@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vcav.io/schemas/input_payload_compatibility.schema.json",
+  "title": "InputPayloadCompatibility",
+  "description": "Input payload for COMPATIBILITY purpose (private mismatch diagnosis)",
+  "type": "object",
+  "properties": {
+    "interaction_type": {
+      "type": "string",
+      "enum": [
+        "DATE",
+        "PROFESSIONAL_INTRO",
+        "TEAM_MEETING",
+        "COFOUNDER_MEETING",
+        "NETWORKING"
+      ],
+      "description": "Type of interaction being evaluated"
+    },
+    "went_well": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 100
+      },
+      "minItems": 0,
+      "maxItems": 3,
+      "description": "Up to 3 short descriptions of positive aspects (max 100 chars each)"
+    },
+    "felt_off": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 100
+      },
+      "minItems": 0,
+      "maxItems": 3,
+      "description": "Up to 3 short descriptions of concerns (max 100 chars each)"
+    },
+    "desired_next": {
+      "type": "string",
+      "maxLength": 100,
+      "description": "What the user hopes for next (max 100 chars)"
+    },
+    "dealbreaker_present": {
+      "type": "boolean",
+      "description": "Whether user has identified a dealbreaker"
+    },
+    "open_to_retry": {
+      "type": "string",
+      "enum": [
+        "YES",
+        "NO",
+        "UNCERTAIN"
+      ],
+      "description": "User's openness to another interaction"
+    }
+  },
+  "required": [
+    "interaction_type",
+    "went_well",
+    "felt_off",
+    "desired_next",
+    "dealbreaker_present",
+    "open_to_retry"
+  ],
+  "additionalProperties": false
+}

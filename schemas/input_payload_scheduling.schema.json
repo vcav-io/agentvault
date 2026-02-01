@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vcav.io/schemas/input_payload_scheduling.schema.json",
+  "title": "InputPayloadScheduling",
+  "description": "Input payload for SCHEDULING purpose (coordinated time selection)",
+  "type": "object",
+  "properties": {
+    "candidate_slots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "slot_id": {
+            "type": "string",
+            "pattern": "^S(0[1-9]|1[0-2])$",
+            "description": "Slot identifier (S01-S12)"
+          },
+          "start_time": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 start time"
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "minimum": 15,
+            "maximum": 480,
+            "description": "Duration in minutes"
+          }
+        },
+        "required": ["slot_id", "start_time", "duration_minutes"],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 12,
+      "description": "Candidate time slots (orchestrator-generated)"
+    },
+    "acceptable_slots": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^S(0[1-9]|1[0-2])$"
+      },
+      "minItems": 0,
+      "maxItems": 12,
+      "description": "Which slots from candidate_slots are acceptable to this participant"
+    },
+    "preferred_slots": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^S(0[1-9]|1[0-2])$"
+      },
+      "minItems": 0,
+      "maxItems": 3,
+      "description": "Top 3 preferred slots (subset of acceptable_slots)"
+    },
+    "flexibility": {
+      "type": "string",
+      "enum": [
+        "FIXED",
+        "SLIGHT_FLEX",
+        "FLEXIBLE"
+      ],
+      "description": "How flexible the participant is on timing"
+    }
+  },
+  "required": [
+    "candidate_slots",
+    "acceptable_slots",
+    "flexibility"
+  ],
+  "additionalProperties": false
+}
