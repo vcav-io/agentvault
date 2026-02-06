@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vcav.io/schemas/input_payload_scheduling_compat_v1.schema.json",
+  "title": "InputPayloadSchedulingCompatV1",
+  "description": "Input payload schema for SCHEDULING_COMPAT_V1 contract. Per-agent scheduling data.",
+  "type": "object",
+  "properties": {
+    "timezone": {
+      "type": "string",
+      "description": "IANA timezone string (e.g. America/New_York)",
+      "maxLength": 64
+    },
+    "availability_windows": {
+      "type": "array",
+      "description": "Available time windows (max 7)",
+      "maxItems": 7,
+      "items": {
+        "type": "object",
+        "properties": {
+          "day": {
+            "type": "string",
+            "enum": [
+              "MONDAY",
+              "TUESDAY",
+              "WEDNESDAY",
+              "THURSDAY",
+              "FRIDAY",
+              "SATURDAY",
+              "SUNDAY"
+            ]
+          },
+          "start_time": {
+            "type": "string",
+            "description": "Start time in HH:MM format",
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+          },
+          "end_time": {
+            "type": "string",
+            "description": "End time in HH:MM format",
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+          }
+        },
+        "required": ["day", "start_time", "end_time"],
+        "additionalProperties": false
+      }
+    },
+    "constraint_flags": {
+      "type": "array",
+      "description": "Scheduling constraint flags (max 5)",
+      "maxItems": 5,
+      "items": {
+        "type": "string",
+        "enum": [
+          "NO_WEEKENDS",
+          "MORNINGS_ONLY",
+          "EVENINGS_ONLY",
+          "FLEXIBLE",
+          "NO_BACK_TO_BACK",
+          "PREFER_SAME_DAY",
+          "RECURRING_CONFLICT"
+        ]
+      }
+    }
+  },
+  "required": [
+    "timezone",
+    "availability_windows",
+    "constraint_flags"
+  ],
+  "additionalProperties": false
+}
