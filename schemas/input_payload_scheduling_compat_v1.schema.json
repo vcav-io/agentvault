@@ -7,12 +7,12 @@
   "properties": {
     "timezone": {
       "type": "string",
-      "description": "IANA timezone string (e.g. America/New_York)",
+      "description": "UTC offset string used by the scheduling oracle (e.g. UTC, UTC-5, UTC+1, UTC+5:30)",
       "maxLength": 64
     },
     "availability_windows": {
       "type": "array",
-      "description": "Available time windows (max 7)",
+      "description": "Available time windows (max 7). Use start/end = NONE to mark no availability entry.",
       "maxItems": 7,
       "items": {
         "type": "object",
@@ -20,52 +20,46 @@
           "day": {
             "type": "string",
             "enum": [
-              "MONDAY",
-              "TUESDAY",
-              "WEDNESDAY",
-              "THURSDAY",
-              "FRIDAY",
-              "SATURDAY",
-              "SUNDAY"
+              "MON",
+              "TUE",
+              "WED",
+              "THU",
+              "FRI"
             ]
           },
-          "start_time": {
+          "start": {
             "type": "string",
-            "description": "Start time in HH:MM format",
-            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+            "description": "Start time in HH:MM format, or NONE"
           },
-          "end_time": {
+          "end": {
             "type": "string",
-            "description": "End time in HH:MM format",
-            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+            "description": "End time in HH:MM format, or NONE"
           }
         },
-        "required": ["day", "start_time", "end_time"],
+        "required": ["day", "start", "end"],
         "additionalProperties": false
       }
     },
-    "constraint_flags": {
-      "type": "array",
-      "description": "Scheduling constraint flags (max 5)",
-      "maxItems": 5,
-      "items": {
-        "type": "string",
-        "enum": [
-          "NO_WEEKENDS",
-          "MORNINGS_ONLY",
-          "EVENINGS_ONLY",
-          "FLEXIBLE",
-          "NO_BACK_TO_BACK",
-          "PREFER_SAME_DAY",
-          "RECURRING_CONFLICT"
-        ]
-      }
+    "min_duration_minutes": {
+      "type": "integer",
+      "description": "Minimum required overlap duration in minutes",
+      "minimum": 1
+    },
+    "location_constraint": {
+      "type": "string",
+      "description": "Location modality preference",
+      "enum": [
+        "EITHER",
+        "REMOTE_ONLY",
+        "IN_PERSON_ONLY"
+      ]
     }
   },
   "required": [
     "timezone",
     "availability_windows",
-    "constraint_flags"
+    "min_duration_minutes",
+    "location_constraint"
   ],
   "additionalProperties": false
 }
