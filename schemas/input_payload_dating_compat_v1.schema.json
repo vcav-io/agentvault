@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vcav.io/schemas/input_payload_dating_compat_v1.schema.json",
+  "title": "InputPayloadDatingCompatV1",
+  "description": "Canonical structured profile schema for dating compatibility ceiling-task evaluation.",
+  "type": "object",
+  "properties": {
+    "age_range": {
+      "type": "string",
+      "enum": [
+        "22-25",
+        "25-30",
+        "30-35",
+        "35-40",
+        "40-45",
+        "45-50",
+        "50+"
+      ]
+    },
+    "relationship_intent": {
+      "type": "string",
+      "enum": [
+        "LONG_TERM",
+        "SHORT_TERM",
+        "CASUAL",
+        "OPEN_TO_ANYTHING"
+      ]
+    },
+    "location_preference": {
+      "type": "string",
+      "enum": [
+        "URBAN",
+        "SUBURBAN",
+        "RURAL",
+        "REMOTE_OK"
+      ]
+    },
+    "lifestyle": {
+      "type": "object",
+      "properties": {
+        "social_energy": {
+          "type": "string",
+          "enum": [
+            "LOW",
+            "MEDIUM",
+            "HIGH"
+          ]
+        },
+        "routine_orientation": {
+          "type": "string",
+          "enum": [
+            "LOW",
+            "MEDIUM",
+            "HIGH"
+          ]
+        }
+      },
+      "required": [
+        "social_energy",
+        "routine_orientation"
+      ],
+      "additionalProperties": false
+    },
+    "values": {
+      "type": "object",
+      "properties": {
+        "family_importance": {
+          "type": "string",
+          "enum": [
+            "LOW",
+            "MEDIUM",
+            "HIGH"
+          ]
+        },
+        "career_priority": {
+          "type": "string",
+          "enum": [
+            "LOW",
+            "MEDIUM",
+            "HIGH"
+          ]
+        }
+      },
+      "required": [
+        "family_importance",
+        "career_priority"
+      ],
+      "additionalProperties": false
+    },
+    "non_exportable_notes": {
+      "type": "string",
+      "description": "Optional free text field intentionally ignored by rubric scoring."
+    }
+  },
+  "required": [
+    "age_range",
+    "relationship_intent",
+    "location_preference",
+    "lifestyle",
+    "values"
+  ],
+  "additionalProperties": false
+}
