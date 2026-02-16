@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vcav.io/schemas/input_payload_injection_escalation_v1.schema.json",
+  "title": "InputPayloadInjectionEscalationV1",
+  "description": "Input payload for INJECTION_ESCALATION purpose. Contains the suspicious content plus minimal context. Intended for bounded classification, not freeform analysis.",
+  "type": "object",
+  "properties": {
+    "suspicious_content": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8000,
+      "description": "The exact content being escalated (prompt, tool output, email, etc.)."
+    },
+    "channel": {
+      "type": "string",
+      "enum": ["CHAT", "EMAIL", "WEB", "CODE", "DOC", "OTHER"],
+      "description": "Where the content originated."
+    },
+    "context": {
+      "type": "string",
+      "maxLength": 2000,
+      "description": "Optional short context about what the user/system was doing when the content appeared.",
+      "default": ""
+    }
+  },
+  "required": ["suspicious_content", "channel"],
+  "additionalProperties": false
+}
+
