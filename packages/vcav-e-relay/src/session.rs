@@ -185,7 +185,10 @@ impl SessionStore {
         let mut store = self.inner.lock().await;
         let before = store.len();
         store.retain(|_, session| {
-            now.signed_duration_since(session.created_at) < ttl_chrono
+            // Don't reap sessions with inference in flight — the background task
+            // needs the session to exist when it writes the result back.
+            session.state == SessionState::Processing
+                || now.signed_duration_since(session.created_at) < ttl_chrono
         });
         before - store.len()
     }
