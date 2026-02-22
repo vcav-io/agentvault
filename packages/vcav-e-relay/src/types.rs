@@ -97,6 +97,11 @@ pub struct CreateSessionResponse {
 pub struct SubmitInputRequest {
     pub role: String,
     pub context: serde_json::Value,
+    /// If provided, the relay verifies this matches the session's contract_hash
+    /// before accepting input. Prevents a malicious initiator from creating a
+    /// session with a permissive contract while advertising a different hash.
+    #[serde(default)]
+    pub expected_contract_hash: Option<String>,
 }
 
 /// Constant-shape status response (same structure regardless of state).

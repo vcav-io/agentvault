@@ -1166,3 +1166,162 @@ async fn test_bilateral_session_e2e_with_mock() {
 
     std::fs::remove_dir_all(&prompt_dir).ok();
 }
+
+// ============================================================================
+// Contract hash verification at submit time
+// ============================================================================
+
+#[tokio::test]
+async fn test_submit_with_correct_contract_hash_succeeds() {
+    let real_hash = "correct_hash_abc";
+    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+
+    let (session_id, tokens) = state
+        .session_store
+        .create(
+            serde_json::from_value(serde_json::json!({
+                "purpose_code": "COMPATIBILITY",
+                "output_schema_id": "test",
+                "output_schema": {"type": "object"},
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": "a".repeat(64)
+            }))
+            .unwrap(),
+            real_hash.to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+
+    let app = build_router(Arc::new(AppState {
+        signing_key: test_signing_key(),
+        anthropic_api_key: "test-key".to_string(),
+        anthropic_model_id: "test-model".to_string(),
+        anthropic_base_url: Some("http://unused".to_string()),
+        prompt_program_dir: "/tmp".to_string(),
+        session_store: state.session_store.clone(),
+    }));
+
+    let input_request = serde_json::json!({
+        "role": "alice",
+        "context": { "preference": "morning" },
+        "expected_contract_hash": real_hash
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/sessions/{session_id}/input"))
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {}", tokens.initiator_submit))
+                .body(Body::from(serde_json::to_vec(&input_request).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_submit_with_wrong_contract_hash_rejected() {
+    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+
+    let (session_id, tokens) = state
+        .session_store
+        .create(
+            serde_json::from_value(serde_json::json!({
+                "purpose_code": "COMPATIBILITY",
+                "output_schema_id": "test",
+                "output_schema": {"type": "object"},
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": "a".repeat(64)
+            }))
+            .unwrap(),
+            "real_hash".to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+
+    let app = build_router(Arc::new(AppState {
+        signing_key: test_signing_key(),
+        anthropic_api_key: "test-key".to_string(),
+        anthropic_model_id: "test-model".to_string(),
+        anthropic_base_url: Some("http://unused".to_string()),
+        prompt_program_dir: "/tmp".to_string(),
+        session_store: state.session_store.clone(),
+    }));
+
+    let input_request = serde_json::json!({
+        "role": "bob",
+        "context": { "preference": "evening" },
+        "expected_contract_hash": "wrong_hash_xyz"
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/sessions/{session_id}/input"))
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {}", tokens.responder_submit))
+                .body(Body::from(serde_json::to_vec(&input_request).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Contract mismatch returns 400 (contract validation error)
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_submit_without_contract_hash_still_works() {
+    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+
+    let (session_id, tokens) = state
+        .session_store
+        .create(
+            serde_json::from_value(serde_json::json!({
+                "purpose_code": "COMPATIBILITY",
+                "output_schema_id": "test",
+                "output_schema": {"type": "object"},
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": "a".repeat(64)
+            }))
+            .unwrap(),
+            "hash".to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+
+    let app = build_router(Arc::new(AppState {
+        signing_key: test_signing_key(),
+        anthropic_api_key: "test-key".to_string(),
+        anthropic_model_id: "test-model".to_string(),
+        anthropic_base_url: Some("http://unused".to_string()),
+        prompt_program_dir: "/tmp".to_string(),
+        session_store: state.session_store.clone(),
+    }));
+
+    // No expected_contract_hash field — backward compat
+    let input_request = serde_json::json!({
+        "role": "alice",
+        "context": {}
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/sessions/{session_id}/input"))
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {}", tokens.initiator_submit))
+                .body(Body::from(serde_json::to_vec(&input_request).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}

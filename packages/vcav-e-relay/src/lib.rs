@@ -151,6 +151,23 @@ async fn submit_input_handler(
         _ => return Err(RelayError::Unauthorized),
     };
 
+    // Verify contract hash if the caller provided one
+    if let Some(ref expected_hash) = request.expected_contract_hash {
+        let hash_matches = state
+            .session_store
+            .with_session(&session_id, |session| {
+                session.contract_hash == *expected_hash
+            })
+            .await
+            .unwrap_or(false);
+
+        if !hash_matches {
+            return Err(RelayError::ContractValidation(
+                "expected_contract_hash does not match session contract".to_string(),
+            ));
+        }
+    }
+
     // Submit input and check if both inputs are now present
     let both_ready = state
         .session_store
