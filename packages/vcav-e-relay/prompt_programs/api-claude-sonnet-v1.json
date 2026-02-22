@@ -1,0 +1,8 @@
+{
+  "profile_version": "1",
+  "profile_id": "api-claude-sonnet-v1",
+  "provider": "anthropic",
+  "model_family": "claude-sonnet",
+  "reasoning_mode": "unconstrained",
+  "structured_output": true
+}

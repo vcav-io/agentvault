@@ -10,13 +10,14 @@
 //! - End-to-end /relay endpoint (with mock Anthropic) returns valid receipt
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use ed25519_dalek::SigningKey;
 use tower::ServiceExt;
 
-use vcav_e_relay::{build_router, AppState};
+use vcav_e_relay::{build_router, session::SessionStore, AppState};
 
 /// Build a test signing key (deterministic).
 fn test_signing_key() -> SigningKey {
@@ -31,6 +32,7 @@ fn test_app_state(mock_base_url: &str, prompt_dir: &str) -> AppState {
         anthropic_model_id: "test-model".to_string(),
         anthropic_base_url: Some(mock_base_url.to_string()),
         prompt_program_dir: prompt_dir.to_string(),
+        session_store: SessionStore::new(Duration::from_secs(600)),
     }
 }
 
@@ -614,4 +616,712 @@ async fn test_relay_endpoint_rejects_invalid_provider() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
     std::fs::remove_dir_all(&prompt_dir).ok();
+}
+
+// ============================================================================
+// Bilateral session tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_create_session_returns_tokens_and_contract_hash() {
+    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+    let app = build_router(state);
+
+    let create_request = serde_json::json!({
+        "contract": {
+            "purpose_code": "COMPATIBILITY",
+            "output_schema_id": "test_schema",
+            "output_schema": mediation_schema(),
+            "participants": ["alice", "bob"],
+            "prompt_template_hash": "a".repeat(64)
+        }
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/sessions")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&create_request).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    // Session ID is SHA-256 hex (64 chars)
+    assert_eq!(json["session_id"].as_str().unwrap().len(), 64);
+
+    // Contract hash is SHA-256 hex (64 chars)
+    assert_eq!(json["contract_hash"].as_str().unwrap().len(), 64);
+
+    // All four tokens are 64 hex chars (32 bytes)
+    for key in &[
+        "initiator_submit_token",
+        "initiator_read_token",
+        "responder_submit_token",
+        "responder_read_token",
+    ] {
+        let token = json[key].as_str().unwrap();
+        assert_eq!(token.len(), 64, "{key} should be 64 hex chars");
+    }
+
+    // All tokens are unique
+    let tokens: Vec<&str> = ["initiator_submit_token", "initiator_read_token",
+        "responder_submit_token", "responder_read_token"]
+        .iter()
+        .map(|k| json[k].as_str().unwrap())
+        .collect();
+    for (i, a) in tokens.iter().enumerate() {
+        for (j, b) in tokens.iter().enumerate() {
+            if i != j {
+                assert_ne!(a, b);
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_session_status_requires_valid_token() {
+    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+
+    // Create a session first
+    let (session_id, _tokens) = state
+        .session_store
+        .create(
+            serde_json::from_value(serde_json::json!({
+                "purpose_code": "COMPATIBILITY",
+                "output_schema_id": "test",
+                "output_schema": {"type": "object"},
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": "a".repeat(64)
+            }))
+            .unwrap(),
+            "hash".to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+
+    let app = build_router(state);
+
+    // Request without token → 401
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/sessions/{session_id}/status"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_session_status_with_valid_token() {
+    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+
+    let (session_id, tokens) = state
+        .session_store
+        .create(
+            serde_json::from_value(serde_json::json!({
+                "purpose_code": "COMPATIBILITY",
+                "output_schema_id": "test",
+                "output_schema": {"type": "object"},
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": "a".repeat(64)
+            }))
+            .unwrap(),
+            "hash".to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/sessions/{session_id}/status"))
+                .header("authorization", format!("Bearer {}", tokens.initiator_submit))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["state"], "CREATED");
+    assert!(json["abort_reason"].is_null());
+}
+
+#[tokio::test]
+async fn test_submit_input_transitions_to_partial() {
+    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+
+    let (session_id, tokens) = state
+        .session_store
+        .create(
+            serde_json::from_value(serde_json::json!({
+                "purpose_code": "COMPATIBILITY",
+                "output_schema_id": "test",
+                "output_schema": {"type": "object"},
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": "a".repeat(64)
+            }))
+            .unwrap(),
+            "hash".to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+
+    let app = build_router(state);
+
+    let input_request = serde_json::json!({
+        "role": "alice",
+        "context": { "preference": "morning" }
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/sessions/{session_id}/input"))
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {}", tokens.initiator_submit))
+                .body(Body::from(serde_json::to_vec(&input_request).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["state"], "PARTIAL");
+}
+
+#[tokio::test]
+async fn test_submit_token_is_one_time_use() {
+    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+
+    let (session_id, tokens) = state
+        .session_store
+        .create(
+            serde_json::from_value(serde_json::json!({
+                "purpose_code": "COMPATIBILITY",
+                "output_schema_id": "test",
+                "output_schema": {"type": "object"},
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": "a".repeat(64)
+            }))
+            .unwrap(),
+            "hash".to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+
+    let state_arc = Arc::new(test_app_state("http://unused", "/tmp"));
+    // Manually insert session into this app state's store
+    // We need to use the same store, so let's use the original state
+    drop(state_arc);
+
+    let input_request = serde_json::json!({
+        "role": "alice",
+        "context": {}
+    });
+
+    // First submit succeeds
+    let app = build_router(Arc::new(test_app_state("http://unused", "/tmp")));
+    // We can't easily reuse the router for two requests without cloning.
+    // Instead, test via the session store directly.
+
+    // Submit input directly via store
+    state
+        .session_store
+        .with_session(&session_id, |session| {
+            session.initiator_input = Some(vcav_e_relay::types::RelayInput {
+                role: "alice".to_string(),
+                context: serde_json::json!({}),
+            });
+            session.initiator_submitted = true;
+            session.state = vcav_e_relay::session::SessionState::Partial;
+        })
+        .await;
+
+    // Now try to submit again via HTTP — should be rejected
+    let app = build_router(Arc::new(AppState {
+        signing_key: test_signing_key(),
+        anthropic_api_key: "test-key".to_string(),
+        anthropic_model_id: "test-model".to_string(),
+        anthropic_base_url: Some("http://unused".to_string()),
+        prompt_program_dir: "/tmp".to_string(),
+        session_store: state.session_store.clone(),
+    }));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/sessions/{session_id}/input"))
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {}", tokens.initiator_submit))
+                .body(Body::from(serde_json::to_vec(&input_request).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // One-time submit: second attempt returns UNAUTHORIZED
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_output_requires_read_token() {
+    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+
+    let (session_id, tokens) = state
+        .session_store
+        .create(
+            serde_json::from_value(serde_json::json!({
+                "purpose_code": "COMPATIBILITY",
+                "output_schema_id": "test",
+                "output_schema": {"type": "object"},
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": "a".repeat(64)
+            }))
+            .unwrap(),
+            "hash".to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+
+    let app = build_router(state);
+
+    // Submit token should NOT be able to read output
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/sessions/{session_id}/output"))
+                .header("authorization", format!("Bearer {}", tokens.initiator_submit))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_output_with_read_token_before_completion() {
+    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+
+    let (session_id, tokens) = state
+        .session_store
+        .create(
+            serde_json::from_value(serde_json::json!({
+                "purpose_code": "COMPATIBILITY",
+                "output_schema_id": "test",
+                "output_schema": {"type": "object"},
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": "a".repeat(64)
+            }))
+            .unwrap(),
+            "hash".to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/sessions/{session_id}/output"))
+                .header("authorization", format!("Bearer {}", tokens.initiator_read))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    // Constant-shape: state + null fields
+    assert_eq!(json["state"], "CREATED");
+    assert!(json["output"].is_null());
+    assert!(json["receipt"].is_null());
+    assert!(json["receipt_signature"].is_null());
+}
+
+#[tokio::test]
+async fn test_unknown_session_returns_unauthorized() {
+    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+    let app = build_router(state);
+
+    // Status of unknown session
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/sessions/nonexistent-session-id/status")
+                .header("authorization", "Bearer some-random-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Constant-shape: same response as bad token
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_bilateral_session_e2e_with_mock() {
+    // Full bilateral flow: create → submit A → submit B → poll → output
+    let (prompt_dir, prompt_hash) = setup_prompt_program("bilateral-e2e");
+
+    let mock_output = serde_json::json!({
+        "decision": "PROCEED",
+        "confidence_bucket": "HIGH",
+        "reason_code": "ALIGNED"
+    });
+    let mock_base_url = start_mock_anthropic(mock_output.clone()).await;
+
+    let state = Arc::new(test_app_state(&mock_base_url, &prompt_dir));
+    let verifying_key = state.signing_key.verifying_key();
+
+    // 1. Create session
+    let (session_id, tokens) = state
+        .session_store
+        .create(
+            serde_json::from_value(serde_json::json!({
+                "purpose_code": "COMPATIBILITY",
+                "output_schema_id": "test_schema",
+                "output_schema": mediation_schema(),
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": prompt_hash,
+                "entropy_budget_bits": 32
+            }))
+            .unwrap(),
+            "will-be-recomputed".to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+
+    // 2. Submit initiator input
+    let app = build_router(Arc::new(AppState {
+        signing_key: test_signing_key(),
+        anthropic_api_key: "test-key".to_string(),
+        anthropic_model_id: "test-model".to_string(),
+        anthropic_base_url: Some(mock_base_url.clone()),
+        prompt_program_dir: prompt_dir.clone(),
+        session_store: state.session_store.clone(),
+    }));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/sessions/{session_id}/input"))
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {}", tokens.initiator_submit))
+                .body(Body::from(
+                    serde_json::to_vec(&serde_json::json!({
+                        "role": "alice",
+                        "context": { "preference": "morning" }
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["state"], "PARTIAL");
+
+    // 3. Submit responder input (triggers inference)
+    let app = build_router(Arc::new(AppState {
+        signing_key: test_signing_key(),
+        anthropic_api_key: "test-key".to_string(),
+        anthropic_model_id: "test-model".to_string(),
+        anthropic_base_url: Some(mock_base_url.clone()),
+        prompt_program_dir: prompt_dir.clone(),
+        session_store: state.session_store.clone(),
+    }));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/sessions/{session_id}/input"))
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {}", tokens.responder_submit))
+                .body(Body::from(
+                    serde_json::to_vec(&serde_json::json!({
+                        "role": "bob",
+                        "context": { "preference": "afternoon" }
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // 4. Wait for inference to complete
+    for _ in 0..50 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let (s, _) = state.session_store.get_state(&session_id).await.unwrap();
+        if s == vcav_e_relay::session::SessionState::Completed
+            || s == vcav_e_relay::session::SessionState::Aborted
+        {
+            break;
+        }
+    }
+
+    let (final_state, abort_reason) = state.session_store.get_state(&session_id).await.unwrap();
+    assert_eq!(
+        final_state,
+        vcav_e_relay::session::SessionState::Completed,
+        "session should be completed, abort_reason: {:?}",
+        abort_reason
+    );
+
+    // 5. Retrieve output with read token
+    let app = build_router(Arc::new(AppState {
+        signing_key: test_signing_key(),
+        anthropic_api_key: "test-key".to_string(),
+        anthropic_model_id: "test-model".to_string(),
+        anthropic_base_url: Some(mock_base_url),
+        prompt_program_dir: prompt_dir.clone(),
+        session_store: state.session_store.clone(),
+    }));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/sessions/{session_id}/output"))
+                .header("authorization", format!("Bearer {}", tokens.initiator_read))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["state"], "COMPLETED");
+    assert_eq!(json["output"], mock_output);
+    assert!(json["receipt"].is_object());
+    assert!(json["receipt_signature"].is_string());
+
+    // 6. Verify receipt
+    let receipt = &json["receipt"];
+    assert_eq!(receipt["execution_lane"], "API_MEDIATED");
+    assert_eq!(receipt["status"], "COMPLETED");
+
+    let receipt_sig = json["receipt_signature"].as_str().unwrap();
+    assert_eq!(receipt_sig.len(), 128);
+
+    let unsigned: receipt_core::UnsignedReceipt =
+        serde_json::from_value(receipt.clone()).unwrap();
+    receipt_core::verify_receipt(&unsigned, receipt_sig, &verifying_key)
+        .expect("bilateral session receipt must verify");
+
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}
+
+// ============================================================================
+// Contract hash verification at submit time
+// ============================================================================
+
+#[tokio::test]
+async fn test_submit_with_correct_contract_hash_succeeds() {
+    let real_hash = "correct_hash_abc";
+    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+
+    let (session_id, tokens) = state
+        .session_store
+        .create(
+            serde_json::from_value(serde_json::json!({
+                "purpose_code": "COMPATIBILITY",
+                "output_schema_id": "test",
+                "output_schema": {"type": "object"},
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": "a".repeat(64)
+            }))
+            .unwrap(),
+            real_hash.to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+
+    let app = build_router(Arc::new(AppState {
+        signing_key: test_signing_key(),
+        anthropic_api_key: "test-key".to_string(),
+        anthropic_model_id: "test-model".to_string(),
+        anthropic_base_url: Some("http://unused".to_string()),
+        prompt_program_dir: "/tmp".to_string(),
+        session_store: state.session_store.clone(),
+    }));
+
+    let input_request = serde_json::json!({
+        "role": "alice",
+        "context": { "preference": "morning" },
+        "expected_contract_hash": real_hash
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/sessions/{session_id}/input"))
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {}", tokens.initiator_submit))
+                .body(Body::from(serde_json::to_vec(&input_request).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_submit_with_wrong_contract_hash_rejected() {
+    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+
+    let (session_id, tokens) = state
+        .session_store
+        .create(
+            serde_json::from_value(serde_json::json!({
+                "purpose_code": "COMPATIBILITY",
+                "output_schema_id": "test",
+                "output_schema": {"type": "object"},
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": "a".repeat(64)
+            }))
+            .unwrap(),
+            "real_hash".to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+
+    let app = build_router(Arc::new(AppState {
+        signing_key: test_signing_key(),
+        anthropic_api_key: "test-key".to_string(),
+        anthropic_model_id: "test-model".to_string(),
+        anthropic_base_url: Some("http://unused".to_string()),
+        prompt_program_dir: "/tmp".to_string(),
+        session_store: state.session_store.clone(),
+    }));
+
+    let input_request = serde_json::json!({
+        "role": "bob",
+        "context": { "preference": "evening" },
+        "expected_contract_hash": "wrong_hash_xyz"
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/sessions/{session_id}/input"))
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {}", tokens.responder_submit))
+                .body(Body::from(serde_json::to_vec(&input_request).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Contract mismatch returns 400 (contract validation error)
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_submit_without_contract_hash_still_works() {
+    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+
+    let (session_id, tokens) = state
+        .session_store
+        .create(
+            serde_json::from_value(serde_json::json!({
+                "purpose_code": "COMPATIBILITY",
+                "output_schema_id": "test",
+                "output_schema": {"type": "object"},
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": "a".repeat(64)
+            }))
+            .unwrap(),
+            "hash".to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+
+    let app = build_router(Arc::new(AppState {
+        signing_key: test_signing_key(),
+        anthropic_api_key: "test-key".to_string(),
+        anthropic_model_id: "test-model".to_string(),
+        anthropic_base_url: Some("http://unused".to_string()),
+        prompt_program_dir: "/tmp".to_string(),
+        session_store: state.session_store.clone(),
+    }));
+
+    // No expected_contract_hash field — backward compat
+    let input_request = serde_json::json!({
+        "role": "alice",
+        "context": {}
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/sessions/{session_id}/input"))
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {}", tokens.initiator_submit))
+                .body(Body::from(serde_json::to_vec(&input_request).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
 }

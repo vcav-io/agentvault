@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::error::RelayError;
-use crate::types::{Contract, RelayInput};
+use crate::types::{Contract, ModelProfile, RelayInput};
 
 /// A content-addressed description of how to assemble a provider prompt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +96,41 @@ impl PromptProgram {
     }
 }
 
+impl ModelProfile {
+    /// Compute the content-addressed hash of this model profile (SHA-256 of canonical JSON).
+    pub fn content_hash(&self) -> Result<String, RelayError> {
+        let canonical = receipt_core::canonicalize_serializable(self)
+            .map_err(|e| RelayError::PromptProgram(format!("model profile canonicalization failed: {e}")))?;
+        let mut hasher = Sha256::new();
+        hasher.update(canonical.as_bytes());
+        Ok(hex::encode(hasher.finalize()))
+    }
+}
+
+/// Load a model profile from the file system by its profile_id.
+/// The file is named `{profile_id}.json` in the given directory.
+pub fn load_model_profile(dir: &str, profile_id: &str) -> Result<ModelProfile, RelayError> {
+    // Sanitize profile_id to prevent path traversal: no '..', no '/', only safe chars
+    if profile_id.contains("..") || profile_id.contains('/') || profile_id.contains('\\') {
+        return Err(RelayError::PromptProgram(
+            "model profile_id contains invalid characters".to_string(),
+        ));
+    }
+
+    let path = std::path::Path::new(dir).join(format!("{profile_id}.json"));
+    let data = std::fs::read_to_string(&path).map_err(|e| {
+        tracing::debug!(path = %path.display(), error = %e, "model profile load failed");
+        RelayError::PromptProgram(format!(
+            "model profile not found for id: {profile_id}"
+        ))
+    })?;
+
+    let profile: ModelProfile = serde_json::from_str(&data)
+        .map_err(|e| RelayError::PromptProgram(format!("invalid model profile JSON: {e}")))?;
+
+    Ok(profile)
+}
+
 /// Load a prompt program from the file system by its content-addressed hash.
 pub fn load_prompt_program(dir: &str, expected_hash: &str) -> Result<PromptProgram, RelayError> {
     // Validate hash format to prevent path traversal (expected_hash is user-controlled)
@@ -167,6 +202,7 @@ mod tests {
             entropy_budget_bits: None,
             timing_class: None,
             metadata: serde_json::Value::Null,
+            model_profile_id: None,
         };
         let input_a = RelayInput {
             role: "alice".to_string(),
@@ -240,5 +276,89 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("64 hex characters"));
+    }
+
+    #[test]
+    fn test_load_model_profile_success() {
+        use crate::types::ModelProfile;
+
+        let dir = std::env::temp_dir().join("vcav-e-relay-test-model-profile");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let profile = ModelProfile {
+            profile_version: "1".to_string(),
+            profile_id: "test-model-v1".to_string(),
+            provider: "anthropic".to_string(),
+            model_family: "claude-sonnet".to_string(),
+            reasoning_mode: "unconstrained".to_string(),
+            structured_output: true,
+        };
+
+        let path = dir.join("test-model-v1.json");
+        std::fs::write(&path, serde_json::to_string(&profile).unwrap()).unwrap();
+
+        let loaded = load_model_profile(dir.to_str().unwrap(), "test-model-v1").unwrap();
+        assert_eq!(loaded.profile_id, "test-model-v1");
+        assert_eq!(loaded.provider, "anthropic");
+        assert_eq!(loaded.model_family, "claude-sonnet");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_model_profile_rejects_path_traversal() {
+        let result = load_model_profile("/tmp", "../etc/passwd");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("invalid characters"));
+    }
+
+    #[test]
+    fn test_load_model_profile_rejects_backslash() {
+        let result = load_model_profile("/tmp", "foo\\bar");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("invalid characters"));
+    }
+
+    #[test]
+    fn test_model_profile_content_hash_deterministic() {
+        use crate::types::ModelProfile;
+
+        let profile = ModelProfile {
+            profile_version: "1".to_string(),
+            profile_id: "api-claude-sonnet-v1".to_string(),
+            provider: "anthropic".to_string(),
+            model_family: "claude-sonnet".to_string(),
+            reasoning_mode: "unconstrained".to_string(),
+            structured_output: true,
+        };
+
+        let h1 = profile.content_hash().unwrap();
+        let h2 = profile.content_hash().unwrap();
+        assert_eq!(h1, h2);
+        assert_eq!(h1.len(), 64);
+    }
+
+    #[test]
+    fn test_model_profile_content_hash_changes_with_content() {
+        use crate::types::ModelProfile;
+
+        let p1 = ModelProfile {
+            profile_version: "1".to_string(),
+            profile_id: "api-claude-sonnet-v1".to_string(),
+            provider: "anthropic".to_string(),
+            model_family: "claude-sonnet".to_string(),
+            reasoning_mode: "unconstrained".to_string(),
+            structured_output: true,
+        };
+        let mut p2 = p1.clone();
+        p2.model_family = "claude-haiku".to_string();
+
+        assert_ne!(p1.content_hash().unwrap(), p2.content_hash().unwrap());
     }
 }
