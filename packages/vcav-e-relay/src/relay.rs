@@ -9,13 +9,14 @@ use crate::error::RelayError;
 use crate::prompt_program::load_prompt_program;
 use crate::provider::anthropic::AnthropicProvider;
 use crate::provider::ProviderRequest;
-use crate::types::{RelayRequest, RelayResponse};
+use crate::session::AbortReason;
+use crate::types::{Contract, RelayInput, RelayRequest, RelayResponse};
 use crate::AppState;
 
 const MAX_TOKENS: u32 = 256;
 
 /// Compute SHA-256 hash of canonical contract JSON for receipt binding.
-fn compute_contract_hash(contract: &crate::types::Contract) -> Result<String, RelayError> {
+pub fn compute_contract_hash(contract: &Contract) -> Result<String, RelayError> {
     let canonical = receipt_core::canonicalize_serializable(contract)
         .map_err(|e| RelayError::ContractValidation(format!("contract canonicalization: {e}")))?;
     let mut hasher = Sha256::new();
@@ -39,35 +40,49 @@ fn validate_output_schema(
     Ok(())
 }
 
-/// The core relay function: validate → assemble → call → check → sign → return.
-pub async fn relay(request: RelayRequest, state: &AppState) -> Result<RelayResponse, RelayError> {
+/// Result of core relay execution.
+pub struct RelayResult {
+    pub output: serde_json::Value,
+    pub receipt: Receipt,
+    pub receipt_signature: String,
+}
+
+/// Core relay logic: validate → assemble → call → check → sign → return.
+///
+/// Extracted from the single-shot `relay()` function so it can be reused by
+/// bilateral session processing.
+pub async fn relay_core(
+    contract: &Contract,
+    input_a: &RelayInput,
+    input_b: &RelayInput,
+    provider_name: &str,
+    state: &AppState,
+) -> Result<RelayResult, RelayError> {
     let session_start = Utc::now();
 
     // 1. Validate provider selection
-    if request.provider != "anthropic" {
+    if provider_name != "anthropic" {
         return Err(RelayError::ContractValidation(format!(
-            "unsupported provider: {}",
-            request.provider
+            "unsupported provider: {provider_name}"
         )));
     }
 
     // 2. Validate contract has exactly 2 participants
-    if request.contract.participants.len() != 2 {
+    if contract.participants.len() != 2 {
         return Err(RelayError::ContractValidation(
             "contract must have exactly 2 participants".to_string(),
         ));
     }
 
     // 3. Compute contract hash
-    let contract_hash = compute_contract_hash(&request.contract)?;
+    let contract_hash = compute_contract_hash(contract)?;
 
     // 4. Load and validate prompt program
     let program =
-        load_prompt_program(&state.prompt_program_dir, &request.contract.prompt_template_hash)?;
+        load_prompt_program(&state.prompt_program_dir, &contract.prompt_template_hash)?;
 
     // 5. Assemble provider request
-    let assembled =
-        program.assemble(&request.contract, &request.input_a, &request.input_b)?;
+    let assembled = program.assemble(contract, input_a, input_b)?;
 
     // 6. Call provider
     let provider = AnthropicProvider::new(
@@ -80,7 +95,7 @@ pub async fn relay(request: RelayRequest, state: &AppState) -> Result<RelayRespo
         .call(ProviderRequest {
             system: assembled.system,
             user_message: assembled.user_message,
-            output_schema: Some(request.contract.output_schema.clone()),
+            output_schema: Some(contract.output_schema.clone()),
             max_tokens: MAX_TOKENS,
         })
         .await?;
@@ -90,17 +105,17 @@ pub async fn relay(request: RelayRequest, state: &AppState) -> Result<RelayRespo
         .map_err(|e| RelayError::OutputValidation(format!("output is not valid JSON: {e}")))?;
 
     // 8. Validate output against schema
-    validate_output_schema(&output, &request.contract.output_schema)?;
+    validate_output_schema(&output, &contract.output_schema)?;
 
     // 9. Compute entropy (advisory — logged but not enforced)
-    let entropy_bits = calculate_schema_entropy_upper_bound(&request.contract.output_schema)
+    let entropy_bits = calculate_schema_entropy_upper_bound(&contract.output_schema)
         .map(|v| v as u32)
         .unwrap_or_else(|e| {
             tracing::warn!("entropy calculation failed: {e}; recording 0");
             0
         });
 
-    if let Some(budget) = request.contract.entropy_budget_bits {
+    if let Some(budget) = contract.entropy_budget_bits {
         if entropy_bits > budget {
             tracing::warn!(
                 entropy_bits,
@@ -115,10 +130,10 @@ pub async fn relay(request: RelayRequest, state: &AppState) -> Result<RelayRespo
     // 10. Generate session ID
     let session_id = hex::encode(Sha256::digest(uuid::Uuid::new_v4().as_bytes()));
 
-    // 11. Build budget usage record (in-memory, no persistent tracking for MVP)
+    // 11. Build budget usage record
     let pair_id = generate_pair_id(
-        &request.contract.participants[0],
-        &request.contract.participants[1],
+        &contract.participants[0],
+        &contract.participants[1],
     );
 
     let budget_usage = BudgetUsageRecord {
@@ -126,7 +141,7 @@ pub async fn relay(request: RelayRequest, state: &AppState) -> Result<RelayRespo
         window_start: session_start,
         bits_used_before: 0,
         bits_used_after: entropy_bits,
-        budget_limit: request.contract.entropy_budget_bits.unwrap_or(128),
+        budget_limit: contract.entropy_budget_bits.unwrap_or(128),
         budget_tier: BudgetTier::Default,
         budget_enforcement: Some("disabled".to_string()),
         compartment_id: None,
@@ -134,15 +149,12 @@ pub async fn relay(request: RelayRequest, state: &AppState) -> Result<RelayRespo
 
     // 12. Build and sign receipt
     let prompt_template_hash = program.content_hash()?;
-
-    // For VCAV-E relay, runtime/model hashes are not applicable (no local inference).
-    // Use content-addressed relay identity hashes.
     let relay_hash = hex::encode(Sha256::digest(b"vcav-e-relay-v0.1.0"));
 
     let unsigned = Receipt::builder()
         .session_id(session_id)
-        .purpose_code(request.contract.purpose_code)
-        .participant_ids(request.contract.participants.clone())
+        .purpose_code(contract.purpose_code)
+        .participant_ids(contract.participants.clone())
         .runtime_hash(&relay_hash)
         .guardian_policy_hash(&relay_hash)
         .model_weights_hash(&relay_hash)
@@ -158,11 +170,11 @@ pub async fn relay(request: RelayRequest, state: &AppState) -> Result<RelayRespo
         .output_entropy_bits(entropy_bits)
         .budget_usage(budget_usage)
         .contract_hash(Some(contract_hash))
-        .output_schema_id(Some(request.contract.output_schema_id.clone()))
+        .output_schema_id(Some(contract.output_schema_id.clone()))
         .signal_class(Some(SignalClass::SessionCompleted))
-        .entropy_budget_bits_opt(request.contract.entropy_budget_bits)
+        .entropy_budget_bits_opt(contract.entropy_budget_bits)
         .prompt_template_hash(Some(prompt_template_hash))
-        .contract_timing_class(request.contract.timing_class.clone())
+        .contract_timing_class(contract.timing_class.clone())
         .model_identity(Some(receipt_core::ModelIdentity {
             provider: "anthropic".to_string(),
             model_id: provider_response.model_id,
@@ -179,10 +191,39 @@ pub async fn relay(request: RelayRequest, state: &AppState) -> Result<RelayRespo
     let receipt_signature = signature.clone();
     let receipt = unsigned.sign(signature);
 
-    Ok(RelayResponse {
+    Ok(RelayResult {
         output,
         receipt,
         receipt_signature,
+    })
+}
+
+/// Map a RelayError to an AbortReason for session state.
+pub fn error_to_abort_reason(error: &RelayError) -> AbortReason {
+    match error {
+        RelayError::OutputValidation(_) => AbortReason::SchemaValidation,
+        RelayError::Provider(_) => AbortReason::ProviderError,
+        RelayError::ContractValidation(_) => AbortReason::ContractMismatch,
+        _ => AbortReason::ProviderError,
+    }
+}
+
+/// Single-shot relay endpoint handler (POST /relay).
+/// Delegates to `relay_core`.
+pub async fn relay(request: RelayRequest, state: &AppState) -> Result<RelayResponse, RelayError> {
+    let result = relay_core(
+        &request.contract,
+        &request.input_a,
+        &request.input_b,
+        &request.provider,
+        state,
+    )
+    .await?;
+
+    Ok(RelayResponse {
+        output: result.output,
+        receipt: result.receipt,
+        receipt_signature: result.receipt_signature,
     })
 }
 
@@ -192,7 +233,7 @@ mod tests {
 
     #[test]
     fn test_compute_contract_hash_deterministic() {
-        let contract = crate::types::Contract {
+        let contract = Contract {
             purpose_code: guardian_core::Purpose::Mediation,
             output_schema_id: "vault_result_mediation".to_string(),
             output_schema: serde_json::json!({"type": "object"}),

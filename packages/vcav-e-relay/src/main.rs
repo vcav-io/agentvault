@@ -1,10 +1,11 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use ed25519_dalek::SigningKey;
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
 
-use vcav_e_relay::{build_router, AppState};
+use vcav_e_relay::{build_router, session::SessionStore, AppState};
 
 #[tokio::main]
 async fn main() {
@@ -47,18 +48,28 @@ async fn main() {
 
     let anthropic_base_url = std::env::var("ANTHROPIC_BASE_URL").ok();
 
+    let session_ttl_secs: u64 = std::env::var("VCAV_SESSION_TTL_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(600);
+    let session_store = SessionStore::new(Duration::from_secs(session_ttl_secs));
+
+    // Start background session reaper
+    session_store.clone().start_reaper();
+
     let state = Arc::new(AppState {
         signing_key,
         anthropic_api_key: api_key,
         anthropic_model_id: model_id,
         anthropic_base_url,
         prompt_program_dir: prompt_dir,
+        session_store,
     });
 
     let app = build_router(state);
 
     let addr = format!("0.0.0.0:{port}");
-    tracing::info!(%addr, "VCAV-E relay starting");
+    tracing::info!(%addr, session_ttl_secs, "VCAV-E relay starting");
     let listener = TcpListener::bind(&addr).await.expect("bind failed");
     axum::serve(listener, app).await.expect("server error");
 }

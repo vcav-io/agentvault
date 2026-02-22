@@ -21,6 +21,12 @@ pub enum RelayError {
 
     #[error("Internal error: {0}")]
     Internal(String),
+
+    #[error("Unauthorized")]
+    Unauthorized,
+
+    #[error("Session not found")]
+    SessionNotFound,
 }
 
 impl RelayError {
@@ -32,6 +38,9 @@ impl RelayError {
             RelayError::OutputValidation(_) => StatusCode::UNPROCESSABLE_ENTITY,
             RelayError::ReceiptSigning(_) => StatusCode::INTERNAL_SERVER_ERROR,
             RelayError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            // Constant-shape: both return 401 with same body.
+            // Caller cannot distinguish "bad token" from "unknown session".
+            RelayError::Unauthorized | RelayError::SessionNotFound => StatusCode::UNAUTHORIZED,
         }
     }
 }
@@ -39,8 +48,13 @@ impl RelayError {
 impl IntoResponse for RelayError {
     fn into_response(self) -> Response {
         let status = self.status_code();
+        // Constant-shape error: no variable detail for auth errors.
+        let error_msg = match &self {
+            RelayError::Unauthorized | RelayError::SessionNotFound => "UNAUTHORIZED".to_string(),
+            other => other.to_string(),
+        };
         let body = serde_json::json!({
-            "error": self.to_string(),
+            "error": error_msg,
         });
         (status, axum::Json(body)).into_response()
     }
