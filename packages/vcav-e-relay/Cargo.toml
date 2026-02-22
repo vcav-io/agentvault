@@ -1,0 +1,32 @@
+[package]
+name = "vcav-e-relay"
+description = "VCAV-E Relay: Stateless API-mediated inference relay with receipt signing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+receipt-core = { path = "../receipt-core" }
+guardian-core = { path = "../guardian-core" }
+
+serde.workspace = true
+serde_json.workspace = true
+axum.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+reqwest = { version = "0.12", features = ["json"] }
+ed25519-dalek.workspace = true
+sha2.workspace = true
+rand.workspace = true
+hex.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+jsonschema.workspace = true
+
+[dev-dependencies]
+verifier-core = { path = "../verifier-core" }
+tokio = { version = "1.0", features = ["full", "test-util"] }
+tower.workspace = true
