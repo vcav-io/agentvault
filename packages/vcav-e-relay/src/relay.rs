@@ -6,7 +6,7 @@ use receipt_core::{
 use sha2::{Digest, Sha256};
 
 use crate::error::RelayError;
-use crate::prompt_program::load_prompt_program;
+use crate::prompt_program::{load_model_profile, load_prompt_program};
 use crate::provider::anthropic::AnthropicProvider;
 use crate::provider::ProviderRequest;
 use crate::session::AbortReason;
@@ -149,17 +149,27 @@ pub async fn relay_core(
 
     // 12. Build and sign receipt
     let prompt_template_hash = program.content_hash()?;
-    let relay_hash = hex::encode(Sha256::digest(b"vcav-e-relay-v0.1.0"));
+    let relay_build_hash = hex::encode(Sha256::digest(b"vcav-e-relay-v0.2.0-bilateral"));
+    let guardian_policy_hash = hex::encode(Sha256::digest(b"guardian-core-v0.1.0"));
+
+    // Load model profile hash if contract specifies one
+    let model_profile_hash = match &contract.model_profile_id {
+        Some(profile_id) => {
+            let profile = load_model_profile(&state.prompt_program_dir, profile_id)?;
+            Some(profile.content_hash()?)
+        }
+        None => None,
+    };
 
     let unsigned = Receipt::builder()
         .session_id(session_id)
         .purpose_code(contract.purpose_code)
         .participant_ids(contract.participants.clone())
-        .runtime_hash(&relay_hash)
-        .guardian_policy_hash(&relay_hash)
-        .model_weights_hash(&relay_hash)
+        .runtime_hash(&relay_build_hash)
+        .guardian_policy_hash(&guardian_policy_hash)
+        .model_weights_hash(&relay_build_hash)
         .llama_cpp_version("n/a")
-        .inference_config_hash(&relay_hash)
+        .inference_config_hash(&relay_build_hash)
         .output_schema_version("1.0.0")
         .session_start(session_start)
         .session_end(session_end)
@@ -175,6 +185,7 @@ pub async fn relay_core(
         .entropy_budget_bits_opt(contract.entropy_budget_bits)
         .prompt_template_hash(Some(prompt_template_hash))
         .contract_timing_class(contract.timing_class.clone())
+        .model_profile_hash(model_profile_hash)
         .model_identity(Some(receipt_core::ModelIdentity {
             provider: "anthropic".to_string(),
             model_id: provider_response.model_id,
@@ -242,12 +253,98 @@ mod tests {
             entropy_budget_bits: None,
             timing_class: None,
             metadata: serde_json::Value::Null,
+            model_profile_id: None,
         };
 
         let h1 = compute_contract_hash(&contract).unwrap();
         let h2 = compute_contract_hash(&contract).unwrap();
         assert_eq!(h1, h2);
         assert_eq!(h1.len(), 64);
+    }
+
+    #[test]
+    fn test_model_profile_hash_deterministic() {
+        use crate::types::ModelProfile;
+        use crate::prompt_program::load_model_profile;
+
+        let dir = std::env::temp_dir().join("vcav-e-relay-test-profile-hash");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let profile = ModelProfile {
+            profile_version: "1".to_string(),
+            profile_id: "test-profile-v1".to_string(),
+            provider: "anthropic".to_string(),
+            model_family: "claude-sonnet".to_string(),
+            reasoning_mode: "unconstrained".to_string(),
+            structured_output: true,
+        };
+
+        let path = dir.join("test-profile-v1.json");
+        std::fs::write(&path, serde_json::to_string(&profile).unwrap()).unwrap();
+
+        let loaded = load_model_profile(dir.to_str().unwrap(), "test-profile-v1").unwrap();
+        let h1 = loaded.content_hash().unwrap();
+        let h2 = loaded.content_hash().unwrap();
+        assert_eq!(h1, h2);
+        assert_eq!(h1.len(), 64);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_model_profile_bound_in_receipt() {
+        use crate::types::ModelProfile;
+        use receipt_core::{BudgetUsageRecord, ExecutionLane, Receipt, ReceiptStatus};
+        use guardian_core::BudgetTier;
+        use chrono::Utc;
+        use sha2::{Digest, Sha256};
+
+        let profile = ModelProfile {
+            profile_version: "1".to_string(),
+            profile_id: "receipt-test-profile-v1".to_string(),
+            provider: "anthropic".to_string(),
+            model_family: "claude-sonnet".to_string(),
+            reasoning_mode: "unconstrained".to_string(),
+            structured_output: true,
+        };
+
+        // Hash the profile directly without file system
+        let profile_hash = profile.content_hash().unwrap();
+
+        // Build a receipt with model_profile_hash
+        let relay_hash = hex::encode(Sha256::digest(b"vcav-e-relay-v0.2.0-bilateral"));
+        let now = Utc::now();
+        let unsigned = Receipt::builder()
+            .session_id("a".repeat(64))
+            .purpose_code(guardian_core::Purpose::Mediation)
+            .participant_ids(vec!["alice".to_string(), "bob".to_string()])
+            .runtime_hash(&relay_hash)
+            .guardian_policy_hash(&relay_hash)
+            .model_weights_hash(&relay_hash)
+            .llama_cpp_version("n/a")
+            .inference_config_hash(&relay_hash)
+            .output_schema_version("1.0.0")
+            .session_start(now)
+            .session_end(now)
+            .fixed_window_duration_seconds(0)
+            .status(ReceiptStatus::Completed)
+            .execution_lane(ExecutionLane::ApiMediated)
+            .output_entropy_bits(6)
+            .budget_usage(BudgetUsageRecord {
+                pair_id: "b".repeat(64),
+                window_start: now,
+                bits_used_before: 0,
+                bits_used_after: 6,
+                budget_limit: 128,
+                budget_tier: BudgetTier::Default,
+                budget_enforcement: Some("disabled".to_string()),
+                compartment_id: None,
+            })
+            .model_profile_hash(Some(profile_hash.clone()))
+            .build_unsigned()
+            .expect("receipt builder should succeed");
+
+        assert_eq!(unsigned.model_profile_hash, Some(profile_hash));
     }
 
     #[test]
@@ -278,5 +375,31 @@ mod tests {
 
         let output = serde_json::json!({"decision": "INVALID"});
         assert!(validate_output_schema(&output, &schema).is_err());
+    }
+
+    #[test]
+    fn test_contract_with_model_profile_id_optional() {
+        // Contract without model_profile_id should deserialize fine (backward compat)
+        let json = serde_json::json!({
+            "purpose_code": "MEDIATION",
+            "output_schema_id": "vault_result_mediation",
+            "output_schema": {"type": "object"},
+            "participants": ["alice", "bob"],
+            "prompt_template_hash": "a".repeat(64)
+        });
+        let contract: Contract = serde_json::from_value(json).unwrap();
+        assert!(contract.model_profile_id.is_none());
+
+        // Contract with model_profile_id should deserialize with value
+        let json_with_profile = serde_json::json!({
+            "purpose_code": "MEDIATION",
+            "output_schema_id": "vault_result_mediation",
+            "output_schema": {"type": "object"},
+            "participants": ["alice", "bob"],
+            "prompt_template_hash": "a".repeat(64),
+            "model_profile_id": "api-claude-sonnet-v1"
+        });
+        let contract_with_profile: Contract = serde_json::from_value(json_with_profile).unwrap();
+        assert_eq!(contract_with_profile.model_profile_id, Some("api-claude-sonnet-v1".to_string()));
     }
 }

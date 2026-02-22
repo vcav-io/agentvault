@@ -219,6 +219,7 @@ mod tests {
             entropy_budget_bits: None,
             timing_class: None,
             metadata: serde_json::Value::Null,
+            model_profile_id: None,
         }
     }
 

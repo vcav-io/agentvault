@@ -14,6 +14,18 @@ pub struct RelayInput {
     pub context: serde_json::Value,
 }
 
+/// Tier 2 model profile — describes the provider + model configuration
+/// consented to by both parties. Hash is bound into the receipt.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelProfile {
+    pub profile_version: String,
+    pub profile_id: String,
+    pub provider: String,
+    pub model_family: String,
+    pub reasoning_mode: String,
+    pub structured_output: bool,
+}
+
 /// Contract describing the session terms.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Contract {
@@ -28,6 +40,8 @@ pub struct Contract {
     pub timing_class: Option<String>,
     #[serde(default)]
     pub metadata: serde_json::Value,
+    #[serde(default)]
+    pub model_profile_id: Option<String>,
 }
 
 // ============================================================================
