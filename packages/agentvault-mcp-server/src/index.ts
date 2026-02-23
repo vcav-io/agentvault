@@ -107,10 +107,16 @@ async function main() {
   console.error('Note: INITIATE/RESPOND modes require an InviteTransport. Only CREATE/JOIN modes available in standalone mode.');
 }
 
-main().catch((error) => {
-  console.error('Server error:', error);
-  process.exit(1);
-});
+// Only run main() when executed directly (npx / bin entry point).
+// When imported as a library, createAgentVaultServer is the API.
+const isDirectExecution = process.argv[1] &&
+  import.meta.url === `file://${process.argv[1]}`;
+if (isDirectExecution) {
+  main().catch((error) => {
+    console.error('Server error:', error);
+    process.exit(1);
+  });
+}
 
 export type { InviteTransport } from './invite-transport.js';
 export type { NormalizedKnownAgent } from './tools/relaySignal.js';

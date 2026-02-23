@@ -411,7 +411,8 @@ async function phaseDiscover(
       // rather than comparing contract hashes. The AFAL invite carries a VCAV contract
       // hash (auto-resolved from template_id) which differs from the AgentVault relay contract
       // hash. The real contract verification happens at the relay on input submission.
-      if (handle.expectedPurpose) {
+      // Skip when expectedContractHash is set — it already matched above.
+      if (handle.expectedPurpose && !handle.expectedContractHash) {
         const expectedTemplate = PURPOSE_TO_TEMPLATE[handle.expectedPurpose];
         const inviteTemplate = invite.template_id;
         if (expectedTemplate && inviteTemplate && inviteTemplate !== expectedTemplate) {
