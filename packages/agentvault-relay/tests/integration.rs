@@ -86,7 +86,8 @@ fn setup_prompt_program(test_name: &str) -> (String, String) {
 #[test]
 fn test_receipt_construction_and_signature_verification() {
     use chrono::Utc;
-    use guardian_core::{calculate_schema_entropy_upper_bound, generate_pair_id, BudgetTier, Purpose};
+    use agentvault_relay::entropy::calculate_schema_entropy_upper_bound;
+    use vault_family_types::{generate_pair_id, BudgetTier, Purpose};
     use receipt_core::{
         BudgetUsageRecord, ExecutionLane, ModelIdentity, Receipt, ReceiptStatus, SignalClass,
     };
@@ -177,7 +178,7 @@ fn test_receipt_construction_and_signature_verification() {
 #[test]
 fn test_receipt_execution_lane_is_api_mediated() {
     use chrono::Utc;
-    use guardian_core::{BudgetTier, Purpose};
+    use vault_family_types::{BudgetTier, Purpose};
     use receipt_core::{BudgetUsageRecord, ExecutionLane, Receipt, ReceiptStatus};
     use sha2::{Digest, Sha256};
 
@@ -220,7 +221,7 @@ fn test_receipt_execution_lane_is_api_mediated() {
 
 #[test]
 fn test_entropy_computation_for_mediation_schema() {
-    use guardian_core::calculate_schema_entropy_upper_bound;
+    use agentvault_relay::entropy::calculate_schema_entropy_upper_bound;
 
     let schema = mediation_schema();
     let entropy = calculate_schema_entropy_upper_bound(&schema).unwrap();
@@ -320,7 +321,7 @@ fn test_contract_hash_binding() {
 #[test]
 fn test_receipt_roundtrip_serialization() {
     use chrono::Utc;
-    use guardian_core::{BudgetTier, Purpose};
+    use vault_family_types::{BudgetTier, Purpose};
     use receipt_core::{
         BudgetUsageRecord, ExecutionLane, Receipt, ReceiptStatus, SignalClass,
     };

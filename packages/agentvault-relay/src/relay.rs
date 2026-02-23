@@ -1,5 +1,5 @@
 use chrono::Utc;
-use guardian_core::calculate_schema_entropy_upper_bound;
+use crate::entropy::calculate_schema_entropy_upper_bound;
 use vault_family_types::{generate_pair_id, BudgetTier};
 use receipt_core::{
     BudgetUsageRecord, ExecutionLane, Receipt, ReceiptStatus, SignalClass,

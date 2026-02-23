@@ -6,9 +6,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-receipt-core = { path = "../receipt-core" }
-guardian-core = { path = "../guardian-core" }
-vault-family-types = { path = "../vault-family-types" }
+receipt-core = { path = "../../../vault-family-core/packages/receipt-core" }
+vault-family-types = { path = "../../../vault-family-core/packages/vault-family-types" }
 
 serde.workspace = true
 serde_json.workspace = true
@@ -28,6 +27,6 @@ uuid.workspace = true
 jsonschema.workspace = true
 
 [dev-dependencies]
-verifier-core = { path = "../verifier-core" }
+verifier-core = { path = "../../../vault-family-core/packages/verifier-core" }
 tokio = { version = "1.0", features = ["full", "test-util"] }
 tower.workspace = true

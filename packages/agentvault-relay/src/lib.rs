@@ -1,3 +1,4 @@
+pub mod entropy;
 pub mod error;
 pub mod prompt_program;
 pub mod provider;
