@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 receipt-core = { path = "../receipt-core" }
 guardian-core = { path = "../guardian-core" }
+vault-family-types = { path = "../vault-family-types" }
 
 serde.workspace = true
 serde_json.workspace = true

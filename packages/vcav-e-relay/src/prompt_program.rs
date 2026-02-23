@@ -194,7 +194,7 @@ mod tests {
     fn test_assemble_structured() {
         let program = sample_program();
         let contract = Contract {
-            purpose_code: guardian_core::Purpose::Mediation,
+            purpose_code: vault_family_types::Purpose::Mediation,
             output_schema_id: "vault_result_mediation".to_string(),
             output_schema: serde_json::json!({}),
             participants: vec!["alice".to_string(), "bob".to_string()],

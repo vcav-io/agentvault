@@ -1,5 +1,6 @@
 use chrono::Utc;
-use guardian_core::{calculate_schema_entropy_upper_bound, generate_pair_id, BudgetTier};
+use guardian_core::calculate_schema_entropy_upper_bound;
+use vault_family_types::{generate_pair_id, BudgetTier};
 use receipt_core::{
     BudgetUsageRecord, ExecutionLane, Receipt, ReceiptStatus, SignalClass,
 };
@@ -245,7 +246,7 @@ mod tests {
     #[test]
     fn test_compute_contract_hash_deterministic() {
         let contract = Contract {
-            purpose_code: guardian_core::Purpose::Mediation,
+            purpose_code: vault_family_types::Purpose::Mediation,
             output_schema_id: "vault_result_mediation".to_string(),
             output_schema: serde_json::json!({"type": "object"}),
             participants: vec!["alice".to_string(), "bob".to_string()],
@@ -295,7 +296,7 @@ mod tests {
     fn test_model_profile_bound_in_receipt() {
         use crate::types::ModelProfile;
         use receipt_core::{BudgetUsageRecord, ExecutionLane, Receipt, ReceiptStatus};
-        use guardian_core::BudgetTier;
+        use vault_family_types::BudgetTier;
         use chrono::Utc;
         use sha2::{Digest, Sha256};
 
@@ -316,7 +317,7 @@ mod tests {
         let now = Utc::now();
         let unsigned = Receipt::builder()
             .session_id("a".repeat(64))
-            .purpose_code(guardian_core::Purpose::Mediation)
+            .purpose_code(vault_family_types::Purpose::Mediation)
             .participant_ids(vec!["alice".to_string(), "bob".to_string()])
             .runtime_hash(&relay_hash)
             .guardian_policy_hash(&relay_hash)
