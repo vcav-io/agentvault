@@ -15,6 +15,9 @@
  *   Host applications (e.g., vcav-mcp-server) inject an OrchestratorClient-backed transport.
  */
 
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -27,25 +30,6 @@ import { RELAY_TOOLS } from './toolDefs.js';
 import { dispatch } from './dispatch.js';
 import type { InviteTransport } from './invite-transport.js';
 import type { NormalizedKnownAgent } from './tools/relaySignal.js';
-
-// --print-config: emit a ready-to-paste MCP configuration block and exit
-if (process.argv.includes('--print-config')) {
-  const config = {
-    mcpServers: {
-      agentvault: {
-        command: 'npx',
-        args: ['-y', 'agentvault-mcp-server'],
-        env: {
-          VCAV_RELAY_URL: 'http://localhost:8080',
-          VCAV_AGENT_ID: 'your-agent-id',
-          VCAV_RESUME_TOKEN_SECRET: 'your-secret-here',
-        },
-      },
-    },
-  };
-  process.stdout.write(JSON.stringify(config, null, 2) + '\n');
-  process.exit(0);
-}
 
 /**
  * Create and start an AgentVault MCP server.
@@ -107,11 +91,31 @@ async function main() {
   console.error('Note: INITIATE/RESPOND modes require an InviteTransport. Only CREATE/JOIN modes available in standalone mode.');
 }
 
-// Only run main() when executed directly (npx / bin entry point).
+// Only run when executed directly (npx / bin entry point).
 // When imported as a library, createAgentVaultServer is the API.
+// realpathSync resolves npm bin symlinks so the check works after `npm install -g`.
+const currentFile = fileURLToPath(import.meta.url);
 const isDirectExecution = process.argv[1] &&
-  import.meta.url === `file://${process.argv[1]}`;
+  realpathSync(process.argv[1]) === currentFile;
 if (isDirectExecution) {
+  if (process.argv.includes('--print-config')) {
+    const config = {
+      mcpServers: {
+        agentvault: {
+          command: 'npx',
+          args: ['-y', 'agentvault-mcp-server'],
+          env: {
+            VCAV_RELAY_URL: 'http://localhost:8080',
+            VCAV_AGENT_ID: 'your-agent-id',
+            VCAV_RESUME_TOKEN_SECRET: 'your-secret-here',
+          },
+        },
+      },
+    };
+    process.stdout.write(JSON.stringify(config, null, 2) + '\n');
+    process.exit(0);
+  }
+
   main().catch((error) => {
     console.error('Server error:', error);
     process.exit(1);

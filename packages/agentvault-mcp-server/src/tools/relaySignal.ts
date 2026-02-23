@@ -448,8 +448,10 @@ async function phaseDiscover(
       return awaitingResponse(handle, 'Relay invite found. Joining session.');
     }
 
-    // If sender sent invites but all failed contract matching, fail fast
+    // If sender sent invites but all failed contract matching, fail fast.
+    // Transition handle to FAILED to prevent stale handle leak.
     if (foundSenderInviteWithContractMismatch) {
+      handle.phase = 'FAILED';
       return buildError('CONTRACT_MISMATCH',
         'Invite contract does not match expected contract.');
     }
