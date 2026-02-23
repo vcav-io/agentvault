@@ -1,5 +1,5 @@
 /**
- * agentvault.relay_signal — Least-trust relay session tool (VCAV-E).
+ * agentvault.relay_signal — Least-trust relay session tool (AgentVault).
  *
  * v2: Uses standard /inbox transport (same as coordinate), phased FSM execution
  * with resume tokens, and guided constant-shape outputs.
@@ -407,9 +407,9 @@ async function phaseDiscover(
         continue;
       }
 
-      // For VCAV-E invites, validate expected_purpose matches the invite's template_id
-      // rather than comparing contract hashes. The AFAL invite carries a VCAV-H contract
-      // hash (auto-resolved from template_id) which differs from the VCAV-E relay contract
+      // For AgentVault relay invites, validate expected_purpose matches the invite's template_id
+      // rather than comparing contract hashes. The AFAL invite carries a VCAV contract
+      // hash (auto-resolved from template_id) which differs from the AgentVault relay contract
       // hash. The real contract verification happens at the relay on input submission.
       if (handle.expectedPurpose) {
         const expectedTemplate = PURPOSE_TO_TEMPLATE[handle.expectedPurpose];

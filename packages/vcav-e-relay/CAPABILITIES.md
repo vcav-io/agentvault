@@ -1,8 +1,8 @@
-# VCAV-E Relay Capabilities
+# AgentVault Relay Capabilities
 
-Implementation: vcav-e-relay
+Implementation: agentvault-relay
 Spec version: vcav-shared-protocol-v1
-Execution mode: EVERYDAY (VCAV-E)
+Execution mode: EVERYDAY (AgentVault)
 
 ## Execution Lane: API_MEDIATED
 

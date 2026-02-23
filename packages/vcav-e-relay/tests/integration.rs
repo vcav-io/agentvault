@@ -1,4 +1,4 @@
-//! Integration tests for VCAV-E relay.
+//! Integration tests for AgentVault relay.
 //!
 //! These tests exercise the receipt construction and verification pipeline
 //! without calling the actual Anthropic API. They validate that:
@@ -17,7 +17,7 @@ use axum::http::{Request, StatusCode};
 use ed25519_dalek::SigningKey;
 use tower::ServiceExt;
 
-use vcav_e_relay::{build_router, session::SessionStore, AppState};
+use agentvault_relay::{build_router, session::SessionStore, AppState};
 
 /// Build a test signing key (deterministic).
 fn test_signing_key() -> SigningKey {
@@ -61,12 +61,12 @@ fn mediation_schema() -> serde_json::Value {
 
 /// Create a prompt program file in a temp dir and return (dir_path, content_hash).
 fn setup_prompt_program(test_name: &str) -> (String, String) {
-    use vcav_e_relay::prompt_program::PromptProgram;
+    use agentvault_relay::prompt_program::PromptProgram;
 
     let program = PromptProgram {
         version: "1.0.0".to_string(),
         system_instruction: "You are a structured data classifier.".to_string(),
-        input_format: vcav_e_relay::prompt_program::InputFormat::Structured,
+        input_format: agentvault_relay::prompt_program::InputFormat::Structured,
     };
 
     let hash = program.content_hash().unwrap();
@@ -858,12 +858,12 @@ async fn test_submit_token_is_one_time_use() {
     state
         .session_store
         .with_session(&session_id, |session| {
-            session.initiator_input = Some(vcav_e_relay::types::RelayInput {
+            session.initiator_input = Some(agentvault_relay::types::RelayInput {
                 role: "alice".to_string(),
                 context: serde_json::json!({}),
             });
             session.initiator_submitted = true;
-            session.state = vcav_e_relay::session::SessionState::Partial;
+            session.state = agentvault_relay::session::SessionState::Partial;
         })
         .await;
 
@@ -1103,8 +1103,8 @@ async fn test_bilateral_session_e2e_with_mock() {
     for _ in 0..50 {
         tokio::time::sleep(Duration::from_millis(100)).await;
         let (s, _) = state.session_store.get_state(&session_id).await.unwrap();
-        if s == vcav_e_relay::session::SessionState::Completed
-            || s == vcav_e_relay::session::SessionState::Aborted
+        if s == agentvault_relay::session::SessionState::Completed
+            || s == agentvault_relay::session::SessionState::Aborted
         {
             break;
         }
@@ -1113,7 +1113,7 @@ async fn test_bilateral_session_e2e_with_mock() {
     let (final_state, abort_reason) = state.session_store.get_state(&session_id).await.unwrap();
     assert_eq!(
         final_state,
-        vcav_e_relay::session::SessionState::Completed,
+        agentvault_relay::session::SessionState::Completed,
         "session should be completed, abort_reason: {:?}",
         abort_reason
     );

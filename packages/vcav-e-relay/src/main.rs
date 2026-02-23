@@ -5,7 +5,7 @@ use ed25519_dalek::SigningKey;
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
 
-use vcav_e_relay::{build_router, session::SessionStore, AppState};
+use agentvault_relay::{build_router, session::SessionStore, AppState};
 
 #[tokio::main]
 async fn main() {
@@ -69,7 +69,7 @@ async fn main() {
     let app = build_router(state);
 
     let addr = format!("0.0.0.0:{port}");
-    tracing::info!(%addr, session_ttl_secs, "VCAV-E relay starting");
+    tracing::info!(%addr, session_ttl_secs, "AgentVault relay starting");
     let listener = TcpListener::bind(&addr).await.expect("bind failed");
     axum::serve(listener, app).await.expect("server error");
 }
