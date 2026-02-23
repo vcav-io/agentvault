@@ -64,7 +64,7 @@ async fn capabilities_handler() -> Json<CapabilitiesResponse> {
     Json(CapabilitiesResponse {
         execution_lane: "API_MEDIATED",
         providers: vec!["anthropic"],
-        purposes: guardian_core::Purpose::all()
+        purposes: vault_family_types::Purpose::all()
             .iter()
             .map(|p| p.to_string())
             .collect(),

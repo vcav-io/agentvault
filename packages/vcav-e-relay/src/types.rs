@@ -1,4 +1,4 @@
-use guardian_core::Purpose;
+use vault_family_types::Purpose;
 use serde::{Deserialize, Serialize};
 
 use crate::session::{AbortReason, SessionState};

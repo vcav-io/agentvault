@@ -1,6 +1,6 @@
 [package]
-name = "vcav-e-relay"
-description = "VCAV-E Relay: Stateless API-mediated inference relay with receipt signing"
+name = "agentvault-relay"
+description = "AgentVault Relay: Stateless API-mediated inference relay with receipt signing"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 receipt-core = { path = "../receipt-core" }
 guardian-core = { path = "../guardian-core" }
+vault-family-types = { path = "../vault-family-types" }
 
 serde.workspace = true
 serde_json.workspace = true

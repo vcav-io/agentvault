@@ -214,7 +214,7 @@ mod tests {
 
     fn test_contract() -> Contract {
         Contract {
-            purpose_code: guardian_core::Purpose::Mediation,
+            purpose_code: vault_family_types::Purpose::Mediation,
             output_schema_id: "test".to_string(),
             output_schema: serde_json::json!({"type": "object"}),
             participants: vec!["alice".to_string(), "bob".to_string()],
