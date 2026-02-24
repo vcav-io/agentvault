@@ -157,7 +157,7 @@ describe('DirectAfalTransport', () => {
   // ── sendPropose — happy path ───────────────────────────────────────────────
 
   describe('sendPropose', () => {
-    it('POSTs a signed PROPOSE to the peer propose endpoint', async () => {
+    it('POSTs a wrapped body with signed PROPOSE and relay tokens', async () => {
       const propose = makePropose();
       const admit = makeSignedAdmit(propose.proposal_id);
 
@@ -166,17 +166,19 @@ describe('DirectAfalTransport', () => {
         json: () => Promise.resolve(admit),
       });
 
-      await transport.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' });
+      const relay = makeRelay();
+      await transport.sendPropose({ propose, relay, templateId: 't', budgetTier: 'SMALL' });
 
       expect(mockFetch).toHaveBeenCalledOnce();
       const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
       expect(url).toBe('http://peer.example.com/afal/propose');
       expect(init.method).toBe('POST');
 
-      const body = JSON.parse(init.body as string) as Record<string, unknown>;
-      expect(typeof body['signature']).toBe('string');
-      expect(body['from']).toBe('alice-test');
-      expect(body['to']).toBe('bob-test');
+      const body = JSON.parse(init.body as string) as { propose: Record<string, unknown>; relay: Record<string, unknown> };
+      expect(typeof body.propose['signature']).toBe('string');
+      expect(body.propose['from']).toBe('alice-test');
+      expect(body.propose['to']).toBe('bob-test');
+      expect(body.relay['session_id']).toBe('sess-001');
     });
 
     it('stores the ADMIT for a later COMMIT', async () => {
@@ -209,8 +211,8 @@ describe('DirectAfalTransport', () => {
       await transport.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' });
 
       const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
-      const body = JSON.parse(init.body as string) as Record<string, unknown>;
-      expect(body['descriptor_hash']).toBe(customHash);
+      const body = JSON.parse(init.body as string) as { propose: Record<string, unknown> };
+      expect(body.propose['descriptor_hash']).toBe(customHash);
     });
 
     it('computes descriptor_hash from localDescriptor when not in propose', async () => {
@@ -225,8 +227,8 @@ describe('DirectAfalTransport', () => {
       await transport.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' });
 
       const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
-      const body = JSON.parse(init.body as string) as Record<string, unknown>;
-      expect(body['descriptor_hash']).toBe(contentHash(localDescriptor));
+      const body = JSON.parse(init.body as string) as { propose: Record<string, unknown> };
+      expect(body.propose['descriptor_hash']).toBe(contentHash(localDescriptor));
     });
 
     it('includes prev_receipt_hash when present in propose', async () => {
@@ -242,8 +244,8 @@ describe('DirectAfalTransport', () => {
       await transport.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' });
 
       const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
-      const body = JSON.parse(init.body as string) as Record<string, unknown>;
-      expect(body['prev_receipt_hash']).toBe(prevHash);
+      const body = JSON.parse(init.body as string) as { propose: Record<string, unknown> };
+      expect(body.propose['prev_receipt_hash']).toBe(prevHash);
     });
 
     it('omits prev_receipt_hash when absent from propose', async () => {
@@ -258,8 +260,8 @@ describe('DirectAfalTransport', () => {
       await transport.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' });
 
       const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
-      const body = JSON.parse(init.body as string) as Record<string, unknown>;
-      expect('prev_receipt_hash' in body).toBe(false);
+      const body = JSON.parse(init.body as string) as { propose: Record<string, unknown> };
+      expect('prev_receipt_hash' in body.propose).toBe(false);
     });
   });
 
@@ -400,6 +402,7 @@ describe('DirectAfalTransport', () => {
       const body = JSON.parse(init.body as string) as Record<string, unknown>;
       expect(body['from']).toBe('alice-test');
       expect(body['admit_token_id']).toBe('token-abc-123');
+      expect(body['proposal_id']).toBe(propose.proposal_id);
       expect(typeof body['signature']).toBe('string');
     });
 
@@ -590,6 +593,41 @@ describe('DirectAfalTransport', () => {
       await expect(
         fresh.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' }),
       ).rejects.toThrow('Failed to fetch peer descriptor: 404');
+    });
+  });
+
+  // ── RESPOND mode ──────────────────────────────────────────────────────────
+
+  describe('RESPOND mode', () => {
+    let respondTransport: DirectAfalTransport;
+
+    beforeEach(() => {
+      respondTransport = new DirectAfalTransport({
+        agentId: 'bob-test',
+        seedHex: PEER_SEED,
+        localDescriptor: peerDescriptor,
+        respondMode: {
+          httpPort: 0,
+          policy: {
+            trustedAgents: [{ agentId: 'alice-test', publicKeyHex: TEST_PUBKEY }],
+            allowedPurposeCodes: ['MEDIATION'],
+            allowedLaneIds: ['API_MEDIATED'],
+            maxEntropyBits: 256,
+            defaultTier: 'DENY',
+          },
+        },
+      });
+    });
+
+    it('checkInbox returns empty when no proposals received', async () => {
+      const result = await respondTransport.checkInbox();
+      expect(result.invites).toEqual([]);
+    });
+
+    it('acceptInvite is a no-op in RESPOND mode', async () => {
+      // Should not throw
+      await respondTransport.acceptInvite('any-id');
+      expect(mockFetch).not.toHaveBeenCalled();
     });
   });
 });

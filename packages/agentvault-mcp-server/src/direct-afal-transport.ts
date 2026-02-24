@@ -2,9 +2,11 @@
  * DirectAfalTransport — AFAL transport that sends Ed25519-signed messages
  * directly to a peer via HTTP, bypassing the orchestrator inbox.
  *
- * M3 MVP: INITIATE mode only. The transport resolves and verifies the peer's
- * descriptor, signs PROPOSE with the agent's Ed25519 seed, verifies ADMIT/DENY
- * responses, and stores ADMIT tokens for a subsequent COMMIT step.
+ * M3: INITIATE mode — resolves peer descriptor, signs PROPOSE, verifies
+ * ADMIT/DENY, stores tokens for COMMIT.
+ *
+ * M4: RESPOND mode (opt-in) — runs an HTTP server that receives PROPOSE/COMMIT,
+ * evaluates admission policy, and enqueues admitted proposals for checkInbox().
  */
 
 import type { AfalTransport, AfalInviteMessage } from './afal-transport.js';
@@ -15,6 +17,9 @@ import {
   DOMAIN_PREFIXES,
   contentHash,
 } from './afal-signing.js';
+import { AfalResponder } from './afal-responder.js';
+import type { AdmissionPolicy } from './afal-responder.js';
+import { AfalHttpServer } from './afal-http-server.js';
 
 // ── AgentDescriptor ────────────────────────────────────────────────────────
 
@@ -49,19 +54,95 @@ export interface DirectAfalTransportConfig {
   seedHex: string;
   localDescriptor: AgentDescriptor;
   peerDescriptorUrl?: string;
+  respondMode?: {
+    httpPort: number;
+    bindAddress?: string;
+    policy: AdmissionPolicy;
+  };
 }
 
 export class DirectAfalTransport implements AfalTransport {
   private readonly config: DirectAfalTransportConfig;
   private peerDescriptor: AgentDescriptor | null = null;
   private storedAdmits = new Map<string, Record<string, unknown>>();
+  private readonly responder: AfalResponder | null;
+  private readonly httpServer: AfalHttpServer | null;
 
   constructor(config: DirectAfalTransportConfig) {
     this.config = config;
+
+    if (config.respondMode) {
+      this.responder = new AfalResponder({
+        agentId: config.agentId,
+        seedHex: config.seedHex,
+        policy: config.respondMode.policy,
+      });
+
+      // Fill in descriptor endpoints based on HTTP server config and re-sign.
+      // The descriptor signature covers endpoints, so any modification
+      // requires re-signing with the agent's seed.
+      const bindAddr = config.respondMode.bindAddress ?? '127.0.0.1';
+      const base = `http://${bindAddr}:${config.respondMode.httpPort}`;
+      const { signature: _, ...unsignedDescriptor } = config.localDescriptor as AgentDescriptor & { signature?: string };
+      const descriptorWithEndpoints = {
+        ...unsignedDescriptor,
+        endpoints: {
+          ...unsignedDescriptor.endpoints,
+          propose: `${base}/afal/propose`,
+          commit: `${base}/afal/commit`,
+        },
+      };
+      const signedDescriptor = signMessage(
+        DOMAIN_PREFIXES.DESCRIPTOR,
+        descriptorWithEndpoints as unknown as Record<string, unknown>,
+        config.seedHex,
+      ) as unknown as AgentDescriptor;
+
+      this.httpServer = new AfalHttpServer({
+        port: config.respondMode.httpPort,
+        bindAddress: config.respondMode.bindAddress,
+        responder: this.responder,
+        localDescriptor: signedDescriptor,
+      });
+    } else {
+      this.responder = null;
+      this.httpServer = null;
+    }
   }
 
   get agentId(): string {
     return this.config.agentId;
+  }
+
+  async start(): Promise<void> {
+    if (!this.httpServer) return;
+
+    await this.httpServer.start();
+
+    // If port was 0 (random), re-sign descriptor with actual port
+    if (this.config.respondMode?.httpPort === 0) {
+      const bindAddr = this.config.respondMode.bindAddress ?? '127.0.0.1';
+      const base = `http://${bindAddr}:${this.httpServer.port}`;
+      const { signature: _s, ...unsigned } = this.httpServer['_localDescriptor'] as AgentDescriptor & { signature?: string };
+      const updated = {
+        ...unsigned,
+        endpoints: {
+          ...unsigned.endpoints,
+          propose: `${base}/afal/propose`,
+          commit: `${base}/afal/commit`,
+        },
+      };
+      const reSigned = signMessage(
+        DOMAIN_PREFIXES.DESCRIPTOR,
+        updated as unknown as Record<string, unknown>,
+        this.config.seedHex,
+      ) as unknown as AgentDescriptor;
+      this.httpServer.setDescriptor(reSigned);
+    }
+  }
+
+  async stop(): Promise<void> {
+    if (this.httpServer) await this.httpServer.stop();
   }
 
   async sendPropose(params: {
@@ -99,10 +180,13 @@ export class DirectAfalTransport implements AfalTransport {
 
     const signed = signMessage(DOMAIN_PREFIXES.PROPOSE, proposeMessage, this.config.seedHex);
 
+    // M4: wrapped body with relay tokens alongside the signed PROPOSE
+    const wrappedBody = { propose: signed, relay: params.relay };
+
     const response = await fetch(peer.endpoints.propose, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(signed),
+      body: JSON.stringify(wrappedBody),
     });
 
     if (!response.ok) {
@@ -151,12 +235,36 @@ export class DirectAfalTransport implements AfalTransport {
   }
 
   async checkInbox(): Promise<{ invites: AfalInviteMessage[] }> {
-    // INITIATE mode only — no incoming proposals in M3
-    return { invites: [] };
+    if (!this.responder) {
+      // INITIATE mode only — no incoming proposals
+      return { invites: [] };
+    }
+
+    // RESPOND mode — drain admitted proposals from the responder queue
+    const admitted = this.responder.drainQueue();
+    const invites: AfalInviteMessage[] = admitted.map((item) => ({
+      invite_id: item.propose.proposal_id,
+      from_agent_id: item.proposerAgentId,
+      payload_type: 'VCAV_E_INVITE_V1',
+      payload: {
+        session_id: item.relay.session_id,
+        responder_submit_token: item.relay.responder_submit_token,
+        responder_read_token: item.relay.responder_read_token,
+        relay_url: item.relay.relay_url,
+      },
+      afalPropose: item.propose,
+    }));
+
+    return { invites };
   }
 
   async acceptInvite(inviteId: string): Promise<void> {
-    // For INITIATOR: inviteId is the proposal_id — look up stored ADMIT
+    // RESPOND mode: no-op — we already sent ADMIT synchronously in handlePropose
+    if (this.responder) {
+      return;
+    }
+
+    // INITIATE mode: inviteId is the proposal_id — look up stored ADMIT
     const admit = this.storedAdmits.get(inviteId);
     if (!admit) {
       throw new Error(`No stored ADMIT for proposal_id: ${inviteId}`);
@@ -166,6 +274,7 @@ export class DirectAfalTransport implements AfalTransport {
 
     const commitMessage: Record<string, unknown> = {
       commit_version: '1',
+      proposal_id: inviteId,
       from: this.config.agentId,
       admit_token_id: admit['admit_token_id'] as string,
       encrypted_input_hash: contentHash({}),
