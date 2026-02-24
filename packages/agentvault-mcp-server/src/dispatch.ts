@@ -4,13 +4,13 @@
  * Routes tool names to their handler functions.
  */
 
-import type { InviteTransport } from './invite-transport.js';
+import type { AfalTransport } from './afal-transport.js';
 import type { NormalizedKnownAgent } from './tools/relaySignal.js';
 
 export async function dispatch(
   toolName: string,
   args: Record<string, unknown>,
-  transport?: InviteTransport,
+  transport?: AfalTransport,
   knownAgents: NormalizedKnownAgent[] = [],
 ): Promise<unknown> {
   switch (toolName) {
