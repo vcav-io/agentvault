@@ -26,7 +26,10 @@ import {
   listRelayPurposes,
   computeRelayContractHash,
 } from 'agentvault-client/contracts';
-import type { InviteTransport, InviteMessage } from '../invite-transport.js';
+import type { AfalTransport, AfalInviteMessage } from '../afal-transport.js';
+import { PURPOSE_TO_TEMPLATE } from '../afal-transport.js';
+import { computeProposalId, generateNonce } from '../afal-types.js';
+import type { AfalPropose, RelayInvitePayload } from '../afal-types.js';
 import {
   encodeRelayToken,
   decodeRelayToken,
@@ -59,12 +62,6 @@ const ABORT_DESCRIPTIONS: Record<string, string> = {
   TIMEOUT: 'The relay session timed out.',
   SCHEMA_VALIDATION: 'The LLM output did not match the contract schema.',
   CONTRACT_MISMATCH: 'Contract hash mismatch (configuration error).',
-};
-
-/** Map relay purpose to an existing orchestrator template_id. */
-const PURPOSE_TO_TEMPLATE: Record<string, string> = {
-  MEDIATION: 'mediation-demo.v1.standard',
-  COMPATIBILITY: 'dating.v1.d2',
 };
 
 // ── Types ───────────────────────────────────────────────────────────────
@@ -258,7 +255,7 @@ function failedResponse(
 async function phaseInvite(
   handle: RelayHandle,
   args: RelaySignalArgs,
-  transport: InviteTransport,
+  transport: AfalTransport,
   knownAgents: NormalizedKnownAgent[],
 ): Promise<ToolResponse<RelaySignalOutput>> {
   const counterparty = resolveAgentAlias(handle.counterparty, knownAgents);
@@ -293,24 +290,41 @@ async function phaseInvite(
   // 1. Create session and submit own input
   const created = await createAndSubmit(config, contract, args.my_input ?? '', 'initiator');
 
-  // 2. Send invite via standard /inbox (not labeled messages)
-  // Note: contract_hash is intentionally omitted — the relay contract hash differs
-  // from any orchestrator contract hash, so the orchestrator auto-resolves from template_id.
+  // 2. Build AfalPropose from purpose and contract template
   const templateId = purposeHint ? (PURPOSE_TO_TEMPLATE[purposeHint] ?? 'mediation-demo.v1.standard') : 'mediation-demo.v1.standard';
-  await transport.sendInvite({
-    to_agent_id: counterparty,
-    template_id: templateId,
-    budget_tier: 'SMALL',
-    payload_type: 'VCAV_E_INVITE_V1',
-    payload: {
-      session_id: created.sessionId,
-      responder_submit_token: created.responderSubmitToken,
-      responder_read_token: created.responderReadToken,
-      relay_url: relayUrl,
-    },
-  });
 
-  // 3. Populate handle with session data
+  const relayContract = purposeHint ? buildRelayContract(purposeHint, [transport.agentId, counterparty]) : undefined;
+  const proposeFields: Omit<AfalPropose, 'proposal_id'> = {
+    proposal_version: '1',
+    nonce: generateNonce(),
+    timestamp: new Date().toISOString(),
+    from: transport.agentId,
+    to: counterparty,
+    purpose_code: purposeHint ?? 'CUSTOM',
+    lane_id: 'API_MEDIATED',
+    output_schema_id: relayContract?.output_schema_id ?? 'custom',
+    output_schema_version: '1',
+    requested_budget_tier: relayContract?.metadata?.['budget_tier'] ?? 'SMALL',
+    requested_entropy_bits: relayContract?.entropy_budget_bits ?? 12,
+    model_profile_id: relayContract?.model_profile_id ?? 'api-claude-sonnet-v1',
+    model_profile_version: '1',
+    admission_tier_requested: 'DEFAULT',
+  };
+
+  const proposalId = computeProposalId(proposeFields);
+  const propose: AfalPropose = { ...proposeFields, proposal_id: proposalId };
+
+  const relay: RelayInvitePayload = {
+    session_id: created.sessionId,
+    responder_submit_token: created.responderSubmitToken,
+    responder_read_token: created.responderReadToken,
+    relay_url: relayUrl,
+  };
+
+  // 3. Send via AFAL transport (adapter wraps as afal_propose_draft in payload)
+  await transport.sendPropose({ propose, relay, templateId, budgetTier: 'SMALL' });
+
+  // 4. Populate handle with session data
   handle.sessionId = created.sessionId;
   handle.contractHash = created.contractHash;
   handle.relayUrl = relayUrl;
@@ -320,6 +334,7 @@ async function phaseInvite(
     initiatorRead: created.initiatorReadToken,
   };
   handle.purpose = purposeHint ?? undefined;
+  handle.proposalId = proposalId;
   handle.phase = 'POLL_RELAY';
 
   return awaitingResponse(handle, 'Relay session created. Waiting for counterparty to join.');
@@ -366,7 +381,7 @@ async function phasePollRelay(
 
 async function phaseDiscover(
   handle: RelayHandle,
-  transport: InviteTransport,
+  transport: AfalTransport,
 ): Promise<ToolResponse<RelaySignalOutput>> {
   // Check overall timeout
   if (Date.now() > handle.timeoutDeadline) {
@@ -377,7 +392,7 @@ async function phaseDiscover(
 
   while (Date.now() < callDeadline) {
     const response = await transport.checkInbox();
-    const invites: InviteMessage[] = response.invites ?? [];
+    const invites: AfalInviteMessage[] = response.invites ?? [];
 
     // Track whether we found invites from the sender that failed contract matching.
     // If all sender invites fail contract checks, return CONTRACT_MISMATCH immediately
@@ -407,17 +422,19 @@ async function phaseDiscover(
         continue;
       }
 
-      // For AgentVault relay invites, validate expected_purpose matches the invite's template_id
-      // rather than comparing contract hashes. The AFAL invite carries a VCAV contract
-      // hash (auto-resolved from template_id) which differs from the AgentVault relay contract
-      // hash. The real contract verification happens at the relay on input submission.
-      // Skip when expectedContractHash is set — it already matched above.
-      if (handle.expectedPurpose && !handle.expectedContractHash) {
+      // AFAL-enriched path: validate purpose_code from parsed AfalPropose
+      if (invite.afalPropose?.purpose_code && handle.expectedPurpose && !handle.expectedContractHash) {
+        if (invite.afalPropose.purpose_code !== handle.expectedPurpose) {
+          foundSenderInviteWithContractMismatch = true;
+          continue;
+        }
+      } else if (handle.expectedPurpose && !handle.expectedContractHash) {
+        // Legacy path: validate expected_purpose via template_id
         const expectedTemplate = PURPOSE_TO_TEMPLATE[handle.expectedPurpose];
         const inviteTemplate = invite.template_id;
         if (expectedTemplate && inviteTemplate && inviteTemplate !== expectedTemplate) {
           foundSenderInviteWithContractMismatch = true;
-          continue; // Wrong purpose — skip this invite
+          continue;
         }
       }
 
@@ -443,6 +460,7 @@ async function phaseDiscover(
         submit: payload['responder_submit_token'] as string,
         read: payload['responder_read_token'] as string,
       };
+      handle.proposalId = invite.afalPropose?.proposal_id;
       handle.phase = 'JOIN';
 
       return awaitingResponse(handle, 'Relay invite found. Joining session.');
@@ -465,7 +483,7 @@ async function phaseDiscover(
 
 async function phaseJoin(
   handle: RelayHandle,
-  transport: InviteTransport,
+  transport: AfalTransport,
 ): Promise<ToolResponse<RelaySignalOutput>> {
   // Check overall timeout
   if (Date.now() > handle.timeoutDeadline) {
@@ -580,7 +598,7 @@ function hasExtraArgs(args: RelaySignalArgs): boolean {
 
 export async function handleRelaySignal(
   args: RelaySignalArgs,
-  transport?: InviteTransport,
+  transport?: AfalTransport,
   knownAgents: NormalizedKnownAgent[] = [],
 ): Promise<ToolResponse<RelaySignalData>> {
   try {
@@ -601,7 +619,7 @@ export async function handleRelaySignal(
       }
 
       if (!transport) {
-        return buildError('SESSION_ERROR', 'Resume requires InviteTransport (agent mode only)');
+        return buildError('SESSION_ERROR', 'Resume requires AfalTransport (agent mode only)');
       }
 
       // Route to the correct phase
@@ -629,7 +647,7 @@ export async function handleRelaySignal(
     switch (args.mode) {
       case 'INITIATE': {
         if (!transport) {
-          return buildError('SESSION_ERROR', 'INITIATE mode requires InviteTransport (agent mode only)');
+          return buildError('SESSION_ERROR', 'INITIATE mode requires AfalTransport (agent mode only)');
         }
         if (!args.counterparty) {
           return buildError('INVALID_INPUT', 'counterparty is required for INITIATE mode');
@@ -674,7 +692,7 @@ export async function handleRelaySignal(
 
       case 'RESPOND': {
         if (!transport) {
-          return buildError('SESSION_ERROR', 'RESPOND mode requires InviteTransport (agent mode only)');
+          return buildError('SESSION_ERROR', 'RESPOND mode requires AfalTransport (agent mode only)');
         }
         if (!args.from) {
           return buildError('INVALID_INPUT', 'from is required for RESPOND mode (agent ID of expected sender)');

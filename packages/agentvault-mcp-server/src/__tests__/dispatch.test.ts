@@ -26,7 +26,7 @@ describe('handleRelaySignal input validation', () => {
     expect(result.error?.detail).toContain('Unknown mode');
   });
 
-  it('INITIATE requires InviteTransport', async () => {
+  it('INITIATE requires AfalTransport', async () => {
     const result = await handleRelaySignal({
       mode: 'INITIATE',
       counterparty: 'agent-2',
@@ -34,10 +34,10 @@ describe('handleRelaySignal input validation', () => {
     });
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe('SESSION_ERROR');
-    expect(result.error?.detail).toContain('InviteTransport');
+    expect(result.error?.detail).toContain('AfalTransport');
   });
 
-  it('RESPOND requires InviteTransport', async () => {
+  it('RESPOND requires AfalTransport', async () => {
     const result = await handleRelaySignal({
       mode: 'RESPOND',
       from: 'agent-1',
@@ -45,7 +45,7 @@ describe('handleRelaySignal input validation', () => {
     });
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe('SESSION_ERROR');
-    expect(result.error?.detail).toContain('InviteTransport');
+    expect(result.error?.detail).toContain('AfalTransport');
   });
 
   it('JOIN requires session_id, submit_token, read_token, contract_hash', async () => {

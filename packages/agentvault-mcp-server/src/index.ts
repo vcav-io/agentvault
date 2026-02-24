@@ -29,19 +29,26 @@ import { buildError } from './envelope.js';
 import { RELAY_TOOLS } from './toolDefs.js';
 import { dispatch } from './dispatch.js';
 import type { InviteTransport } from './invite-transport.js';
+import { OrchestratorInboxAdapter } from './afal-transport.js';
+import type { AfalTransport } from './afal-transport.js';
 import type { NormalizedKnownAgent } from './tools/relaySignal.js';
 
 /**
  * Create and start an AgentVault MCP server.
  *
- * @param transport - Optional InviteTransport for INITIATE/RESPOND modes.
+ * @param inviteTransport - Optional InviteTransport for INITIATE/RESPOND modes.
  *   When omitted, only CREATE and JOIN (legacy token exchange) modes are available.
+ *   Wrapped in OrchestratorInboxAdapter to provide AfalTransport.
  * @param knownAgents - Optional list of known agents for alias resolution.
  */
 export function createAgentVaultServer(
   inviteTransport?: InviteTransport,
   knownAgents: NormalizedKnownAgent[] = [],
 ): Server {
+  const afalTransport: AfalTransport | undefined = inviteTransport
+    ? new OrchestratorInboxAdapter(inviteTransport)
+    : undefined;
+
   const server = new Server(
     {
       name: 'agentvault-mcp-server',
@@ -65,7 +72,7 @@ export function createAgentVaultServer(
       const result = await dispatch(
         name,
         args as Record<string, unknown>,
-        inviteTransport,
+        afalTransport,
         knownAgents,
       );
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
@@ -123,4 +130,7 @@ if (isDirectExecution) {
 }
 
 export type { InviteTransport } from './invite-transport.js';
+export type { AfalTransport, AfalInviteMessage } from './afal-transport.js';
+export { OrchestratorInboxAdapter } from './afal-transport.js';
+export type { AfalPropose, RelayInvitePayload } from './afal-types.js';
 export type { NormalizedKnownAgent } from './tools/relaySignal.js';
