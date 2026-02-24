@@ -6,8 +6,10 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-receipt-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "960b796f9eafb4ad7decd7a4c921bb7e5ad68937", package = "receipt-core" }
-vault-family-types = { git = "https://github.com/vcav-io/vault-family-core", rev = "960b796f9eafb4ad7decd7a4c921bb7e5ad68937", package = "vault-family-types" }
+# TODO: replace git rev pins with tagged releases once vault-family-core stabilises
+afal-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "a9112332206b5350c99a2e0b73d7bdd0557178b5", package = "afal-core" }
+receipt-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "a9112332206b5350c99a2e0b73d7bdd0557178b5", package = "receipt-core" }
+vault-family-types = { git = "https://github.com/vcav-io/vault-family-core", rev = "a9112332206b5350c99a2e0b73d7bdd0557178b5", package = "vault-family-types" }
 
 serde.workspace = true
 serde_json.workspace = true
@@ -27,6 +29,6 @@ uuid.workspace = true
 jsonschema.workspace = true
 
 [dev-dependencies]
-verifier-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "960b796f9eafb4ad7decd7a4c921bb7e5ad68937", package = "verifier-core" }
+verifier-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "a9112332206b5350c99a2e0b73d7bdd0557178b5", package = "verifier-core" }
 tokio = { version = "1.0", features = ["full", "test-util"] }
 tower.workspace = true

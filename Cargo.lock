@@ -3,9 +3,26 @@
 version = 4
 
 [[package]]
+name = "afal-core"
+version = "0.1.0"
+source = "git+https://github.com/vcav-io/vault-family-core?rev=a9112332206b5350c99a2e0b73d7bdd0557178b5#a9112332206b5350c99a2e0b73d7bdd0557178b5"
+dependencies = [
+ "chrono",
+ "ed25519-dalek",
+ "hex",
+ "receipt-core",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "vault-family-types",
+]
+
+[[package]]
 name = "agentvault-relay"
 version = "0.1.0"
 dependencies = [
+ "afal-core",
  "axum",
  "chrono",
  "ed25519-dalek",
@@ -1361,7 +1378,7 @@ dependencies = [
 [[package]]
 name = "receipt-core"
 version = "0.1.0"
-source = "git+https://github.com/vcav-io/vault-family-core?rev=960b796f9eafb4ad7decd7a4c921bb7e5ad68937#960b796f9eafb4ad7decd7a4c921bb7e5ad68937"
+source = "git+https://github.com/vcav-io/vault-family-core?rev=a9112332206b5350c99a2e0b73d7bdd0557178b5#a9112332206b5350c99a2e0b73d7bdd0557178b5"
 dependencies = [
  "base64",
  "chrono",
@@ -2130,7 +2147,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 [[package]]
 name = "vault-family-types"
 version = "0.1.0"
-source = "git+https://github.com/vcav-io/vault-family-core?rev=960b796f9eafb4ad7decd7a4c921bb7e5ad68937#960b796f9eafb4ad7decd7a4c921bb7e5ad68937"
+source = "git+https://github.com/vcav-io/vault-family-core?rev=a9112332206b5350c99a2e0b73d7bdd0557178b5#a9112332206b5350c99a2e0b73d7bdd0557178b5"
 dependencies = [
  "serde",
  "serde_json",
@@ -2147,7 +2164,7 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 [[package]]
 name = "verifier-core"
 version = "0.1.0"
-source = "git+https://github.com/vcav-io/vault-family-core?rev=960b796f9eafb4ad7decd7a4c921bb7e5ad68937#960b796f9eafb4ad7decd7a4c921bb7e5ad68937"
+source = "git+https://github.com/vcav-io/vault-family-core?rev=a9112332206b5350c99a2e0b73d7bdd0557178b5#a9112332206b5350c99a2e0b73d7bdd0557178b5"
 dependencies = [
  "base64",
  "ed25519-dalek",
