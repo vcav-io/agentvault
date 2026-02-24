@@ -50,7 +50,7 @@ describe('findExistingRelayHandle', () => {
   });
 
   it('does not find terminal handles', () => {
-    const handle = createRelayHandle({
+    createRelayHandle({
       agentId: 'agent-1',
       role: 'INITIATOR',
       phase: 'COMPLETED',
