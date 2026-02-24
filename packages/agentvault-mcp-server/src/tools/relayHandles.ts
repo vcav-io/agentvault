@@ -33,6 +33,8 @@ export interface RelayHandle {
   relayUrl?: string;
   tokens?: { submit: string; read: string; initiatorRead?: string };
   inviteId?: string;
+  /** AFAL proposal ID for tracing and future receipt binding. */
+  proposalId?: string;
   /** Set to true after relay input has been submitted (JOIN phase). */
   submitted?: boolean;
   /** Stored from first call for use on resume (responder only). */
