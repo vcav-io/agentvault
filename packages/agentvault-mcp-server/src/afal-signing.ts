@@ -76,7 +76,12 @@ export function verify(
   const digest = computeDigest(domainPrefix, unsignedPayload);
   try {
     return ed25519.verify(hexToBytes(signatureHex), digest, hexToBytes(publicKeyHex));
-  } catch {
+  } catch (err) {
+    console.error(
+      `verify: ed25519 verification threw (not just returned false): ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
     return false;
   }
 }
@@ -98,6 +103,9 @@ export function verifyMessage(
 ): boolean {
   const signatureHex = message.signature;
   if (typeof signatureHex !== 'string') {
+    console.error(
+      `verifyMessage: message has no valid signature field (got ${typeof signatureHex}). Domain: ${domainPrefix}`,
+    );
     return false;
   }
   const unsigned = stripSignature(message);

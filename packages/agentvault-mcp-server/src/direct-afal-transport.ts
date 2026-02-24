@@ -75,6 +75,7 @@ export class DirectAfalTransport implements AfalTransport {
     const proposeMessage: Record<string, unknown> = {
       proposal_version: params.propose.proposal_version,
       proposal_id: params.propose.proposal_id,
+      nonce: params.propose.nonce,
       timestamp: params.propose.timestamp,
       from: params.propose.from,
       to: params.propose.to,
@@ -109,7 +110,14 @@ export class DirectAfalTransport implements AfalTransport {
       throw new Error(`PROPOSE rejected: ${response.status} ${body}`);
     }
 
-    const admitOrDeny = await response.json() as Record<string, unknown>;
+    let admitOrDeny: Record<string, unknown>;
+    try {
+      admitOrDeny = (await response.json()) as Record<string, unknown>;
+    } catch {
+      throw new Error(
+        `PROPOSE endpoint returned non-JSON response (${response.status})`,
+      );
+    }
     const outcome = admitOrDeny['outcome'];
 
     if (outcome === 'ADMIT') {
@@ -120,6 +128,11 @@ export class DirectAfalTransport implements AfalTransport {
       );
       if (!verified) {
         throw new Error('ADMIT signature verification failed');
+      }
+      if (typeof admitOrDeny['admit_token_id'] !== 'string' || !admitOrDeny['admit_token_id']) {
+        throw new Error(
+          `ADMIT response missing required admit_token_id for proposal: ${params.propose.proposal_id}`,
+        );
       }
       this.storedAdmits.set(params.propose.proposal_id, admitOrDeny);
     } else if (outcome === 'DENY') {
@@ -179,10 +192,17 @@ export class DirectAfalTransport implements AfalTransport {
 
   private async resolvePeerDescriptor(): Promise<AgentDescriptor> {
     if (this.peerDescriptor !== null) {
-      if (Date.parse(this.peerDescriptor.expires_at) > Date.now()) {
+      const expiresMs = Date.parse(this.peerDescriptor.expires_at);
+      if (Number.isNaN(expiresMs)) {
+        console.error(
+          `resolvePeerDescriptor: cached descriptor has unparseable expires_at: "${this.peerDescriptor.expires_at}". Re-fetching.`,
+        );
+        this.peerDescriptor = null;
+      } else if (expiresMs > Date.now()) {
         return this.peerDescriptor;
+      } else {
+        this.peerDescriptor = null;
       }
-      this.peerDescriptor = null;
     }
 
     if (!this.config.peerDescriptorUrl) {
@@ -194,12 +214,35 @@ export class DirectAfalTransport implements AfalTransport {
       throw new Error(`Failed to fetch peer descriptor: ${response.status}`);
     }
 
-    const descriptor = await response.json() as AgentDescriptor;
+    let raw: Record<string, unknown>;
+    try {
+      raw = (await response.json()) as Record<string, unknown>;
+    } catch {
+      throw new Error(
+        `Peer descriptor from ${this.config.peerDescriptorUrl} returned non-JSON`,
+      );
+    }
+
+    // Validate required nested structure before trusting the cast
+    const identityKey = (raw as Record<string, unknown>).identity_key as Record<string, unknown> | undefined;
+    if (!identityKey || typeof identityKey !== 'object' || typeof identityKey.public_key_hex !== 'string') {
+      throw new Error(
+        `Peer descriptor from ${this.config.peerDescriptorUrl} is malformed: missing or invalid identity_key.public_key_hex`,
+      );
+    }
+    const endpoints = (raw as Record<string, unknown>).endpoints as Record<string, unknown> | undefined;
+    if (!endpoints || typeof endpoints !== 'object' || typeof endpoints.propose !== 'string' || typeof endpoints.commit !== 'string') {
+      throw new Error(
+        `Peer descriptor from ${this.config.peerDescriptorUrl} is malformed: missing required endpoints (propose, commit)`,
+      );
+    }
+
+    const descriptor = raw as unknown as AgentDescriptor;
 
     const verified = verifyMessage(
       DOMAIN_PREFIXES.DESCRIPTOR,
-      descriptor as unknown as Record<string, unknown>,
-      descriptor.identity_key.public_key_hex,
+      raw,
+      identityKey.public_key_hex as string,
     );
     if (!verified) {
       throw new Error('Peer descriptor signature verification failed');
