@@ -80,6 +80,10 @@ export class AfalHttpServer {
     await new Promise<void>((resolve) => srv.close(() => resolve()));
   }
 
+  get localDescriptor(): AgentDescriptor {
+    return this._localDescriptor;
+  }
+
   /** Extracted for testability — handles a single HTTP request. */
   handleRequest(req: IncomingMessage, res: ServerResponse): void {
     // Concurrent request guard
@@ -90,7 +94,8 @@ export class AfalHttpServer {
     }
     this.inflight++;
 
-    const done = () => { this.inflight--; };
+    let doneCalled = false;
+    const done = () => { if (!doneCalled) { doneCalled = true; this.inflight--; } };
     const method = req.method ?? '';
     const url = req.url ?? '';
 
@@ -119,17 +124,26 @@ export class AfalHttpServer {
           return;
         }
 
-        if (url === '/afal/propose') {
-          const result = this.config.responder.handlePropose(body);
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(result.response));
-        } else {
-          const result = this.config.responder.handleCommit(body);
-          const status = result.ok ? 200 : 400;
-          res.writeHead(status, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(result));
+        try {
+          if (url === '/afal/propose') {
+            const result = this.config.responder.handlePropose(body);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(result.response));
+          } else {
+            const result = this.config.responder.handleCommit(body);
+            const status = result.ok ? 200 : 400;
+            res.writeHead(status, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(result));
+          }
+        } catch (e) {
+          console.error(`AFAL ${url} handler threw:`, e);
+          if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Internal server error' }));
+          }
+        } finally {
+          done();
         }
-        done();
       });
       return;
     }
@@ -145,12 +159,19 @@ export class AfalHttpServer {
   ): void {
     const chunks: Buffer[] = [];
     let size = 0;
+    let called = false;
+
+    const finish = (err: string | null, body: unknown) => {
+      if (called) return;
+      called = true;
+      callback(err, body);
+    };
 
     req.on('data', (chunk: Buffer) => {
       size += chunk.length;
       if (size > MAX_BODY_BYTES) {
         req.destroy();
-        callback('BODY_TOO_LARGE', null);
+        finish('BODY_TOO_LARGE', null);
         return;
       }
       chunks.push(chunk);
@@ -160,14 +181,14 @@ export class AfalHttpServer {
       try {
         const raw = Buffer.concat(chunks).toString('utf-8');
         const parsed = JSON.parse(raw);
-        callback(null, parsed);
+        finish(null, parsed);
       } catch {
-        callback('Invalid JSON', null);
+        finish('Invalid JSON', null);
       }
     });
 
     req.on('error', () => {
-      callback('Request error', null);
+      finish('Request error', null);
     });
   }
 }

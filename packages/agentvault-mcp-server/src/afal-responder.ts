@@ -158,24 +158,24 @@ export class AfalResponder {
       return this.deny(proposalId, 'STALE', now);
     }
 
-    // 8. Check nonce uniqueness
-    if (!this.nonceCache.check(propose.from, propose.nonce, proposedMs)) {
-      return this.deny(proposalId, 'REPLAY', now);
-    }
-
-    // 9. Check purpose_code
+    // 8. Check purpose_code (pure — before nonce side effect)
     if (!this.config.policy.allowedPurposeCodes.includes(propose.purpose_code)) {
       return this.deny(proposalId, 'POLICY', now);
     }
 
-    // 10. Check lane_id
+    // 9. Check lane_id (pure — before nonce side effect)
     if (!this.config.policy.allowedLaneIds.includes(propose.lane_id)) {
       return this.deny(proposalId, 'POLICY', now);
     }
 
-    // 11. Check requested_entropy_bits
+    // 10. Check requested_entropy_bits (pure — before nonce side effect)
     if (propose.requested_entropy_bits > this.config.policy.maxEntropyBits) {
       return this.deny(proposalId, 'POLICY', now);
+    }
+
+    // 11. Check nonce uniqueness (side effect — must be last before ADMIT)
+    if (!this.nonceCache.check(propose.from, propose.nonce, proposedMs)) {
+      return this.deny(proposalId, 'REPLAY', now);
     }
 
     // All checks passed — ADMIT
@@ -221,7 +221,7 @@ export class AfalResponder {
     const from = commit['from'];
     const proposalId = commit['proposal_id'];
 
-    if (typeof admitTokenId !== 'string' || typeof from !== 'string') {
+    if (typeof admitTokenId !== 'string' || typeof from !== 'string' || typeof proposalId !== 'string') {
       return { ok: false, error: 'Missing required COMMIT fields' };
     }
 
@@ -234,7 +234,7 @@ export class AfalResponder {
       return { ok: false, error: 'COMMIT sender does not match proposer' };
     }
 
-    if (typeof proposalId === 'string' && proposalId !== admitted.propose.proposal_id) {
+    if (proposalId !== admitted.propose.proposal_id) {
       return { ok: false, error: 'COMMIT proposal_id does not match ADMIT' };
     }
 

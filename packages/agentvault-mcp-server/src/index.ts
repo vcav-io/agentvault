@@ -112,12 +112,24 @@ function buildDirectTransportFromEnv(): DirectAfalTransport | null {
   const seedHex = process.env['VCAV_AFAL_SEED_HEX'];
   if (!seedHex) return null;
 
-  const agentId = process.env['VCAV_AGENT_ID'] ?? 'unknown';
+  const agentId = process.env['VCAV_AGENT_ID'];
+  if (!agentId) {
+    console.error('VCAV_AGENT_ID is required when VCAV_AFAL_SEED_HEX is set');
+    return null;
+  }
   const httpPort = process.env['VCAV_AFAL_HTTP_PORT'];
   const bindAddress = process.env['VCAV_AFAL_BIND_ADDRESS'] ?? '127.0.0.1';
   const peerDescriptorUrl = process.env['VCAV_AFAL_PEER_DESCRIPTOR_URL'];
 
-  const pubKeyHex = bytesToHex(ed25519.getPublicKey(hexToBytes(seedHex)));
+  let pubKeyHex: string;
+  try {
+    pubKeyHex = bytesToHex(ed25519.getPublicKey(hexToBytes(seedHex)));
+  } catch (err) {
+    console.error(
+      `VCAV_AFAL_SEED_HEX is not a valid 32-byte hex seed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return null;
+  }
 
   const now = new Date().toISOString();
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
@@ -162,7 +174,18 @@ function buildDirectTransportFromEnv(): DirectAfalTransport | null {
     const trustedJson = process.env['VCAV_AFAL_TRUSTED_AGENTS'];
     if (trustedJson) {
       try {
-        trustedAgents = JSON.parse(trustedJson) as TrustedAgent[];
+        const parsed: unknown = JSON.parse(trustedJson);
+        if (!Array.isArray(parsed)) {
+          console.error('VCAV_AFAL_TRUSTED_AGENTS must be a JSON array');
+          return null;
+        }
+        for (const entry of parsed) {
+          if (typeof entry?.agentId !== 'string' || typeof entry?.publicKeyHex !== 'string') {
+            console.error('VCAV_AFAL_TRUSTED_AGENTS entries must have string agentId and publicKeyHex');
+            return null;
+          }
+        }
+        trustedAgents = parsed as TrustedAgent[];
       } catch {
         console.error(`VCAV_AFAL_TRUSTED_AGENTS is not valid JSON: ${trustedJson}`);
         return null;
@@ -210,8 +233,15 @@ async function main() {
   }
 
   // Graceful shutdown
+  let shuttingDown = false;
   const shutdown = async () => {
-    if (directTransport) await directTransport.stop();
+    if (shuttingDown) return;
+    shuttingDown = true;
+    try {
+      if (directTransport) await directTransport.stop();
+    } catch (err) {
+      console.error('Error during transport shutdown:', err);
+    }
     process.exit(0);
   };
   process.on('SIGTERM', shutdown);

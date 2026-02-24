@@ -123,7 +123,7 @@ export class DirectAfalTransport implements AfalTransport {
     if (this.config.respondMode?.httpPort === 0) {
       const bindAddr = this.config.respondMode.bindAddress ?? '127.0.0.1';
       const base = `http://${bindAddr}:${this.httpServer.port}`;
-      const { signature: _s, ...unsigned } = this.httpServer['_localDescriptor'] as AgentDescriptor & { signature?: string };
+      const { signature: _s, ...unsigned } = this.httpServer.localDescriptor as AgentDescriptor & { signature?: string };
       const updated = {
         ...unsigned,
         endpoints: {
@@ -197,9 +197,11 @@ export class DirectAfalTransport implements AfalTransport {
     let admitOrDeny: Record<string, unknown>;
     try {
       admitOrDeny = (await response.json()) as Record<string, unknown>;
-    } catch {
+    } catch (parseErr) {
       throw new Error(
-        `PROPOSE endpoint returned non-JSON response (${response.status})`,
+        `PROPOSE endpoint returned non-JSON response (${response.status}): ${
+          parseErr instanceof Error ? parseErr.message : String(parseErr)
+        }`,
       );
     }
     const outcome = admitOrDeny['outcome'];
