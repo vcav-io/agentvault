@@ -12,7 +12,7 @@
 
 import type { InviteTransport, InviteMessage } from './invite-transport.js';
 import type { AfalPropose, RelayInvitePayload } from './afal-types.js';
-import { hasAfalDraft } from './afal-types.js';
+import { hasAfalDraft, computeProposalId } from './afal-types.js';
 
 // ── AfalTransport Interface ─────────────────────────────────────────────
 
@@ -118,6 +118,34 @@ export class OrchestratorInboxAdapter implements AfalTransport {
 
         const draft = invite.payload['afal_propose_draft'] as Record<string, unknown>;
 
+        // Validate compliance field — M2 only supports UNSIGNED
+        const compliance = draft['compliance'];
+        if (typeof compliance === 'string' && compliance !== 'UNSIGNED') {
+          console.error(
+            `checkInbox: invite ${invite.invite_id} has unsupported compliance: ${compliance}. Treating as legacy.`,
+          );
+          return invite;
+        }
+
+        // Validate all required string fields are present and correctly typed
+        const requiredStrings = [
+          'proposal_version', 'proposal_id', 'nonce', 'timestamp',
+          'from', 'to', 'purpose_code', 'lane_id', 'output_schema_id',
+          'output_schema_version', 'requested_budget_tier',
+          'model_profile_id', 'model_profile_version', 'admission_tier_requested',
+        ] as const;
+
+        const missingField = requiredStrings.find(
+          (f) => typeof draft[f] !== 'string' || !draft[f],
+        );
+        if (missingField || typeof draft['requested_entropy_bits'] !== 'number') {
+          console.error(
+            `checkInbox: malformed afal_propose_draft in invite ${invite.invite_id}, ` +
+            `invalid field: ${missingField ?? 'requested_entropy_bits'}. Treating as legacy.`,
+          );
+          return invite;
+        }
+
         const afalPropose: AfalPropose = {
           proposal_version: draft['proposal_version'] as string,
           proposal_id: draft['proposal_id'] as string,
@@ -134,12 +162,23 @@ export class OrchestratorInboxAdapter implements AfalTransport {
           model_profile_id: draft['model_profile_id'] as string,
           model_profile_version: draft['model_profile_version'] as string,
           admission_tier_requested: draft['admission_tier_requested'] as string,
-          // Optional fields — only set if present
-          ...(draft['descriptor_hash'] != null && { descriptor_hash: draft['descriptor_hash'] as string }),
-          ...(draft['model_profile_hash'] != null && { model_profile_hash: draft['model_profile_hash'] as string }),
-          ...(draft['prev_receipt_hash'] != null && { prev_receipt_hash: draft['prev_receipt_hash'] as string }),
-          ...(draft['signature'] != null && { signature: draft['signature'] as string }),
+          // Optional fields — only set if present and correctly typed
+          ...(typeof draft['descriptor_hash'] === 'string' && { descriptor_hash: draft['descriptor_hash'] }),
+          ...(typeof draft['model_profile_hash'] === 'string' && { model_profile_hash: draft['model_profile_hash'] }),
+          ...(typeof draft['prev_receipt_hash'] === 'string' && { prev_receipt_hash: draft['prev_receipt_hash'] }),
+          ...(typeof draft['signature'] === 'string' && { signature: draft['signature'] }),
         };
+
+        // Verify proposal_id integrity — recompute and check
+        const { proposal_id: claimed, ...hashableFields } = afalPropose;
+        const expected = computeProposalId(hashableFields);
+        if (claimed !== expected) {
+          console.error(
+            `checkInbox: proposal_id mismatch in invite ${invite.invite_id}: ` +
+            `claimed=${claimed.slice(0, 16)}… expected=${expected.slice(0, 16)}…. Treating as legacy.`,
+          );
+          return invite;
+        }
 
         return { ...invite, afalPropose };
       },

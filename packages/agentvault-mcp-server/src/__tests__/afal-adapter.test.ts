@@ -13,7 +13,7 @@ function createMockTransport(invites: InviteMessage[] = []): InviteTransport {
   };
 }
 
-function createTestPropose(overrides: Partial<AfalPropose> = {}): AfalPropose {
+function createTestPropose(overrides: Partial<Omit<AfalPropose, 'proposal_id'>> = {}): AfalPropose {
   const fields: Omit<AfalPropose, 'proposal_id'> = {
     proposal_version: '1',
     nonce: 'a'.repeat(64),
@@ -32,7 +32,7 @@ function createTestPropose(overrides: Partial<AfalPropose> = {}): AfalPropose {
     ...overrides,
   };
   const proposal_id = computeProposalId(fields);
-  return { ...fields, proposal_id, ...overrides };
+  return { ...fields, proposal_id };
 }
 
 function createTestRelay(): RelayInvitePayload {
@@ -183,6 +183,116 @@ describe('OrchestratorInboxAdapter', () => {
       expect(parsed!.purpose_code).toBe('MEDIATION');
       expect(parsed!.from).toBe('alice-demo');
       expect(parsed!.to).toBe('bob-demo');
+    });
+
+    it('rejects malformed draft (missing required field) as legacy', async () => {
+      const invite: InviteMessage = {
+        invite_id: 'inv-malformed',
+        from_agent_id: 'alice-demo',
+        payload_type: 'VCAV_E_INVITE_V1',
+        payload: {
+          session_id: 'sess-1',
+          responder_submit_token: 'tok',
+          responder_read_token: 'tok',
+          relay_url: 'http://relay.example.com',
+          afal_propose_draft: {
+            compliance: 'UNSIGNED',
+            proposal_version: '1',
+            // missing most required fields
+          },
+        },
+      };
+
+      mockTransport = createMockTransport([invite]);
+      adapter = new OrchestratorInboxAdapter(mockTransport);
+      const result = await adapter.checkInbox();
+
+      expect(result.invites).toHaveLength(1);
+      expect(result.invites[0].afalPropose).toBeUndefined();
+    });
+
+    it('rejects unsupported compliance value as legacy', async () => {
+      const propose = createTestPropose();
+      const draft: Record<string, unknown> = {
+        compliance: 'SIGNED',
+        proposal_version: propose.proposal_version,
+        proposal_id: propose.proposal_id,
+        nonce: propose.nonce,
+        timestamp: propose.timestamp,
+        from: propose.from,
+        to: propose.to,
+        purpose_code: propose.purpose_code,
+        lane_id: propose.lane_id,
+        output_schema_id: propose.output_schema_id,
+        output_schema_version: propose.output_schema_version,
+        requested_budget_tier: propose.requested_budget_tier,
+        requested_entropy_bits: propose.requested_entropy_bits,
+        model_profile_id: propose.model_profile_id,
+        model_profile_version: propose.model_profile_version,
+        admission_tier_requested: propose.admission_tier_requested,
+      };
+
+      const invite: InviteMessage = {
+        invite_id: 'inv-signed',
+        from_agent_id: 'alice-demo',
+        payload_type: 'VCAV_E_INVITE_V1',
+        payload: {
+          session_id: 'sess-1',
+          responder_submit_token: 'tok',
+          responder_read_token: 'tok',
+          relay_url: 'http://relay.example.com',
+          afal_propose_draft: draft,
+        },
+      };
+
+      mockTransport = createMockTransport([invite]);
+      adapter = new OrchestratorInboxAdapter(mockTransport);
+      const result = await adapter.checkInbox();
+
+      expect(result.invites).toHaveLength(1);
+      expect(result.invites[0].afalPropose).toBeUndefined();
+    });
+
+    it('rejects draft with spoofed proposal_id as legacy', async () => {
+      const propose = createTestPropose();
+      const draft: Record<string, unknown> = {
+        compliance: 'UNSIGNED',
+        proposal_version: propose.proposal_version,
+        proposal_id: 'f'.repeat(64), // spoofed — doesn't match content hash
+        nonce: propose.nonce,
+        timestamp: propose.timestamp,
+        from: propose.from,
+        to: propose.to,
+        purpose_code: propose.purpose_code,
+        lane_id: propose.lane_id,
+        output_schema_id: propose.output_schema_id,
+        output_schema_version: propose.output_schema_version,
+        requested_budget_tier: propose.requested_budget_tier,
+        requested_entropy_bits: propose.requested_entropy_bits,
+        model_profile_id: propose.model_profile_id,
+        model_profile_version: propose.model_profile_version,
+        admission_tier_requested: propose.admission_tier_requested,
+      };
+
+      const invite: InviteMessage = {
+        invite_id: 'inv-spoofed',
+        from_agent_id: 'alice-demo',
+        payload_type: 'VCAV_E_INVITE_V1',
+        payload: {
+          session_id: 'sess-1',
+          responder_submit_token: 'tok',
+          responder_read_token: 'tok',
+          relay_url: 'http://relay.example.com',
+          afal_propose_draft: draft,
+        },
+      };
+
+      mockTransport = createMockTransport([invite]);
+      adapter = new OrchestratorInboxAdapter(mockTransport);
+      const result = await adapter.checkInbox();
+
+      expect(result.invites).toHaveLength(1);
+      expect(result.invites[0].afalPropose).toBeUndefined();
     });
 
     it('returns undefined afalPropose for legacy payloads', async () => {

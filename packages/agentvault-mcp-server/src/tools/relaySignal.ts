@@ -260,16 +260,17 @@ async function phaseInvite(
 ): Promise<ToolResponse<RelaySignalOutput>> {
   const counterparty = resolveAgentAlias(handle.counterparty, knownAgents);
 
-  // Resolve contract
+  // Resolve contract — use transport.agentId consistently as the identity source
+  const agentId = transport.agentId;
   let contract: object;
   let purposeHint: string | null = null;
+  let relayContract: ReturnType<typeof buildRelayContract> | undefined;
   if (args.contract) {
     contract = args.contract;
   } else if (args.purpose) {
-    const myId = process.env['VCAV_AGENT_ID'] ?? '';
     let built;
     try {
-      built = buildRelayContract(args.purpose, [myId, counterparty]);
+      built = buildRelayContract(args.purpose, [agentId, counterparty]);
     } catch (e) {
       return buildError('INVALID_INPUT', (e as Error).message);
     }
@@ -278,6 +279,7 @@ async function phaseInvite(
         `Unknown purpose "${args.purpose}". Available: ${listRelayPurposes().join(', ')}`);
     }
     contract = built;
+    relayContract = built;
     purposeHint = args.purpose;
   } else {
     return buildError('INVALID_INPUT',
@@ -290,15 +292,14 @@ async function phaseInvite(
   // 1. Create session and submit own input
   const created = await createAndSubmit(config, contract, args.my_input ?? '', 'initiator');
 
-  // 2. Build AfalPropose from purpose and contract template
+  // 2. Build AfalPropose from purpose and contract template (reuses `relayContract` from above)
   const templateId = purposeHint ? (PURPOSE_TO_TEMPLATE[purposeHint] ?? 'mediation-demo.v1.standard') : 'mediation-demo.v1.standard';
 
-  const relayContract = purposeHint ? buildRelayContract(purposeHint, [transport.agentId, counterparty]) : undefined;
   const proposeFields: Omit<AfalPropose, 'proposal_id'> = {
     proposal_version: '1',
     nonce: generateNonce(),
     timestamp: new Date().toISOString(),
-    from: transport.agentId,
+    from: agentId,
     to: counterparty,
     purpose_code: purposeHint ?? 'CUSTOM',
     lane_id: 'API_MEDIATED',
@@ -446,8 +447,12 @@ async function phaseDiscover(
         try {
           const relayContract = buildRelayContract(handle.expectedPurpose, [handle.counterparty, myId]);
           if (relayContract) relayContractHash = computeRelayContractHash(relayContract);
-        } catch {
-          // Non-fatal — relay will verify on submit
+        } catch (err) {
+          // Non-fatal — relay will verify on submit, but log for diagnostics
+          console.error(
+            `phaseDiscover: failed to compute relay contract hash for purpose=${handle.expectedPurpose}: ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+          );
         }
       }
 
@@ -507,9 +512,13 @@ async function phaseJoin(
     // Accept the orchestrator invite after successful submit
     try {
       await transport.acceptInvite(handle.inviteId!);
-    } catch {
+    } catch (err) {
       // Accept failure is non-fatal — relay session proceeds regardless.
-      // The invite expires naturally via TTL.
+      // But log for operator diagnostics (auth errors, connectivity).
+      console.error(
+        `phaseJoin: acceptInvite failed for invite=${handle.inviteId}: ` +
+        `${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 

@@ -63,19 +63,30 @@ export function hasAfalDraft(
 ): payload is Record<string, unknown> & { afal_propose_draft: Record<string, unknown> } {
   return (
     payload['afal_propose_draft'] != null &&
-    typeof payload['afal_propose_draft'] === 'object'
+    typeof payload['afal_propose_draft'] === 'object' &&
+    !Array.isArray(payload['afal_propose_draft'])
   );
 }
 
 // ── Proposal ID Derivation ──────────────────────────────────────────────
 
 /**
- * Fields excluded from the proposal_id hash:
+ * Allowlist of fields included in the proposal_id hash.
+ * Using an allowlist (not denylist) prevents accidental inclusion of extra
+ * properties and makes the hash computation explicit.
+ *
+ * Excluded by design:
  * - proposal_id: it's the output
  * - compliance: adapter metadata, not part of the propose
  * - signature: not available at hash time
  */
-const EXCLUDED_FROM_HASH = new Set(['proposal_id', 'compliance', 'signature']);
+const HASHABLE_FIELDS = new Set([
+  'proposal_version', 'nonce', 'timestamp', 'from', 'to',
+  'purpose_code', 'lane_id', 'output_schema_id', 'output_schema_version',
+  'requested_budget_tier', 'requested_entropy_bits',
+  'model_profile_id', 'model_profile_version', 'admission_tier_requested',
+  'descriptor_hash', 'model_profile_hash', 'prev_receipt_hash',
+]);
 
 /**
  * Compute a deterministic proposal_id from an AfalPropose's hashable fields.
@@ -88,7 +99,7 @@ const EXCLUDED_FROM_HASH = new Set(['proposal_id', 'compliance', 'signature']);
 export function computeProposalId(propose: Omit<AfalPropose, 'proposal_id'>): string {
   const hashable: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(propose)) {
-    if (!EXCLUDED_FROM_HASH.has(key) && value !== undefined) {
+    if (HASHABLE_FIELDS.has(key) && value !== undefined) {
       hashable[key] = value;
     }
   }
