@@ -34,7 +34,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { buildError } from './envelope.js';
-import { RELAY_TOOLS } from './toolDefs.js';
+import { RELAY_TOOLS, IDENTITY_TOOLS } from './toolDefs.js';
 import { dispatch } from './dispatch.js';
 import type { InviteTransport } from './invite-transport.js';
 import { OrchestratorInboxAdapter } from './afal-transport.js';
@@ -78,7 +78,7 @@ export function createAgentVaultServer(
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    return { tools: RELAY_TOOLS };
+    return { tools: [...IDENTITY_TOOLS, ...RELAY_TOOLS] };
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -209,15 +209,42 @@ function buildDirectTransportFromEnv(): DirectAfalTransport | null {
   return new DirectAfalTransport(config);
 }
 
+/**
+ * Parse VCAV_KNOWN_AGENTS environment variable.
+ * Expected format: JSON array of {agent_id: string, aliases: string[]}.
+ */
+function parseKnownAgentsFromEnv(): NormalizedKnownAgent[] {
+  const raw = process.env['VCAV_KNOWN_AGENTS'];
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      console.error('VCAV_KNOWN_AGENTS must be a JSON array');
+      return [];
+    }
+    for (const entry of parsed) {
+      if (typeof entry?.agent_id !== 'string' || !Array.isArray(entry?.aliases)) {
+        console.error('VCAV_KNOWN_AGENTS entries must have string agent_id and aliases array');
+        return [];
+      }
+    }
+    return parsed as NormalizedKnownAgent[];
+  } catch {
+    console.error(`VCAV_KNOWN_AGENTS is not valid JSON: ${raw}`);
+    return [];
+  }
+}
+
 // Standalone entry point — runs without an InviteTransport
 // (CREATE/JOIN modes only unless the host injects one).
 // If VCAV_AFAL_SEED_HEX is set, also starts DirectAfalTransport.
 async function main() {
   const directTransport = buildDirectTransportFromEnv();
+  const knownAgents = parseKnownAgentsFromEnv();
 
   const server = directTransport
-    ? createAgentVaultServer(undefined, [], directTransport)
-    : createAgentVaultServer();
+    ? createAgentVaultServer(undefined, knownAgents, directTransport)
+    : createAgentVaultServer(undefined, knownAgents);
 
   if (directTransport) {
     await directTransport.start();
