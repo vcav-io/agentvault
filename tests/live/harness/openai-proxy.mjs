@@ -162,8 +162,9 @@ function readBody(req) {
     req.on('end', () => {
       try {
         resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
-      } catch {
-        resolve({});
+      } catch (err) {
+        console.error('readBody: JSON parse failed:', err.message);
+        reject(new Error(`Invalid JSON body: ${err.message}`));
       }
     });
     req.on('error', reject);

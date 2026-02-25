@@ -50,10 +50,10 @@ generate_report() {
   local bob_session_file="${BOB_DIR:-${HOME}/vcav-test/bob}/.agentvault/last_session.json"
 
   if [[ -f "${alice_session_file}" ]]; then
-    alice_session_id="\"$(node -e "const s=require('${alice_session_file}');process.stdout.write(s.session_id??'unknown')" 2>/dev/null || echo "unknown")\""
+    alice_session_id="\"$(node -e "const fs=require('fs');try{const s=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));process.stdout.write(s.session_id??'unknown')}catch{process.stdout.write('unknown')}" -- "${alice_session_file}" 2>/dev/null || echo "unknown")\""
   fi
   if [[ -f "${bob_session_file}" ]]; then
-    bob_session_id="\"$(node -e "const s=require('${bob_session_file}');process.stdout.write(s.session_id??'unknown')" 2>/dev/null || echo "unknown")\""
+    bob_session_id="\"$(node -e "const fs=require('fs');try{const s=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));process.stdout.write(s.session_id??'unknown')}catch{process.stdout.write('unknown')}" -- "${bob_session_file}" 2>/dev/null || echo "unknown")\""
   fi
 
   # Collect receipt fields if available

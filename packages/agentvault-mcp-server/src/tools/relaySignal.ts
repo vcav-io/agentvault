@@ -183,7 +183,7 @@ function writeLastSessionFile(
       relay_url: relayUrl,
       timestamp: new Date().toISOString(),
     };
-    fs.writeFileSync(tmpPath, JSON.stringify(record, null, 2) + '\n', 'utf8');
+    fs.writeFileSync(tmpPath, JSON.stringify(record, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
     fs.renameSync(tmpPath, finalPath);
   } catch (err) {
     // Non-fatal — log but do not fail the relay operation

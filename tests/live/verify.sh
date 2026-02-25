@@ -82,12 +82,12 @@ read_session_file() {
   node -e "
 const fs = require('fs');
 try {
-  const s = JSON.parse(fs.readFileSync('${file}', 'utf8'));
-  process.stdout.write(s.${field} ?? '');
+  const s = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+  process.stdout.write(s[process.argv[2]] ?? '');
 } catch (e) {
   process.stdout.write('');
 }
-" 2>/dev/null || true
+" -- "${file}" "${field}" 2>/dev/null || true
 }
 
 log_info "Reading session info from agent working dirs..."
@@ -110,6 +110,13 @@ if [[ -z "${ALICE_SESSION_ID}" ]]; then
 fi
 if [[ -z "${BOB_SESSION_ID}" ]]; then
   log_warn "Could not read Bob's session ID from ${BOB_SESSION_FILE}"
+fi
+
+# Fail if neither session file is readable and no manual override
+if [[ -z "${ALICE_SESSION_ID}" && -z "${BOB_SESSION_ID}" && -z "${MANUAL_SESSION}" ]]; then
+  log_error "Cannot read session info from either agent. Did the test complete?"
+  log_error "Provide --session and --read-token manually, or check agent working dirs."
+  exit 1
 fi
 
 log_info "Alice session: ${ALICE_SESSION_ID:-<not found>}"
@@ -161,16 +168,18 @@ extract_receipt() {
   node -e "
 const fs = require('fs');
 try {
-  const out = JSON.parse(fs.readFileSync('${output_file}', 'utf8'));
+  const out = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
   if (out.receipt) {
-    fs.writeFileSync('${receipt_file}', JSON.stringify(out.receipt, null, 2));
+    fs.writeFileSync(process.argv[2], JSON.stringify(out.receipt, null, 2));
     if (out.receipt_signature) {
-      fs.writeFileSync('${sig_file}', out.receipt_signature + '\n');
+      fs.writeFileSync(process.argv[3], out.receipt_signature + '\n');
     }
     process.stdout.write('extracted\n');
   }
-} catch {}
-" 2>/dev/null && log_success "Receipt extracted to ${receipt_file}" || true
+} catch (e) {
+  process.stderr.write('extract_receipt failed: ' + e.message + '\n');
+}
+" -- "${output_file}" "${receipt_file}" "${sig_file}" && log_success "Receipt extracted to ${receipt_file}" || true
 }
 
 extract_receipt "${RUN_DIR}/alice_output.json"
@@ -188,7 +197,13 @@ run_check() {
   local passed="$2"  # "true" or "false"
   local detail="${3:-}"
 
-  CHECKS+=("{\"name\":\"${name}\",\"passed\":${passed},\"detail\":\"${detail}\"}")
+  # Escape detail for safe JSON embedding (backslashes, double quotes, newlines)
+  local escaped_detail
+  escaped_detail="${detail//\\/\\\\}"
+  escaped_detail="${escaped_detail//\"/\\\"}"
+  escaped_detail="${escaped_detail//$'\n'/\\n}"
+
+  CHECKS+=("{\"name\":\"${name}\",\"passed\":${passed},\"detail\":\"${escaped_detail}\"}")
   if [[ "${passed}" == "false" ]]; then
     ALL_PASSED=0
     log_error "FAIL: ${name}${detail:+ — ${detail}}"
@@ -221,9 +236,9 @@ fi
 if [[ -f "${RUN_DIR}/alice_output.json" ]]; then
   local_output_text="$(node -e "
 const fs=require('fs');
-try{const o=JSON.parse(fs.readFileSync('${RUN_DIR}/alice_output.json','utf8'));
+try{const o=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));
 process.stdout.write(String(o.output||o.text||o.content||'').length);}catch{process.stdout.write('0');}
-" 2>/dev/null || echo 0)"
+" -- "${RUN_DIR}/alice_output.json" 2>/dev/null || echo 0)"
   if [[ "${local_output_text}" -gt 0 ]]; then
     run_check "output_nonempty" "true"
   else
@@ -308,7 +323,9 @@ for (const scDir of scenarioDirs) {
         } else {
           results.checked++;
         }
-      } catch {}
+      } catch (e) {
+        console.error('Tier1: could not read prompt file:', promptFile, e.message);
+      }
     }
   }
 }
@@ -398,12 +415,12 @@ if [[ -f "${RUN_DIR}/receipt.json" ]]; then
   log_info "Extracting receipt fields..."
   node -e "
 const fs=require('fs');
-const r=JSON.parse(fs.readFileSync('${RUN_DIR}/receipt.json','utf8'));
+const r=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));
 const fields=['contract_hash','model_profile_hash','output_entropy_bits','prompt_template_hash'];
 for(const f of fields){
   if(r[f]) console.log(f+'='+r[f]);
 }
-" 2>/dev/null | while IFS= read -r line; do log_info "  receipt: ${line}"; done || true
+" -- "${RUN_DIR}/receipt.json" 2>/dev/null | while IFS= read -r line; do log_info "  receipt: ${line}"; done || true
 fi
 
 # ---------------------------------------------------------------------------
@@ -412,11 +429,16 @@ fi
 
 CHECKS_JSON="[$(printf '%s,' "${CHECKS[@]}" | sed 's/,$//')]"
 
+local_all_passed_bool="true"
+if [[ "${ALL_PASSED}" -eq 0 ]]; then
+  local_all_passed_bool="false"
+fi
+
 cat >"${RUN_DIR}/verify.json" <<JSON
 {
   "run_id": "${RUN_ID}",
   "timestamp": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')",
-  "all_passed": ${ALL_PASSED},
+  "all_passed": ${local_all_passed_bool},
   "checks": ${CHECKS_JSON}
 }
 JSON
