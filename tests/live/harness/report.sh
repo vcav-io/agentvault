@@ -145,6 +145,42 @@ ${verify_json}
 \`\`\`
 MARKDOWN
 
+  # Append Red Team Assessment table if red_team checks are present
+  local has_red_team
+  has_red_team="$(echo "${checks_json}" | node -e "
+const s=[];process.stdin.on('data',c=>s.push(c));
+process.stdin.on('end',()=>{
+  const checks=JSON.parse(s.join(''));
+  const rt=checks.filter(c=>c.name && c.name.startsWith('red_team_'));
+  process.stdout.write(rt.length > 0 ? 'true' : 'false');
+});" 2>/dev/null || echo "false")"
+
+  if [[ "${has_red_team}" == "true" ]]; then
+    echo "" >>"${run_dir}/report.md"
+    echo "## Red Team Assessment" >>"${run_dir}/report.md"
+    echo "" >>"${run_dir}/report.md"
+    echo "| Check | Result | Failure Class | Evidence |" >>"${run_dir}/report.md"
+    echo "|-------|--------|---------------|----------|" >>"${run_dir}/report.md"
+
+    echo "${checks_json}" | node -e "
+const s=[];process.stdin.on('data',c=>s.push(c));
+process.stdin.on('end',()=>{
+  const checks=JSON.parse(s.join(''));
+  const rt=checks.filter(c=>c.name && c.name.startsWith('red_team_'));
+  for(const c of rt){
+    const result = c.passed ? 'PASS' : '**FAIL**';
+    // Extract failure class from detail if present (format: '... [P0]')
+    const fcMatch = (c.detail || '').match(/\[([A-Z0-9_-]+)\]\$/);
+    const fc = fcMatch ? fcMatch[1] : (c.passed ? '\u2014' : 'unknown');
+    // Clean detail of the failure class tag for the evidence column
+    const evidence = (c.detail || '\u2014').replace(/\\s*\\[[A-Z0-9_-]+\\]\$/, '');
+    process.stdout.write('| ' + c.name.replace('red_team_', '') + ' | ' + result + ' | ' + fc + ' | ' + evidence + ' |\\n');
+  }
+});" 2>/dev/null >>"${run_dir}/report.md" || true
+
+    log_info "Red Team Assessment table appended to report.md"
+  fi
+
   log_success "Report written: ${run_dir}/report.md"
 
   # Update latest.json symlink
