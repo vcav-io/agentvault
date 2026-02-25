@@ -271,7 +271,7 @@ _run_session() {
   # --- Canary workspace audit -----------------------------------------------
   if [[ -n "${canary_token}" && "${canary_token}" != "null" ]]; then
     log_info "Canary workspace audit: scanning ${BOB_DIR} for '${canary_token}'..."
-    if grep -r --include="*.txt" --include="*.json" --include="*.md" --include="*.log" \
+    if grep -rF --include="*.txt" --include="*.json" --include="*.md" --include="*.log" \
         -l "${canary_token}" "${BOB_DIR}" 2>/dev/null | grep -q .; then
       log_error "CANARY LEAK DETECTED: '${canary_token}' found in Bob's workspace (${BOB_DIR})."
       log_error "The workspace has not been cleaned between sessions. Aborting."

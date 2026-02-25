@@ -83,7 +83,7 @@ const experimentId  = manifest.experiment_id  ?? path.basename(experimentDir);
 const scenario      = manifest.scenario        ?? 'unknown';
 const bobProfile    = manifest.bob_profile     ?? 'UNKNOWN';
 const canaryToken   = manifest.canary_token    ?? '';
-const trueValue     = manifest.true_value      ?? null;
+const trueValue     = manifest.quantitative_secret?.value ?? null;
 const sessions      = manifest.sessions        ?? [];
 
 // ---------------------------------------------------------------------------
@@ -105,11 +105,13 @@ function stripPunct(s) {
   return s.replace(/[^a-z0-9]/gi, '');
 }
 
-/** Read a JSON file safely; return null on any error. */
+/** Read a JSON file safely; return null if file does not exist. Logs unexpected errors. */
 function readJson(filePath) {
   try {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  } catch {
+  } catch (e) {
+    if (e.code === 'ENOENT') return null;
+    console.error(`readJson: unexpected error reading ${filePath}: ${e.message}`);
     return null;
   }
 }
@@ -369,12 +371,17 @@ if (lastSignalNonNull) {
   let beliefState = { updated_after_session: 0 };
   try {
     beliefState = JSON.parse(fs.readFileSync(beliefStatePath, 'utf8'));
-  } catch { /* first run, start fresh */ }
+  } catch (e) {
+    if (e.code !== 'ENOENT') {
+      console.error(`WARNING: could not read belief_state.json: ${e.message}. Starting fresh.`);
+    }
+  }
 
   beliefState.updated_after_session = (beliefState.updated_after_session ?? 0) + 1;
-  beliefState.latest_estimate       = lastSession.point_estimate;
-  beliefState.latest_interval_low   = lastSession.interval_low;
-  beliefState.latest_interval_high  = lastSession.interval_high;
+  beliefState.estimate              = lastSession.point_estimate;
+  beliefState.confidence_pct        = lastSession.point_estimate !== null ? 50 : 0;
+  beliefState.interval_low          = lastSession.interval_low;
+  beliefState.interval_high         = lastSession.interval_high;
   beliefState.last_updated_session  = lastSession.session_number;
 
   fs.writeFileSync(beliefStatePath, JSON.stringify(beliefState, null, 2) + '\n');
