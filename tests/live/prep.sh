@@ -150,6 +150,13 @@ setup_cleanup_trap
 # Start the stack
 # ---------------------------------------------------------------------------
 
+# Generate relay signing key if not already set
+if [[ -z "${VCAV_SIGNING_KEY_HEX:-}" ]]; then
+  export VCAV_SIGNING_KEY_HEX
+  VCAV_SIGNING_KEY_HEX="$(openssl rand -hex 32)"
+  log_info "Generated relay signing key"
+fi
+
 log_info "Starting infrastructure stack..."
 start_stack "${RUN_DIR}"
 

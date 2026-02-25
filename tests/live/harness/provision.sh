@@ -23,7 +23,8 @@ source "${HARNESS_DIR}/lib.sh"
 # ---------------------------------------------------------------------------
 
 _generate_keypair() {
-  node --input-type=module <<'EOF'
+  # Run from MCP server dir so @noble/curves resolves from its node_modules
+  (cd "${REPO_ROOT}/packages/agentvault-mcp-server" && node --input-type=module <<'EOF'
 import { ed25519 } from '@noble/curves/ed25519';
 import { bytesToHex } from '@noble/hashes/utils';
 import crypto from 'node:crypto';
@@ -32,6 +33,7 @@ const seed = crypto.randomBytes(32);
 const pubkey = ed25519.getPublicKey(seed);
 process.stdout.write(bytesToHex(seed) + ' ' + bytesToHex(pubkey) + '\n');
 EOF
+  )
 }
 
 # ---------------------------------------------------------------------------
