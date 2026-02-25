@@ -386,7 +386,8 @@ function hashInput(input: string): string {
   return createHash('sha256').update(input).digest('hex');
 }
 
-/** Check whether an error from sendPropose is a network-level failure worth retrying. */
+/** Check whether an error from sendPropose is a network-level failure worth retrying.
+ *  Must stay aligned with mapRelayError's transient-error detection. */
 function isRetryableTransportError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const msg = err.message;
@@ -394,7 +395,9 @@ function isRetryableTransportError(err: unknown): boolean {
     msg.includes('fetch failed') ||
     msg.includes('ECONNREFUSED') ||
     msg.includes('ECONNRESET') ||
-    msg.includes('ETIMEDOUT')
+    msg.includes('ETIMEDOUT') ||
+    msg.includes('abort') ||
+    msg.includes('Relay HTTP 5')
   );
 }
 
@@ -1083,7 +1086,9 @@ export async function handleRelaySignal(
       fs.mkdirSync(debugDir, { recursive: true });
       const entry = `[${new Date().toISOString()}] error_code=${code} detail=${detail} raw=${error instanceof Error ? error.stack ?? error.message : String(error)}\n`;
       fs.appendFileSync(path.join(debugDir, 'relay-debug.log'), entry, 'utf8');
-    } catch { /* non-fatal */ }
+    } catch (logErr) {
+      console.error(`handleRelaySignal: failed to write diagnostic log: ${logErr instanceof Error ? logErr.message : String(logErr)}`);
+    }
     return buildError(code, detail);
   }
 }

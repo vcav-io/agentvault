@@ -145,44 +145,9 @@ export class DirectAfalTransport implements AfalTransport {
     if (this.httpServer) await this.httpServer.stop();
   }
 
+  // No transport-level retries — the relay_signal FSM handles retries via
+  // PROPOSE_RETRY phase with CALL_AGAIN cycling (up to 120s overall timeout).
   async sendPropose(params: {
-    propose: AfalPropose;
-    relay: RelayInvitePayload;
-    templateId: string;
-    budgetTier: string;
-  }): Promise<void> {
-    // Quick retries for sub-second startup races. The relay_signal FSM handles
-    // longer waits via CALL_AGAIN cycling (up to 120s overall timeout).
-    const maxAttempts = 3;
-    const baseDelayMs = 1500;
-    let lastError: Error | null = null;
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        return await this._sendProposeOnce(params);
-      } catch (err) {
-        lastError = err instanceof Error ? err : new Error(String(err));
-        const isRetryable =
-          lastError.message.includes('fetch failed') ||
-          lastError.message.includes('ECONNREFUSED') ||
-          lastError.message.includes('ECONNRESET') ||
-          lastError.message.includes('ETIMEDOUT');
-        if (!isRetryable || attempt === maxAttempts) {
-          throw lastError;
-        }
-        const delay = baseDelayMs * Math.pow(1.5, attempt - 1);
-        console.error(
-          `sendPropose: peer unreachable (attempt ${attempt}/${maxAttempts}), retrying in ${Math.round(delay / 1000)}s...`,
-        );
-        await new Promise((resolve) => setTimeout(resolve, delay));
-        // Clear cached descriptor so we re-fetch
-        this.peerDescriptor = null;
-      }
-    }
-    throw lastError!;
-  }
-
-  private async _sendProposeOnce(params: {
     propose: AfalPropose;
     relay: RelayInvitePayload;
     templateId: string;
