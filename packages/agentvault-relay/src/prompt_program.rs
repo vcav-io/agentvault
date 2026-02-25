@@ -56,15 +56,13 @@ impl PromptProgram {
                     purpose = contract.purpose_code,
                     schema_id = contract.output_schema_id,
                     role_a = input_a.role,
-                    context_a = serde_json::to_string_pretty(&input_a.context)
-                        .map_err(|e| RelayError::PromptProgram(format!(
-                            "failed to serialize input_a: {e}"
-                        )))?,
+                    context_a = serde_json::to_string_pretty(&input_a.context).map_err(|e| {
+                        RelayError::PromptProgram(format!("failed to serialize input_a: {e}"))
+                    })?,
                     role_b = input_b.role,
-                    context_b = serde_json::to_string_pretty(&input_b.context)
-                        .map_err(|e| RelayError::PromptProgram(format!(
-                            "failed to serialize input_b: {e}"
-                        )))?,
+                    context_b = serde_json::to_string_pretty(&input_b.context).map_err(|e| {
+                        RelayError::PromptProgram(format!("failed to serialize input_b: {e}"))
+                    })?,
                 )
             }
             InputFormat::Narrative => {
@@ -76,15 +74,13 @@ impl PromptProgram {
                      No explanation, no markdown, no code fences.",
                     purpose = contract.purpose_code,
                     role_a = input_a.role,
-                    context_a = serde_json::to_string_pretty(&input_a.context)
-                        .map_err(|e| RelayError::PromptProgram(format!(
-                            "failed to serialize input_a: {e}"
-                        )))?,
+                    context_a = serde_json::to_string_pretty(&input_a.context).map_err(|e| {
+                        RelayError::PromptProgram(format!("failed to serialize input_a: {e}"))
+                    })?,
                     role_b = input_b.role,
-                    context_b = serde_json::to_string_pretty(&input_b.context)
-                        .map_err(|e| RelayError::PromptProgram(format!(
-                            "failed to serialize input_b: {e}"
-                        )))?,
+                    context_b = serde_json::to_string_pretty(&input_b.context).map_err(|e| {
+                        RelayError::PromptProgram(format!("failed to serialize input_b: {e}"))
+                    })?,
                 )
             }
         };
@@ -99,8 +95,9 @@ impl PromptProgram {
 impl ModelProfile {
     /// Compute the content-addressed hash of this model profile (SHA-256 of canonical JSON).
     pub fn content_hash(&self) -> Result<String, RelayError> {
-        let canonical = receipt_core::canonicalize_serializable(self)
-            .map_err(|e| RelayError::PromptProgram(format!("model profile canonicalization failed: {e}")))?;
+        let canonical = receipt_core::canonicalize_serializable(self).map_err(|e| {
+            RelayError::PromptProgram(format!("model profile canonicalization failed: {e}"))
+        })?;
         let mut hasher = Sha256::new();
         hasher.update(canonical.as_bytes());
         Ok(hex::encode(hasher.finalize()))
@@ -120,9 +117,7 @@ pub fn load_model_profile(dir: &str, profile_id: &str) -> Result<ModelProfile, R
     let path = std::path::Path::new(dir).join(format!("{profile_id}.json"));
     let data = std::fs::read_to_string(&path).map_err(|e| {
         tracing::debug!(path = %path.display(), error = %e, "model profile load failed");
-        RelayError::PromptProgram(format!(
-            "model profile not found for id: {profile_id}"
-        ))
+        RelayError::PromptProgram(format!("model profile not found for id: {profile_id}"))
     })?;
 
     let profile: ModelProfile = serde_json::from_str(&data)

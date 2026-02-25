@@ -181,7 +181,8 @@ impl SessionStore {
     /// Reap expired sessions. Returns number of sessions removed.
     pub async fn reap_expired(&self) -> usize {
         let now = Utc::now();
-        let ttl_chrono = chrono::Duration::from_std(self.ttl).unwrap_or(chrono::Duration::seconds(600));
+        let ttl_chrono =
+            chrono::Duration::from_std(self.ttl).unwrap_or(chrono::Duration::seconds(600));
         let mut store = self.inner.lock().await;
         let before = store.len();
         store.retain(|_, session| {
@@ -263,11 +264,15 @@ mod tests {
             .await;
 
         assert_eq!(
-            store.validate_token(&session_id, &tokens.initiator_submit).await,
+            store
+                .validate_token(&session_id, &tokens.initiator_submit)
+                .await,
             Some(TokenRole::InitiatorSubmit)
         );
         assert_eq!(
-            store.validate_token(&session_id, &tokens.responder_read).await,
+            store
+                .validate_token(&session_id, &tokens.responder_read)
+                .await,
             Some(TokenRole::ResponderRead)
         );
         assert_eq!(
@@ -276,7 +281,9 @@ mod tests {
         );
         // Unknown session returns None (constant-shape)
         assert_eq!(
-            store.validate_token("unknown-session", &tokens.initiator_submit).await,
+            store
+                .validate_token("unknown-session", &tokens.initiator_submit)
+                .await,
             None
         );
     }

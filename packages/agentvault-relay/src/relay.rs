@@ -1,14 +1,13 @@
-use chrono::Utc;
 use crate::entropy::calculate_schema_entropy_upper_bound;
-use vault_family_types::{generate_pair_id, BudgetTier};
-use receipt_core::{
-    BudgetUsageRecord, ExecutionLane, Receipt, ReceiptStatus, SignalClass,
-};
+use chrono::Utc;
+use receipt_core::{BudgetUsageRecord, ExecutionLane, Receipt, ReceiptStatus, SignalClass};
 use sha2::{Digest, Sha256};
+use vault_family_types::{generate_pair_id, BudgetTier};
 
 use crate::error::RelayError;
 use crate::prompt_program::{load_model_profile, load_prompt_program};
 use crate::provider::anthropic::AnthropicProvider;
+use crate::provider::openai::OpenAIProvider;
 use crate::provider::ProviderRequest;
 use crate::session::AbortReason;
 use crate::types::{Contract, RelayInput, RelayRequest, RelayResponse};
@@ -61,45 +60,56 @@ pub async fn relay_core(
 ) -> Result<RelayResult, RelayError> {
     let session_start = Utc::now();
 
-    // 1. Validate provider selection
-    if provider_name != "anthropic" {
-        return Err(RelayError::ContractValidation(format!(
-            "unsupported provider: {provider_name}"
-        )));
-    }
-
-    // 2. Validate contract has exactly 2 participants
+    // 1. Validate contract has exactly 2 participants
     if contract.participants.len() != 2 {
         return Err(RelayError::ContractValidation(
             "contract must have exactly 2 participants".to_string(),
         ));
     }
 
-    // 3. Compute contract hash
+    // 2. Compute contract hash
     let contract_hash = compute_contract_hash(contract)?;
 
-    // 4. Load and validate prompt program
-    let program =
-        load_prompt_program(&state.prompt_program_dir, &contract.prompt_template_hash)?;
+    // 3. Load and validate prompt program
+    let program = load_prompt_program(&state.prompt_program_dir, &contract.prompt_template_hash)?;
 
-    // 5. Assemble provider request
+    // 4. Assemble provider request
     let assembled = program.assemble(contract, input_a, input_b)?;
 
-    // 6. Call provider
-    let provider = AnthropicProvider::new(
-        state.anthropic_api_key.clone(),
-        state.anthropic_model_id.clone(),
-        state.anthropic_base_url.clone(),
-    )?;
+    let provider_request = ProviderRequest {
+        system: assembled.system,
+        user_message: assembled.user_message,
+        output_schema: Some(contract.output_schema.clone()),
+        max_tokens: MAX_TOKENS,
+    };
 
-    let provider_response = provider
-        .call(ProviderRequest {
-            system: assembled.system,
-            user_message: assembled.user_message,
-            output_schema: Some(contract.output_schema.clone()),
-            max_tokens: MAX_TOKENS,
-        })
-        .await?;
+    // 5. Call provider
+    let provider_response = match provider_name {
+        "anthropic" => {
+            let provider = AnthropicProvider::new(
+                state.anthropic_api_key.clone(),
+                state.anthropic_model_id.clone(),
+                state.anthropic_base_url.clone(),
+            )?;
+            provider.call(provider_request).await?
+        }
+        "openai" => {
+            let api_key = state.openai_api_key.clone().ok_or_else(|| {
+                RelayError::ContractValidation("OpenAI API key not configured".to_string())
+            })?;
+            let provider = OpenAIProvider::new(
+                api_key,
+                state.openai_model_id.clone(),
+                state.openai_base_url.clone(),
+            )?;
+            provider.call(provider_request).await?
+        }
+        _ => {
+            return Err(RelayError::ContractValidation(format!(
+                "unsupported provider: {provider_name}"
+            )));
+        }
+    };
 
     // 7. Parse output
     let output: serde_json::Value = serde_json::from_str(&provider_response.text)
@@ -132,10 +142,7 @@ pub async fn relay_core(
     let session_id = hex::encode(Sha256::digest(uuid::Uuid::new_v4().as_bytes()));
 
     // 11. Build budget usage record
-    let pair_id = generate_pair_id(
-        &contract.participants[0],
-        &contract.participants[1],
-    );
+    let pair_id = generate_pair_id(&contract.participants[0], &contract.participants[1]);
 
     let budget_usage = BudgetUsageRecord {
         pair_id,
@@ -188,7 +195,7 @@ pub async fn relay_core(
         .contract_timing_class(contract.timing_class.clone())
         .model_profile_hash(model_profile_hash)
         .model_identity(Some(receipt_core::ModelIdentity {
-            provider: "anthropic".to_string(),
+            provider: provider_name.to_string(),
             model_id: provider_response.model_id,
             model_version: None,
         }))
@@ -265,8 +272,8 @@ mod tests {
 
     #[test]
     fn test_model_profile_hash_deterministic() {
-        use crate::types::ModelProfile;
         use crate::prompt_program::load_model_profile;
+        use crate::types::ModelProfile;
 
         let dir = std::env::temp_dir().join("vcav-e-relay-test-profile-hash");
         std::fs::create_dir_all(&dir).unwrap();
@@ -295,10 +302,10 @@ mod tests {
     #[test]
     fn test_model_profile_bound_in_receipt() {
         use crate::types::ModelProfile;
-        use receipt_core::{BudgetUsageRecord, ExecutionLane, Receipt, ReceiptStatus};
-        use vault_family_types::BudgetTier;
         use chrono::Utc;
+        use receipt_core::{BudgetUsageRecord, ExecutionLane, Receipt, ReceiptStatus};
         use sha2::{Digest, Sha256};
+        use vault_family_types::BudgetTier;
 
         let profile = ModelProfile {
             profile_version: "1".to_string(),
@@ -442,6 +449,9 @@ mod tests {
             "model_profile_id": "api-claude-sonnet-v1"
         });
         let contract_with_profile: Contract = serde_json::from_value(json_with_profile).unwrap();
-        assert_eq!(contract_with_profile.model_profile_id, Some("api-claude-sonnet-v1".to_string()));
+        assert_eq!(
+            contract_with_profile.model_profile_id,
+            Some("api-claude-sonnet-v1".to_string())
+        );
     }
 }

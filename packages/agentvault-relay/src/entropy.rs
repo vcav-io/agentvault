@@ -221,20 +221,24 @@ mod tests {
 
     #[test]
     fn const_is_zero_bits() {
-        let schema: Value = serde_json::from_str(r#"{
+        let schema: Value = serde_json::from_str(
+            r#"{
             "type": "object",
             "properties": { "version": { "const": "V1" } }
-        }"#)
+        }"#,
+        )
         .unwrap();
         assert_eq!(calculate_schema_entropy_upper_bound(&schema).unwrap(), 0);
     }
 
     #[test]
     fn empty_enum_errors() {
-        let schema: Value = serde_json::from_str(r#"{
+        let schema: Value = serde_json::from_str(
+            r#"{
             "type": "object",
             "properties": { "status": { "type": "string", "enum": [] } }
-        }"#)
+        }"#,
+        )
         .unwrap();
         assert!(matches!(
             calculate_schema_entropy_upper_bound(&schema),
@@ -244,12 +248,14 @@ mod tests {
 
     #[test]
     fn unsupported_composition_requires_metadata() {
-        let schema: Value = serde_json::from_str(r#"{
+        let schema: Value = serde_json::from_str(
+            r#"{
             "type": "object",
             "properties": {
                 "decision": { "oneOf": [{ "const": "A" }, { "const": "B" }] }
             }
-        }"#)
+        }"#,
+        )
         .unwrap();
         assert!(matches!(
             calculate_schema_entropy_upper_bound(&schema),
@@ -259,7 +265,8 @@ mod tests {
 
     #[test]
     fn explicit_metadata_overrides() {
-        let schema: Value = serde_json::from_str(r#"{
+        let schema: Value = serde_json::from_str(
+            r#"{
             "type": "object",
             "properties": {
                 "decision": {
@@ -267,17 +274,20 @@ mod tests {
                     "x-vcav-entropy-bits-upper-bound": 1
                 }
             }
-        }"#)
+        }"#,
+        )
         .unwrap();
         assert_eq!(calculate_schema_entropy_upper_bound(&schema).unwrap(), 1);
     }
 
     #[test]
     fn unresolvable_ref_errors() {
-        let schema: Value = serde_json::from_str(r##"{
+        let schema: Value = serde_json::from_str(
+            r##"{
             "type": "object",
             "properties": { "x": { "$ref": "#/$defs/missing" } }
-        }"##)
+        }"##,
+        )
         .unwrap();
         assert!(matches!(
             calculate_schema_entropy_upper_bound(&schema),

@@ -31,6 +31,9 @@ fn test_app_state(mock_base_url: &str, prompt_dir: &str) -> AppState {
         anthropic_api_key: "test-key".to_string(),
         anthropic_model_id: "test-model".to_string(),
         anthropic_base_url: Some(mock_base_url.to_string()),
+        openai_api_key: None,
+        openai_model_id: "gpt-4o".to_string(),
+        openai_base_url: None,
         prompt_program_dir: prompt_dir.to_string(),
         session_store: SessionStore::new(Duration::from_secs(600)),
     }
@@ -85,13 +88,13 @@ fn setup_prompt_program(test_name: &str) -> (String, String) {
 
 #[test]
 fn test_receipt_construction_and_signature_verification() {
-    use chrono::Utc;
     use agentvault_relay::entropy::calculate_schema_entropy_upper_bound;
-    use vault_family_types::{generate_pair_id, BudgetTier, Purpose};
+    use chrono::Utc;
     use receipt_core::{
         BudgetUsageRecord, ExecutionLane, ModelIdentity, Receipt, ReceiptStatus, SignalClass,
     };
     use sha2::{Digest, Sha256};
+    use vault_family_types::{generate_pair_id, BudgetTier, Purpose};
 
     let signing_key = test_signing_key();
     let verifying_key = signing_key.verifying_key();
@@ -178,9 +181,9 @@ fn test_receipt_construction_and_signature_verification() {
 #[test]
 fn test_receipt_execution_lane_is_api_mediated() {
     use chrono::Utc;
-    use vault_family_types::{BudgetTier, Purpose};
     use receipt_core::{BudgetUsageRecord, ExecutionLane, Receipt, ReceiptStatus};
     use sha2::{Digest, Sha256};
+    use vault_family_types::{BudgetTier, Purpose};
 
     let relay_hash = hex::encode(Sha256::digest(b"vcav-e-relay-v0.1.0"));
     let now = Utc::now();
@@ -321,11 +324,9 @@ fn test_contract_hash_binding() {
 #[test]
 fn test_receipt_roundtrip_serialization() {
     use chrono::Utc;
-    use vault_family_types::{BudgetTier, Purpose};
-    use receipt_core::{
-        BudgetUsageRecord, ExecutionLane, Receipt, ReceiptStatus, SignalClass,
-    };
+    use receipt_core::{BudgetUsageRecord, ExecutionLane, Receipt, ReceiptStatus, SignalClass};
     use sha2::{Digest, Sha256};
+    use vault_family_types::{BudgetTier, Purpose};
 
     let signing_key = test_signing_key();
     let relay_hash = hex::encode(Sha256::digest(b"vcav-e-relay-v0.1.0"));
@@ -573,8 +574,7 @@ async fn test_relay_endpoint_end_to_end() {
 
     // 10. Verify receipt signature using verifier
     //     Deserialize as UnsignedReceipt (ignores the signature field)
-    let unsigned: receipt_core::UnsignedReceipt =
-        serde_json::from_value(receipt.clone()).unwrap();
+    let unsigned: receipt_core::UnsignedReceipt = serde_json::from_value(receipt.clone()).unwrap();
     receipt_core::verify_receipt(&unsigned, receipt_sig, &verifying_key)
         .expect("receipt signature must verify");
 
@@ -675,11 +675,15 @@ async fn test_create_session_returns_tokens_and_contract_hash() {
     }
 
     // All tokens are unique
-    let tokens: Vec<&str> = ["initiator_submit_token", "initiator_read_token",
-        "responder_submit_token", "responder_read_token"]
-        .iter()
-        .map(|k| json[k].as_str().unwrap())
-        .collect();
+    let tokens: Vec<&str> = [
+        "initiator_submit_token",
+        "initiator_read_token",
+        "responder_submit_token",
+        "responder_read_token",
+    ]
+    .iter()
+    .map(|k| json[k].as_str().unwrap())
+    .collect();
     for (i, a) in tokens.iter().enumerate() {
         for (j, b) in tokens.iter().enumerate() {
             if i != j {
@@ -752,7 +756,10 @@ async fn test_session_status_with_valid_token() {
         .oneshot(
             Request::builder()
                 .uri(format!("/sessions/{session_id}/status"))
-                .header("authorization", format!("Bearer {}", tokens.initiator_submit))
+                .header(
+                    "authorization",
+                    format!("Bearer {}", tokens.initiator_submit),
+                )
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -803,7 +810,10 @@ async fn test_submit_input_transitions_to_partial() {
                 .method("POST")
                 .uri(format!("/sessions/{session_id}/input"))
                 .header("content-type", "application/json")
-                .header("authorization", format!("Bearer {}", tokens.initiator_submit))
+                .header(
+                    "authorization",
+                    format!("Bearer {}", tokens.initiator_submit),
+                )
                 .body(Body::from(serde_json::to_vec(&input_request).unwrap()))
                 .unwrap(),
         )
@@ -874,6 +884,9 @@ async fn test_submit_token_is_one_time_use() {
         anthropic_api_key: "test-key".to_string(),
         anthropic_model_id: "test-model".to_string(),
         anthropic_base_url: Some("http://unused".to_string()),
+        openai_api_key: None,
+        openai_model_id: "gpt-4o".to_string(),
+        openai_base_url: None,
         prompt_program_dir: "/tmp".to_string(),
         session_store: state.session_store.clone(),
     }));
@@ -884,7 +897,10 @@ async fn test_submit_token_is_one_time_use() {
                 .method("POST")
                 .uri(format!("/sessions/{session_id}/input"))
                 .header("content-type", "application/json")
-                .header("authorization", format!("Bearer {}", tokens.initiator_submit))
+                .header(
+                    "authorization",
+                    format!("Bearer {}", tokens.initiator_submit),
+                )
                 .body(Body::from(serde_json::to_vec(&input_request).unwrap()))
                 .unwrap(),
         )
@@ -922,7 +938,10 @@ async fn test_output_requires_read_token() {
         .oneshot(
             Request::builder()
                 .uri(format!("/sessions/{session_id}/output"))
-                .header("authorization", format!("Bearer {}", tokens.initiator_submit))
+                .header(
+                    "authorization",
+                    format!("Bearer {}", tokens.initiator_submit),
+                )
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1039,6 +1058,9 @@ async fn test_bilateral_session_e2e_with_mock() {
         anthropic_api_key: "test-key".to_string(),
         anthropic_model_id: "test-model".to_string(),
         anthropic_base_url: Some(mock_base_url.clone()),
+        openai_api_key: None,
+        openai_model_id: "gpt-4o".to_string(),
+        openai_base_url: None,
         prompt_program_dir: prompt_dir.clone(),
         session_store: state.session_store.clone(),
     }));
@@ -1049,7 +1071,10 @@ async fn test_bilateral_session_e2e_with_mock() {
                 .method("POST")
                 .uri(format!("/sessions/{session_id}/input"))
                 .header("content-type", "application/json")
-                .header("authorization", format!("Bearer {}", tokens.initiator_submit))
+                .header(
+                    "authorization",
+                    format!("Bearer {}", tokens.initiator_submit),
+                )
                 .body(Body::from(
                     serde_json::to_vec(&serde_json::json!({
                         "role": "alice",
@@ -1075,6 +1100,9 @@ async fn test_bilateral_session_e2e_with_mock() {
         anthropic_api_key: "test-key".to_string(),
         anthropic_model_id: "test-model".to_string(),
         anthropic_base_url: Some(mock_base_url.clone()),
+        openai_api_key: None,
+        openai_model_id: "gpt-4o".to_string(),
+        openai_base_url: None,
         prompt_program_dir: prompt_dir.clone(),
         session_store: state.session_store.clone(),
     }));
@@ -1085,7 +1113,10 @@ async fn test_bilateral_session_e2e_with_mock() {
                 .method("POST")
                 .uri(format!("/sessions/{session_id}/input"))
                 .header("content-type", "application/json")
-                .header("authorization", format!("Bearer {}", tokens.responder_submit))
+                .header(
+                    "authorization",
+                    format!("Bearer {}", tokens.responder_submit),
+                )
                 .body(Body::from(
                     serde_json::to_vec(&serde_json::json!({
                         "role": "bob",
@@ -1125,6 +1156,9 @@ async fn test_bilateral_session_e2e_with_mock() {
         anthropic_api_key: "test-key".to_string(),
         anthropic_model_id: "test-model".to_string(),
         anthropic_base_url: Some(mock_base_url),
+        openai_api_key: None,
+        openai_model_id: "gpt-4o".to_string(),
+        openai_base_url: None,
         prompt_program_dir: prompt_dir.clone(),
         session_store: state.session_store.clone(),
     }));
@@ -1160,8 +1194,7 @@ async fn test_bilateral_session_e2e_with_mock() {
     let receipt_sig = json["receipt_signature"].as_str().unwrap();
     assert_eq!(receipt_sig.len(), 128);
 
-    let unsigned: receipt_core::UnsignedReceipt =
-        serde_json::from_value(receipt.clone()).unwrap();
+    let unsigned: receipt_core::UnsignedReceipt = serde_json::from_value(receipt.clone()).unwrap();
     receipt_core::verify_receipt(&unsigned, receipt_sig, &verifying_key)
         .expect("bilateral session receipt must verify");
 
@@ -1198,6 +1231,9 @@ async fn test_submit_with_correct_contract_hash_succeeds() {
         anthropic_api_key: "test-key".to_string(),
         anthropic_model_id: "test-model".to_string(),
         anthropic_base_url: Some("http://unused".to_string()),
+        openai_api_key: None,
+        openai_model_id: "gpt-4o".to_string(),
+        openai_base_url: None,
         prompt_program_dir: "/tmp".to_string(),
         session_store: state.session_store.clone(),
     }));
@@ -1214,7 +1250,10 @@ async fn test_submit_with_correct_contract_hash_succeeds() {
                 .method("POST")
                 .uri(format!("/sessions/{session_id}/input"))
                 .header("content-type", "application/json")
-                .header("authorization", format!("Bearer {}", tokens.initiator_submit))
+                .header(
+                    "authorization",
+                    format!("Bearer {}", tokens.initiator_submit),
+                )
                 .body(Body::from(serde_json::to_vec(&input_request).unwrap()))
                 .unwrap(),
         )
@@ -1249,6 +1288,9 @@ async fn test_submit_with_wrong_contract_hash_rejected() {
         anthropic_api_key: "test-key".to_string(),
         anthropic_model_id: "test-model".to_string(),
         anthropic_base_url: Some("http://unused".to_string()),
+        openai_api_key: None,
+        openai_model_id: "gpt-4o".to_string(),
+        openai_base_url: None,
         prompt_program_dir: "/tmp".to_string(),
         session_store: state.session_store.clone(),
     }));
@@ -1265,7 +1307,10 @@ async fn test_submit_with_wrong_contract_hash_rejected() {
                 .method("POST")
                 .uri(format!("/sessions/{session_id}/input"))
                 .header("content-type", "application/json")
-                .header("authorization", format!("Bearer {}", tokens.responder_submit))
+                .header(
+                    "authorization",
+                    format!("Bearer {}", tokens.responder_submit),
+                )
                 .body(Body::from(serde_json::to_vec(&input_request).unwrap()))
                 .unwrap(),
         )
@@ -1301,6 +1346,9 @@ async fn test_submit_without_contract_hash_still_works() {
         anthropic_api_key: "test-key".to_string(),
         anthropic_model_id: "test-model".to_string(),
         anthropic_base_url: Some("http://unused".to_string()),
+        openai_api_key: None,
+        openai_model_id: "gpt-4o".to_string(),
+        openai_base_url: None,
         prompt_program_dir: "/tmp".to_string(),
         session_store: state.session_store.clone(),
     }));
@@ -1317,7 +1365,10 @@ async fn test_submit_without_contract_hash_still_works() {
                 .method("POST")
                 .uri(format!("/sessions/{session_id}/input"))
                 .header("content-type", "application/json")
-                .header("authorization", format!("Bearer {}", tokens.initiator_submit))
+                .header(
+                    "authorization",
+                    format!("Bearer {}", tokens.initiator_submit),
+                )
                 .body(Body::from(serde_json::to_vec(&input_request).unwrap()))
                 .unwrap(),
         )
