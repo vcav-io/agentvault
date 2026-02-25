@@ -57,6 +57,12 @@ if [[ -z "${SCENARIO}" ]]; then
   exit 1
 fi
 
+# Auto-generate experiment ID for multi-session runs
+if [[ "${NUM_SESSIONS}" -gt 1 && -z "${EXPERIMENT_ID}" ]]; then
+  EXPERIMENT_ID="exp-$(date -u '+%Y%m%d-%H%M%S')"
+  log_info "Auto-generated experiment ID: ${EXPERIMENT_ID}"
+fi
+
 require_cmd curl
 require_cmd jq
 require_cmd node
@@ -80,6 +86,7 @@ validate_scenario() {
 
   PURPOSE="$(jq -r '.purpose' "${SCENARIO_DIR}/criteria.json")"
   CANARY_TOKEN="$(jq -r '.red_team_checks.canary_token // empty' "${SCENARIO_DIR}/criteria.json")"
+  BOB_PROFILE="$(jq -r '.bob_profile // "UNKNOWN"' "${SCENARIO_DIR}/criteria.json")"
   DESIRED_PURPOSE="${PURPOSE}"
 
   log_info "Scenario: ${SCENARIO}  |  Purpose: ${PURPOSE}  |  Sessions: ${NUM_SESSIONS}"
@@ -400,12 +407,15 @@ run_session() {
   local verify_exit=0
   "${SCRIPT_DIR}/verify.sh" "${run_id}" --session "${session_id}" --read-token "${init_read_token}" || verify_exit=$?
 
-  # --- Append to runs.jsonl (if experiment) ---
+  # --- Update experiment manifest and runs.jsonl ---
   if [[ -n "${EXPERIMENT_ID}" ]]; then
     local exp_dir="${RESULTS_BASE}/experiments/${EXPERIMENT_ID}"
     mkdir -p "${exp_dir}"
+
     local run_status="pass"
     [[ ${verify_exit} -ne 0 ]] && run_status="fail"
+
+    # Append to runs.jsonl
     jq -n -c \
       --arg session_num "${session_num}" \
       --arg run_id "${run_id}" \
@@ -415,6 +425,31 @@ run_session() {
       --arg provider "${PROVIDER}" \
       '{session_num: ($session_num | tonumber), run_id: $run_id, status: $status, duration_s: ($duration_s | tonumber), contract_hash: $contract_hash, provider: $provider}' \
       >> "${exp_dir}/runs.jsonl"
+
+    # Append session entry to manifest.json
+    local session_entry
+    session_entry="$(jq -n \
+      --arg session_number "${session_num}" \
+      --arg session_id "${session_id}" \
+      --arg run_dir "${run_dir}" \
+      --arg run_id "${run_id}" \
+      --arg bob_profile "${BOB_PROFILE}" \
+      --arg session_start_ts "${t_start}" \
+      --arg session_end_ts "${t_end}" \
+      --arg status "${run_status}" \
+      '{
+        session_number: ($session_number | tonumber),
+        session_id: $session_id,
+        run_dir: $run_dir,
+        run_id: $run_id,
+        bob_profile: $bob_profile,
+        session_start_ts: $session_start_ts,
+        session_end_ts: $session_end_ts,
+        status: $status
+      }')"
+    local manifest="${exp_dir}/manifest.json"
+    jq --argjson entry "${session_entry}" '.sessions += [$entry]' "${manifest}" > "${manifest}.tmp" \
+      && mv "${manifest}.tmp" "${manifest}"
   fi
 
   return ${verify_exit}
@@ -428,6 +463,60 @@ validate_scenario
 canary_hygiene_check
 start_relay
 build_contract
+
+# ---------------------------------------------------------------------------
+# Write experiment manifest (before session loop)
+# ---------------------------------------------------------------------------
+
+if [[ -n "${EXPERIMENT_ID}" ]]; then
+  EXP_DIR="${RESULTS_BASE}/experiments/${EXPERIMENT_ID}"
+  mkdir -p "${EXP_DIR}"
+
+  GIT_SHA="$(git -C "${REPO_ROOT}" rev-parse --short HEAD 2>/dev/null || echo "unknown")"
+  EXP_START_TS="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+
+  # Read full criteria.json for embedding in manifest
+  CRITERIA_JSON="$(cat "${SCENARIO_DIR}/criteria.json")"
+
+  jq -n \
+    --arg experiment_id "${EXPERIMENT_ID}" \
+    --arg scenario "${SCENARIO}" \
+    --arg purpose "${PURPOSE}" \
+    --arg bob_profile "${BOB_PROFILE}" \
+    --arg canary_token "${CANARY_TOKEN}" \
+    --argjson quantitative_secret "$(jq '.quantitative_secret // null' "${SCENARIO_DIR}/criteria.json")" \
+    --arg desired_contract "${CONTRACT_HASH}" \
+    --arg contract_hash "${CONTRACT_HASH}" \
+    --arg prompt_template_hash "${PROMPT_TEMPLATE_HASH}" \
+    --arg provider "${PROVIDER}" \
+    --arg total_sessions "${NUM_SESSIONS}" \
+    --arg seed "${SEED}" \
+    --arg git_sha "${GIT_SHA}" \
+    --arg started_at "${EXP_START_TS}" \
+    --arg relay_url "${RELAY_URL}" \
+    --argjson criteria "${CRITERIA_JSON}" \
+    '{
+      experiment_id: $experiment_id,
+      scenario: $scenario,
+      purpose: $purpose,
+      bob_profile: $bob_profile,
+      canary_token: $canary_token,
+      quantitative_secret: $quantitative_secret,
+      desired_contract: $desired_contract,
+      contract_hash: $contract_hash,
+      prompt_template_hash: $prompt_template_hash,
+      provider: $provider,
+      total_sessions: ($total_sessions | tonumber),
+      seed: (if $seed == "" then null else $seed end),
+      git_sha: $git_sha,
+      started_at: $started_at,
+      relay_url: $relay_url,
+      criteria: $criteria,
+      sessions: []
+    }' > "${EXP_DIR}/manifest.json"
+
+  log_info "Experiment manifest: ${EXP_DIR}/manifest.json"
+fi
 
 echo ""
 echo "==========================================================="
@@ -458,12 +547,10 @@ for (( i=1; i<=NUM_SESSIONS; i++ )); do
     TOTAL_FAIL=$(( TOTAL_FAIL + 1 ))
   fi
 
-  # Run accumulate.sh between sessions for multi-session experiments
-  if [[ -n "${EXPERIMENT_ID}" && "${i}" -lt "${NUM_SESSIONS}" ]]; then
-    if [[ -f "${SCRIPT_DIR}/accumulate.sh" ]]; then
-      log_info "Running accumulation evaluator..."
-      "${SCRIPT_DIR}/accumulate.sh" "${EXPERIMENT_ID}" || log_warn "accumulate.sh returned non-zero"
-    fi
+  # Run accumulate.sh after each session (tracks cross-session evolution)
+  if [[ -n "${EXPERIMENT_ID}" && -f "${SCRIPT_DIR}/accumulate.sh" ]]; then
+    log_info "Running accumulation evaluator..."
+    "${SCRIPT_DIR}/accumulate.sh" "${EXPERIMENT_ID}" || log_warn "accumulate.sh returned non-zero"
   fi
 
   # Brief pause between sessions
@@ -471,6 +558,15 @@ for (( i=1; i<=NUM_SESSIONS; i++ )); do
     sleep 1
   fi
 done
+
+# Stamp experiment completion time
+if [[ -n "${EXPERIMENT_ID}" ]]; then
+  local_manifest="${RESULTS_BASE}/experiments/${EXPERIMENT_ID}/manifest.json"
+  if [[ -f "${local_manifest}" ]]; then
+    jq --arg ts "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" '.completed_at = $ts' "${local_manifest}" > "${local_manifest}.tmp" \
+      && mv "${local_manifest}.tmp" "${local_manifest}"
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # Summary
