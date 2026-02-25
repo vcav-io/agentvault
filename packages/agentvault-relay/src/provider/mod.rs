@@ -1,4 +1,5 @@
 pub mod anthropic;
+pub mod openai;
 
 pub struct ProviderRequest {
     pub system: String,

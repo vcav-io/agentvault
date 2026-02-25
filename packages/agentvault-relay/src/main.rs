@@ -14,8 +14,8 @@ async fn main() {
         .init();
 
     let api_key = std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY must be set");
-    let model_id = std::env::var("VCAV_MODEL_ID")
-        .unwrap_or_else(|_| "claude-sonnet-4-5-20250929".to_string());
+    let model_id =
+        std::env::var("VCAV_MODEL_ID").unwrap_or_else(|_| "claude-sonnet-4-5-20250929".to_string());
     let prompt_dir =
         std::env::var("VCAV_PROMPT_PROGRAM_DIR").unwrap_or_else(|_| "prompt_programs".to_string());
     let port: u16 = std::env::var("VCAV_PORT")
@@ -48,6 +48,11 @@ async fn main() {
 
     let anthropic_base_url = std::env::var("ANTHROPIC_BASE_URL").ok();
 
+    let openai_api_key = std::env::var("OPENAI_API_KEY").ok();
+    let openai_model_id =
+        std::env::var("VCAV_OPENAI_MODEL_ID").unwrap_or_else(|_| "gpt-4o".to_string());
+    let openai_base_url = std::env::var("OPENAI_BASE_URL").ok();
+
     let session_ttl_secs: u64 = std::env::var("VCAV_SESSION_TTL_SECS")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -57,11 +62,18 @@ async fn main() {
     // Start background session reaper
     session_store.clone().start_reaper();
 
+    if openai_api_key.is_some() {
+        tracing::info!(model_id = %openai_model_id, "OpenAI provider enabled");
+    }
+
     let state = Arc::new(AppState {
         signing_key,
         anthropic_api_key: api_key,
         anthropic_model_id: model_id,
         anthropic_base_url,
+        openai_api_key,
+        openai_model_id,
+        openai_base_url,
         prompt_program_dir: prompt_dir,
         session_store,
     });

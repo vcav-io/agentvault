@@ -20,9 +20,8 @@ use crate::error::RelayError;
 use crate::relay::compute_contract_hash;
 use crate::session::{SessionState, SessionStore, TokenRole};
 use crate::types::{
-    CapabilitiesResponse, CreateSessionRequest, CreateSessionResponse, HealthResponse,
-    RelayInput, RelayRequest, RelayResponse, SessionOutputResponse, SessionStatusResponse,
-    SubmitInputRequest,
+    CapabilitiesResponse, CreateSessionRequest, CreateSessionResponse, HealthResponse, RelayInput,
+    RelayRequest, RelayResponse, SessionOutputResponse, SessionStatusResponse, SubmitInputRequest,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -32,6 +31,9 @@ pub struct AppState {
     pub anthropic_api_key: String,
     pub anthropic_model_id: String,
     pub anthropic_base_url: Option<String>,
+    pub openai_api_key: Option<String>,
+    pub openai_model_id: String,
+    pub openai_base_url: Option<String>,
     pub prompt_program_dir: String,
     pub session_store: SessionStore,
 }
@@ -61,10 +63,14 @@ async fn health_handler() -> Json<HealthResponse> {
     })
 }
 
-async fn capabilities_handler() -> Json<CapabilitiesResponse> {
+async fn capabilities_handler(State(state): State<Arc<AppState>>) -> Json<CapabilitiesResponse> {
+    let mut providers = vec!["anthropic"];
+    if state.openai_api_key.is_some() {
+        providers.push("openai");
+    }
     Json(CapabilitiesResponse {
         execution_lane: "API_MEDIATED",
-        providers: vec!["anthropic"],
+        providers,
         purposes: vault_family_types::Purpose::all()
             .iter()
             .map(|p| p.to_string())
@@ -96,11 +102,14 @@ async fn create_session_handler(
     Json(request): Json<CreateSessionRequest>,
 ) -> Result<Json<CreateSessionResponse>, RelayError> {
     // Validate provider
-    if request.provider != "anthropic" {
-        return Err(RelayError::ContractValidation(format!(
-            "unsupported provider: {}",
-            request.provider
-        )));
+    match request.provider.as_str() {
+        "anthropic" => {}
+        "openai" if state.openai_api_key.is_some() => {}
+        other => {
+            return Err(RelayError::ContractValidation(format!(
+                "unsupported provider: {other}"
+            )));
+        }
     }
 
     // Validate contract has exactly 2 participants

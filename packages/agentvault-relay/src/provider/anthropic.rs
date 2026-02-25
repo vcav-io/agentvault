@@ -2,8 +2,8 @@ use reqwest::Client;
 use serde_json::Value;
 use std::time::Duration;
 
-use crate::error::RelayError;
 use super::{ProviderRequest, ProviderResponse};
+use crate::error::RelayError;
 
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -33,7 +33,11 @@ pub struct AnthropicProvider {
 }
 
 impl AnthropicProvider {
-    pub fn new(api_key: String, model_id: String, base_url: Option<String>) -> Result<Self, RelayError> {
+    pub fn new(
+        api_key: String,
+        model_id: String,
+        base_url: Option<String>,
+    ) -> Result<Self, RelayError> {
         let client = Client::builder()
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
@@ -151,7 +155,9 @@ fn extract_text(response: &Value) -> Result<String, RelayError> {
         }
     }
 
-    Err(RelayError::Provider("no text block in response".to_string()))
+    Err(RelayError::Provider(
+        "no text block in response".to_string(),
+    ))
 }
 
 #[cfg(test)]

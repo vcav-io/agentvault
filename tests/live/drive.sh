@@ -366,6 +366,11 @@ run_session() {
   # Save for next session's adaptive Bob
   PREV_OUTPUT_FILE="${run_dir}/alice_output.json"
 
+  # --- Extract model identity from receipt ---
+  local model_provider model_id_actual
+  model_provider="$(jq -r '.receipt.model_identity.provider // empty' "${run_dir}/alice_output.json")"
+  model_id_actual="$(jq -r '.receipt.model_identity.model_id // empty' "${run_dir}/alice_output.json")"
+
   # --- Write run metadata ---
   local transitions_json
   transitions_json="$(printf '%s\n' "${state_transitions[@]}" | jq -R . | jq -s .)"
@@ -377,6 +382,8 @@ run_session() {
     --arg desired_purpose "${DESIRED_PURPOSE}" \
     --arg observed_contract_hash "${observed_hash}" \
     --arg provider "${PROVIDER}" \
+    --arg model_provider "${model_provider}" \
+    --arg model_id "${model_id_actual}" \
     --arg t_start "${t_start}" \
     --arg t_end "${t_end}" \
     --arg duration_s "${elapsed}" \
@@ -393,6 +400,8 @@ run_session() {
       desired_purpose: $desired_purpose,
       observed_contract_hash: $observed_contract_hash,
       provider: $provider,
+      model_provider: (if $model_provider == "" then null else $model_provider end),
+      model_id: (if $model_id == "" then null else $model_id end),
       t_start: $t_start,
       t_end: $t_end,
       duration_s: ($duration_s | tonumber),
@@ -423,7 +432,8 @@ run_session() {
       --arg duration_s "${elapsed}" \
       --arg contract_hash "${CONTRACT_HASH}" \
       --arg provider "${PROVIDER}" \
-      '{session_num: ($session_num | tonumber), run_id: $run_id, status: $status, duration_s: ($duration_s | tonumber), contract_hash: $contract_hash, provider: $provider}' \
+      --arg model_id "${model_id_actual}" \
+      '{session_num: ($session_num | tonumber), run_id: $run_id, status: $status, duration_s: ($duration_s | tonumber), contract_hash: $contract_hash, provider: $provider, model_id: (if $model_id == "" then null else $model_id end)}' \
       >> "${exp_dir}/runs.jsonl"
 
     # Append session entry to manifest.json
@@ -437,6 +447,7 @@ run_session() {
       --arg session_start_ts "${t_start}" \
       --arg session_end_ts "${t_end}" \
       --arg status "${run_status}" \
+      --arg model_id "${model_id_actual}" \
       '{
         session_number: ($session_number | tonumber),
         session_id: $session_id,
@@ -445,7 +456,8 @@ run_session() {
         bob_profile: $bob_profile,
         session_start_ts: $session_start_ts,
         session_end_ts: $session_end_ts,
-        status: $status
+        status: $status,
+        model_id: (if $model_id == "" then null else $model_id end)
       }')"
     local manifest="${exp_dir}/manifest.json"
     jq --argjson entry "${session_entry}" '.sessions += [$entry]' "${manifest}" > "${manifest}.tmp" \
