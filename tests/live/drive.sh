@@ -122,15 +122,15 @@ canary_hygiene_check() {
 # ---------------------------------------------------------------------------
 
 detect_provider() {
-  if [[ -n "${PROVIDER}" ]]; then return; fi
-
-  # Source .env if present
+  # Source .env if present (always — relay needs API keys even with explicit --provider)
   if [[ -f "${REPO_ROOT}/.env" ]]; then
     set -a
     # shellcheck source=/dev/null
     source "${REPO_ROOT}/.env"
     set +a
   fi
+
+  if [[ -n "${PROVIDER}" ]]; then return; fi
 
   if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
     PROVIDER="anthropic"
