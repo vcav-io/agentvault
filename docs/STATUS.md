@@ -49,6 +49,25 @@ Adversarial scenarios and multi-run accumulation evaluator, per `docs/plans/agen
 - Tier 3 in `verify.sh` — evidence-based failure attribution (P0/M0/P1_CANARY/P1_RECONSTRUCTION), canary CI guard
 - Red Team Assessment table in `report.sh`
 
+## Multi-Provider Support
+
+**Status: Implemented** (PR #18, #19)
+
+The relay now supports both Anthropic and OpenAI providers. OpenAI is optional — configured via `OPENAI_API_KEY`, `VCAV_OPENAI_MODEL_ID` (default `gpt-4o`), and `OPENAI_BASE_URL` env vars.
+
+### Changes
+
+- `provider/openai.rs` — OpenAI Chat Completions provider with strict schema enforcement
+- `relay.rs` — match-based provider dispatch (replaces hardcoded Anthropic)
+- Receipts now record dynamic `model_identity` (provider + model_id) instead of hardcoded `"anthropic"`
+- `drive.sh` — extracts `model_provider` and `model_id` into `run_metadata.json`, `runs.jsonl`, and experiment manifest
+
+### Verified
+
+- 3-session accumulation with `gpt-4.1-2025-04-14`: 3/3 PASS, no privacy leaks
+- 3-session accumulation with `claude-sonnet-4-5-20250929`: 2/3 PASS (S1 leaked `£100` in overlap_summary)
+- Both passed cross-session accumulation check (no interval narrowing detected)
+
 ### Open
 
 - [ ] Safe-default fallback refactor — replace `2>/dev/null || echo "safe"` with fail-safe defaults (#14)
