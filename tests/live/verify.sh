@@ -137,15 +137,22 @@ retrieve_session() {
   fi
 
   log_info "Retrieving session ${session_id} output..."
+  local tmp_file="${out_file}.tmp"
   local http_code
-  http_code="$(curl -s -o "${out_file}" -w '%{http_code}' \
+  http_code="$(curl -s -o "${tmp_file}" -w '%{http_code}' \
     -H "Authorization: Bearer ${read_token}" \
     "${RELAY_URL}/sessions/${session_id}/output" 2>/dev/null || true)"
 
   if [[ "${http_code}" == "200" ]]; then
+    mv "${tmp_file}" "${out_file}"
     log_success "Session output saved: ${out_file}"
   else
-    log_warn "Session output request returned HTTP ${http_code} for ${session_id}"
+    rm -f "${tmp_file}"
+    if [[ -f "${out_file}" ]]; then
+      log_warn "Session output request returned HTTP ${http_code} — keeping existing ${out_file}"
+    else
+      log_warn "Session output request returned HTTP ${http_code} for ${session_id}"
+    fi
   fi
 }
 
@@ -237,7 +244,9 @@ if [[ -f "${RUN_DIR}/alice_output.json" ]]; then
   local_output_text="$(node -e "
 const fs=require('fs');
 try{const o=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));
-process.stdout.write(String(o.output||o.text||o.content||'').length);}catch{process.stdout.write('0');}
+const v=o.output??o.text??o.content??'';
+const len=typeof v==='object'&&v!==null?JSON.stringify(v).length:String(v).length;
+process.stdout.write(String(len));}catch(e){process.stdout.write('0');}
 " -- "${RUN_DIR}/alice_output.json" 2>/dev/null || echo 0)"
   if [[ "${local_output_text}" -gt 0 ]]; then
     run_check "output_nonempty" "true"
@@ -333,7 +342,7 @@ for (const scDir of scenarioDirs) {
 console.log(JSON.stringify(results));
 TIER1JS
 
-tier1_output="$(node --input-type=module "${TIER1_SCRIPT}" "${RUN_DIR}" 2>/dev/null)" || tier1_output='{"checked":0,"leaked":[]}'
+tier1_output="$(node "${TIER1_SCRIPT}" "${RUN_DIR}" 2>/dev/null)" || tier1_output='{"checked":0,"leaked":[]}'
 
 tier1_checked="$(echo "${tier1_output}" | node -e "let s='';process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>{const r=JSON.parse(s);process.stdout.write(String(r.checked));})" 2>/dev/null || echo 0)"
 tier1_leaked="$(echo "${tier1_output}" | node -e "let s='';process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>{const r=JSON.parse(s);process.stdout.write(String(r.leaked.length));})" 2>/dev/null || echo 0)"
@@ -394,7 +403,7 @@ try {
 console.log(JSON.stringify({ valid: issues.length === 0, issues }));
 TIER2JS
 
-  tier2_output="$(node --input-type=module "${TIER2_SCRIPT}" "${RUN_DIR}/alice_output.json" 2>/dev/null)" || tier2_output='{"valid":false,"issues":["script error"]}'
+  tier2_output="$(node "${TIER2_SCRIPT}" "${RUN_DIR}/alice_output.json" 2>/dev/null)" || tier2_output='{"valid":false,"issues":["script error"]}'
   tier2_valid="$(echo "${tier2_output}" | node -e "let s='';process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>{const r=JSON.parse(s);process.stdout.write(String(r.valid));})" 2>/dev/null || echo "false")"
 
   if [[ "${tier2_valid}" == "true" ]]; then

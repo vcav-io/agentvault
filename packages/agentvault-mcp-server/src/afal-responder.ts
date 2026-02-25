@@ -18,7 +18,7 @@ import { signMessage, verifyMessage, DOMAIN_PREFIXES } from './afal-signing.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export type DenyCode = 'UNTRUSTED' | 'UNSUPPORTED' | 'STALE' | 'REPLAY' | 'POLICY';
+export type DenyCode = 'UNTRUSTED' | 'UNSUPPORTED' | 'STALE' | 'REPLAY' | 'POLICY' | 'INTEGRITY';
 
 export interface TrustedAgent {
   agentId: string;
@@ -129,7 +129,7 @@ export class AfalResponder {
     const { proposal_id: claimed, ...hashable } = propose;
     const expected = computeProposalId(hashable);
     if (claimed !== expected) {
-      return this.deny(proposalId, 'UNSUPPORTED', now);
+      return this.deny(proposalId, 'INTEGRITY', now);
     }
 
     // 4. Check propose.to matches our agentId
@@ -258,6 +258,10 @@ export class AfalResponder {
     denyCode: DenyCode,
     nowMs: number,
   ): { outcome: 'DENY'; response: Record<string, unknown> } {
+    console.error(
+      `AfalResponder DENY: code=${denyCode}, proposal=${proposalId}, agentId=${this.config.agentId}` +
+      (denyCode === 'INTEGRITY' ? ` (proposal_id mismatch: claimed=${proposalId.slice(0, 16)}…)` : ''),
+    );
     const expiresAtIso = new Date(nowMs + ADMIT_TTL_MS).toISOString();
     const denyUnsigned: Record<string, unknown> = {
       admission_version: '1',

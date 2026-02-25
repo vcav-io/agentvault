@@ -145,6 +145,8 @@ export class DirectAfalTransport implements AfalTransport {
     if (this.httpServer) await this.httpServer.stop();
   }
 
+  // No transport-level retries — the relay_signal FSM handles retries via
+  // PROPOSE_RETRY phase with CALL_AGAIN cycling (up to 120s overall timeout).
   async sendPropose(params: {
     propose: AfalPropose;
     relay: RelayInvitePayload;
@@ -153,6 +155,8 @@ export class DirectAfalTransport implements AfalTransport {
   }): Promise<void> {
     const peer = await this.resolvePeerDescriptor();
 
+    // Never inject hashable fields post-hoc — they must be set before
+    // computeProposalId or proposal_id integrity will fail on the receiver.
     const proposeMessage: Record<string, unknown> = {
       proposal_version: params.propose.proposal_version,
       proposal_id: params.propose.proposal_id,
@@ -160,19 +164,23 @@ export class DirectAfalTransport implements AfalTransport {
       timestamp: params.propose.timestamp,
       from: params.propose.from,
       to: params.propose.to,
-      descriptor_hash:
-        params.propose.descriptor_hash ?? contentHash(this.config.localDescriptor),
       purpose_code: params.propose.purpose_code,
       lane_id: params.propose.lane_id,
       output_schema_id: params.propose.output_schema_id,
       output_schema_version: params.propose.output_schema_version,
       model_profile_id: params.propose.model_profile_id,
       model_profile_version: params.propose.model_profile_version,
-      model_profile_hash: params.propose.model_profile_hash ?? '',
       requested_entropy_bits: params.propose.requested_entropy_bits,
       requested_budget_tier: params.propose.requested_budget_tier,
       admission_tier_requested: params.propose.admission_tier_requested,
     };
+
+    if (params.propose.descriptor_hash !== undefined) {
+      proposeMessage['descriptor_hash'] = params.propose.descriptor_hash;
+    }
+    if (params.propose.model_profile_hash !== undefined) {
+      proposeMessage['model_profile_hash'] = params.propose.model_profile_hash;
+    }
 
     if (params.propose.prev_receipt_hash !== undefined) {
       proposeMessage['prev_receipt_hash'] = params.propose.prev_receipt_hash;
@@ -230,7 +238,10 @@ export class DirectAfalTransport implements AfalTransport {
       if (!verified) {
         throw new Error('DENY signature verification failed');
       }
-      throw new Error(`Proposal denied: ${params.propose.proposal_id}`);
+      const denyCode = admitOrDeny['deny_code'] ?? 'UNKNOWN';
+      throw new Error(
+        `Proposal denied (deny_code=${denyCode}): proposal=${params.propose.proposal_id}, from=${params.propose.from}, to=${params.propose.to}, purpose=${params.propose.purpose_code}`,
+      );
     } else {
       throw new Error(`Unexpected response outcome: ${String(outcome)}`);
     }

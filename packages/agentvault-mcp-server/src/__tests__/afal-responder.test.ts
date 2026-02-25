@@ -170,7 +170,7 @@ describe('AfalResponder', () => {
       expect(result.outcome).toBe('DENY');
     });
 
-    it('DENYs tampered proposal_id (UNSUPPORTED)', () => {
+    it('DENYs tampered proposal_id (INTEGRITY)', () => {
       const body = makeWrappedBody();
       (body.propose as Record<string, unknown>)['proposal_id'] = 'f'.repeat(64);
       // Re-sign with tampered id
@@ -178,7 +178,7 @@ describe('AfalResponder', () => {
       body.propose = resigned;
       const result = responder.handlePropose(body);
       expect(result.outcome).toBe('DENY');
-      expect(result.response['deny_code']).toBe('UNSUPPORTED');
+      expect(result.response['deny_code']).toBe('INTEGRITY');
     });
 
     it('DENYs wrong recipient (UNTRUSTED)', () => {

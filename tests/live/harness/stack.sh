@@ -36,6 +36,11 @@ PROXY_PID_FILE=""
 # ---------------------------------------------------------------------------
 
 _detect_provider_mode() {
+  # Explicit override from --provider flag
+  if [[ -n "${VCAV_PROVIDER:-}" ]]; then
+    echo "${VCAV_PROVIDER}"
+    return
+  fi
   if [[ "${VCAV_MOCK:-}" == "1" ]]; then
     echo "mock"
   elif [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
