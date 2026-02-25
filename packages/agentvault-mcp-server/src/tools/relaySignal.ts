@@ -13,6 +13,8 @@
  */
 
 import { createHash } from 'node:crypto';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { buildSuccess, buildError, type ToolResponse, type ErrorCode } from '../envelope.js';
 import {
   createAndSubmit,
@@ -160,6 +162,35 @@ function mapRelayError(error: unknown): { code: ErrorCode; detail: string } {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function writeLastSessionFile(
+  sessionId: string,
+  role: 'INITIATOR' | 'RESPONDER',
+  readToken: string,
+  relayUrl: string,
+): void {
+  try {
+    const workdir = process.env['VCAV_WORKDIR'] ?? process.cwd();
+    const dir = path.join(workdir, '.agentvault');
+    fs.mkdirSync(dir, { recursive: true });
+    const finalPath = path.join(dir, 'last_session.json');
+    const tmpPath = `${finalPath}.tmp`;
+    const record = {
+      session_id: sessionId,
+      role,
+      read_token: readToken,
+      relay_url: relayUrl,
+      timestamp: new Date().toISOString(),
+    };
+    fs.writeFileSync(tmpPath, JSON.stringify(record, null, 2) + '\n', 'utf8');
+    fs.renameSync(tmpPath, finalPath);
+  } catch (err) {
+    // Non-fatal — log but do not fail the relay operation
+    console.error(
+      `writeLastSessionFile: failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
 
 function resolveAgentAlias(hint: string, knownAgents: NormalizedKnownAgent[]): string {
@@ -338,6 +369,8 @@ async function phaseInvite(
   handle.proposalId = proposalId;
   handle.phase = 'POLL_RELAY';
 
+  writeLastSessionFile(created.sessionId, 'INITIATOR', created.initiatorReadToken, relayUrl);
+
   return awaitingResponse(handle, 'Relay session created. Waiting for counterparty to join.');
 }
 
@@ -508,6 +541,8 @@ async function phaseJoin(
       handle.contractHash,
     );
     handle.submitted = true;
+
+    writeLastSessionFile(handle.sessionId!, 'RESPONDER', handle.tokens!.read, handle.relayUrl!);
 
     // Accept the orchestrator invite after successful submit
     try {

@@ -4,6 +4,21 @@
  * Exports the relay_signal tool schema under the agentvault namespace.
  */
 
+export const IDENTITY_TOOLS = [
+  {
+    name: 'agentvault.get_identity',
+    description:
+      'Returns this agent\'s identity (agent_id) and the list of known agents ' +
+      'available for relay sessions. Call this before agentvault.relay_signal ' +
+      'to confirm your agent_id and discover counterparty aliases.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {},
+      required: [],
+    },
+  },
+];
+
 export const RELAY_TOOLS = [
   {
     name: 'agentvault.relay_signal',

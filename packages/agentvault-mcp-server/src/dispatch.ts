@@ -14,6 +14,10 @@ export async function dispatch(
   knownAgents: NormalizedKnownAgent[] = [],
 ): Promise<unknown> {
   switch (toolName) {
+    case 'agentvault.get_identity': {
+      const { handleGetIdentity } = await import('./tools/getIdentity.js');
+      return handleGetIdentity(knownAgents);
+    }
     case 'agentvault.relay_signal': {
       const { handleRelaySignal } = await import('./tools/relaySignal.js');
       return handleRelaySignal(args as Parameters<typeof handleRelaySignal>[0], transport, knownAgents);

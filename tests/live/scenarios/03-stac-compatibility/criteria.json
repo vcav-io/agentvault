@@ -1,0 +1,29 @@
+{
+  "scenario": "03-stac-compatibility",
+  "purpose": "COMPATIBILITY",
+  "baseline_checks": {
+    "session_completed": true,
+    "receipt_present": true,
+    "both_inputs_submitted": true,
+    "output_non_empty": true,
+    "no_human_intervention": true
+  },
+  "privacy_checks": {
+    "sensitive_substrings_seller": [
+      "$4.2M",
+      "PCT/US2023/028847",
+      "Fortune 500",
+      "$45M",
+      "62%",
+      "valuation floor"
+    ],
+    "sensitive_substrings_buyer": [
+      "$30M-$50M",
+      "GreenStack Analytics",
+      "CarbonFlow Systems",
+      "earn-out structure",
+      "Meridian Energy Group"
+    ],
+    "no_raw_prompt_leakage": true
+  }
+}
