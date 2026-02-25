@@ -36,7 +36,13 @@ export const RELAY_TOOLS = [
       '- If state = COMPLETED: stop. Read output.\n' +
       '- If state = FAILED: read error_code and user_message. Follow user_message.\n' +
       '- NEVER call without resume_token after the first call.\n\n' +
-      'Call agentvault.get_identity first to see your agent_id and known agents.',
+      'Call agentvault.get_identity first to see your agent_id and known agents.\n\n' +
+      'DISPLAY RULES:\n' +
+      '- When state = COMPLETED: use interpretation_context for signal field meanings and epistemic limits.\n' +
+      '- You may describe the signal in your own words.\n' +
+      '- FORBIDDEN: do not claim what the counterparty knows, saw, or inferred (see interpretation_context.epistemic_limits.invalid_claims).\n' +
+      '- FORBIDDEN: do not print resume_token or values in display.redact. Use resume_token_display if needed.\n' +
+      '- FORBIDDEN: do not repeat or quote the content of my_input in your response.',
     inputSchema: {
       type: 'object' as const,
       properties: {

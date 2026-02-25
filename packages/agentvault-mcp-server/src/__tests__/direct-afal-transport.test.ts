@@ -3,7 +3,7 @@ import { ed25519 } from '@noble/curves/ed25519';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
 import { DirectAfalTransport } from '../direct-afal-transport.js';
 import type { AgentDescriptor } from '../direct-afal-transport.js';
-import { signMessage, DOMAIN_PREFIXES, contentHash } from '../afal-signing.js';
+import { signMessage, DOMAIN_PREFIXES } from '../afal-signing.js';
 import type { AfalPropose, RelayInvitePayload } from '../afal-types.js';
 import { computeProposalId } from '../afal-types.js';
 
@@ -198,7 +198,7 @@ describe('DirectAfalTransport', () => {
       expect(stored!['admit_token_id']).toBe('token-abc-123');
     });
 
-    it('uses descriptor_hash from propose if present, else computes from localDescriptor', async () => {
+    it('includes descriptor_hash in wire message when present in propose', async () => {
       const customHash = 'd'.repeat(64);
       const propose = makePropose({ descriptor_hash: customHash });
       const admit = makeSignedAdmit(propose.proposal_id);
@@ -215,7 +215,7 @@ describe('DirectAfalTransport', () => {
       expect(body.propose['descriptor_hash']).toBe(customHash);
     });
 
-    it('computes descriptor_hash from localDescriptor when not in propose', async () => {
+    it('omits descriptor_hash when not in propose', async () => {
       const propose = makePropose(); // no descriptor_hash
       const admit = makeSignedAdmit(propose.proposal_id);
 
@@ -228,7 +228,23 @@ describe('DirectAfalTransport', () => {
 
       const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
       const body = JSON.parse(init.body as string) as { propose: Record<string, unknown> };
-      expect(body.propose['descriptor_hash']).toBe(contentHash(localDescriptor));
+      expect(body.propose['descriptor_hash']).toBeUndefined();
+    });
+
+    it('omits model_profile_hash when not in propose', async () => {
+      const propose = makePropose(); // no model_profile_hash
+      const admit = makeSignedAdmit(propose.proposal_id);
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(admit),
+      });
+
+      await transport.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' });
+
+      const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+      const body = JSON.parse(init.body as string) as { propose: Record<string, unknown> };
+      expect(body.propose['model_profile_hash']).toBeUndefined();
     });
 
     it('includes prev_receipt_hash when present in propose', async () => {
@@ -263,6 +279,41 @@ describe('DirectAfalTransport', () => {
       const body = JSON.parse(init.body as string) as { propose: Record<string, unknown> };
       expect('prev_receipt_hash' in body.propose).toBe(false);
     });
+
+    it('ADMIT succeeds when propose has no descriptor_hash or model_profile_hash (regression)', async () => {
+      // This test covers the bug where _sendProposeOnce injected descriptor_hash
+      // and model_profile_hash post-hoc, breaking proposal_id integrity on the receiver.
+      const fresh = new DirectAfalTransport({
+        agentId: 'alice-test',
+        seedHex: TEST_SEED,
+        localDescriptor,
+        peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-descriptor.json',
+      });
+
+      const propose = makePropose(); // has no descriptor_hash or model_profile_hash
+      const admit = makeSignedAdmit(propose.proposal_id);
+
+      // descriptor fetch
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(peerDescriptor),
+      });
+      // propose → ADMIT
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(admit),
+      });
+
+      await fresh.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' });
+
+      // Verify the wire message did NOT include descriptor_hash or model_profile_hash
+      const sentBody = JSON.parse(mockFetch.mock.calls[1][1].body as string);
+      expect(sentBody.propose['descriptor_hash']).toBeUndefined();
+      expect(sentBody.propose['model_profile_hash']).toBeUndefined();
+
+      // Verify ADMIT was stored
+      expect(fresh._getStoredAdmit(propose.proposal_id)).toBeDefined();
+    });
   });
 
   // ── sendPropose — DENY ────────────────────────────────────────────────────
@@ -279,7 +330,7 @@ describe('DirectAfalTransport', () => {
 
       await expect(
         transport.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' }),
-      ).rejects.toThrow(`Proposal denied: ${propose.proposal_id}`);
+      ).rejects.toThrow(/Proposal denied \(deny_code=/);
     });
 
     it('does not store anything when denied', async () => {
@@ -629,5 +680,68 @@ describe('DirectAfalTransport', () => {
       await respondTransport.acceptInvite('any-id');
       expect(mockFetch).not.toHaveBeenCalled();
     });
+  });
+});
+
+// ── End-to-end: proposal_id integrity via AfalResponder ────────────────────
+
+import { AfalResponder } from '../afal-responder.js';
+
+describe('proposal_id integrity (end-to-end)', () => {
+  it('responder ADMITs when optional hashable fields are absent', () => {
+    // End-to-end: build propose like phaseInvite (no descriptor_hash,
+    // no model_profile_hash), sign it, send to AfalResponder, verify ADMIT.
+
+    const responder = new AfalResponder({
+      agentId: 'bob-test',
+      seedHex: PEER_SEED,
+      policy: {
+        trustedAgents: [{ agentId: 'alice-test', publicKeyHex: TEST_PUBKEY }],
+        allowedPurposeCodes: ['MEDIATION'],
+        allowedLaneIds: ['API_MEDIATED'],
+        maxEntropyBits: 256,
+        defaultTier: 'DENY',
+      },
+    });
+
+    // Use fresh timestamp to avoid STALE rejection
+    const propose = makePropose({ timestamp: new Date().toISOString() });
+    const signed = signMessage(
+      DOMAIN_PREFIXES.PROPOSE,
+      propose as unknown as Record<string, unknown>,
+      TEST_SEED,
+    );
+    const body = { propose: signed, relay: makeRelay() };
+    const result = responder.handlePropose(body);
+    expect(result.outcome).toBe('ADMIT');
+  });
+
+  it('responder DENYs with INTEGRITY when descriptor_hash is injected post-hoc', () => {
+    // Reproduces the original bug: propose computed without descriptor_hash,
+    // but wire message includes it → proposal_id mismatch → DENY.
+    const responder = new AfalResponder({
+      agentId: 'bob-test',
+      seedHex: PEER_SEED,
+      policy: {
+        trustedAgents: [{ agentId: 'alice-test', publicKeyHex: TEST_PUBKEY }],
+        allowedPurposeCodes: ['MEDIATION'],
+        allowedLaneIds: ['API_MEDIATED'],
+        maxEntropyBits: 256,
+        defaultTier: 'DENY',
+      },
+    });
+
+    // Use fresh timestamp to avoid STALE rejection
+    const propose = makePropose({ timestamp: new Date().toISOString() });
+    // Inject descriptor_hash post-hoc (the old bug)
+    const tamperedPropose = {
+      ...(propose as unknown as Record<string, unknown>),
+      descriptor_hash: 'injected-hash',
+    };
+    const signed = signMessage(DOMAIN_PREFIXES.PROPOSE, tamperedPropose, TEST_SEED);
+    const body = { propose: signed, relay: makeRelay() };
+    const result = responder.handlePropose(body);
+    expect(result.outcome).toBe('DENY');
+    expect(result.response['deny_code']).toBe('INTEGRITY');
   });
 });

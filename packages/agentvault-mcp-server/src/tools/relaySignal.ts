@@ -91,6 +91,34 @@ export interface RelaySignalArgs {
   contract_hash?: string;
 }
 
+export interface DisplayDirective {
+  forbidden: string[];
+  redact: string[];
+}
+
+export interface SignalFieldSemantic {
+  field: string;
+  description: string;
+  values?: Record<string, string>;
+}
+
+export interface EpistemicLimits {
+  valid_claims: string[];
+  invalid_claims: string[];
+}
+
+export interface InterpretationContext {
+  purpose: string;
+  signal_description: string;
+  signal_fields: SignalFieldSemantic[];
+  epistemic_limits: EpistemicLimits;
+  provenance: {
+    session_id: string | null;
+    contract_hash: string | null;
+    receipt_available: boolean;
+  };
+}
+
 export interface RelaySignalOutput {
   mode: 'INITIATE' | 'RESPOND';
   state: 'IN_PROGRESS' | 'AWAITING' | 'COMPLETED' | 'FAILED';
@@ -106,6 +134,9 @@ export interface RelaySignalOutput {
   user_message: string;
   output?: SessionOutputResponse;
   error_code?: string;
+  display: DisplayDirective;
+  interpretation_context?: InterpretationContext;
+  resume_token_display?: string | null;
 }
 
 // Legacy data types (kept for CREATE/JOIN backward compat)
@@ -125,6 +156,148 @@ export interface RelaySignalJoinData {
 }
 
 type RelaySignalData = RelaySignalOutput | RelaySignalCreateData | RelaySignalJoinData;
+
+// ── Interpretation Context ───────────────────────────────────────────────
+
+function mediationContext(handle: RelayHandle): InterpretationContext {
+  return {
+    purpose: 'MEDIATION',
+    signal_description:
+      'Bounded mediation signal from private relay computation. Indicates alignment degree ' +
+      'and suggested next step without revealing either party\'s input.',
+    signal_fields: [
+      {
+        field: 'mediation_signal',
+        description: 'Overall alignment assessment.',
+        values: {
+          ALIGNMENT_POSSIBLE: 'Sufficient common ground to proceed.',
+          PARTIAL_ALIGNMENT: 'Some overlap; gaps remain.',
+          FUNDAMENTAL_DISAGREEMENT: 'Positions incompatible on core points.',
+          NEEDS_FACILITATION: 'Complexity requires structured process.',
+          INSUFFICIENT_SIGNAL: 'Not enough information to assess.',
+        },
+      },
+      {
+        field: 'common_ground_code',
+        description: 'Category of shared ground detected.',
+        values: {
+          GOAL_ALIGNMENT: 'Shared end-goals.',
+          RESOURCE_ALIGNMENT: 'Agreement on resource use.',
+          RELATIONSHIP_CONTINUITY: 'Both value the ongoing relationship.',
+          VALUE_ALIGNMENT: 'Shared underlying values.',
+          OPERATIONAL_ALIGNMENT: 'Agreement on how to work together.',
+          NO_COMMON_GROUND_DETECTED: 'No shared ground identified.',
+        },
+      },
+      {
+        field: 'confidence_band',
+        description: 'Relay confidence in the signal given inputs provided.',
+        values: { LOW: 'Low confidence.', MEDIUM: 'Moderate confidence.', HIGH: 'High confidence.' },
+      },
+      {
+        field: 'next_step_signal',
+        description: 'Recommended next step.',
+        values: {
+          DIRECT_DIALOGUE: 'Parties can speak directly.',
+          STRUCTURED_NEGOTIATION: 'Formal negotiation recommended.',
+          THIRD_PARTY_FACILITATION: 'External facilitator would help.',
+          COOLING_PERIOD: 'Pause before engaging.',
+          SEEK_CLARIFICATION: 'More information needed.',
+        },
+      },
+    ],
+    epistemic_limits: {
+      valid_claims: [
+        'The protocol does not expose raw inputs to counterparties.',
+        'Only a bounded signal is produced — not a summary of either input.',
+        `This session is cryptographically receipted (session_id=${handle.sessionId ?? 'n/a'}).`,
+      ],
+      invalid_claims: [
+        '"Bob never saw your input" — the relay enforces privacy at its boundary, but cannot control what the counterparty\'s agent does with the relay output.',
+        '"Alice does not know X" — the protocol limits what the relay discloses, not what agents infer.',
+        '"The other party doesn\'t know about…" — overclaims beyond protocol guarantees.',
+      ],
+    },
+    provenance: {
+      session_id: handle.sessionId ?? null,
+      contract_hash: handle.contractHash ?? null,
+      receipt_available: true,
+    },
+  };
+}
+
+function compatibilityContext(handle: RelayHandle): InterpretationContext {
+  return {
+    purpose: 'COMPATIBILITY',
+    signal_description:
+      'Bounded compatibility signal indicating degree of match between two parties\' private criteria, ' +
+      'without revealing what those criteria were.',
+    signal_fields: [
+      {
+        field: 'compatibility_signal',
+        description: 'Degree of match between criteria.',
+        values: {
+          STRONG_MATCH: 'High overlap.',
+          PARTIAL_MATCH: 'Meaningful overlap with gaps.',
+          WEAK_MATCH: 'Limited overlap.',
+          NO_MATCH: 'Criteria incompatible.',
+        },
+      },
+      {
+        field: 'overlap_summary',
+        description: 'Relay-generated summary of what the overlap consists of (not extracted from either input).',
+      },
+    ],
+    epistemic_limits: {
+      valid_claims: [
+        'The protocol does not expose raw inputs to counterparties.',
+        'The overlap_summary was generated by the relay, not extracted from either party\'s input.',
+        `This session is cryptographically receipted (session_id=${handle.sessionId ?? 'n/a'}).`,
+      ],
+      invalid_claims: [
+        '"Bob never saw your input" — the relay enforces privacy at its boundary, but cannot control what the counterparty\'s agent does with the relay output.',
+        '"The counterparty\'s specific criteria are known" — the protocol does not expose them.',
+        '"The other party doesn\'t know about…" — overclaims beyond protocol guarantees.',
+      ],
+    },
+    provenance: {
+      session_id: handle.sessionId ?? null,
+      contract_hash: handle.contractHash ?? null,
+      receipt_available: true,
+    },
+  };
+}
+
+function customContext(handle: RelayHandle): InterpretationContext {
+  return {
+    purpose: handle.purpose ?? 'CUSTOM',
+    signal_description: 'Bounded signal from a custom relay contract.',
+    signal_fields: [],
+    epistemic_limits: {
+      valid_claims: [
+        'The protocol does not expose raw inputs to counterparties.',
+        'Only a bounded signal is produced — not a summary of either input.',
+      ],
+      invalid_claims: [
+        '"Bob never saw your input" — the relay enforces privacy at its boundary, but cannot control what the counterparty\'s agent does with the relay output.',
+        '"The other party doesn\'t know about…" — overclaims beyond protocol guarantees.',
+      ],
+    },
+    provenance: {
+      session_id: handle.sessionId ?? null,
+      contract_hash: handle.contractHash ?? null,
+      receipt_available: true,
+    },
+  };
+}
+
+function buildInterpretationContext(handle: RelayHandle): InterpretationContext {
+  switch (handle.purpose) {
+    case 'MEDIATION': return mediationContext(handle);
+    case 'COMPATIBILITY': return compatibilityContext(handle);
+    default: return customContext(handle);
+  }
+}
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -150,7 +323,13 @@ function mapRelayError(error: unknown): { code: ErrorCode; detail: string } {
       msg.includes('abort') ||
       msg.includes('Relay HTTP 5')
     ) {
-      return { code: 'COUNTERPARTY_UNREACHABLE', detail: msg };
+      return {
+        code: 'COUNTERPARTY_UNREACHABLE',
+        detail: `Counterparty not reachable (they may not have started yet). ${msg}`,
+      };
+    }
+    if (msg.includes('Proposal denied')) {
+      return { code: 'SESSION_ERROR', detail: `Counterparty explicitly denied the proposal. ${msg}` };
     }
     if (msg.includes('relay_url')) {
       return { code: 'INVALID_INPUT', detail: msg };
@@ -207,6 +386,18 @@ function hashInput(input: string): string {
   return createHash('sha256').update(input).digest('hex');
 }
 
+/** Check whether an error from sendPropose is a network-level failure worth retrying. */
+function isRetryableTransportError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message;
+  return (
+    msg.includes('fetch failed') ||
+    msg.includes('ECONNREFUSED') ||
+    msg.includes('ECONNRESET') ||
+    msg.includes('ETIMEDOUT')
+  );
+}
+
 function getResumeTokenSecret(): string | null {
   return process.env['VCAV_RESUME_TOKEN_SECRET'] ?? null;
 }
@@ -218,11 +409,15 @@ function awaitingResponse(
   userMessage: string,
 ): ToolResponse<RelaySignalOutput> {
   const token = encodeRelayToken(handle, getResumeTokenSecret());
+  const resumeTokenDisplay = token.length > 16
+    ? `${token.slice(0, 12)}…${token.slice(-4)}`
+    : token;
   return buildSuccess('PENDING', {
     mode: handle.role === 'INITIATOR' ? 'INITIATE' : 'RESPOND',
     state: 'AWAITING',
     phase: handle.phase,
     resume_token: token,
+    resume_token_display: resumeTokenDisplay,
     session_id: handle.sessionId,
     contract_hash: handle.contractHash,
     from: handle.role === 'RESPONDER' ? handle.counterparty : undefined,
@@ -231,6 +426,10 @@ function awaitingResponse(
     next_args_patch: { resume_token: token },
     next_update_seconds: 5,
     user_message: userMessage,
+    display: {
+      forbidden: ['PRINT_RESUME_TOKEN', 'CLAIM_COUNTERPARTY_KNOWLEDGE'],
+      redact: ['resume_token'],
+    },
   });
 }
 
@@ -244,6 +443,7 @@ function completedResponse(
     state: 'COMPLETED',
     phase: 'COMPLETED',
     resume_token: null,
+    resume_token_display: null,
     session_id: handle.sessionId,
     contract_hash: handle.contractHash,
     from: handle.role === 'RESPONDER' ? handle.counterparty : undefined,
@@ -251,8 +451,19 @@ function completedResponse(
     next_tool: null,
     next_args_patch: null,
     next_update_seconds: null,
-    user_message: 'Relay session complete. Output and receipt available.',
+    user_message: 'Relay session complete.',
     output,
+    display: {
+      forbidden: [
+        'CLAIM_COUNTERPARTY_KNOWLEDGE',
+        'PRINT_RESUME_TOKEN',
+        'QUOTE_MY_INPUT',
+        'QUOTE_COUNTERPARTY_INPUT',
+        'INCLUDE_CREDENTIALS',
+      ],
+      redact: ['resume_token', 'my_input'],
+    },
+    interpretation_context: buildInterpretationContext(handle),
   });
 }
 
@@ -268,6 +479,7 @@ function failedResponse(
     state: 'FAILED',
     phase: 'FAILED',
     resume_token: null,
+    resume_token_display: null,
     session_id: handle.sessionId,
     contract_hash: handle.contractHash,
     from: handle.role === 'RESPONDER' ? handle.counterparty : undefined,
@@ -278,6 +490,10 @@ function failedResponse(
     user_message: userMessage,
     error_code: errorCode,
     output,
+    display: {
+      forbidden: ['PRINT_RESUME_TOKEN'],
+      redact: ['resume_token'],
+    },
   });
 }
 
@@ -353,10 +569,7 @@ async function phaseInvite(
     relay_url: relayUrl,
   };
 
-  // 3. Send via AFAL transport (adapter wraps as afal_propose_draft in payload)
-  await transport.sendPropose({ propose, relay, templateId, budgetTier: 'SMALL' });
-
-  // 4. Populate handle with session data
+  // 3. Populate handle with session data (before sendPropose so PROPOSE_RETRY has state)
   handle.sessionId = created.sessionId;
   handle.contractHash = created.contractHash;
   handle.relayUrl = relayUrl;
@@ -367,10 +580,27 @@ async function phaseInvite(
   };
   handle.purpose = purposeHint ?? undefined;
   handle.proposalId = proposalId;
-  handle.phase = 'POLL_RELAY';
 
   writeLastSessionFile(created.sessionId, 'INITIATOR', created.initiatorReadToken, relayUrl);
 
+  // 4. Send via AFAL transport — if peer is unreachable, transition to PROPOSE_RETRY
+  //    so the FSM retries across tool calls (up to the overall timeout).
+  const proposeParams = { propose, relay, templateId, budgetTier: 'SMALL' as const };
+  try {
+    await transport.sendPropose(proposeParams);
+  } catch (err) {
+    if (isRetryableTransportError(err)) {
+      handle.retryState = proposeParams;
+      handle.phase = 'PROPOSE_RETRY';
+      return awaitingResponse(
+        handle,
+        'Counterparty not yet reachable (they may not have started yet). Will keep trying.',
+      );
+    }
+    throw err; // non-retryable — let outer catch handle
+  }
+
+  handle.phase = 'POLL_RELAY';
   return awaitingResponse(handle, 'Relay session created. Waiting for counterparty to join.');
 }
 
@@ -409,6 +639,45 @@ async function phasePollRelay(
 
   // Call budget expired — relay still running
   return awaitingResponse(handle, 'Waiting for counterparty to join relay session.');
+}
+
+async function phaseRetryPropose(
+  handle: RelayHandle,
+  transport: AfalTransport,
+): Promise<ToolResponse<RelaySignalOutput>> {
+  if (Date.now() > handle.timeoutDeadline) {
+    return failedResponse(
+      handle,
+      'COUNTERPARTY_UNREACHABLE',
+      'Counterparty never became reachable within the timeout. Ask them to start their agent, then call agentvault.relay_signal INITIATE again.',
+    );
+  }
+
+  const params = handle.retryState as {
+    propose: AfalPropose;
+    relay: RelayInvitePayload;
+    templateId: string;
+    budgetTier: string;
+  };
+
+  try {
+    await transport.sendPropose(params);
+  } catch (err) {
+    if (isRetryableTransportError(err)) {
+      return awaitingResponse(
+        handle,
+        'Counterparty still not reachable. Will keep trying.',
+      );
+    }
+    // Non-retryable error (e.g. DENY response) — fail
+    const detail = err instanceof Error ? err.message : String(err);
+    return failedResponse(handle, 'SESSION_ERROR', detail);
+  }
+
+  // PROPOSE succeeded — advance to relay polling
+  handle.phase = 'POLL_RELAY';
+  handle.retryState = undefined;
+  return awaitingResponse(handle, 'Invite delivered. Waiting for counterparty to join relay session.');
 }
 
 // ── RESPOND Phases ──────────────────────────────────────────────────────
@@ -668,6 +937,8 @@ export async function handleRelaySignal(
 
       // Route to the correct phase
       switch (handle.phase) {
+        case 'PROPOSE_RETRY':
+          return await phaseRetryPropose(handle, transport);
         case 'POLL_RELAY':
           return await phasePollRelay(handle);
         case 'DISCOVER':
@@ -717,6 +988,7 @@ export async function handleRelaySignal(
         const existing = findExistingRelayHandle(agentId, 'INITIATOR', idempotencyKey);
         if (existing) {
           // Reattach — route to current phase
+          if (existing.phase === 'PROPOSE_RETRY') return await phaseRetryPropose(existing, transport);
           if (existing.phase === 'POLL_RELAY') return await phasePollRelay(existing);
           return awaitingResponse(existing, 'Reattached to existing relay session.');
         }
@@ -804,6 +1076,14 @@ export async function handleRelaySignal(
     }
   } catch (error) {
     const { code, detail } = mapRelayError(error);
+    // Diagnostic file log for debugging live test failures
+    try {
+      const workdir = process.env['VCAV_WORKDIR'] ?? process.cwd();
+      const debugDir = path.join(workdir, '.agentvault');
+      fs.mkdirSync(debugDir, { recursive: true });
+      const entry = `[${new Date().toISOString()}] error_code=${code} detail=${detail} raw=${error instanceof Error ? error.stack ?? error.message : String(error)}\n`;
+      fs.appendFileSync(path.join(debugDir, 'relay-debug.log'), entry, 'utf8');
+    } catch { /* non-fatal */ }
     return buildError(code, detail);
   }
 }

@@ -14,6 +14,7 @@ import { createHash, createHmac, timingSafeEqual, randomUUID } from 'node:crypto
 
 export type RelayPhase =
   | 'INVITE'
+  | 'PROPOSE_RETRY'
   | 'POLL_RELAY'
   | 'DISCOVER'
   | 'JOIN'
@@ -41,6 +42,8 @@ export interface RelayHandle {
   myInput?: string;
   expectedPurpose?: string;
   expectedContractHash?: string;
+  /** Opaque retry state for PROPOSE_RETRY phase (stored by relaySignal). */
+  retryState?: unknown;
   createdAt: number;
   timeoutDeadline: number;
   idempotencyKey: string;

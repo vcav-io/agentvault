@@ -17,7 +17,7 @@ import https from 'node:https';
 
 const PORT = parseInt(process.env.PORT ?? '3199', 10);
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? '';
-const OPENAI_MODEL = process.env.OPENAI_MODEL ?? 'gpt-4o';
+const OPENAI_MODEL = process.env.OPENAI_MODEL ?? process.env.OPENAI_MODEL_ID ?? 'gpt-4o';
 const OPENAI_HOST = 'api.openai.com';
 
 if (!OPENAI_API_KEY) {

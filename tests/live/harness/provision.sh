@@ -101,7 +101,8 @@ JSON
 
   # -------------------------------------------------------------------------
   # Alice's .mcp.json (INITIATOR role)
-  # Note: Bob's MCP server (AFAL HTTP) must be running before Alice initiates.
+  # Startup order is independent — PROPOSE_RETRY retries for up to 120s if the
+  # peer is unreachable. Either agent can start first. (Confirmed in live testing.)
   # Bob's AFAL HTTP port is 3201.
   # -------------------------------------------------------------------------
   mkdir -p "${alice_dir}"

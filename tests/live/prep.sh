@@ -53,8 +53,8 @@ while [[ $# -gt 0 ]]; do
       ;;
     --provider)
       case "${2:-}" in
-        anthropic) unset VCAV_MOCK 2>/dev/null || true ;;
-        openai)    unset VCAV_MOCK 2>/dev/null || true ;;
+        anthropic) unset VCAV_MOCK 2>/dev/null || true; export VCAV_PROVIDER=anthropic ;;
+        openai)    unset VCAV_MOCK 2>/dev/null || true; export VCAV_PROVIDER=openai ;;
         mock)      export VCAV_MOCK=1; FLAG_MOCK=1 ;;
         *)
           log_error "Unknown provider: ${2:-}. Use: anthropic, openai, mock"
