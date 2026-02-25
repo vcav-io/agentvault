@@ -379,6 +379,47 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_output_schema_rejects_max_length() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "compatibility_signal": { "type": "string", "enum": ["STRONG_MATCH", "PARTIAL_MATCH", "WEAK_MATCH", "NO_MATCH"] },
+                "overlap_summary": { "type": "string", "maxLength": 100 }
+            },
+            "required": ["compatibility_signal", "overlap_summary"],
+            "additionalProperties": false
+        });
+
+        let long_summary = "x".repeat(110);
+        let output = serde_json::json!({
+            "compatibility_signal": "STRONG_MATCH",
+            "overlap_summary": long_summary
+        });
+        let err = validate_output_schema(&output, &schema).unwrap_err();
+        assert!(err.to_string().contains("longer than 100 characters"));
+    }
+
+    #[test]
+    fn test_validate_output_schema_accepts_within_max_length() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "compatibility_signal": { "type": "string", "enum": ["STRONG_MATCH", "PARTIAL_MATCH", "WEAK_MATCH", "NO_MATCH"] },
+                "overlap_summary": { "type": "string", "maxLength": 100 }
+            },
+            "required": ["compatibility_signal", "overlap_summary"],
+            "additionalProperties": false
+        });
+
+        let short_summary = "x".repeat(99);
+        let output = serde_json::json!({
+            "compatibility_signal": "PARTIAL_MATCH",
+            "overlap_summary": short_summary
+        });
+        assert!(validate_output_schema(&output, &schema).is_ok());
+    }
+
+    #[test]
     fn test_contract_with_model_profile_id_optional() {
         // Contract without model_profile_id should deserialize fine (backward compat)
         let json = serde_json::json!({

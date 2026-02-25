@@ -84,7 +84,7 @@ const TEMPLATES: Record<string, ContractTemplate> = {
       required: ['compatibility_signal', 'overlap_summary'],
       additionalProperties: false,
     },
-    prompt_template_hash: '46119bca88297d92102ed2027236347009c81c0420df6a6cdad6ef1360d8f5de',
+    prompt_template_hash: '57a4a7ef5b187a226b9c0e9cbcbdece326b115093176a80edafd72e85a94bc06',
     entropy_budget_bits: 8,
     model_profile_id: 'api-claude-sonnet-v1',
     metadata: { scenario: 'scheduling-compatibility', version: '1' },
