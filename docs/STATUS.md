@@ -6,31 +6,52 @@
 
 The live test suite described in `docs/plans/agent_vault_live_test_suite_brief.md` has been implemented.
 
-### Completed
+### Harness Infrastructure
 
-- [x] MCP server: `agentvault.get_identity` tool (returns agent_id + known counterparties)
-- [x] MCP server: session pointer file write (`.agentvault/last_session.json` after session create/join)
-- [x] Harness infrastructure (`tests/live/harness/`):
-  - `lib.sh` — shared bash functions (logging, health check, cleanup)
-  - `stack.sh` — relay + provider proxy lifecycle management
-  - `mock-anthropic.mjs` — schema-driven mock Anthropic API server
-  - `openai-proxy.mjs` — OpenAI-to-Anthropic translation proxy
-  - `provision.sh` — Ed25519 keygen + MCP config generation
-  - `workspace.sh` — agent working directory setup + isolation
-  - `report.sh` — JSON/MD report generation
-- [x] Orchestration scripts:
-  - `tests/live/prep.sh` — build, start stack, provision, print operator instructions
-  - `tests/live/verify.sh` — session retrieval, Tier 1/2 privacy checks, report generation
-- [x] Scenario fixtures (4 scenarios):
-  - `01-cofounder-mediation` — co-founder strategy disagreement (MEDIATION)
-  - `02-employment-reference` — one-way confidential reference (MEDIATION)
-  - `03-stac-compatibility` — M&A compatibility check (COMPATIBILITY)
-  - `04-adversarial-extraction` — adversarial extraction resistance (COMPATIBILITY, negative test)
+- `tests/live/harness/` — lib.sh, stack.sh, mock-anthropic.mjs, openai-proxy.mjs, provision.sh, workspace.sh, report.sh
+- `tests/live/prep.sh` — build, start stack, provision, print operator instructions
+- `tests/live/verify.sh` — session retrieval, Tier 1/2/3 privacy + red team checks, report generation
+- MCP server: `agentvault.get_identity` tool, session pointer file write
 
-### Pending / Extensions
+### Scenarios
 
+| # | Scenario | Contract | Purpose |
+|---|----------|----------|---------|
+| 01 | cofounder-mediation | MEDIATION | Co-founder strategy disagreement |
+| 02 | employment-reference | MEDIATION | One-way confidential reference |
+| 03 | stac-compatibility | COMPATIBILITY | M&A compatibility check |
+| 04 | adversarial-extraction | COMPATIBILITY | Adversarial extraction resistance (negative test) |
+
+## Red Team Test Suite
+
+**Status: Implemented** (PR #13)
+
+Adversarial scenarios and multi-run accumulation evaluator, per `docs/plans/agent_vault_red_team_test_plan_v_1.md`.
+
+### Scenarios
+
+| # | Scenario | Category | Bob Profile |
+|---|----------|----------|-------------|
+| 05 | tool-exfiltration | A (tool-mediated) | — |
+| 06 | accumulation-naive | B (cross-session) | NAIVE |
+| 07 | accumulation-strategic | B (cross-session) | STRATEGIC |
+| 08 | accumulation-expert | B (cross-session) | EXPERT |
+| 09 | encoding-reflection | Secondary (M1) | — |
+| 10 | social-engineering | Secondary (M2) | — |
+
+### Scripts
+
+- `tests/live/prep-multi.sh` — multi-run experiment orchestration (manifest, canary workspace audit, belief state injection)
+- `tests/live/accumulate.sh` — post-experiment evaluator (canary scan, signal extraction, interval narrowing, reconstruction accuracy)
+
+### Verification
+
+- Tier 3 in `verify.sh` — evidence-based failure attribution (P0/M0/P1_CANARY/P1_RECONSTRUCTION), canary CI guard
+- Red Team Assessment table in `report.sh`
+
+### Open
+
+- [ ] Safe-default fallback refactor — replace `2>/dev/null || echo "safe"` with fail-safe defaults (#14)
 - [ ] Paraphrase stability tooling (variant B prompts per scenario)
-- [ ] Multi-run flake analysis (Scenario 01 x20)
-- [ ] Protocol-level leakage probes
-- [ ] Tier 3 semantic privacy checks (embedding-based, deferred)
+- [ ] Category C (meta-protocol leakage) — blocked on relay metadata observer endpoint
 - [ ] CI integration for TypeScript packages
