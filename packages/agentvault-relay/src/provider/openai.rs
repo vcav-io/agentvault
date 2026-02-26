@@ -9,6 +9,25 @@ const DEFAULT_BASE_URL: &str = "https://api.openai.com";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
+const UNSUPPORTED_KEYWORDS: &[&str] =
+    &["minimum", "maximum", "minItems", "maxItems", "uniqueItems"];
+
+/// Recursively strips JSON Schema keywords unsupported by OpenAI strict mode.
+fn strip_unsupported_keywords(value: &mut Value) {
+    if let Some(obj) = value.as_object_mut() {
+        obj.retain(|key, _| {
+            !UNSUPPORTED_KEYWORDS.contains(&key.as_str()) && !key.starts_with("x-")
+        });
+        for child in obj.values_mut() {
+            strip_unsupported_keywords(child);
+        }
+    } else if let Some(arr) = value.as_array_mut() {
+        for item in arr {
+            strip_unsupported_keywords(item);
+        }
+    }
+}
+
 /// Recursively adds `"additionalProperties": false` to all objects in a JSON Schema.
 /// OpenAI strict mode requires this on every nested object.
 fn ensure_strict_schema(value: &mut Value) {
@@ -74,6 +93,7 @@ impl OpenAIProvider {
 
         if let Some(ref schema) = request.output_schema {
             let mut strict_schema = schema.clone();
+            strip_unsupported_keywords(&mut strict_schema);
             ensure_strict_schema(&mut strict_schema);
             body.as_object_mut().unwrap().insert(
                 "response_format".to_string(),
@@ -198,6 +218,45 @@ mod tests {
             }]
         });
         assert!(extract_text(&response).is_err());
+    }
+
+    #[test]
+    fn test_strip_unsupported_keywords() {
+        let mut schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100,
+                    "description": "A count"
+                },
+                "items": {
+                    "type": "array",
+                    "items": { "type": "string", "enum": ["A", "B"] },
+                    "minItems": 0,
+                    "maxItems": 3,
+                    "uniqueItems": true,
+                    "x-vcav-entropy-bits-upper-bound": 8
+                }
+            }
+        });
+
+        strip_unsupported_keywords(&mut schema);
+
+        assert!(schema["properties"]["count"].get("minimum").is_none());
+        assert!(schema["properties"]["count"].get("maximum").is_none());
+        assert_eq!(schema["properties"]["count"]["type"], "integer");
+        assert_eq!(schema["properties"]["count"]["description"], "A count");
+        // Array keywords and x- extensions stripped
+        assert!(schema["properties"]["items"].get("minItems").is_none());
+        assert!(schema["properties"]["items"].get("maxItems").is_none());
+        assert!(schema["properties"]["items"].get("uniqueItems").is_none());
+        assert!(schema["properties"]["items"]
+            .get("x-vcav-entropy-bits-upper-bound")
+            .is_none());
+        // Core fields preserved
+        assert_eq!(schema["properties"]["items"]["type"], "array");
     }
 
     #[test]

@@ -62,8 +62,25 @@ The relay now supports both Anthropic and OpenAI providers. OpenAI is optional �
 
 See `docs/red-team-report-2026-02-25.md` for cross-model comparison results.
 
+## COMPATIBILITY Schema v2
+
+**Status: Implemented**
+
+Replaced free-text `overlap_summary` field with orthogonal enum dimensions to eliminate
+unconstrained information channel identified in red team testing (see `docs/red-team-report-2026-02-25.md`).
+
+- Output schema: `vcav_e_compatibility_signal_v2` — all fields are bounded enums or bounded arrays of enums
+- Dimensions: `thesis_fit`, `size_fit`, `stage_fit`, `confidence`, `primary_reasons`, `blocking_reasons`, `next_step`
+- Entropy budget: 32 bits (advisory), up from 8 bits
+- New prompt program with anti-covert-encoding instructions
+- `accumulate.sh` updated for v2 signal extraction and forbidden-token scanning
+- `verify.sh` digit/currency regression guard scoped to string values
+
 ### Open
 
+- [ ] Deterministic policy gate — relay-side output filtering rejecting currency/digits/proper nouns (elevated priority)
+- [ ] Client-side enum rendering — deterministic template converting enum tuples to human-friendly sentences
+- [ ] Derivable `next_step` — make it a function of other fields rather than model-chosen
 - [ ] Safe-default fallback refactor — replace `2>/dev/null || echo "safe"` with fail-safe defaults (#14)
 - [ ] Paraphrase stability tooling (variant B prompts per scenario)
 - [ ] Category C (meta-protocol leakage) — blocked on relay metadata observer endpoint

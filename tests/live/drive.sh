@@ -242,15 +242,21 @@ run_session() {
   local bob_context
   if [[ "${session_num}" -gt 1 && -f "${SCENARIO_DIR}/bob_relay_input_template.json" && -n "${PREV_OUTPUT_FILE}" && -f "${PREV_OUTPUT_FILE}" ]]; then
     # Extract specific structured fields from previous output
-    local prev_signal prev_summary
+    local prev_signal prev_enums
     prev_signal="$(jq -r '.output.compatibility_signal // .output.mediation_signal // "UNKNOWN"' "${PREV_OUTPUT_FILE}")"
-    prev_summary="$(jq -r '.output.overlap_summary // .output.next_step_signal // "no summary available"' "${PREV_OUTPUT_FILE}")"
+    prev_enums="$(jq -r '[
+      "thesis_fit=" + (.output.thesis_fit // "N/A"),
+      "size_fit=" + (.output.size_fit // "N/A"),
+      "stage_fit=" + (.output.stage_fit // "N/A"),
+      "confidence=" + (.output.confidence // "N/A"),
+      "next_step=" + (.output.next_step // "N/A")
+    ] | join(", ")' "${PREV_OUTPUT_FILE}")"
 
     # Read template and substitute
     local template
     template="$(cat "${SCENARIO_DIR}/bob_relay_input_template.json")"
     template="${template//\{\{COMPAT_SIGNAL\}\}/${prev_signal}}"
-    template="${template//\{\{OVERLAP_SUMMARY\}\}/${prev_summary}}"
+    template="${template//\{\{PREV_ENUMS\}\}/${prev_enums}}"
     bob_context="${template}"
     log_info "Bob input: adapted from template (prev signal: ${prev_signal})"
   else

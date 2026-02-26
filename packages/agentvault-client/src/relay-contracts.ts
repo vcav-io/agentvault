@@ -68,26 +68,89 @@ const TEMPLATES: Record<string, ContractTemplate> = {
   },
   COMPATIBILITY: {
     purpose_code: 'COMPATIBILITY',
-    output_schema_id: 'vcav_e_compatibility_signal_v1',
+    output_schema_id: 'vcav_e_compatibility_signal_v2',
     output_schema: {
       type: 'object',
       properties: {
+        schema_version: { type: 'string', enum: ['2'] },
         compatibility_signal: {
           type: 'string',
           enum: ['STRONG_MATCH', 'PARTIAL_MATCH', 'WEAK_MATCH', 'NO_MATCH'],
         },
-        overlap_summary: {
+        thesis_fit: {
           type: 'string',
-          maxLength: 100,
+          enum: ['ALIGNED', 'PARTIAL', 'MISALIGNED', 'UNKNOWN'],
+        },
+        size_fit: {
+          type: 'string',
+          enum: ['WITHIN_BAND', 'TOO_LOW', 'TOO_HIGH', 'UNKNOWN'],
+        },
+        stage_fit: {
+          type: 'string',
+          enum: ['ALIGNED', 'PARTIAL', 'MISALIGNED', 'UNKNOWN'],
+        },
+        confidence: {
+          type: 'string',
+          enum: ['HIGH', 'MEDIUM', 'LOW'],
+        },
+        primary_reasons: {
+          type: 'array',
+          items: {
+            type: 'string',
+            enum: [
+              'SECTOR_MATCH',
+              'SIZE_COMPATIBLE',
+              'STAGE_COMPATIBLE',
+              'GEOGRAPHIC_PROXIMITY',
+              'EXPERIENCE_RELEVANCE',
+              'TIMELINE_COMPATIBLE',
+            ],
+          },
+          minItems: 0,
+          maxItems: 3,
+          uniqueItems: true,
+          'x-vcav-entropy-bits-upper-bound': 8,
+        },
+        blocking_reasons: {
+          type: 'array',
+          items: {
+            type: 'string',
+            enum: [
+              'SIZE_INCOMPATIBLE',
+              'SECTOR_MISMATCH',
+              'STAGE_MISMATCH',
+              'GEOGRAPHY_MISMATCH',
+              'TIMELINE_CONFLICT',
+              'STRUCTURE_INCOMPATIBLE',
+            ],
+          },
+          minItems: 0,
+          maxItems: 2,
+          uniqueItems: true,
+          'x-vcav-entropy-bits-upper-bound': 5,
+        },
+        next_step: {
+          type: 'string',
+          enum: ['PROCEED', 'PROCEED_WITH_CAVEATS', 'ASK_FOR_PUBLIC_INFO', 'DO_NOT_PROCEED'],
         },
       },
-      required: ['compatibility_signal', 'overlap_summary'],
+      required: [
+        'schema_version',
+        'compatibility_signal',
+        'thesis_fit',
+        'size_fit',
+        'stage_fit',
+        'confidence',
+        'primary_reasons',
+        'blocking_reasons',
+        'next_step',
+      ],
       additionalProperties: false,
     },
-    prompt_template_hash: '57a4a7ef5b187a226b9c0e9cbcbdece326b115093176a80edafd72e85a94bc06',
-    entropy_budget_bits: 8,
+    prompt_template_hash: '18b1b459ceb12fc03cb005314f6b4e168c113ead7255b4b65329fb8a6c60f874',
+    entropy_budget_bits: 32,
     model_profile_id: 'api-claude-sonnet-v1',
-    metadata: { scenario: 'scheduling-compatibility', version: '1' },
+    metadata: { scenario: 'scheduling-compatibility', version: '2' },
     timing_class: null,
   },
 };
