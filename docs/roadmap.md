@@ -187,8 +187,8 @@ Phase 1 is complete when:
 
 **Mechanical (must pass in CI):**
 - Relay-side digit/currency guard has deterministic unit tests — **done** (7 unit tests, PR #22)
-- Schema validation rejects `additionalProperties`
-- Model profile startup hash check passes
+- Schema validation rejects `additionalProperties` — **done** (v2 schema has `additionalProperties: false`)
+- Model profile startup hash check passes — **done** (lockfile validation, PR #24)
 
 **CI infrastructure:** Rust CI now authenticates to private `vault-family-core`
 dependency via `VAULT_CORE_TOKEN` secret (PR #22). All jobs green.
@@ -199,6 +199,8 @@ dependency via `VAULT_CORE_TOKEN` secret (PR #22). All jobs green.
 - Accumulation tests operate purely on enum output (done)
 - No numeric or currency tokens appear in SAFE contract output — **done**
   (relay-side enforcement, PR #22)
+
+**Phase 1 status: COMPLETE.** All mechanical and evidential exit criteria met.
 
 ---
 
@@ -450,9 +452,12 @@ AgentVault remains software-attested, relay-based.
 
 # IV. Immediate Priorities
 
+**Phase 1 — COMPLETE:**
 1. ~~Add relay-side digit/currency guard (Phase 1, item 2)~~ — **done** (PR #22)
-2. Replace fake runtime hash with real build artefact (Phase 1, item 4)
-3. ~~Add model profile startup hash check (Phase 1, item 3)~~ — **done**
+2. ~~Replace fake runtime hash with real build artefact (Phase 1, item 4)~~ — **done** (PR #23)
+3. ~~Add model profile startup hash check (Phase 1, item 3)~~ — **done** (PR #24)
+
+**Next priorities:**
 4. Begin OpenClaw skill creation (Phase 2b, item 10)
    — **Current state:** Brief exists (`docs/plans/open_claw_agent_vault_mcp_port_brief_v_1.md`).
    No skill file or mcporter config created yet.
