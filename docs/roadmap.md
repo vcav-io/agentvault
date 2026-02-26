@@ -167,7 +167,13 @@ are still ID-named (`api-claude-sonnet-v1.json`), so a file can be mutated
 between runs without detection until receipt comparison. The gap is relay-side
 startup validation.
 
-## 4. Honest Runtime Hashing
+## 4. Honest Runtime Hashing — DONE
+
+*Completed: `build.rs` embeds git commit SHA at build time. `runtime_hash` is
+`SHA256(GIT_SHA)`. `model_weights_hash` and `inference_config_hash` use honest
+sentinel values reflecting the API-mediated relay (no local weights or inference).
+Health endpoint returns `git_sha` field. Receipts no longer claim unverifiable
+runtime provenance.*
 
 Replace `SHA256("version-string")` with:
 
@@ -175,10 +181,6 @@ Replace `SHA256("version-string")` with:
 - Docker image digest
 
 Receipts must not claim unverifiable runtime provenance.
-
-**Current state:** Not done. Relay uses `SHA256("vcav-e-relay-v0.2.0-bilateral")`
-as `runtime_hash`, `model_weights_hash`, and `inference_config_hash`. This is a
-placeholder, not a real build artefact hash.
 
 ## 5. Phase 1 Exit Criteria
 

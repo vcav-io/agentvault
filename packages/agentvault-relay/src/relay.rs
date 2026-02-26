@@ -15,6 +15,10 @@ use crate::AppState;
 
 const MAX_TOKENS: u32 = 256;
 
+/// Git commit SHA embedded at build time by build.rs.
+/// Falls back to "unknown" in environments where .git/ is not present.
+const GIT_SHA: &str = env!("VCAV_GIT_SHA");
+
 /// Compute SHA-256 hash of canonical contract JSON for receipt binding.
 pub fn compute_contract_hash(contract: &Contract) -> Result<String, RelayError> {
     let canonical = receipt_core::canonicalize_serializable(contract)
@@ -248,7 +252,12 @@ pub async fn relay_core(
 
     // 12. Build and sign receipt
     let prompt_template_hash = program.content_hash()?;
-    let relay_build_hash = hex::encode(Sha256::digest(b"vcav-e-relay-v0.2.0-bilateral"));
+    // runtime_hash: real git SHA embedded at build time by build.rs
+    let runtime_hash = hex::encode(Sha256::digest(GIT_SHA.as_bytes()));
+    // model_weights_hash: honest "n/a" — relay is API-mediated; no local weights
+    let model_weights_hash = hex::encode(Sha256::digest(b"api-mediated-no-local-weights"));
+    // inference_config_hash: honest "n/a" — relay is API-mediated; no local inference
+    let inference_config_hash = hex::encode(Sha256::digest(b"api-mediated-no-local-inference"));
     let guardian_policy_hash = hex::encode(Sha256::digest(b"guardian-core-v0.1.0"));
 
     // Load model profile hash if contract specifies one
@@ -264,11 +273,11 @@ pub async fn relay_core(
         .session_id(session_id)
         .purpose_code(contract.purpose_code)
         .participant_ids(contract.participants.clone())
-        .runtime_hash(&relay_build_hash)
+        .runtime_hash(&runtime_hash)
         .guardian_policy_hash(&guardian_policy_hash)
-        .model_weights_hash(&relay_build_hash)
+        .model_weights_hash(&model_weights_hash)
         .llama_cpp_version("n/a")
-        .inference_config_hash(&relay_build_hash)
+        .inference_config_hash(&inference_config_hash)
         .output_schema_version("1.0.0")
         .session_start(session_start)
         .session_end(session_end)
@@ -412,17 +421,21 @@ mod tests {
         let profile_hash = profile.content_hash().unwrap();
 
         // Build a receipt with model_profile_hash
-        let relay_hash = hex::encode(Sha256::digest(b"vcav-e-relay-v0.2.0-bilateral"));
+        let runtime_hash = hex::encode(Sha256::digest(GIT_SHA.as_bytes()));
+        let guardian_hash = hex::encode(Sha256::digest(b"guardian-core-v0.1.0"));
+        let model_weights_hash = hex::encode(Sha256::digest(b"api-mediated-no-local-weights"));
+        let inference_config_hash = hex::encode(Sha256::digest(b"api-mediated-no-local-inference"));
+
         let now = Utc::now();
         let unsigned = Receipt::builder()
             .session_id("a".repeat(64))
             .purpose_code(vault_family_types::Purpose::Mediation)
             .participant_ids(vec!["alice".to_string(), "bob".to_string()])
-            .runtime_hash(&relay_hash)
-            .guardian_policy_hash(&relay_hash)
-            .model_weights_hash(&relay_hash)
+            .runtime_hash(&runtime_hash)
+            .guardian_policy_hash(&guardian_hash)
+            .model_weights_hash(&model_weights_hash)
             .llama_cpp_version("n/a")
-            .inference_config_hash(&relay_hash)
+            .inference_config_hash(&inference_config_hash)
             .output_schema_version("1.0.0")
             .session_start(now)
             .session_end(now)

@@ -25,6 +25,7 @@ use crate::types::{
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const GIT_SHA: &str = env!("VCAV_GIT_SHA");
 
 pub struct AppState {
     pub signing_key: SigningKey,
@@ -59,6 +60,7 @@ async fn health_handler() -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok",
         version: VERSION,
+        git_sha: GIT_SHA,
         execution_lane: "API_MEDIATED",
     })
 }
