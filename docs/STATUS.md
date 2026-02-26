@@ -90,6 +90,23 @@ unconstrained information channel identified in red team testing (see `docs/red-
 - Health endpoint (`GET /health`) now returns `git_sha` field
 - Receipts no longer claim unverifiable runtime provenance
 
+## Model Profile Immutability (Phase 1, item 3)
+
+**Status: Implemented** (2026-02-26)
+
+Lockfile (`model_profiles.lock`) pins each profile ID to its expected content hash.
+The relay refuses to start if any lockfile entry's computed hash doesn't match.
+
+- `validate_model_profile_lockfile(dir)` in `prompt_program.rs` — reads lockfile,
+  verifies each listed profile's hash, returns hard error on mismatch, graceful Ok
+  on missing lockfile (dev environments)
+- `generate_model_profile_lockfile(dir)` in `prompt_program.rs` — scans `*.json`
+  files, deserializes valid `ModelProfile` entries, writes lockfile
+- Startup integration in `main.rs` — validates before binding to port, exits with code 1 on mismatch
+- `examples/gen_lockfile.rs` — CLI helper: `cargo run --example gen_lockfile -- <dir>`
+- `prompt_programs/model_profiles.lock` committed with `api-claude-sonnet-v1` hash
+- 5 unit tests: valid lockfile, hash mismatch, missing lockfile, extra unlisted profile, generate round-trip
+
 ### Open
 
 - [x] Deterministic policy gate — relay-side digit/currency guard (GATE rule, Unicode Nd/Sc categories, scoped to COMPAT v2)

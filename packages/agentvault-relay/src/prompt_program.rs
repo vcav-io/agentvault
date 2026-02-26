@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -124,6 +126,101 @@ pub fn load_model_profile(dir: &str, profile_id: &str) -> Result<ModelProfile, R
         .map_err(|e| RelayError::PromptProgram(format!("invalid model profile JSON: {e}")))?;
 
     Ok(profile)
+}
+
+const LOCKFILE_NAME: &str = "model_profiles.lock";
+
+/// Validate model profile lockfile: for each entry, load profile, compute hash, compare.
+/// Missing lockfile → Ok (graceful degradation for dev environments).
+/// Hash mismatch → Err (hard failure).
+pub fn validate_model_profile_lockfile(dir: &str) -> Result<(), RelayError> {
+    let lockfile_path = std::path::Path::new(dir).join(LOCKFILE_NAME);
+
+    let data = match std::fs::read_to_string(&lockfile_path) {
+        Ok(d) => d,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            tracing::warn!(
+                path = %lockfile_path.display(),
+                "model_profiles.lock not found — skipping profile hash validation (dev mode)"
+            );
+            return Ok(());
+        }
+        Err(e) => {
+            return Err(RelayError::PromptProgram(format!(
+                "failed to read model_profiles.lock: {e}"
+            )));
+        }
+    };
+
+    let lockfile: HashMap<String, String> = serde_json::from_str(&data).map_err(|e| {
+        RelayError::PromptProgram(format!("invalid model_profiles.lock format: {e}"))
+    })?;
+
+    for (profile_id, expected_hash) in &lockfile {
+        let profile = load_model_profile(dir, profile_id)?;
+        let actual_hash = profile.content_hash()?;
+        if &actual_hash != expected_hash {
+            return Err(RelayError::PromptProgram(format!(
+                "model profile hash mismatch for '{profile_id}': \
+                 expected {expected_hash}, got {actual_hash}"
+            )));
+        }
+        tracing::debug!(profile_id, "model profile hash verified");
+    }
+
+    tracing::info!(count = lockfile.len(), "model profile lockfile validated");
+    Ok(())
+}
+
+/// Generate (or regenerate) the lockfile for all valid ModelProfile JSON files in `dir`.
+/// Scans `*.json` files, deserializes those that match ModelProfile, and writes
+/// `model_profiles.lock` with `{ profile_id -> content_hash }` entries.
+pub fn generate_model_profile_lockfile(dir: &str) -> Result<(), RelayError> {
+    let dir_path = std::path::Path::new(dir);
+
+    let entries = std::fs::read_dir(dir_path).map_err(|e| {
+        RelayError::PromptProgram(format!("failed to read prompt_programs dir: {e}"))
+    })?;
+
+    let mut lockfile: HashMap<String, String> = HashMap::new();
+
+    for entry in entries {
+        let entry = entry.map_err(|e| {
+            RelayError::PromptProgram(format!("failed to read directory entry: {e}"))
+        })?;
+        let path = entry.path();
+
+        // Only process *.json, skip the lockfile itself
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+
+        let data = match std::fs::read_to_string(&path) {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+
+        let profile: ModelProfile = match serde_json::from_str(&data) {
+            Ok(p) => p,
+            Err(_) => continue, // Not a ModelProfile — skip
+        };
+
+        let hash = profile.content_hash()?;
+        lockfile.insert(profile.profile_id.clone(), hash);
+    }
+
+    let lockfile_path = dir_path.join(LOCKFILE_NAME);
+    let lockfile_json = serde_json::to_string_pretty(&lockfile)
+        .map_err(|e| RelayError::PromptProgram(format!("failed to serialize lockfile: {e}")))?;
+    std::fs::write(&lockfile_path, lockfile_json + "\n")
+        .map_err(|e| RelayError::PromptProgram(format!("failed to write lockfile: {e}")))?;
+
+    tracing::info!(
+        path = %lockfile_path.display(),
+        count = lockfile.len(),
+        "model_profiles.lock written"
+    );
+    Ok(())
 }
 
 /// Load a prompt program from the file system by its content-addressed hash.
@@ -355,5 +452,119 @@ mod tests {
         p2.model_family = "claude-haiku".to_string();
 
         assert_ne!(p1.content_hash().unwrap(), p2.content_hash().unwrap());
+    }
+
+    fn make_test_profile(profile_id: &str) -> crate::types::ModelProfile {
+        crate::types::ModelProfile {
+            profile_version: "1".to_string(),
+            profile_id: profile_id.to_string(),
+            provider: "anthropic".to_string(),
+            model_family: "claude-sonnet".to_string(),
+            reasoning_mode: "unconstrained".to_string(),
+            structured_output: true,
+        }
+    }
+
+    fn write_profile(dir: &std::path::Path, profile: &crate::types::ModelProfile) {
+        let path = dir.join(format!("{}.json", profile.profile_id));
+        std::fs::write(path, serde_json::to_string(profile).unwrap()).unwrap();
+    }
+
+    fn write_lockfile(dir: &std::path::Path, entries: &[(&str, &str)]) {
+        use std::collections::HashMap;
+        let map: HashMap<&str, &str> = entries.iter().cloned().collect();
+        let path = dir.join(LOCKFILE_NAME);
+        std::fs::write(path, serde_json::to_string_pretty(&map).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn test_lockfile_valid() {
+        let dir = std::env::temp_dir().join("vcav-lockfile-valid");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let profile = make_test_profile("test-model-v1");
+        write_profile(&dir, &profile);
+        let hash = profile.content_hash().unwrap();
+        write_lockfile(&dir, &[("test-model-v1", &hash)]);
+
+        let result = validate_model_profile_lockfile(dir.to_str().unwrap());
+        assert!(result.is_ok(), "expected Ok, got: {result:?}");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_lockfile_hash_mismatch() {
+        let dir = std::env::temp_dir().join("vcav-lockfile-mismatch");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let profile = make_test_profile("test-model-v1");
+        write_profile(&dir, &profile);
+        // Write a deliberately wrong hash
+        write_lockfile(&dir, &[("test-model-v1", &"a".repeat(64))]);
+
+        let result = validate_model_profile_lockfile(dir.to_str().unwrap());
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("hash mismatch"),
+            "error should mention hash mismatch"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_lockfile_missing_is_ok() {
+        let dir = std::env::temp_dir().join("vcav-lockfile-missing");
+        std::fs::create_dir_all(&dir).unwrap();
+        // No lockfile written
+
+        let result = validate_model_profile_lockfile(dir.to_str().unwrap());
+        assert!(result.is_ok(), "missing lockfile should return Ok");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_lockfile_extra_profile_not_in_lockfile_is_ok() {
+        let dir = std::env::temp_dir().join("vcav-lockfile-extra");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let p1 = make_test_profile("pinned-model-v1");
+        let p2 = make_test_profile("extra-model-v1");
+        write_profile(&dir, &p1);
+        write_profile(&dir, &p2);
+
+        // Only lockfile entry for p1 — p2 is extra (unlisted)
+        let hash1 = p1.content_hash().unwrap();
+        write_lockfile(&dir, &[("pinned-model-v1", &hash1)]);
+
+        let result = validate_model_profile_lockfile(dir.to_str().unwrap());
+        assert!(
+            result.is_ok(),
+            "extra unlisted profile should not cause failure"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_generate_lockfile() {
+        let dir = std::env::temp_dir().join("vcav-lockfile-generate");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let profile = make_test_profile("gen-model-v1");
+        write_profile(&dir, &profile);
+
+        generate_model_profile_lockfile(dir.to_str().unwrap()).unwrap();
+
+        // Lockfile should now exist and validate successfully
+        let result = validate_model_profile_lockfile(dir.to_str().unwrap());
+        assert!(
+            result.is_ok(),
+            "generated lockfile should validate: {result:?}"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
