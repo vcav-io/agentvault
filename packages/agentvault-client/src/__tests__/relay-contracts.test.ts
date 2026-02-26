@@ -41,8 +41,17 @@ describe('buildRelayContract', () => {
     const contract = buildRelayContract('COMPATIBILITY', ['alice-demo', 'bob-demo']);
     expect(contract).toBeDefined();
     expect(contract!.purpose_code).toBe('COMPATIBILITY');
-    expect(contract!.output_schema_id).toBe('vcav_e_compatibility_signal_v1');
-    expect(contract!.entropy_budget_bits).toBe(8);
+    expect(contract!.output_schema_id).toBe('vcav_e_compatibility_signal_v2');
+    expect(contract!.entropy_budget_bits).toBe(32);
+    expect(contract!.output_schema).toHaveProperty('properties.schema_version');
+    expect(contract!.output_schema).toHaveProperty('properties.thesis_fit');
+    expect(contract!.output_schema).toHaveProperty('properties.size_fit');
+    expect(contract!.output_schema).toHaveProperty('properties.stage_fit');
+    expect(contract!.output_schema).toHaveProperty('properties.confidence');
+    expect(contract!.output_schema).toHaveProperty('properties.primary_reasons');
+    expect(contract!.output_schema).toHaveProperty('properties.blocking_reasons');
+    expect(contract!.output_schema).toHaveProperty('properties.next_step');
+    expect(contract!.output_schema).not.toHaveProperty('properties.overlap_summary');
   });
 
   it('returns undefined for unknown purpose', () => {
@@ -130,6 +139,6 @@ describe('golden hash vectors (cross-language parity)', () => {
   it('compatibility contract hash matches Rust relay', () => {
     const contract = buildRelayContract('COMPATIBILITY', ['alice-demo', 'bob-demo'])!;
     const hash = computeRelayContractHash(contract);
-    expect(hash).toBe('cae3ef24e1a34687adbdb245f1e4d256e87a5527e04f8ecdf879c95fc027073d');
+    expect(hash).toBe('bea26bf282b6eab571bad844ba262973e3fb81e4132218bf9b7a74dfc55cc7e4');
   });
 });

@@ -395,6 +395,27 @@ try {
         issues.push(`field "${key}" has ${value.length} chars (possible unbounded text)`);
       }
     }
+
+    // Check 4: Forbidden token scan for v2 enum-only schemas
+    // Digits and currency symbols should never appear in string values
+    // of all-enum output. Scoped to string values only (not JSON structure).
+    if (output.schema_version === '2') {
+      const digitRe = /[0-9]/;
+      const currencyRe = /[\u00a3$\u20ac]/; // £ $ €
+      for (const [key, value] of Object.entries(output)) {
+        if (typeof value === 'string' && key !== 'schema_version') {
+          if (digitRe.test(value)) issues.push(`forbidden digit in "${key}": "${value}"`);
+          if (currencyRe.test(value)) issues.push(`forbidden currency in "${key}": "${value}"`);
+        }
+        if (Array.isArray(value)) {
+          for (const item of value) {
+            if (typeof item !== 'string') continue;
+            if (digitRe.test(item)) issues.push(`forbidden digit in "${key}" item: "${item}"`);
+            if (currencyRe.test(item)) issues.push(`forbidden currency in "${key}" item: "${item}"`);
+          }
+        }
+      }
+    }
   }
 } catch (e) {
   issues.push(`parse error: ${e.message}`);
