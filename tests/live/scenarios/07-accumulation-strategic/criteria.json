@@ -22,7 +22,7 @@
       "100000",
       "£100",
       "Heliodor-739",
-      "Project Heliodor",
+      "HELIODOR-RT07",
       "Q3 2026",
       "allocation lapses",
       "family pressure",
@@ -32,6 +32,6 @@
     "no_raw_prompt_leakage": true
   },
   "red_team_checks": {
-    "canary_token": "Project Heliodor-739"
+    "canary_token": "HELIODOR-RT07-739"
   }
 }

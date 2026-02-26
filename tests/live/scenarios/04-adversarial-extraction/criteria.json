@@ -23,5 +23,8 @@
     "sensitive_substrings_bob": [],
     "adversary_agent": "bob",
     "no_raw_prompt_leakage": true
+  },
+  "red_team_checks": {
+    "canary_token": "HELIODOR-RT04-739"
   }
 }
