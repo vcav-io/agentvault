@@ -225,38 +225,35 @@ Receipt includes `output_schema_hash`.
 **Current state:** Not started. Schema is embedded in contract and bound
 indirectly via contract hash. No separate content-addressing.
 
-## 7. Policy Bundle v1 (Minimal)
+## 7. RelayEnforcementPolicy Phase A — DONE
 
-Introduce first-class PolicyBundle artefact.
+*Completed: PR #26, merged 2026-02-26.*
 
-Example structure:
-- `allowed_schema_hashes`
-- `allowed_model_profile_hashes`
-- `reject_patterns`
-- `entropy_constraints` (including budget governance — see below)
-- `max_tokens`
-- `provider_allowlist`
-- `enforcement_classification` (GATE vs ADVISORY per rule)
+Introduced `RelayEnforcementPolicy` as a first-class, content-addressed
+artefact with lockfile validation and receipt binding. This is the relay's
+local enforcement config — distinct from the vcav orchestrator's governance
+`PolicyBundle` (which governs lanes, provenance, asymmetry, TTL, entropy budget).
 
-The `entropy_constraints` section must define how entropy budgets are set and
-reviewed. Currently the 32-bit advisory budget for COMPATIBILITY v2 is a
-hardcoded constant with no review trigger. The PolicyBundle should declare:
-- Budget value and classification (GATE vs ADVISORY)
-- Review trigger (e.g. "review if actual exceeds 80% of budget")
-- Tightening policy (e.g. "reduce after schema change if actual headroom > 50%")
+**Phase A deliverables:**
+- `RelayEnforcementPolicy` type with enum-based rules (`RuleType`,
+  `RuleScopeKind`, `EnforcementClass` — no stringly-typed variants)
+- RFC 8785 JCS content addressing (via `receipt_core::canonicalize_serializable`)
+- Lockfile validation (fail-closed by default; dev override requires both
+  `VCAV_ENV=dev` and `VCAV_ENFORCEMENT_LOCKFILE_SKIP=1`)
+- Reverse lockfile check (disk → lockfile, not just lockfile → disk)
+- Capability derivation from rules (not declared in JSON)
+- Receipt binding: `guardian_policy_hash` = real enforcement policy content hash
+- Example policy: `compatibility_safe_v1.json` with Nd/Sc unicode guards
+- 28 unit tests covering serde, hashing, lockfile, capabilities, path traversal
 
-This prevents entropy budgets from silently drifting as schemas evolve.
+**Phase A is "declared, not enforced":** the receipt proves which enforcement
+policy was loaded at startup, but the hardcoded guard still runs independently.
 
-Enforced in relay (no Guardian rewrite yet).
+**Remaining phases:**
+- **Phase B:** Wire existing hardcoded guard to read from policy config
+- **Phase C:** Add schema-content-addressing-dependent rules (requires item 6)
 
-Receipt binds `policy_bundle_hash`.
-
-**Dependency:** Requires item 6 (schema-as-standalone-artefact) to be done
-first, since the policy bundle references schema hashes.
-
-**Current state:** Not started. No PolicyBundle type in codebase. Policy is
-currently represented by flat fields (`purpose_code`, `entropy_budget_bits`,
-`guardian_policy_hash`).
+**Dependency:** Phase C requires item 6 (schema-as-standalone-artefact).
 
 ## 8. Capability Declaration in Policy
 
@@ -293,15 +290,16 @@ Per `docs/plans/open_claw_agent_vault_mcp_port_brief_v_1.md`.
 This track runs in parallel with Phase 2 artefact discipline. It depends on
 Phase 1 being complete (v2 schema hardened) but does not depend on Phase 2.
 
-## 10. OpenClaw Skill + mcporter Integration
+## 10. OpenClaw Skill + mcporter Integration — DONE
 
-- Create OpenClaw Skill (`~/.openclaw/skills/agentvault/SKILL.md`)
-- Validate mcporter can invoke all AgentVault MCP tools
-- Test AFAL direct transport between two VPS instances
-- No native plugin port initially (mcporter indirection only)
+*Completed: PR #25, merged 2026-02-26.*
 
-The skill teaches the agent how to use AgentVault tools, encodes the correct
-lifecycle, and prevents protocol instructions from appearing in user prompts.
+- Created OpenClaw Skill (`skills/openclaw/agentvault/SKILL.md`)
+- VPS deployment runbook (`docs/guides/openclaw-vps-runbook.md`)
+- Skill covers: identity discovery, INITIATE/RESPOND flow, resume loop,
+  completion, failure, session state file, protocol rules, display rules
+- "Outputs are signals" framing and non-leak UX rules
+- No native plugin port (mcporter indirection only)
 
 ## 11. VPS Runbook + First Live Session
 
@@ -457,13 +455,18 @@ AgentVault remains software-attested, relay-based.
 2. ~~Replace fake runtime hash with real build artefact (Phase 1, item 4)~~ — **done** (PR #23)
 3. ~~Add model profile startup hash check (Phase 1, item 3)~~ — **done** (PR #24)
 
+**Phase 2 progress:**
+4. ~~OpenClaw skill + VPS runbook (Phase 2b, item 10)~~ — **done** (PR #25)
+5. ~~RelayEnforcementPolicy Phase A (Phase 2, item 7)~~ — **done** (PR #26)
+
 **Next priorities:**
-4. Begin OpenClaw skill creation (Phase 2b, item 10)
-   — **Current state:** Brief exists (`docs/plans/open_claw_agent_vault_mcp_port_brief_v_1.md`).
-   No skill file or mcporter config created yet.
-5. Create initial PolicyBundle v1 skeleton (Phase 2, item 7)
-   — **Current state:** No PolicyBundle type in codebase. Policy is flat fields in
-   contracts (`purpose_code`, `entropy_budget_bits`, `guardian_policy_hash`).
+6. Output schema as standalone artefact (Phase 2, item 6)
+   — **Current state:** Schema embedded in contract, referenced by human-readable
+   `output_schema_id`. No content-addressing.
+7. First live OpenClaw VPS session (Phase 2b, item 11)
+   — **Current state:** Skill and runbook exist. VPS deployment not yet attempted.
+8. RelayEnforcementPolicy Phase B — wire guard to policy config
+   — **Current state:** Phase A complete. Hardcoded guard runs independently of policy.
 
 Stop there before expanding scope.
 
