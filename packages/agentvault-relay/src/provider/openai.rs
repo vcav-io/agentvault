@@ -9,6 +9,30 @@ const DEFAULT_BASE_URL: &str = "https://api.openai.com";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
+const UNSUPPORTED_KEYWORDS: &[&str] = &[
+    "minimum",
+    "maximum",
+    "minItems",
+    "maxItems",
+    "uniqueItems",
+];
+
+/// Recursively strips JSON Schema keywords unsupported by OpenAI strict mode.
+fn strip_unsupported_keywords(value: &mut Value) {
+    if let Some(obj) = value.as_object_mut() {
+        obj.retain(|key, _| {
+            !UNSUPPORTED_KEYWORDS.contains(&key.as_str()) && !key.starts_with("x-")
+        });
+        for child in obj.values_mut() {
+            strip_unsupported_keywords(child);
+        }
+    } else if let Some(arr) = value.as_array_mut() {
+        for item in arr {
+            strip_unsupported_keywords(item);
+        }
+    }
+}
+
 /// Recursively adds `"additionalProperties": false` to all objects in a JSON Schema.
 /// OpenAI strict mode requires this on every nested object.
 fn ensure_strict_schema(value: &mut Value) {
@@ -74,6 +98,7 @@ impl OpenAIProvider {
 
         if let Some(ref schema) = request.output_schema {
             let mut strict_schema = schema.clone();
+            strip_unsupported_keywords(&mut strict_schema);
             ensure_strict_schema(&mut strict_schema);
             body.as_object_mut().unwrap().insert(
                 "response_format".to_string(),

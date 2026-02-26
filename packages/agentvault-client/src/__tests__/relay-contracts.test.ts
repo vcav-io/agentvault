@@ -139,6 +139,6 @@ describe('golden hash vectors (cross-language parity)', () => {
   it('compatibility contract hash matches Rust relay', () => {
     const contract = buildRelayContract('COMPATIBILITY', ['alice-demo', 'bob-demo'])!;
     const hash = computeRelayContractHash(contract);
-    expect(hash).toBe('bea26bf282b6eab571bad844ba262973e3fb81e4132218bf9b7a74dfc55cc7e4');
+    expect(hash).toBe('ade915527b6351b729f758f2c0c11140ee3cf7846950a13113cb6a7d35ed5de0');
   });
 });

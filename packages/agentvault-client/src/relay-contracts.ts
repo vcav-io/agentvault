@@ -147,7 +147,7 @@ const TEMPLATES: Record<string, ContractTemplate> = {
       ],
       additionalProperties: false,
     },
-    prompt_template_hash: '56876501c8511554b9f51a1fcb0efd57b78eb4b39903985bbc5681b7d16a0af1',
+    prompt_template_hash: '18b1b459ceb12fc03cb005314f6b4e168c113ead7255b4b65329fb8a6c60f874',
     entropy_budget_bits: 32,
     model_profile_id: 'api-claude-sonnet-v1',
     metadata: { scenario: 'scheduling-compatibility', version: '2' },

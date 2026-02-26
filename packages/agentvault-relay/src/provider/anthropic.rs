@@ -10,11 +10,19 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
-const UNSUPPORTED_KEYWORDS: &[&str] = &["minimum", "maximum"];
+const UNSUPPORTED_KEYWORDS: &[&str] = &[
+    "minimum",
+    "maximum",
+    "minItems",
+    "maxItems",
+    "uniqueItems",
+];
 
 fn strip_unsupported_keywords(value: &mut Value) {
     if let Some(obj) = value.as_object_mut() {
-        obj.retain(|key, _| !UNSUPPORTED_KEYWORDS.contains(&key.as_str()));
+        obj.retain(|key, _| {
+            !UNSUPPORTED_KEYWORDS.contains(&key.as_str()) && !key.starts_with("x-")
+        });
         for child in obj.values_mut() {
             strip_unsupported_keywords(child);
         }
@@ -174,6 +182,14 @@ mod tests {
                     "minimum": 0,
                     "maximum": 100,
                     "description": "A count"
+                },
+                "items": {
+                    "type": "array",
+                    "items": { "type": "string", "enum": ["A", "B"] },
+                    "minItems": 0,
+                    "maxItems": 3,
+                    "uniqueItems": true,
+                    "x-vcav-entropy-bits-upper-bound": 8
                 }
             }
         });
@@ -184,6 +200,17 @@ mod tests {
         assert!(schema["properties"]["count"].get("maximum").is_none());
         assert_eq!(schema["properties"]["count"]["type"], "integer");
         assert_eq!(schema["properties"]["count"]["description"], "A count");
+        // Array keywords and x- extensions stripped
+        assert!(schema["properties"]["items"].get("minItems").is_none());
+        assert!(schema["properties"]["items"].get("maxItems").is_none());
+        assert!(schema["properties"]["items"]
+            .get("uniqueItems")
+            .is_none());
+        assert!(schema["properties"]["items"]
+            .get("x-vcav-entropy-bits-upper-bound")
+            .is_none());
+        // Core fields preserved
+        assert_eq!(schema["properties"]["items"]["type"], "array");
     }
 
     #[test]

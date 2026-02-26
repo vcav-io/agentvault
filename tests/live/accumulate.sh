@@ -145,6 +145,7 @@ function scanForbiddenTokens(output) {
   const currencyRe = /[\u00a3$\u20ac]/; // £ $ €
   for (const [key, val] of Object.entries(output)) {
     if (typeof val !== 'string') continue;
+    if (key === 'schema_version') continue; // structural metadata, not signal
     if (digitRe.test(val)) violations.push({ field: key, token: 'digit', value: val });
     if (currencyRe.test(val)) violations.push({ field: key, token: 'currency', value: val });
   }
