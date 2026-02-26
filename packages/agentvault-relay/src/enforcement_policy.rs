@@ -245,9 +245,39 @@ pub fn validate_enforcement_lockfile(dir: &str) -> Result<(), RelayError> {
             RelayError::EnforcementPolicy(format!("invalid relay_policies.lock format: {e}"))
         })?;
 
+    if lockfile.is_empty() {
+        return Err(RelayError::EnforcementPolicy(
+            "relay_policies.lock is empty — at least one policy must be pinned".to_string(),
+        ));
+    }
+
+    // Reverse check: every .json file on disk must have a lockfile entry
+    let on_disk_ids = scan_policy_ids(dir)?;
+    for disk_id in &on_disk_ids {
+        if !lockfile.contains_key(disk_id) {
+            return Err(RelayError::EnforcementPolicy(format!(
+                "policy file '{disk_id}.json' is not in the lockfile — \
+                 regenerate relay_policies.lock to include it"
+            )));
+        }
+    }
+
     for (policy_id, expected_hash) in &lockfile {
+        // Sanitize policy_id to prevent path traversal
+        if policy_id.contains("..") || policy_id.contains('/') || policy_id.contains('\\') {
+            return Err(RelayError::EnforcementPolicy(
+                "policy_id in lockfile contains invalid characters".to_string(),
+            ));
+        }
+
         let policy_path = std::path::Path::new(dir).join(format!("{policy_id}.json"));
-        let policy = load_enforcement_policy(policy_path.to_str().unwrap_or(""))?;
+        let policy_path_str = policy_path.to_str().ok_or_else(|| {
+            RelayError::EnforcementPolicy(format!(
+                "policy path for '{policy_id}' is not valid UTF-8: {}",
+                policy_path.display()
+            ))
+        })?;
+        let policy = load_enforcement_policy(policy_path_str)?;
         let actual_hash = content_hash(&policy)?;
         if &actual_hash != expected_hash {
             return Err(RelayError::EnforcementPolicy(format!(
@@ -263,6 +293,70 @@ pub fn validate_enforcement_lockfile(dir: &str) -> Result<(), RelayError> {
         "enforcement policy lockfile validated"
     );
     Ok(())
+}
+
+/// Load and parse the lockfile, returning the map of `policy_id -> hash`.
+///
+/// Returns an error if the lockfile is missing or malformed.
+pub fn load_lockfile_entries(
+    dir: &str,
+) -> Result<std::collections::HashMap<String, String>, RelayError> {
+    let lockfile_path = std::path::Path::new(dir).join(LOCKFILE_NAME);
+    let data = std::fs::read_to_string(&lockfile_path).map_err(|e| {
+        RelayError::EnforcementPolicy(format!(
+            "failed to read relay_policies.lock at {}: {e}",
+            lockfile_path.display()
+        ))
+    })?;
+    let lockfile: std::collections::HashMap<String, String> =
+        serde_json::from_str(&data).map_err(|e| {
+            RelayError::EnforcementPolicy(format!("invalid relay_policies.lock format: {e}"))
+        })?;
+    Ok(lockfile)
+}
+
+/// Scan a directory for `.json` files that deserialize as `RelayEnforcementPolicy`
+/// and return their `policy_id` values.
+fn scan_policy_ids(dir: &str) -> Result<HashSet<String>, RelayError> {
+    let dir_path = std::path::Path::new(dir);
+    let entries = std::fs::read_dir(dir_path).map_err(|e| {
+        RelayError::EnforcementPolicy(format!("failed to read relay_policies dir: {e}"))
+    })?;
+
+    let mut ids = HashSet::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| {
+            RelayError::EnforcementPolicy(format!("failed to read directory entry: {e}"))
+        })?;
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let data = match std::fs::read_to_string(&path) {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "skipping policy file: failed to read"
+                );
+                continue;
+            }
+        };
+        let policy: RelayEnforcementPolicy = match serde_json::from_str(&data) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "skipping file: not a valid RelayEnforcementPolicy"
+                );
+                continue;
+            }
+        };
+        ids.insert(policy.policy_id.clone());
+    }
+    Ok(ids)
 }
 
 /// Generate (or regenerate) the lockfile for all valid enforcement policy JSON files in `dir`.
@@ -290,12 +384,26 @@ pub fn generate_enforcement_lockfile(dir: &str) -> Result<(), RelayError> {
 
         let data = match std::fs::read_to_string(&path) {
             Ok(d) => d,
-            Err(_) => continue,
+            Err(e) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "skipping policy file: failed to read"
+                );
+                continue;
+            }
         };
 
         let policy: RelayEnforcementPolicy = match serde_json::from_str(&data) {
             Ok(p) => p,
-            Err(_) => continue, // Not a RelayEnforcementPolicy — skip
+            Err(e) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "skipping file: not a valid RelayEnforcementPolicy"
+                );
+                continue;
+            }
         };
 
         let hash = content_hash(&policy)?;
@@ -323,6 +431,9 @@ pub fn generate_enforcement_lockfile(dir: &str) -> Result<(), RelayError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Mutex to serialize tests that mutate process-global env vars.
+    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn sample_policy() -> RelayEnforcementPolicy {
         RelayEnforcementPolicy {
@@ -545,18 +656,21 @@ mod tests {
 
     #[test]
     fn test_lockfile_missing_fails_by_default() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let dir = std::env::temp_dir().join("vcav-enforcement-lockfile-missing");
         std::fs::create_dir_all(&dir).unwrap();
         // No lockfile written
 
-        // Set VCAV_ENV explicitly to "production" to avoid interference from
-        // parallel tests that may have set VCAV_ENV=dev.
-        std::env::set_var("VCAV_ENV", "production");
-        std::env::remove_var("VCAV_ENFORCEMENT_LOCKFILE_SKIP");
+        unsafe {
+            std::env::set_var("VCAV_ENV", "production");
+            std::env::remove_var("VCAV_ENFORCEMENT_LOCKFILE_SKIP");
+        }
 
         let result = validate_enforcement_lockfile(dir.to_str().unwrap());
 
-        std::env::remove_var("VCAV_ENV");
+        unsafe {
+            std::env::remove_var("VCAV_ENV");
+        }
 
         assert!(
             result.is_err(),
@@ -568,17 +682,22 @@ mod tests {
 
     #[test]
     fn test_lockfile_missing_warns_with_dev_override() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let dir = std::env::temp_dir().join("vcav-enforcement-lockfile-dev-skip");
         std::fs::create_dir_all(&dir).unwrap();
         // No lockfile written
 
-        std::env::set_var("VCAV_ENFORCEMENT_LOCKFILE_SKIP", "1");
-        std::env::set_var("VCAV_ENV", "dev");
+        unsafe {
+            std::env::set_var("VCAV_ENFORCEMENT_LOCKFILE_SKIP", "1");
+            std::env::set_var("VCAV_ENV", "dev");
+        }
 
         let result = validate_enforcement_lockfile(dir.to_str().unwrap());
 
-        std::env::remove_var("VCAV_ENFORCEMENT_LOCKFILE_SKIP");
-        std::env::remove_var("VCAV_ENV");
+        unsafe {
+            std::env::remove_var("VCAV_ENFORCEMENT_LOCKFILE_SKIP");
+            std::env::remove_var("VCAV_ENV");
+        }
 
         assert!(
             result.is_ok(),
@@ -590,18 +709,21 @@ mod tests {
 
     #[test]
     fn test_lockfile_skip_without_dev_env_fails() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let dir = std::env::temp_dir().join("vcav-enforcement-lockfile-skip-no-dev");
         std::fs::create_dir_all(&dir).unwrap();
 
-        // Set VCAV_ENV explicitly to "production" to avoid interference from
-        // parallel tests that may have set VCAV_ENV=dev.
-        std::env::set_var("VCAV_ENFORCEMENT_LOCKFILE_SKIP", "1");
-        std::env::set_var("VCAV_ENV", "production");
+        unsafe {
+            std::env::set_var("VCAV_ENFORCEMENT_LOCKFILE_SKIP", "1");
+            std::env::set_var("VCAV_ENV", "production");
+        }
 
         let result = validate_enforcement_lockfile(dir.to_str().unwrap());
 
-        std::env::remove_var("VCAV_ENFORCEMENT_LOCKFILE_SKIP");
-        std::env::remove_var("VCAV_ENV");
+        unsafe {
+            std::env::remove_var("VCAV_ENFORCEMENT_LOCKFILE_SKIP");
+            std::env::remove_var("VCAV_ENV");
+        }
 
         assert!(
             result.is_err(),
@@ -613,15 +735,17 @@ mod tests {
 
     #[test]
     fn test_generate_lockfile_round_trip() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let dir = std::env::temp_dir().join("vcav-enforcement-lockfile-generate");
         std::fs::create_dir_all(&dir).unwrap();
 
         let policy = sample_policy();
         write_policy_file(&dir, &policy);
 
-        // Also need env vars cleared so validate_enforcement_lockfile won't skip
-        std::env::remove_var("VCAV_ENFORCEMENT_LOCKFILE_SKIP");
-        std::env::remove_var("VCAV_ENV");
+        unsafe {
+            std::env::remove_var("VCAV_ENFORCEMENT_LOCKFILE_SKIP");
+            std::env::remove_var("VCAV_ENV");
+        }
 
         generate_enforcement_lockfile(dir.to_str().unwrap()).unwrap();
 
@@ -632,6 +756,173 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // -----------------------------------------------------------------------
+    // Path traversal
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_lockfile_rejects_path_traversal_in_policy_id() {
+        let dir = std::env::temp_dir().join("vcav-enforcement-lockfile-traversal");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        write_lockfile_entries(&dir, &[("../etc/passwd", &"a".repeat(64))]);
+
+        let result = validate_enforcement_lockfile(dir.to_str().unwrap());
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("invalid characters"),
+            "error should mention invalid characters for path traversal"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // -----------------------------------------------------------------------
+    // Empty and malformed lockfile
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_empty_lockfile_fails() {
+        let dir = std::env::temp_dir().join("vcav-enforcement-lockfile-empty");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        write_lockfile_entries(&dir, &[]);
+
+        let result = validate_enforcement_lockfile(dir.to_str().unwrap());
+        assert!(result.is_err(), "empty lockfile should fail closed");
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("at least one policy"),
+            "error should mention empty lockfile"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_malformed_lockfile_json_fails() {
+        let dir = std::env::temp_dir().join("vcav-enforcement-lockfile-malformed");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let path = dir.join(LOCKFILE_NAME);
+        std::fs::write(&path, b"{not valid json").unwrap();
+
+        let result = validate_enforcement_lockfile(dir.to_str().unwrap());
+        assert!(
+            result.is_err(),
+            "malformed lockfile JSON should fail closed"
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("invalid relay_policies.lock format"),
+            "error should indicate format problem"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_lockfile_entry_for_missing_policy_fails() {
+        let dir = std::env::temp_dir().join("vcav-enforcement-lockfile-ghost");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        write_lockfile_entries(&dir, &[("ghost_policy", &"a".repeat(64))]);
+        // No ghost_policy.json written
+
+        let result = validate_enforcement_lockfile(dir.to_str().unwrap());
+        assert!(
+            result.is_err(),
+            "lockfile entry for nonexistent policy should fail"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // -----------------------------------------------------------------------
+    // Reverse lockfile check (disk → lockfile)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_unlocked_policy_on_disk_is_rejected() {
+        let dir = std::env::temp_dir().join("vcav-enforcement-lockfile-extra-policy");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Write the locked policy
+        let policy = sample_policy();
+        write_policy_file(&dir, &policy);
+        let hash = content_hash(&policy).unwrap();
+        write_lockfile_entries(&dir, &[("compatibility_safe_v1", &hash)]);
+
+        // Write a second policy that is NOT in the lockfile
+        let mut extra = sample_policy();
+        extra.policy_id = "rogue_policy".to_string();
+        write_policy_file(&dir, &extra);
+
+        let result = validate_enforcement_lockfile(dir.to_str().unwrap());
+        assert!(
+            result.is_err(),
+            "unlocked policy on disk should be rejected"
+        );
+        assert!(
+            result.unwrap_err().to_string().contains("rogue_policy"),
+            "error should name the unlocked policy"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // -----------------------------------------------------------------------
+    // Capability derivation coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_derive_capabilities_entropy_gate_requires_budget_enforcement() {
+        let mut policy = sample_policy();
+        policy.entropy_constraints = Some(EntropyConstraints {
+            budget_bits: 64,
+            classification: EnforcementClass::Gate,
+            review_trigger_pct: None,
+        });
+        let caps = derive_required_capabilities(&policy);
+        assert!(
+            caps.contains(&RelayCapability::EntropyBudgetEnforcement),
+            "entropy_constraints with Gate classification should require EntropyBudgetEnforcement"
+        );
+    }
+
+    #[test]
+    fn test_derive_capabilities_entropy_advisory_does_not_require_budget_enforcement() {
+        let mut policy = sample_policy();
+        policy.entropy_constraints = Some(EntropyConstraints {
+            budget_bits: 64,
+            classification: EnforcementClass::Advisory,
+            review_trigger_pct: None,
+        });
+        let caps = derive_required_capabilities(&policy);
+        assert!(
+            !caps.contains(&RelayCapability::EntropyBudgetEnforcement),
+            "Advisory entropy constraint should not require EntropyBudgetEnforcement"
+        );
+    }
+
+    #[test]
+    fn test_derive_capabilities_max_output_tokens() {
+        let mut policy = sample_policy();
+        policy.max_output_tokens = Some(1024);
+        let caps = derive_required_capabilities(&policy);
+        assert!(
+            caps.contains(&RelayCapability::MaxOutputTokensEnforcement),
+            "non-None max_output_tokens should require MaxOutputTokensEnforcement"
+        );
     }
 
     // -----------------------------------------------------------------------

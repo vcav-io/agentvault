@@ -71,8 +71,24 @@ async fn main() {
         std::process::exit(1);
     }
 
+    // Derive policy filename from lockfile — no hardcoded filenames.
+    let lockfile_entries = match enforcement_policy::load_lockfile_entries(&relay_policies_dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to read enforcement policy lockfile — refusing to start");
+            std::process::exit(1);
+        }
+    };
+    if lockfile_entries.len() != 1 {
+        tracing::error!(
+            count = lockfile_entries.len(),
+            "expected exactly one enforcement policy in lockfile (multi-policy selection not yet implemented)"
+        );
+        std::process::exit(1);
+    }
+    let policy_id = lockfile_entries.keys().next().unwrap();
     let enforcement_policy_path = std::path::Path::new(&relay_policies_dir)
-        .join("compatibility_safe_v1.json")
+        .join(format!("{policy_id}.json"))
         .to_string_lossy()
         .into_owned();
 
