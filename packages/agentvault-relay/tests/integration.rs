@@ -36,6 +36,7 @@ fn test_app_state(mock_base_url: &str, prompt_dir: &str) -> AppState {
         openai_base_url: None,
         prompt_program_dir: prompt_dir.to_string(),
         session_store: SessionStore::new(Duration::from_secs(600)),
+        enforcement_policy_hash: "0".repeat(64),
     }
 }
 
@@ -889,6 +890,7 @@ async fn test_submit_token_is_one_time_use() {
         openai_base_url: None,
         prompt_program_dir: "/tmp".to_string(),
         session_store: state.session_store.clone(),
+        enforcement_policy_hash: "0".repeat(64),
     }));
 
     let response = app
@@ -1063,6 +1065,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         openai_base_url: None,
         prompt_program_dir: prompt_dir.clone(),
         session_store: state.session_store.clone(),
+        enforcement_policy_hash: "0".repeat(64),
     }));
 
     let response = app
@@ -1105,6 +1108,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         openai_base_url: None,
         prompt_program_dir: prompt_dir.clone(),
         session_store: state.session_store.clone(),
+        enforcement_policy_hash: "0".repeat(64),
     }));
 
     let response = app
@@ -1161,6 +1165,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         openai_base_url: None,
         prompt_program_dir: prompt_dir.clone(),
         session_store: state.session_store.clone(),
+        enforcement_policy_hash: "0".repeat(64),
     }));
 
     let response = app
@@ -1236,6 +1241,7 @@ async fn test_submit_with_correct_contract_hash_succeeds() {
         openai_base_url: None,
         prompt_program_dir: "/tmp".to_string(),
         session_store: state.session_store.clone(),
+        enforcement_policy_hash: "0".repeat(64),
     }));
 
     let input_request = serde_json::json!({
@@ -1293,6 +1299,7 @@ async fn test_submit_with_wrong_contract_hash_rejected() {
         openai_base_url: None,
         prompt_program_dir: "/tmp".to_string(),
         session_store: state.session_store.clone(),
+        enforcement_policy_hash: "0".repeat(64),
     }));
 
     let input_request = serde_json::json!({
@@ -1351,6 +1358,7 @@ async fn test_submit_without_contract_hash_still_works() {
         openai_base_url: None,
         prompt_program_dir: "/tmp".to_string(),
         session_store: state.session_store.clone(),
+        enforcement_policy_hash: "0".repeat(64),
     }));
 
     // No expected_contract_hash field — backward compat

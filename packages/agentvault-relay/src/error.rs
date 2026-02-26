@@ -22,6 +22,9 @@ pub enum RelayError {
     #[error("Receipt signing failed: {0}")]
     ReceiptSigning(String),
 
+    #[error("Enforcement policy error: {0}")]
+    EnforcementPolicy(String),
+
     #[error("Internal error: {0}")]
     Internal(String),
 
@@ -41,6 +44,7 @@ impl RelayError {
             RelayError::OutputValidation(_) => StatusCode::UNPROCESSABLE_ENTITY,
             RelayError::PolicyGate(_) => StatusCode::UNPROCESSABLE_ENTITY,
             RelayError::ReceiptSigning(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            RelayError::EnforcementPolicy(_) => StatusCode::INTERNAL_SERVER_ERROR,
             RelayError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             // Constant-shape: both return 401 with same body.
             // Caller cannot distinguish "bad token" from "unknown session".
