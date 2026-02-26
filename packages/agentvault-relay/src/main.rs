@@ -53,6 +53,13 @@ async fn main() {
         std::env::var("VCAV_OPENAI_MODEL_ID").unwrap_or_else(|_| "gpt-4o".to_string());
     let openai_base_url = std::env::var("OPENAI_BASE_URL").ok();
 
+    // Validate model profile lockfile before binding to port.
+    // Exits with a non-zero code on hash mismatch.
+    if let Err(e) = agentvault_relay::prompt_program::validate_model_profile_lockfile(&prompt_dir) {
+        tracing::error!(error = %e, "model profile lockfile validation failed — refusing to start");
+        std::process::exit(1);
+    }
+
     let session_ttl_secs: u64 = std::env::var("VCAV_SESSION_TTL_SECS")
         .ok()
         .and_then(|s| s.parse().ok())
