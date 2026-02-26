@@ -258,7 +258,8 @@ pub async fn relay_core(
     let model_weights_hash = hex::encode(Sha256::digest(b"api-mediated-no-local-weights"));
     // inference_config_hash: honest "n/a" — relay is API-mediated; no local inference
     let inference_config_hash = hex::encode(Sha256::digest(b"api-mediated-no-local-inference"));
-    let guardian_policy_hash = hex::encode(Sha256::digest(b"guardian-core-v0.1.0"));
+    // Phase A: declared only — enforcement wired in Phase B
+    let guardian_policy_hash = state.enforcement_policy_hash.clone();
 
     // Load model profile hash if contract specifies one
     let model_profile_hash = match &contract.model_profile_id {

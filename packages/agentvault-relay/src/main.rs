@@ -5,7 +5,7 @@ use ed25519_dalek::SigningKey;
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
 
-use agentvault_relay::{build_router, session::SessionStore, AppState};
+use agentvault_relay::{build_router, enforcement_policy, session::SessionStore, AppState};
 
 #[tokio::main]
 async fn main() {
@@ -60,6 +60,66 @@ async fn main() {
         std::process::exit(1);
     }
 
+    // Load and validate enforcement policy. Fail-closed: missing lockfile = startup failure.
+    let relay_policies_dir = std::path::Path::new(&prompt_dir)
+        .join("relay_policies")
+        .to_string_lossy()
+        .into_owned();
+
+    if let Err(e) = enforcement_policy::validate_enforcement_lockfile(&relay_policies_dir) {
+        tracing::error!(error = %e, "enforcement policy lockfile validation failed — refusing to start");
+        std::process::exit(1);
+    }
+
+    // Derive policy filename from lockfile — no hardcoded filenames.
+    let lockfile_entries = match enforcement_policy::load_lockfile_entries(&relay_policies_dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to read enforcement policy lockfile — refusing to start");
+            std::process::exit(1);
+        }
+    };
+    if lockfile_entries.len() != 1 {
+        tracing::error!(
+            count = lockfile_entries.len(),
+            "expected exactly one enforcement policy in lockfile (multi-policy selection not yet implemented)"
+        );
+        std::process::exit(1);
+    }
+    let policy_id = lockfile_entries.keys().next().unwrap();
+    let enforcement_policy_path = std::path::Path::new(&relay_policies_dir)
+        .join(format!("{policy_id}.json"))
+        .to_string_lossy()
+        .into_owned();
+
+    let loaded_policy = match enforcement_policy::load_enforcement_policy(&enforcement_policy_path)
+    {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to load enforcement policy — refusing to start");
+            std::process::exit(1);
+        }
+    };
+
+    if let Err(e) = enforcement_policy::validate_capabilities(&loaded_policy) {
+        tracing::error!(error = %e, "enforcement policy requires unsupported capabilities — refusing to start");
+        std::process::exit(1);
+    }
+
+    let enforcement_policy_hash = match enforcement_policy::content_hash(&loaded_policy) {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to compute enforcement policy hash — refusing to start");
+            std::process::exit(1);
+        }
+    };
+
+    tracing::info!(
+        policy_id = %loaded_policy.policy_id,
+        hash = %enforcement_policy_hash,
+        "Enforcement policy loaded"
+    );
+
     let session_ttl_secs: u64 = std::env::var("VCAV_SESSION_TTL_SECS")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -83,6 +143,7 @@ async fn main() {
         openai_base_url,
         prompt_program_dir: prompt_dir,
         session_store,
+        enforcement_policy_hash,
     });
 
     let app = build_router(state);

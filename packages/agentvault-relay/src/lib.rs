@@ -1,3 +1,4 @@
+pub mod enforcement_policy;
 pub mod entropy;
 pub mod error;
 pub mod prompt_program;
@@ -37,6 +38,9 @@ pub struct AppState {
     pub openai_base_url: Option<String>,
     pub prompt_program_dir: String,
     pub session_store: SessionStore,
+    /// Content hash of the loaded enforcement policy.
+    /// Phase A: declared only — enforcement wired in Phase B.
+    pub enforcement_policy_hash: String,
 }
 
 // ============================================================================
