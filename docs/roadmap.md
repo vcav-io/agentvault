@@ -185,16 +185,19 @@ placeholder, not a real build artefact hash.
 Phase 1 is complete when:
 
 **Mechanical (must pass in CI):**
-- Relay-side digit/currency guard has deterministic unit tests
+- Relay-side digit/currency guard has deterministic unit tests — **done** (7 unit tests, PR #22)
 - Schema validation rejects `additionalProperties`
 - Model profile startup hash check passes
+
+**CI infrastructure:** Rust CI now authenticates to private `vault-family-core`
+dependency via `VAULT_CORE_TOKEN` secret (PR #22). All jobs green.
 
 **Evidential (documented, not CI-gated):**
 - Red-team suite passes across providers (20/20 — done, see
   `docs/red-team-evaluation-notes.md`)
 - Accumulation tests operate purely on enum output (done)
-- No numeric or currency tokens appear in SAFE contract output (done post-hoc,
-  needs relay-side enforcement)
+- No numeric or currency tokens appear in SAFE contract output — **done**
+  (relay-side enforcement, PR #22)
 
 ---
 
@@ -446,7 +449,7 @@ AgentVault remains software-attested, relay-based.
 
 # IV. Immediate Priorities
 
-1. Add relay-side digit/currency guard (Phase 1, item 2)
+1. ~~Add relay-side digit/currency guard (Phase 1, item 2)~~ — **done** (PR #22)
 2. Replace fake runtime hash with real build artefact (Phase 1, item 4)
 3. Add model profile startup hash check (Phase 1, item 3)
 4. Begin OpenClaw skill creation (Phase 2b, item 10)
