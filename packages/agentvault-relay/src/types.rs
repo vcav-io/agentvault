@@ -130,6 +130,7 @@ pub struct SessionOutputResponse {
 pub struct HealthResponse {
     pub status: &'static str,
     pub version: &'static str,
+    pub git_sha: &'static str,
     pub execution_lane: &'static str,
 }
 

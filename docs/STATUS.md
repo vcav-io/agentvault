@@ -80,6 +80,16 @@ unconstrained information channel identified in red team testing (see `docs/red-
 - `accumulate.sh` updated for v2 signal extraction and forbidden-token scanning
 - `verify.sh` digit/currency regression guard scoped to string values
 
+## Honest Runtime Hashing
+
+**Status: Implemented** (Phase 1, item 4)
+
+- `build.rs` — runs `git rev-parse HEAD` at build time, emits `VCAV_GIT_SHA` env var; falls back to `"unknown"` when `.git/` is absent
+- `relay.rs` — `runtime_hash` is now `SHA256(GIT_SHA)` rather than a fake version string
+- `model_weights_hash` and `inference_config_hash` use honest static sentinel values (`api-mediated-no-local-weights`, `api-mediated-no-local-inference`) reflecting the API-mediated nature of the relay
+- Health endpoint (`GET /health`) now returns `git_sha` field
+- Receipts no longer claim unverifiable runtime provenance
+
 ### Open
 
 - [x] Deterministic policy gate — relay-side digit/currency guard (GATE rule, Unicode Nd/Sc categories, scoped to COMPAT v2)
