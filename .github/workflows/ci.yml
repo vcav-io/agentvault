@@ -15,6 +15,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Configure git for private dependencies
+        run: git config --global url."https://x-access-token:${{ secrets.VAULT_CORE_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
