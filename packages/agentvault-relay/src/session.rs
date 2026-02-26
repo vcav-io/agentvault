@@ -28,6 +28,7 @@ pub enum AbortReason {
     SchemaValidation,
     ProviderError,
     ContractMismatch,
+    PolicyGate,
 }
 
 /// Token set for a session. Split by capability (submit vs read) and role.

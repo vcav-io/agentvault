@@ -82,7 +82,7 @@ unconstrained information channel identified in red team testing (see `docs/red-
 
 ### Open
 
-- [ ] Deterministic policy gate — relay-side output filtering rejecting currency/digits/proper nouns (elevated priority)
+- [x] Deterministic policy gate — relay-side digit/currency guard (GATE rule, Unicode Nd/Sc categories, scoped to COMPAT v2)
 - [ ] Client-side enum rendering — deterministic template converting enum tuples to human-friendly sentences
 - [ ] Derivable `next_step` — make it a function of other fields rather than model-chosen
 - [ ] Safe-default fallback refactor — replace `2>/dev/null || echo "safe"` with fail-safe defaults (#14)
