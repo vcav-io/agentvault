@@ -16,6 +16,9 @@ pub enum RelayError {
     #[error("Output schema validation failed: {0}")]
     OutputValidation(String),
 
+    #[error("Output policy gate violation: {0}")]
+    PolicyGate(String),
+
     #[error("Receipt signing failed: {0}")]
     ReceiptSigning(String),
 
@@ -36,6 +39,7 @@ impl RelayError {
             RelayError::PromptProgram(_) => StatusCode::BAD_REQUEST,
             RelayError::Provider(_) => StatusCode::BAD_GATEWAY,
             RelayError::OutputValidation(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            RelayError::PolicyGate(_) => StatusCode::UNPROCESSABLE_ENTITY,
             RelayError::ReceiptSigning(_) => StatusCode::INTERNAL_SERVER_ERROR,
             RelayError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             // Constant-shape: both return 401 with same body.
@@ -48,9 +52,10 @@ impl RelayError {
 impl IntoResponse for RelayError {
     fn into_response(self) -> Response {
         let status = self.status_code();
-        // Constant-shape error: no variable detail for auth errors.
+        // Constant-shape error: no variable detail for auth or policy gate errors.
         let error_msg = match &self {
             RelayError::Unauthorized | RelayError::SessionNotFound => "UNAUTHORIZED".to_string(),
+            RelayError::PolicyGate(_) => "OUTPUT_POLICY_VIOLATION".to_string(),
             other => other.to_string(),
         };
         let body = serde_json::json!({

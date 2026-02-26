@@ -40,6 +40,94 @@ fn validate_output_schema(
     Ok(())
 }
 
+/// Returns true if the character is a Unicode currency symbol (general category Sc).
+///
+/// Inline check to avoid adding a dependency for ~60 codepoints.
+/// Source: Unicode 15.1 Sc category. Covers common currency signs used in
+/// financial contexts (£, $, €, ¥, ₹, etc.).
+fn is_currency_symbol(c: char) -> bool {
+    matches!(c,
+        '\u{0024}'          // $ DOLLAR SIGN
+        | '\u{00A2}'..='\u{00A5}' // ¢ £ ¤ ¥
+        | '\u{058F}'        // ֏ ARMENIAN DRAM
+        | '\u{060B}'        // ﷋ AFGHANI SIGN
+        | '\u{07FE}'..='\u{07FF}' // NKO DOROME / TAMAN signs
+        | '\u{09F3}'        // ৳ BENGALI RUPEE
+        | '\u{09FB}'        // ৻ BENGALI GANDA
+        | '\u{0AF1}'        // ૱ GUJARATI RUPEE
+        | '\u{0BF9}'        // ௹ TAMIL RUPEE
+        | '\u{0E3F}'        // ฿ THAI BAHT
+        | '\u{17DB}'        // ៛ KHMER CURRENCY
+        | '\u{20A0}'..='\u{20C0}' // Currency Symbols block (₠ through ⃀)
+        | '\u{A838}'        // ꠸ NORTH INDIC RUPEE
+        | '\u{FDFC}'        // ﷼ RIAL SIGN
+        | '\u{FE69}'        // ﹩ SMALL DOLLAR
+        | '\u{FF04}'        // ＄ FULLWIDTH DOLLAR
+        | '\u{FFE0}'..='\u{FFE1}' // ￠ ￡ FULLWIDTH CENT/POUND
+        | '\u{FFE5}'..='\u{FFE6}' // ￥ ￦ FULLWIDTH YEN/WON
+        | '\u{11FDD}'..='\u{11FE0}' // Tamil fraction/cash signs
+        | '\u{1E2FF}'       // WANCHO NGUN
+        | '\u{1ECB0}'       // INDIC SIYAQ RUPEE
+    )
+}
+
+/// GATE rule: reject output if any string value contains Unicode numeric characters
+/// (category Nd) or currency symbols (category Sc).
+///
+/// **Threat model**: This is a defense-in-depth backstop / schema regression detector,
+/// not the primary privacy control. The primary control is the all-enum schema with
+/// `additionalProperties: false`. This guard fires only if the schema is misconfigured,
+/// weakened, or a provider structured-output bug bypasses enum constraints.
+///
+/// **Scope**: Scans JSON string values only. JSON number literals (e.g. `{"confidence": 3}`)
+/// are NOT checked — schema validation runs first and rejects non-string types where
+/// string enums are expected. If the schema is later weakened to allow numeric types,
+/// this guard will NOT catch numeric-typed values. The `test_schema_rejects_numeric_literal_before_gate`
+/// test regression-proofs this assumption.
+///
+/// **Phase 1 only**: Scoped to `vcav_e_compatibility_signal_v2` via hardcoded schema ID.
+/// Will migrate to PolicyBundle configuration in Phase 2.
+fn validate_output_policy_gate(
+    output: &serde_json::Value,
+    output_schema_id: &str,
+) -> Result<(), RelayError> {
+    if output_schema_id != "vcav_e_compatibility_signal_v2" {
+        return Ok(());
+    }
+
+    // At the top level, skip `schema_version` — it is a structural metadata field
+    // constrained to a single-value enum (e.g. ["2"]) with 0 bits of entropy.
+    // This matches the verify.sh post-hoc check behavior (line 406).
+    if let serde_json::Value::Object(map) = output {
+        for (key, value) in map {
+            if key == "schema_version" {
+                continue;
+            }
+            if json_strings_contain_forbidden(value) {
+                tracing::warn!(
+                    gate = "digit_currency",
+                    output_schema_id,
+                    "policy gate rejected output"
+                );
+                return Err(RelayError::PolicyGate("digit_currency_gate".into()));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Recursively check if any string value in the JSON contains forbidden characters
+/// (Unicode numeric or currency symbols).
+fn json_strings_contain_forbidden(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::String(s) => s.chars().any(|c| c.is_numeric() || is_currency_symbol(c)),
+        serde_json::Value::Array(arr) => arr.iter().any(json_strings_contain_forbidden),
+        serde_json::Value::Object(map) => map.values().any(json_strings_contain_forbidden),
+        _ => false,
+    }
+}
+
 /// Result of core relay execution.
 pub struct RelayResult {
     pub output: serde_json::Value,
@@ -117,6 +205,9 @@ pub async fn relay_core(
 
     // 8. Validate output against schema
     validate_output_schema(&output, &contract.output_schema)?;
+
+    // 8b. Policy gate: reject forbidden characters in string values (GATE rule)
+    validate_output_policy_gate(&output, &contract.output_schema_id)?;
 
     // 9. Compute entropy (advisory — logged but not enforced)
     let entropy_bits = calculate_schema_entropy_upper_bound(&contract.output_schema)
@@ -221,6 +312,7 @@ pub async fn relay_core(
 pub fn error_to_abort_reason(error: &RelayError) -> AbortReason {
     match error {
         RelayError::OutputValidation(_) => AbortReason::SchemaValidation,
+        RelayError::PolicyGate(_) => AbortReason::PolicyGate,
         RelayError::Provider(_) => AbortReason::ProviderError,
         RelayError::ContractValidation(_) => AbortReason::ContractMismatch,
         _ => AbortReason::ProviderError,
@@ -452,6 +544,158 @@ mod tests {
         assert_eq!(
             contract_with_profile.model_profile_id,
             Some("api-claude-sonnet-v1".to_string())
+        );
+    }
+
+    // ========================================================================
+    // Policy gate tests (digit/currency guard)
+    // ========================================================================
+
+    const COMPAT_V2_SCHEMA_ID: &str = "vcav_e_compatibility_signal_v2";
+
+    #[test]
+    fn test_policy_gate_rejects_digits() {
+        let output = serde_json::json!({
+            "compatibility_signal": "STRONG_MATCH_42"
+        });
+        let err = validate_output_policy_gate(&output, COMPAT_V2_SCHEMA_ID).unwrap_err();
+        assert!(matches!(err, RelayError::PolicyGate(_)));
+    }
+
+    #[test]
+    fn test_policy_gate_rejects_unicode_digits() {
+        // Fullwidth digit zero: U+FF10
+        let output = serde_json::json!({
+            "compatibility_signal": "MATCH\u{FF10}"
+        });
+        let err = validate_output_policy_gate(&output, COMPAT_V2_SCHEMA_ID).unwrap_err();
+        assert!(matches!(err, RelayError::PolicyGate(_)));
+    }
+
+    #[test]
+    fn test_policy_gate_rejects_currency() {
+        for symbol in ["£", "$", "€"] {
+            let output = serde_json::json!({
+                "compatibility_signal": format!("MATCH{symbol}")
+            });
+            let err = validate_output_policy_gate(&output, COMPAT_V2_SCHEMA_ID).unwrap_err();
+            assert!(
+                matches!(err, RelayError::PolicyGate(_)),
+                "should reject currency symbol: {symbol}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_policy_gate_rejects_digit_in_array() {
+        let output = serde_json::json!({
+            "compatibility_signal": "STRONG_MATCH",
+            "primary_reasons": ["SECTOR_MATCH", "SIZE_7K"]
+        });
+        let err = validate_output_policy_gate(&output, COMPAT_V2_SCHEMA_ID).unwrap_err();
+        assert!(matches!(err, RelayError::PolicyGate(_)));
+    }
+
+    #[test]
+    fn test_policy_gate_accepts_clean_enum() {
+        let output = serde_json::json!({
+            "schema_version": "2",
+            "compatibility_signal": "STRONG_MATCH",
+            "thesis_fit": "ALIGNED",
+            "size_fit": "WITHIN_BAND",
+            "stage_fit": "ALIGNED",
+            "confidence": "HIGH",
+            "primary_reasons": ["SECTOR_MATCH", "SIZE_COMPATIBLE"],
+            "blocking_reasons": [],
+            "next_step": "PROCEED"
+        });
+        assert!(validate_output_policy_gate(&output, COMPAT_V2_SCHEMA_ID).is_ok());
+    }
+
+    #[test]
+    fn test_policy_gate_ignores_non_compat() {
+        let output = serde_json::json!({
+            "decision": "PROCEED_42",
+            "amount": "$100"
+        });
+        // Non-COMPAT v2 schema: gate does not fire
+        assert!(validate_output_policy_gate(&output, "vault_result_mediation").is_ok());
+    }
+
+    #[test]
+    fn test_schema_rejects_numeric_literal_before_gate() {
+        // Proves the invariant: schema validation catches numeric types before
+        // the policy gate runs. If this test ever fails, the schema has been
+        // weakened and the policy gate has a gap for numeric-typed values.
+        let compat_v2_schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "schema_version": { "type": "string", "enum": ["2"] },
+                "compatibility_signal": {
+                    "type": "string",
+                    "enum": ["STRONG_MATCH", "PARTIAL_MATCH", "WEAK_MATCH", "NO_MATCH"]
+                },
+                "thesis_fit": {
+                    "type": "string",
+                    "enum": ["ALIGNED", "PARTIAL", "MISALIGNED", "UNKNOWN"]
+                },
+                "size_fit": {
+                    "type": "string",
+                    "enum": ["WITHIN_BAND", "TOO_LOW", "TOO_HIGH", "UNKNOWN"]
+                },
+                "stage_fit": {
+                    "type": "string",
+                    "enum": ["ALIGNED", "PARTIAL", "MISALIGNED", "UNKNOWN"]
+                },
+                "confidence": {
+                    "type": "string",
+                    "enum": ["HIGH", "MEDIUM", "LOW"]
+                },
+                "primary_reasons": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["SECTOR_MATCH", "SIZE_COMPATIBLE", "STAGE_COMPATIBLE",
+                                 "GEOGRAPHIC_PROXIMITY", "EXPERIENCE_RELEVANCE", "TIMELINE_COMPATIBLE"]
+                    },
+                    "minItems": 0, "maxItems": 3, "uniqueItems": true
+                },
+                "blocking_reasons": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["SIZE_INCOMPATIBLE", "SECTOR_MISMATCH", "STAGE_MISMATCH",
+                                 "GEOGRAPHY_MISMATCH", "TIMELINE_CONFLICT", "STRUCTURE_INCOMPATIBLE"]
+                    },
+                    "minItems": 0, "maxItems": 2, "uniqueItems": true
+                },
+                "next_step": {
+                    "type": "string",
+                    "enum": ["PROCEED", "PROCEED_WITH_CAVEATS", "ASK_FOR_PUBLIC_INFO", "DO_NOT_PROCEED"]
+                }
+            },
+            "required": ["schema_version", "compatibility_signal", "thesis_fit", "size_fit",
+                         "stage_fit", "confidence", "primary_reasons", "blocking_reasons", "next_step"],
+            "additionalProperties": false
+        });
+
+        // Output with a JSON number literal where a string enum is expected
+        let output_with_number = serde_json::json!({
+            "schema_version": "2",
+            "compatibility_signal": "STRONG_MATCH",
+            "thesis_fit": "ALIGNED",
+            "size_fit": "WITHIN_BAND",
+            "stage_fit": "ALIGNED",
+            "confidence": 3,
+            "primary_reasons": ["SECTOR_MATCH"],
+            "blocking_reasons": [],
+            "next_step": "PROCEED"
+        });
+
+        let err = validate_output_schema(&output_with_number, &compat_v2_schema);
+        assert!(
+            err.is_err(),
+            "schema validation must reject numeric literal in enum field"
         );
     }
 }
