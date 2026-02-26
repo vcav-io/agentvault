@@ -91,7 +91,7 @@ After the first call, the response may include:
 {
   "action_required": "CALL_AGAIN",
   "resume_token": "...",
-  "state": "PENDING"
+  "state": "AWAITING"
 }
 ```
 
@@ -136,9 +136,10 @@ the user_message explicitly says to retry.
 
 ## Session State File
 
-After each call, write (or update) `./.agentvault/last_session.json` with the
-current `resume_token`, `state`, and timestamp. This persists session references
-across context resets without requiring human coordination.
+After each call, the MCP server writes `./.agentvault/last_session.json` with
+`session_id`, `role`, `read_token`, `relay_url`, and `timestamp`. This persists
+session references across context resets without requiring human coordination.
+Do not write this file yourself — the tool handles it.
 
 ---
 

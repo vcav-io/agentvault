@@ -31,8 +31,8 @@ Set these on each VPS before starting the MCP server. Values differ per host.
 |----------|----------|-------------|
 | `VCAV_AGENT_ID` | Yes | Unique agent identifier for this host (e.g. `alice-agent`) |
 | `VCAV_RELAY_URL` | Yes | Base URL of the AgentVault relay (e.g. `https://relay.example.com`) |
-| `VCAV_AFAL_SEED_HEX` | Yes (AFAL) | Ed25519 seed as 64-char hex — enables AFAL direct transport and INITIATE/RESPOND modes |
-| `VCAV_AFAL_ENDPOINT_URL` | Yes (AFAL) | Public URL for this agent's AFAL HTTP endpoint (e.g. `https://alice.example.com:9100`) — used by the peer to send invites |
+| `VCAV_AFAL_SEED_HEX` | Yes (AFAL) | Ed25519 seed as 64-char hex — enables AFAL direct transport and INITIATE/RESPOND modes. **Secret: do not commit to version control.** Generate with `openssl rand -hex 32`. |
+| `VCAV_AFAL_PEER_DESCRIPTOR_URL` | INITIATE mode | Peer's AFAL descriptor URL (e.g. `https://bob.example.com:9100/afal/descriptor`) — used by initiator to discover the peer |
 | `VCAV_KNOWN_AGENTS` | Yes | JSON array of peer agents for alias resolution (see format below) |
 | `VCAV_RESUME_TOKEN_SECRET` | Recommended | HMAC secret for signing resume tokens. Generate with `openssl rand -hex 32` |
 | `VCAV_AFAL_HTTP_PORT` | RESPOND mode | Port for AFAL HTTP server — enables inbox for incoming invites |
@@ -46,11 +46,13 @@ Set these on each VPS before starting the MCP server. Values differ per host.
 [
   {
     "agent_id": "bob-agent",
-    "aliases": ["bob", "Bob"],
-    "descriptor_url": "https://bob.example.com:9100/afal/descriptor"
+    "aliases": ["bob", "Bob"]
   }
 ]
 ```
+
+Note: `VCAV_KNOWN_AGENTS` entries have only `agent_id` and `aliases`. The peer's
+descriptor URL is configured separately via `VCAV_AFAL_PEER_DESCRIPTOR_URL`.
 
 ### VCAV_AFAL_TRUSTED_AGENTS format
 
@@ -147,10 +149,10 @@ Add the AgentVault MCP server to mcporter's configuration. Create or update
         "VCAV_AFAL_SEED_HEX": "<your-seed-hex>",
         "VCAV_AFAL_HTTP_PORT": "9100",
         "VCAV_AFAL_BIND_ADDRESS": "0.0.0.0",
-        "VCAV_AFAL_ENDPOINT_URL": "https://alice.example.com:9100",
+        "VCAV_AFAL_PEER_DESCRIPTOR_URL": "https://bob.example.com:9100/afal/descriptor",
         "VCAV_AFAL_ALLOWED_PURPOSES": "MEDIATION,COMPATIBILITY",
         "VCAV_AFAL_TRUSTED_AGENTS": "[{\"agentId\":\"bob-agent\",\"publicKeyHex\":\"...\"}]",
-        "VCAV_KNOWN_AGENTS": "[{\"agent_id\":\"bob-agent\",\"aliases\":[\"bob\"]}]",
+        "VCAV_KNOWN_AGENTS": "[{\"agent_id\":\"bob-agent\",\"aliases\":[\"bob\",\"Bob\"]}]",
         "VCAV_RESUME_TOKEN_SECRET": "<your-secret>"
       }
     }
