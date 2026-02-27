@@ -10,3 +10,5 @@ dist/
 
 .claude/*
 !.claude/settings.json
+
+.agentvault/
