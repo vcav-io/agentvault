@@ -15,6 +15,7 @@ import { createHash, createHmac, timingSafeEqual, randomUUID } from 'node:crypto
 export type RelayPhase =
   | 'INVITE'
   | 'PROPOSE_RETRY'
+  | 'POLL_INVITE'
   | 'POLL_RELAY'
   | 'DISCOVER'
   | 'JOIN'

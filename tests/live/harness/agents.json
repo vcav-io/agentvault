@@ -1,0 +1,14 @@
+{
+  "agents": [
+    {
+      "agent_id": "alice",
+      "inbox_token": "test_alice_inbox_token_7f3a9b2e",
+      "public_key_hex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "agent_id": "bob",
+      "inbox_token": "test_bob_inbox_token_4c8d1e5f",
+      "public_key_hex": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ]
+}

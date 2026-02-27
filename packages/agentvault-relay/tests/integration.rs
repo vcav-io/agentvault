@@ -17,7 +17,9 @@ use axum::http::{Request, StatusCode};
 use ed25519_dalek::SigningKey;
 use tower::ServiceExt;
 
-use agentvault_relay::{build_router, session::SessionStore, AppState};
+use agentvault_relay::{
+    agent_registry::AgentRegistry, build_router, inbox::InboxStore, session::SessionStore, AppState,
+};
 
 /// Build a test signing key (deterministic).
 fn test_signing_key() -> SigningKey {
@@ -37,6 +39,8 @@ fn test_app_state(mock_base_url: &str, prompt_dir: &str) -> AppState {
         prompt_program_dir: prompt_dir.to_string(),
         session_store: SessionStore::new(Duration::from_secs(600)),
         enforcement_policy_hash: "0".repeat(64),
+        agent_registry: AgentRegistry::empty(),
+        inbox_store: InboxStore::new(Duration::from_secs(600)),
     }
 }
 
@@ -891,6 +895,8 @@ async fn test_submit_token_is_one_time_use() {
         prompt_program_dir: "/tmp".to_string(),
         session_store: state.session_store.clone(),
         enforcement_policy_hash: "0".repeat(64),
+        agent_registry: AgentRegistry::empty(),
+        inbox_store: InboxStore::new(Duration::from_secs(600)),
     }));
 
     let response = app
@@ -1066,6 +1072,8 @@ async fn test_bilateral_session_e2e_with_mock() {
         prompt_program_dir: prompt_dir.clone(),
         session_store: state.session_store.clone(),
         enforcement_policy_hash: "0".repeat(64),
+        agent_registry: AgentRegistry::empty(),
+        inbox_store: InboxStore::new(Duration::from_secs(600)),
     }));
 
     let response = app
@@ -1109,6 +1117,8 @@ async fn test_bilateral_session_e2e_with_mock() {
         prompt_program_dir: prompt_dir.clone(),
         session_store: state.session_store.clone(),
         enforcement_policy_hash: "0".repeat(64),
+        agent_registry: AgentRegistry::empty(),
+        inbox_store: InboxStore::new(Duration::from_secs(600)),
     }));
 
     let response = app
@@ -1166,6 +1176,8 @@ async fn test_bilateral_session_e2e_with_mock() {
         prompt_program_dir: prompt_dir.clone(),
         session_store: state.session_store.clone(),
         enforcement_policy_hash: "0".repeat(64),
+        agent_registry: AgentRegistry::empty(),
+        inbox_store: InboxStore::new(Duration::from_secs(600)),
     }));
 
     let response = app
@@ -1242,6 +1254,8 @@ async fn test_submit_with_correct_contract_hash_succeeds() {
         prompt_program_dir: "/tmp".to_string(),
         session_store: state.session_store.clone(),
         enforcement_policy_hash: "0".repeat(64),
+        agent_registry: AgentRegistry::empty(),
+        inbox_store: InboxStore::new(Duration::from_secs(600)),
     }));
 
     let input_request = serde_json::json!({
@@ -1300,6 +1314,8 @@ async fn test_submit_with_wrong_contract_hash_rejected() {
         prompt_program_dir: "/tmp".to_string(),
         session_store: state.session_store.clone(),
         enforcement_policy_hash: "0".repeat(64),
+        agent_registry: AgentRegistry::empty(),
+        inbox_store: InboxStore::new(Duration::from_secs(600)),
     }));
 
     let input_request = serde_json::json!({
@@ -1359,6 +1375,8 @@ async fn test_submit_without_contract_hash_still_works() {
         prompt_program_dir: "/tmp".to_string(),
         session_store: state.session_store.clone(),
         enforcement_policy_hash: "0".repeat(64),
+        agent_registry: AgentRegistry::empty(),
+        inbox_store: InboxStore::new(Duration::from_secs(600)),
     }));
 
     // No expected_contract_hash field — backward compat

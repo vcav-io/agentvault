@@ -5,7 +5,10 @@ use ed25519_dalek::SigningKey;
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
 
-use agentvault_relay::{build_router, enforcement_policy, session::SessionStore, AppState};
+use agentvault_relay::{
+    agent_registry::AgentRegistry, build_router, enforcement_policy, inbox::InboxStore,
+    session::SessionStore, AppState,
+};
 
 #[tokio::main]
 async fn main() {
@@ -129,6 +132,58 @@ async fn main() {
     // Start background session reaper
     session_store.clone().start_reaper();
 
+    // Load agent registry for inbox auth.
+    // Fail-closed: missing file = startup failure unless VCAV_INBOX_AUTH=off + VCAV_ENV=dev.
+    let inbox_auth_off = std::env::var("VCAV_INBOX_AUTH")
+        .map(|v| v == "off")
+        .unwrap_or(false);
+    let is_dev = std::env::var("VCAV_ENV")
+        .map(|v| v == "dev")
+        .unwrap_or(false);
+    if inbox_auth_off && !is_dev {
+        tracing::error!(
+            "VCAV_INBOX_AUTH=off requires VCAV_ENV=dev — refusing to start. \
+             This is a safety check to prevent accidentally disabling inbox auth in production."
+        );
+        std::process::exit(1);
+    }
+    let agent_registry_path = std::env::var("VCAV_AGENT_REGISTRY_PATH").ok();
+    let agent_registry = match agent_registry_path {
+        Some(ref path) => match AgentRegistry::load_from_file(path) {
+            Ok(registry) => {
+                tracing::info!(agents = registry.len(), path = %path, "Agent registry loaded");
+                registry
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "agent registry load failed — refusing to start");
+                std::process::exit(1);
+            }
+        },
+        None if inbox_auth_off && is_dev => {
+            tracing::warn!(
+                "VCAV_INBOX_AUTH=off + VCAV_ENV=dev — inbox endpoints disabled (no agent registry)"
+            );
+            AgentRegistry::empty()
+        }
+        None => {
+            tracing::error!(
+                "VCAV_AGENT_REGISTRY_PATH not set and VCAV_INBOX_AUTH != off — refusing to start. \
+                 Set VCAV_AGENT_REGISTRY_PATH to an agents.json file, or set VCAV_INBOX_AUTH=off + VCAV_ENV=dev to disable inbox."
+            );
+            std::process::exit(1);
+        }
+    };
+
+    // Create inbox store with configurable TTL (default 7 days)
+    let invite_ttl_secs: u64 = std::env::var("VCAV_INVITE_TTL_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(604800);
+    let inbox_store = InboxStore::new(Duration::from_secs(invite_ttl_secs));
+
+    // Start background inbox reaper
+    inbox_store.clone().start_reaper();
+
     if openai_api_key.is_some() {
         tracing::info!(model_id = %openai_model_id, "OpenAI provider enabled");
     }
@@ -144,6 +199,8 @@ async fn main() {
         prompt_program_dir: prompt_dir,
         session_store,
         enforcement_policy_hash,
+        agent_registry,
+        inbox_store,
     });
 
     let app = build_router(state);

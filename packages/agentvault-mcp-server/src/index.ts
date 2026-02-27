@@ -42,6 +42,7 @@ import type { AfalTransport } from './afal-transport.js';
 import type { NormalizedKnownAgent } from './tools/relaySignal.js';
 import { DirectAfalTransport } from './direct-afal-transport.js';
 import type { DirectAfalTransportConfig, AgentDescriptor } from './direct-afal-transport.js';
+import { RelayInboxTransport } from './relay-inbox-transport.js';
 import { signMessage, DOMAIN_PREFIXES } from './afal-signing.js';
 import type { AdmissionPolicy, TrustedAgent } from './afal-responder.js';
 import { ed25519 } from '@noble/curves/ed25519';
@@ -235,28 +236,66 @@ function parseKnownAgentsFromEnv(): NormalizedKnownAgent[] {
   }
 }
 
+/**
+ * Build a RelayInboxTransport from VCAV_INBOX_* environment variables.
+ * Returns null if VCAV_INBOX_TOKEN is not set or VCAV_INBOX_TRANSPORT !== 'relay'.
+ */
+function buildRelayInboxTransportFromEnv(): RelayInboxTransport | null {
+  if (process.env['VCAV_INBOX_TRANSPORT'] !== 'relay') return null;
+  // Fail-closed: when relay mode is explicitly requested, missing env vars are fatal.
+  const inboxToken = process.env['VCAV_INBOX_TOKEN'];
+  if (!inboxToken) {
+    throw new Error(
+      'VCAV_INBOX_TOKEN is required when VCAV_INBOX_TRANSPORT=relay. ' +
+      'Set the inbox token or remove VCAV_INBOX_TRANSPORT to use a different mode.',
+    );
+  }
+  const agentId = process.env['VCAV_AGENT_ID'];
+  if (!agentId) {
+    throw new Error(
+      'VCAV_AGENT_ID is required when VCAV_INBOX_TRANSPORT=relay.',
+    );
+  }
+  const relayUrl = process.env['VCAV_RELAY_URL'];
+  if (!relayUrl) {
+    throw new Error(
+      'VCAV_RELAY_URL is required when VCAV_INBOX_TRANSPORT=relay.',
+    );
+  }
+  return new RelayInboxTransport({ agentId, inboxToken, relayUrl });
+}
+
 // Standalone entry point — runs without an InviteTransport
 // (CREATE/JOIN modes only unless the host injects one).
 // If VCAV_AFAL_SEED_HEX is set, also starts DirectAfalTransport.
+// If VCAV_INBOX_TRANSPORT=relay, uses RelayInboxTransport.
 async function main() {
   const directTransport = buildDirectTransportFromEnv();
+  const relayInboxTransport = buildRelayInboxTransportFromEnv();
   const knownAgents = parseKnownAgentsFromEnv();
 
-  const server = directTransport
-    ? createAgentVaultServer(undefined, knownAgents, directTransport)
+  // Priority: relay inbox > direct AFAL > none
+  const chosenTransport = relayInboxTransport ?? directTransport ?? undefined;
+
+  const server = chosenTransport
+    ? createAgentVaultServer(undefined, knownAgents, chosenTransport)
     : createAgentVaultServer(undefined, knownAgents);
 
-  if (directTransport) {
+  if (directTransport && !relayInboxTransport) {
     await directTransport.start();
     console.error(`AFAL Direct Transport active (agent: ${directTransport.agentId})`);
+  }
+
+  if (relayInboxTransport) {
+    console.error(`Relay Inbox Transport active (agent: ${relayInboxTransport.agentId}, relay: ${relayInboxTransport.relayUrl})`);
   }
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error('AgentVault MCP Server running on stdio');
 
-  if (!directTransport) {
-    console.error('Note: INITIATE/RESPOND modes require an InviteTransport or VCAV_AFAL_SEED_HEX. Only CREATE/JOIN modes available in standalone mode.');
+  if (!chosenTransport) {
+    console.error('Note: INITIATE/RESPOND modes require a transport. Set VCAV_INBOX_TRANSPORT=relay + VCAV_INBOX_TOKEN, or VCAV_AFAL_SEED_HEX. Only CREATE/JOIN modes available in standalone mode.');
   }
 
   // Graceful shutdown
@@ -307,8 +346,10 @@ if (isDirectExecution) {
 }
 
 export type { InviteTransport } from './invite-transport.js';
-export type { AfalTransport, AfalInviteMessage } from './afal-transport.js';
-export { OrchestratorInboxAdapter } from './afal-transport.js';
+export type { AfalTransport, AfalInviteMessage, AcceptResult } from './afal-transport.js';
+export { OrchestratorInboxAdapter, isAcceptResult } from './afal-transport.js';
+export { RelayInboxTransport } from './relay-inbox-transport.js';
+export type { RelayInboxTransportConfig } from './relay-inbox-transport.js';
 export type { AfalPropose, RelayInvitePayload } from './afal-types.js';
 export type { NormalizedKnownAgent } from './tools/relaySignal.js';
 export { DirectAfalTransport } from './direct-afal-transport.js';

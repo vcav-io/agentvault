@@ -1,6 +1,10 @@
+pub mod agent_registry;
 pub mod enforcement_policy;
 pub mod entropy;
 pub mod error;
+pub mod inbox;
+pub mod inbox_handlers;
+pub mod inbox_types;
 pub mod prompt_program;
 pub mod provider;
 pub mod relay;
@@ -17,7 +21,9 @@ use axum::{
 };
 use ed25519_dalek::SigningKey;
 
+use crate::agent_registry::AgentRegistry;
 use crate::error::RelayError;
+use crate::inbox::InboxStore;
 use crate::relay::compute_contract_hash;
 use crate::session::{SessionState, SessionStore, TokenRole};
 use crate::types::{
@@ -41,6 +47,10 @@ pub struct AppState {
     /// Content hash of the loaded enforcement policy.
     /// Phase A: declared only — enforcement wired in Phase B.
     pub enforcement_policy_hash: String,
+    /// Agent registry for inbox authentication.
+    pub agent_registry: AgentRegistry,
+    /// In-memory inbox store for async invites.
+    pub inbox_store: InboxStore,
 }
 
 // ============================================================================
@@ -371,5 +381,22 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/sessions/:id/input", post(submit_input_handler))
         .route("/sessions/:id/status", get(session_status_handler))
         .route("/sessions/:id/output", get(session_output_handler))
+        // Inbox endpoints
+        .route("/invites", post(inbox_handlers::create_invite_handler))
+        .route("/inbox", get(inbox_handlers::list_inbox_handler))
+        .route("/invites/:id", get(inbox_handlers::get_invite_handler))
+        .route(
+            "/invites/:id/accept",
+            post(inbox_handlers::accept_invite_handler),
+        )
+        .route(
+            "/invites/:id/decline",
+            post(inbox_handlers::decline_invite_handler),
+        )
+        .route(
+            "/invites/:id/cancel",
+            post(inbox_handlers::cancel_invite_handler),
+        )
+        .route("/inbox/events", get(inbox_handlers::inbox_events_handler))
         .with_state(state)
 }

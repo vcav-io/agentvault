@@ -29,7 +29,8 @@ import {
   computeRelayContractHash,
 } from 'agentvault-client/contracts';
 import type { AfalTransport, AfalInviteMessage } from '../afal-transport.js';
-import { PURPOSE_TO_TEMPLATE } from '../afal-transport.js';
+import { PURPOSE_TO_TEMPLATE, isAcceptResult } from '../afal-transport.js';
+import { RelayInboxTransport, RELAY_INBOX_PAYLOAD_TYPE } from '../relay-inbox-transport.js';
 import { computeProposalId, generateNonce } from '../afal-types.js';
 import type { AfalPropose, RelayInvitePayload } from '../afal-types.js';
 import {
@@ -536,6 +537,27 @@ async function phaseInvite(
       `INITIATE requires purpose (${listRelayPurposes().join(', ')}) or contract`);
   }
 
+  // ── Relay inbox path ──────────────────────────────────────────────────
+  // When using RelayInboxTransport, create an invite via the relay's inbox
+  // instead of creating a session eagerly. The relay creates the session
+  // when the responder accepts the invite.
+  if (transport instanceof RelayInboxTransport) {
+    const resp = await transport.createRelayInvite({
+      to_agent_id: counterparty,
+      contract,
+      provider: 'anthropic',
+      purpose_code: purposeHint ?? 'CUSTOM',
+    });
+
+    handle.inviteId = resp.invite_id;
+    handle.contractHash = resp.contract_hash;
+    handle.relayUrl = transport.relayUrl;
+    handle.purpose = purposeHint ?? undefined;
+    handle.myInput = args.my_input;
+    handle.phase = 'POLL_INVITE';
+    return awaitingResponse(handle, 'Invite created. Waiting for counterparty to accept.');
+  }
+
   const relayUrl = resolveRelayUrl(args.relay_url);
   const config = { relay_url: relayUrl };
 
@@ -605,6 +627,80 @@ async function phaseInvite(
 
   handle.phase = 'POLL_RELAY';
   return awaitingResponse(handle, 'Relay session created. Waiting for counterparty to join.');
+}
+
+/**
+ * POLL_INVITE phase (relay inbox INITIATE only).
+ *
+ * Polls GET /invites/:id until the invite is ACCEPTED.
+ * When accepted, extracts session tokens, submits initiator input,
+ * and transitions to POLL_RELAY.
+ */
+async function phasePollInvite(
+  handle: RelayHandle,
+  transport: AfalTransport,
+): Promise<ToolResponse<RelaySignalOutput>> {
+  if (Date.now() > handle.timeoutDeadline) {
+    return failedResponse(handle, 'RELAY_TIMEOUT', 'Timed out waiting for invite acceptance. Call agentvault.relay_signal INITIATE to retry.');
+  }
+
+  if (!(transport instanceof RelayInboxTransport)) {
+    return failedResponse(handle, 'SESSION_ERROR', 'POLL_INVITE phase requires RelayInboxTransport.');
+  }
+
+  const callDeadline = Date.now() + CALL_BUDGET_MS;
+
+  while (Date.now() < callDeadline) {
+    const detail = await transport.getInviteDetail(handle.inviteId!);
+
+    if (detail.status === 'ACCEPTED') {
+      // Validate required session fields before using them
+      if (!detail.session_id || !detail.submit_token || !detail.read_token) {
+        return failedResponse(handle, 'SESSION_ERROR',
+          'Invite accepted but relay returned incomplete session data (missing session_id, submit_token, or read_token).');
+      }
+
+      // Extract initiator session tokens
+      handle.sessionId = detail.session_id;
+      handle.tokens = {
+        submit: detail.submit_token,
+        read: '', // initiator doesn't use responder read token
+        initiatorRead: detail.read_token,
+      };
+
+      writeLastSessionFile(handle.sessionId, 'INITIATOR', detail.read_token, handle.relayUrl!);
+
+      // Submit initiator input
+      const config = { relay_url: handle.relayUrl! };
+      await rawSubmitInput(
+        config,
+        handle.sessionId!,
+        handle.tokens.submit,
+        'initiator',
+        handle.myInput ?? '',
+        handle.contractHash,
+      );
+
+      handle.phase = 'POLL_RELAY';
+      return awaitingResponse(handle, 'Counterparty accepted. Input submitted. Waiting for relay session to complete.');
+    }
+
+    if (detail.status === 'DECLINED') {
+      return failedResponse(handle, 'INVITE_DECLINED', 'Counterparty declined the invite.');
+    }
+    if (detail.status === 'EXPIRED') {
+      return failedResponse(handle, 'INVITE_EXPIRED', 'Invite expired before counterparty accepted.');
+    }
+    if (detail.status === 'CANCELED') {
+      return failedResponse(handle, 'INVITE_CANCELED', 'Invite was canceled.');
+    }
+
+    // Still PENDING — wait and retry
+    await sleep(POLL_INTERVAL_MS);
+  }
+
+  // Call budget expired — invite still pending
+  return awaitingResponse(handle, 'Waiting for counterparty to accept invite.');
 }
 
 async function phasePollRelay(
@@ -713,14 +809,19 @@ async function phaseDiscover(
 
       // Filter by sender
       if (fromAgentId !== handle.counterparty) continue;
-      // Filter by payload type
-      if (payloadType !== 'VCAV_E_INVITE_V1') continue;
+      // Filter by payload type — accept both legacy and relay inbox invites
+      const isRelayInbox = payloadType === RELAY_INBOX_PAYLOAD_TYPE;
+      if (payloadType !== 'VCAV_E_INVITE_V1' && !isRelayInbox) continue;
       // If handle already has a bound inviteId, only match that
       if (handle.inviteId && invite.invite_id !== handle.inviteId) continue;
 
-      const payload = invite.payload;
-      if (!payload || typeof payload !== 'object') continue;
-      if (!payload['session_id'] || !payload['responder_submit_token'] || !payload['responder_read_token'] || !payload['relay_url']) continue;
+      // For legacy invites, require session tokens in payload.
+      // For relay inbox invites, tokens come from acceptInvite later.
+      if (!isRelayInbox) {
+        const payload = invite.payload;
+        if (!payload || typeof payload !== 'object') continue;
+        if (!payload['session_id'] || !payload['responder_submit_token'] || !payload['responder_read_token'] || !payload['relay_url']) continue;
+      }
 
       // Check expected_contract_hash if provided (direct hash comparison)
       if (handle.expectedContractHash && invite.contract_hash !== handle.expectedContractHash) {
@@ -763,16 +864,27 @@ async function phaseDiscover(
 
       // Bind invite to handle (stops scanning for different invites)
       handle.inviteId = invite.invite_id;
-      handle.sessionId = payload['session_id'] as string;
       handle.contractHash = relayContractHash ?? invite.contract_hash;
-      handle.relayUrl = handle.relayUrl ?? payload['relay_url'] as string;
-      handle.tokens = {
-        submit: payload['responder_submit_token'] as string,
-        read: payload['responder_read_token'] as string,
-      };
       handle.proposalId = invite.afalPropose?.proposal_id;
-      handle.phase = 'JOIN';
 
+      if (isRelayInbox) {
+        // Relay inbox: tokens come from acceptInvite in phaseJoin.
+        // Set relayUrl from transport if available.
+        if (transport instanceof RelayInboxTransport) {
+          handle.relayUrl = handle.relayUrl ?? transport.relayUrl;
+        }
+      } else {
+        // Legacy: extract session tokens from invite payload.
+        const payload = invite.payload!;
+        handle.sessionId = payload['session_id'] as string;
+        handle.relayUrl = handle.relayUrl ?? payload['relay_url'] as string;
+        handle.tokens = {
+          submit: payload['responder_submit_token'] as string,
+          read: payload['responder_read_token'] as string,
+        };
+      }
+
+      handle.phase = 'JOIN';
       return awaitingResponse(handle, 'Relay invite found. Joining session.');
     }
 
@@ -804,6 +916,22 @@ async function phaseJoin(
 
   // Submit input if not yet done (uses stored myInput from handle, not args)
   if (!handle.submitted) {
+    // For relay inbox: accept invite FIRST to get session tokens.
+    // For legacy transports: tokens are already in handle from phaseDiscover.
+    if (!handle.sessionId || !handle.tokens) {
+      // No session tokens yet — must be relay inbox path. Accept to get them.
+      const result = await transport.acceptInvite(handle.inviteId!);
+      if (isAcceptResult(result)) {
+        handle.sessionId = result.session_id;
+        handle.tokens = {
+          submit: result.submit_token,
+          read: result.read_token,
+        };
+      } else {
+        return failedResponse(handle, 'SESSION_ERROR', 'acceptInvite did not return session tokens.');
+      }
+    }
+
     await rawSubmitInput(
       config,
       handle.sessionId!,
@@ -816,16 +944,19 @@ async function phaseJoin(
 
     writeLastSessionFile(handle.sessionId!, 'RESPONDER', handle.tokens!.read, handle.relayUrl!);
 
-    // Accept the orchestrator invite after successful submit
-    try {
-      await transport.acceptInvite(handle.inviteId!);
-    } catch (err) {
-      // Accept failure is non-fatal — relay session proceeds regardless.
-      // But log for operator diagnostics (auth errors, connectivity).
-      console.error(
-        `phaseJoin: acceptInvite failed for invite=${handle.inviteId}: ` +
-        `${err instanceof Error ? err.message : String(err)}`,
-      );
+    // Accept the orchestrator invite after successful submit (legacy transports only).
+    // For relay inbox, accept was already called above.
+    if (handle.tokens && !(transport instanceof RelayInboxTransport)) {
+      try {
+        await transport.acceptInvite(handle.inviteId!);
+      } catch (err) {
+        // Accept failure is non-fatal — relay session proceeds regardless.
+        // But log for operator diagnostics (auth errors, connectivity).
+        console.error(
+          `phaseJoin: acceptInvite failed for invite=${handle.inviteId}: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
   }
 
@@ -942,6 +1073,8 @@ export async function handleRelaySignal(
       switch (handle.phase) {
         case 'PROPOSE_RETRY':
           return await phaseRetryPropose(handle, transport);
+        case 'POLL_INVITE':
+          return await phasePollInvite(handle, transport);
         case 'POLL_RELAY':
           return await phasePollRelay(handle);
         case 'DISCOVER':
@@ -992,6 +1125,7 @@ export async function handleRelaySignal(
         if (existing) {
           // Reattach — route to current phase
           if (existing.phase === 'PROPOSE_RETRY') return await phaseRetryPropose(existing, transport);
+          if (existing.phase === 'POLL_INVITE') return await phasePollInvite(existing, transport);
           if (existing.phase === 'POLL_RELAY') return await phasePollRelay(existing);
           return awaitingResponse(existing, 'Reattached to existing relay session.');
         }
