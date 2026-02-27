@@ -32,6 +32,7 @@ impl InviteStatus {
 ///
 /// The full contract is stored server-side but never exposed in list responses.
 /// Recipients see only contract_hash + purpose_code pre-accept.
+#[derive(Debug, Clone)]
 pub struct Invite {
     pub version: String,
     pub invite_id: String,

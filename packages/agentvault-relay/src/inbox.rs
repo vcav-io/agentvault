@@ -61,6 +61,11 @@ impl InboxStore {
         request: &CreateInviteRequest,
         from_agent_pubkey: Option<String>,
     ) -> Result<CreateInviteResponse, RelayError> {
+        if from_agent_id == request.to_agent_id {
+            return Err(RelayError::ContractValidation(
+                "cannot send invite to self".to_string(),
+            ));
+        }
         let contract_hash = compute_contract_hash(&request.contract)?;
         let now = Utc::now();
         let invite_ttl_chrono =
@@ -387,6 +392,9 @@ impl InboxStore {
         let mut store = self.inner.lock().await;
         let mut expired_count = 0;
         let mut gc_ids = Vec::new();
+        // Collect newly-expired invite metadata during the mutation pass
+        // so we don't need to re-scan with fragile equality checks.
+        let mut newly_expired: Vec<(String, String, String)> = Vec::new();
 
         for (id, invite) in store.invites.iter_mut() {
             // Phase 1: expire pending invites that are past their TTL
@@ -394,8 +402,11 @@ impl InboxStore {
                 invite.status = InviteStatus::Expired;
                 invite.updated_at = now;
                 expired_count += 1;
-
-                // We'll emit events after the mutable borrow ends
+                newly_expired.push((
+                    invite.invite_id.clone(),
+                    invite.to_agent_id.clone(),
+                    invite.from_agent_id.clone(),
+                ));
             }
 
             // Phase 2: garbage-collect invites that have been EXPIRED for > gc_grace
@@ -408,20 +419,6 @@ impl InboxStore {
         }
 
         // Emit INVITE_EXPIRED events for newly expired invites
-        // (We need to collect them first since we can't borrow mutably and immutably at once)
-        let newly_expired: Vec<(String, String, String)> = store
-            .invites
-            .values()
-            .filter(|inv| inv.status == InviteStatus::Expired && inv.updated_at == now)
-            .map(|inv| {
-                (
-                    inv.invite_id.clone(),
-                    inv.to_agent_id.clone(),
-                    inv.from_agent_id.clone(),
-                )
-            })
-            .collect();
-
         for (invite_id, to_agent_id, from_agent_id) in newly_expired {
             let event = self.build_event_locked(
                 &mut store,
@@ -1064,5 +1061,30 @@ mod tests {
         };
         let response = store.list_inbox("bob", &query).await;
         assert_eq!(response.latest_event_id, 2);
+    }
+
+    #[tokio::test]
+    async fn test_self_invite_rejected() {
+        let store = InboxStore::new(Duration::from_secs(604800));
+        let mut request = test_create_request();
+        request.to_agent_id = "alice".to_string(); // same as from_agent_id
+
+        let result = store.create_invite("alice", &request, None).await;
+        assert!(matches!(result, Err(RelayError::ContractValidation(_))));
+    }
+
+    #[tokio::test]
+    async fn test_auth_only_recipient_can_decline() {
+        let store = InboxStore::new(Duration::from_secs(604800));
+        let invite_resp = store
+            .create_invite("alice", &test_create_request(), None)
+            .await
+            .unwrap();
+
+        // Alice (sender) cannot decline
+        let result = store
+            .decline_invite(&invite_resp.invite_id, "alice", None)
+            .await;
+        assert!(matches!(result, Err(RelayError::Unauthorized)));
     }
 }

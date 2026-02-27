@@ -242,20 +242,25 @@ function parseKnownAgentsFromEnv(): NormalizedKnownAgent[] {
  */
 function buildRelayInboxTransportFromEnv(): RelayInboxTransport | null {
   if (process.env['VCAV_INBOX_TRANSPORT'] !== 'relay') return null;
+  // Fail-closed: when relay mode is explicitly requested, missing env vars are fatal.
   const inboxToken = process.env['VCAV_INBOX_TOKEN'];
   if (!inboxToken) {
-    console.error('VCAV_INBOX_TOKEN is required when VCAV_INBOX_TRANSPORT=relay');
-    return null;
+    throw new Error(
+      'VCAV_INBOX_TOKEN is required when VCAV_INBOX_TRANSPORT=relay. ' +
+      'Set the inbox token or remove VCAV_INBOX_TRANSPORT to use a different mode.',
+    );
   }
   const agentId = process.env['VCAV_AGENT_ID'];
   if (!agentId) {
-    console.error('VCAV_AGENT_ID is required when VCAV_INBOX_TRANSPORT=relay');
-    return null;
+    throw new Error(
+      'VCAV_AGENT_ID is required when VCAV_INBOX_TRANSPORT=relay.',
+    );
   }
   const relayUrl = process.env['VCAV_RELAY_URL'];
   if (!relayUrl) {
-    console.error('VCAV_RELAY_URL is required when VCAV_INBOX_TRANSPORT=relay');
-    return null;
+    throw new Error(
+      'VCAV_RELAY_URL is required when VCAV_INBOX_TRANSPORT=relay.',
+    );
   }
   return new RelayInboxTransport({ agentId, inboxToken, relayUrl });
 }

@@ -52,10 +52,11 @@ impl RelayError {
             RelayError::ReceiptSigning(_) => StatusCode::INTERNAL_SERVER_ERROR,
             RelayError::EnforcementPolicy(_) => StatusCode::INTERNAL_SERVER_ERROR,
             RelayError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            // Constant-shape: both return 401 with same body.
-            // Caller cannot distinguish "bad token" from "unknown session".
-            RelayError::Unauthorized | RelayError::SessionNotFound => StatusCode::UNAUTHORIZED,
-            RelayError::InviteNotFound => StatusCode::NOT_FOUND,
+            // Constant-shape: all return 401 with same body.
+            // Caller cannot distinguish "bad token" from "unknown session/invite".
+            RelayError::Unauthorized | RelayError::SessionNotFound | RelayError::InviteNotFound => {
+                StatusCode::UNAUTHORIZED
+            }
             RelayError::InviteStateConflict(_) => StatusCode::CONFLICT,
         }
     }
@@ -66,7 +67,9 @@ impl IntoResponse for RelayError {
         let status = self.status_code();
         // Constant-shape error: no variable detail for auth or policy gate errors.
         let error_msg = match &self {
-            RelayError::Unauthorized | RelayError::SessionNotFound => "UNAUTHORIZED".to_string(),
+            RelayError::Unauthorized | RelayError::SessionNotFound | RelayError::InviteNotFound => {
+                "UNAUTHORIZED".to_string()
+            }
             RelayError::PolicyGate(_) => "OUTPUT_POLICY_VIOLATION".to_string(),
             other => other.to_string(),
         };

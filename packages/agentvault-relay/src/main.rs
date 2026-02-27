@@ -133,10 +133,20 @@ async fn main() {
     session_store.clone().start_reaper();
 
     // Load agent registry for inbox auth.
-    // Fail-closed: missing file = startup failure unless VCAV_INBOX_AUTH=off.
+    // Fail-closed: missing file = startup failure unless VCAV_INBOX_AUTH=off + VCAV_ENV=dev.
     let inbox_auth_off = std::env::var("VCAV_INBOX_AUTH")
         .map(|v| v == "off")
         .unwrap_or(false);
+    let is_dev = std::env::var("VCAV_ENV")
+        .map(|v| v == "dev")
+        .unwrap_or(false);
+    if inbox_auth_off && !is_dev {
+        tracing::error!(
+            "VCAV_INBOX_AUTH=off requires VCAV_ENV=dev — refusing to start. \
+             This is a safety check to prevent accidentally disabling inbox auth in production."
+        );
+        std::process::exit(1);
+    }
     let agent_registry_path = std::env::var("VCAV_AGENT_REGISTRY_PATH").ok();
     let agent_registry = match agent_registry_path {
         Some(ref path) => match AgentRegistry::load_from_file(path) {
@@ -149,14 +159,16 @@ async fn main() {
                 std::process::exit(1);
             }
         },
-        None if inbox_auth_off => {
-            tracing::warn!("VCAV_INBOX_AUTH=off — inbox endpoints disabled (no agent registry)");
+        None if inbox_auth_off && is_dev => {
+            tracing::warn!(
+                "VCAV_INBOX_AUTH=off + VCAV_ENV=dev — inbox endpoints disabled (no agent registry)"
+            );
             AgentRegistry::empty()
         }
         None => {
             tracing::error!(
                 "VCAV_AGENT_REGISTRY_PATH not set and VCAV_INBOX_AUTH != off — refusing to start. \
-                 Set VCAV_AGENT_REGISTRY_PATH to an agents.json file, or set VCAV_INBOX_AUTH=off to disable inbox."
+                 Set VCAV_AGENT_REGISTRY_PATH to an agents.json file, or set VCAV_INBOX_AUTH=off + VCAV_ENV=dev to disable inbox."
             );
             std::process::exit(1);
         }

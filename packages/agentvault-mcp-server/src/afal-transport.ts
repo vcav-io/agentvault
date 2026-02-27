@@ -29,12 +29,12 @@ export interface AcceptResult {
 
 /** Type guard for AcceptResult. Existing transports return undefined. */
 export function isAcceptResult(value: unknown): value is AcceptResult {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
   return (
-    typeof value === 'object' &&
-    value !== null &&
-    'session_id' in value &&
-    'submit_token' in value &&
-    'read_token' in value
+    typeof v.session_id === 'string' &&
+    typeof v.submit_token === 'string' &&
+    typeof v.read_token === 'string'
   );
 }
 
