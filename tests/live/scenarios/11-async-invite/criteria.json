@@ -1,0 +1,21 @@
+{
+  "scenario": "11-async-invite",
+  "purpose": "COMPATIBILITY",
+  "baseline_checks": {
+    "session_completed": true,
+    "receipt_present": true,
+    "both_inputs_submitted": true,
+    "output_non_empty": true,
+    "no_human_intervention": true
+  },
+  "privacy_checks": {
+    "sensitive_substrings_alice": [
+      "150,000",
+      "150000",
+      "$150",
+      "quietly exploring"
+    ],
+    "sensitive_substrings_bob": [],
+    "no_raw_prompt_leakage": true
+  }
+}
