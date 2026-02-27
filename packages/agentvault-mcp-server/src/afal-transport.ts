@@ -20,6 +20,24 @@ export interface AfalInviteMessage extends InviteMessage {
   afalPropose?: AfalPropose;
 }
 
+/** Returned by acceptInvite when the transport provides session tokens (relay inbox). */
+export interface AcceptResult {
+  session_id: string;
+  submit_token: string;
+  read_token: string;
+}
+
+/** Type guard for AcceptResult. Existing transports return undefined. */
+export function isAcceptResult(value: unknown): value is AcceptResult {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'session_id' in value &&
+    'submit_token' in value &&
+    'read_token' in value
+  );
+}
+
 export interface AfalTransport {
   sendPropose(params: {
     propose: AfalPropose;
@@ -30,7 +48,7 @@ export interface AfalTransport {
 
   checkInbox(): Promise<{ invites: AfalInviteMessage[] }>;
 
-  acceptInvite(inviteId: string): Promise<void>;
+  acceptInvite(inviteId: string): Promise<AcceptResult | void>;
 
   readonly agentId: string;
 }

@@ -27,6 +27,8 @@ chrono.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 jsonschema.workspace = true
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures-util = "0.3"
 
 [dev-dependencies]
 verifier-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "a9112332206b5350c99a2e0b73d7bdd0557178b5", package = "verifier-core" }

@@ -33,6 +33,12 @@ pub enum RelayError {
 
     #[error("Session not found")]
     SessionNotFound,
+
+    #[error("Invite not found")]
+    InviteNotFound,
+
+    #[error("Invite state conflict: {0}")]
+    InviteStateConflict(String),
 }
 
 impl RelayError {
@@ -49,6 +55,8 @@ impl RelayError {
             // Constant-shape: both return 401 with same body.
             // Caller cannot distinguish "bad token" from "unknown session".
             RelayError::Unauthorized | RelayError::SessionNotFound => StatusCode::UNAUTHORIZED,
+            RelayError::InviteNotFound => StatusCode::NOT_FOUND,
+            RelayError::InviteStateConflict(_) => StatusCode::CONFLICT,
         }
     }
 }
