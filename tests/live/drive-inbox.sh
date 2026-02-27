@@ -207,6 +207,26 @@ assert_not_empty() {
   fi
 }
 
+# Wrapper around curl that checks HTTP status code.
+# Usage: relay_curl [-X METHOD] URL [curl args...]
+# Returns response body on stdout. Fails the script on 4xx/5xx.
+relay_curl() {
+  local tmpfile
+  tmpfile="$(mktemp)"
+  local http_code
+  http_code="$(curl -s -o "${tmpfile}" -w '%{http_code}' "$@")"
+  local body
+  body="$(cat "${tmpfile}")"
+  rm -f "${tmpfile}"
+
+  if [[ "${http_code}" -ge 400 ]]; then
+    log_error "HTTP ${http_code} from: $*"
+    log_error "Response body: ${body}"
+    exit 1
+  fi
+  echo "${body}"
+}
+
 # ---------------------------------------------------------------------------
 # Main flow
 # ---------------------------------------------------------------------------
@@ -252,7 +272,7 @@ create_body="$(jq -n \
     purpose_code: "COMPATIBILITY"
   }')"
 
-create_resp="$(curl -s -X POST "${RELAY_URL}/invites" \
+create_resp="$(relay_curl -X POST "${RELAY_URL}/invites" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${ALICE_INBOX_TOKEN}" \
   -d "${create_body}")"
@@ -273,7 +293,7 @@ log_info "Invite created: ${invite_id}"
 
 log_info "Step 2: Alice checks invite detail (sender, pre-accept)..."
 
-alice_detail="$(curl -s "${RELAY_URL}/invites/${invite_id}" \
+alice_detail="$(relay_curl "${RELAY_URL}/invites/${invite_id}" \
   -H "Authorization: Bearer ${ALICE_INBOX_TOKEN}")"
 
 assert_eq "sender sees PENDING status" \
@@ -297,7 +317,7 @@ log_success "Offline delay complete — Bob now comes online"
 
 log_info "Step 4: Bob polls inbox..."
 
-inbox_resp="$(curl -s "${RELAY_URL}/inbox?status=PENDING" \
+inbox_resp="$(relay_curl "${RELAY_URL}/inbox?status=PENDING" \
   -H "Authorization: Bearer ${BOB_INBOX_TOKEN}")"
 
 inbox_count="$(echo "${inbox_resp}" | jq '.invites | length')"
@@ -317,7 +337,7 @@ log_info "Bob discovered invite: ${discovered_id}"
 
 log_info "Step 5: Bob checks invite detail (recipient, pre-accept)..."
 
-bob_detail="$(curl -s "${RELAY_URL}/invites/${invite_id}" \
+bob_detail="$(relay_curl "${RELAY_URL}/invites/${invite_id}" \
   -H "Authorization: Bearer ${BOB_INBOX_TOKEN}")"
 
 assert_eq "recipient sees PENDING status" \
@@ -333,7 +353,7 @@ assert_eq "recipient sees no session_id pre-accept" \
 
 log_info "Step 6: Bob accepts invite..."
 
-accept_resp="$(curl -s -X POST "${RELAY_URL}/invites/${invite_id}/accept" \
+accept_resp="$(relay_curl -X POST "${RELAY_URL}/invites/${invite_id}/accept" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${BOB_INBOX_TOKEN}" \
   -d "{\"expected_contract_hash\": \"${CONTRACT_HASH}\"}")"
@@ -357,7 +377,7 @@ log_info "Session created via accept: ${session_id}"
 log_info "Step 7: Verifying post-accept invite status..."
 
 # Alice (sender) polls invite detail — should see ACCEPTED + initiator tokens
-alice_post="$(curl -s "${RELAY_URL}/invites/${invite_id}" \
+alice_post="$(relay_curl "${RELAY_URL}/invites/${invite_id}" \
   -H "Authorization: Bearer ${ALICE_INBOX_TOKEN}")"
 
 assert_eq "sender sees ACCEPTED" \
@@ -378,7 +398,7 @@ assert_not_empty "alice submit != bob submit (different roles)" "$(
 )"
 
 # Bob (recipient) polls invite detail — should see ACCEPTED + responder tokens
-bob_post="$(curl -s "${RELAY_URL}/invites/${invite_id}" \
+bob_post="$(relay_curl "${RELAY_URL}/invites/${invite_id}" \
   -H "Authorization: Bearer ${BOB_INBOX_TOKEN}")"
 
 assert_eq "recipient sees ACCEPTED" \
@@ -399,7 +419,7 @@ bob_context="$(cat "${SCENARIO_DIR}/bob_relay_input_s1.json")"
 alice_input_body="$(jq -n --argjson ctx "${alice_context}" \
   '{role: "alice", context: $ctx}')"
 
-alice_input_resp="$(curl -s -X POST "${RELAY_URL}/sessions/${session_id}/input" \
+alice_input_resp="$(relay_curl -X POST "${RELAY_URL}/sessions/${session_id}/input" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${alice_submit_token}" \
   -d "${alice_input_body}")"
@@ -409,7 +429,7 @@ log_info "Alice input submitted: $(echo "${alice_input_resp}" | jq -r '.state')"
 bob_input_body="$(jq -n --argjson ctx "${bob_context}" --arg hash "${CONTRACT_HASH}" \
   '{role: "bob", context: $ctx, expected_contract_hash: $hash}')"
 
-bob_input_resp="$(curl -s -X POST "${RELAY_URL}/sessions/${session_id}/input" \
+bob_input_resp="$(relay_curl -X POST "${RELAY_URL}/sessions/${session_id}/input" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${bob_submit_token}" \
   -d "${bob_input_body}")"
@@ -479,7 +499,7 @@ verify_exit=0
 
 log_info "Step 11: Verifying idempotent re-accept..."
 
-reaccept_resp="$(curl -s -X POST "${RELAY_URL}/invites/${invite_id}/accept" \
+reaccept_resp="$(relay_curl -X POST "${RELAY_URL}/invites/${invite_id}/accept" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${BOB_INBOX_TOKEN}" \
   -d "{\"expected_contract_hash\": \"${CONTRACT_HASH}\"}")"

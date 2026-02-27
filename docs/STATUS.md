@@ -143,6 +143,25 @@ The relay refuses to start if any lockfile entry's computed hash doesn't match.
 - `prompt_programs/model_profiles.lock` committed with `api-claude-sonnet-v1` hash
 - 5 unit tests: valid lockfile, hash mismatch, missing lockfile, extra unlisted profile, generate round-trip
 
+## Async Invites & Inbox (Phase 2b, item 11)
+
+**Status: Implemented** (PR #36, 2026-02-27)
+
+Relay-mediated async inbox eliminating the synchrony coincidence. Alice deposits
+invites while Bob is offline; Bob discovers them on next poll.
+
+- `src/inbox_types.rs` — Versioned wire types (`version: "1"`), state machine,
+  caller-dependent token redaction
+- `src/inbox.rs` — `InboxStore` (7-day TTL, two-phase expiry, SSE broadcast)
+- `src/inbox_handlers.rs` — 7 endpoints (POST /invites, GET /inbox,
+  GET /invites/:id, POST accept/decline/cancel, GET /inbox/events SSE)
+- `src/agent_registry.rs` — Static agent auth (JSON file, fail-closed)
+- `packages/agentvault-client/src/inbox.ts` — HTTP client functions
+- `packages/agentvault-mcp-server/src/relay-inbox-transport.ts` — `RelayInboxTransport`
+- `relaySignal.ts` — FSM integration for INITIATE and RESPOND modes
+- `tests/live/drive-inbox.sh` — Live test with offline delay proof
+- 141 unit tests, 34 integration tests, 27 TS tests
+
 ### Open
 
 - [x] Deterministic policy gate — relay-side digit/currency guard (GATE rule, Unicode Nd/Sc categories, scoped to COMPAT v2)
@@ -152,3 +171,5 @@ The relay refuses to start if any lockfile entry's computed hash doesn't match.
 - [ ] Paraphrase stability tooling (variant B prompts per scenario)
 - [ ] Category C (meta-protocol leakage) — blocked on relay metadata observer endpoint
 - [ ] CI integration for TypeScript packages
+- [ ] Extract inbox protocol types to VFC — blocked on first live session (see roadmap item 11c)
+- [ ] Inbox hardening: `relayFetch` timeout wrapping, `res.json()` runtime validation, mutex splitting, persistent storage

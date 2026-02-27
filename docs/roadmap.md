@@ -301,17 +301,86 @@ Phase 1 being complete (v2 schema hardened) but does not depend on Phase 2.
 - "Outputs are signals" framing and non-leak UX rules
 - No native plugin port (mcporter indirection only)
 
-## 11. VPS Runbook + First Live Session
+## 11. Async Invites & Inbox — DONE
 
-- Pre-flight checklist on both hosts (OpenClaw, mcporter, MCP server)
+*Completed: PR #36, merged 2026-02-27.*
+
+Relay-mediated async inbox so Alice can deposit an invite while Bob is offline,
+and Bob discovers it later by polling the relay. Eliminates the "synchrony
+coincidence" that previously required both agents to be online simultaneously.
+
+**Deliverables:**
+- `inbox_types.rs` — Versioned wire types (`version: "1"`), state machine
+  (PENDING → ACCEPTED/DECLINED/CANCELED/EXPIRED, all terminal), caller-dependent
+  token redaction
+- `inbox.rs` — `InboxStore` with 7-day TTL, two-phase expiry (expire first,
+  GC after 24h grace), SSE broadcast per recipient
+- `inbox_handlers.rs` — 7 Axum handlers: POST /invites, GET /inbox,
+  GET /invites/:id, POST accept/decline/cancel, GET /inbox/events (SSE)
+- `agent_registry.rs` — Static agent auth (JSON file, fail-closed, constant-time
+  token validation)
+- `packages/agentvault-client/src/inbox.ts` — HTTP client functions
+- `packages/agentvault-mcp-server/src/relay-inbox-transport.ts` —
+  `RelayInboxTransport` implementing `AfalTransport`
+- `relaySignal.ts` FSM integration — INITIATE/phaseInvite, RESPOND/phaseDiscover,
+  phaseJoin with relay inbox path
+- `tests/live/drive-inbox.sh` — Live test scenario with offline delay proof
+- 141 unit tests, 34 integration tests, 27 TS tests
+
+**Architecture decisions:**
+- Types prototyped in relay crate, versioned, extract to VFC when stable (see item 11c)
+- Accept-to-session bridge: idempotent, reuses `SessionStore::create`
+- Constant-shape error responses (401 for InviteNotFound + Unauthorized)
+- SSE is lossy (bounded broadcast buffer), GET is authoritative
+
+## 11a. First Live Async Invite Session (Local End-to-End)
+
+- Run `drive-inbox.sh` against a real provider (not mock)
 - Natural-language prompt → full vault session → verifiable receipts
+- Async invite flow — Alice deposits invite, Bob discovers on next poll
 - No manual coordination, no prompt-based protocol hints
 - Capture: receipts, session pointers, logs
 
 Success criteria:
 - Receipts verifiable
 - No out-of-band coordination
+- No synchrony coincidence — invite survives offline period
 - Session fully completed via tool-mediated flow
+
+VPS deployment is a separate operational concern — not needed for protocol validation.
+
+## 11b. Inbox Hardening (Post-Live Validation)
+
+Follow-up improvements identified during PR review. Not blocking for first live
+session but should be addressed before production use.
+
+- `relayFetch` timeout wrapping — throw descriptive error instead of raw `AbortError`
+- Runtime validation of `res.json()` casts in inbox client (library boundary)
+- `accept_invite` mutex contention — holds inbox lock during `SessionStore::create`.
+  Fine for single-agent traffic; needs lock splitting for concurrent accept load.
+- Persistent inbox storage (SQLite) — currently in-memory, lost on relay restart.
+
+## 11c. Extract Inbox Protocol Types to VFC
+
+**Depends on:** Item 11a (first live session validates wire format).
+
+The inbox wire types are currently prototyped in the relay crate (`inbox_types.rs`)
+with explicit `version: "1"` for future extraction. Once the wire format is proven
+stable through live sessions:
+
+1. Extract protocol-level types to `vault-family-core`:
+   - `InviteStatus`, `InboxEventType`, `DeclineReasonCode` (enums)
+   - `InviteSummary`, `InviteDetailResponse`, `InboxResponse` (wire format)
+   - Request/response types (`CreateInviteRequest`, `AcceptInviteResponse`, etc.)
+2. Keep relay-internal types in relay crate:
+   - `Invite` (server-side storage with `pub(crate)` state machine fields)
+   - `InboxStore`, `InboxStoreInner`
+3. Align TypeScript client types with VFC definitions (codegen or shared schema)
+4. Resolve `Contract` dependency direction — `CreateInviteRequest` references
+   relay-internal `Contract` type, needs restructuring for VFC
+
+**Not before live validation.** Premature extraction adds cross-repo coordination
+cost for types that may still change.
 
 ## 12. Native OpenClaw Plugin (Optional, Phase 4+)
 
@@ -460,13 +529,17 @@ AgentVault remains software-attested, relay-based.
 5. ~~RelayEnforcementPolicy Phase A (Phase 2, item 7)~~ — **done** (PR #26)
 
 **Next priorities:**
-6. Output schema as standalone artefact (Phase 2, item 6)
+6. ~~Async invites & inbox (Phase 2b, item 11)~~ — **done** (PR #36)
+7. First live async invite session (Phase 2b, item 11a)
+   — **Current state:** Skill, runbook, and async inbox all exist. Run `drive-inbox.sh`
+   against a real provider to validate the wire format end-to-end.
+8. Output schema as standalone artefact (Phase 2, item 6)
    — **Current state:** Schema embedded in contract, referenced by human-readable
    `output_schema_id`. No content-addressing.
-7. First live OpenClaw VPS session (Phase 2b, item 11)
-   — **Current state:** Skill and runbook exist. VPS deployment not yet attempted.
-8. RelayEnforcementPolicy Phase B — wire guard to policy config
+9. RelayEnforcementPolicy Phase B — wire guard to policy config
    — **Current state:** Phase A complete. Hardcoded guard runs independently of policy.
+10. Extract inbox protocol types to VFC (Phase 2b, item 11c)
+   — **Blocked on:** item 11a (live session validates wire format).
 
 Stop there before expanding scope.
 
@@ -481,3 +554,4 @@ Stop there before expanding scope.
 | 2026-02-26 | Anthropic shows signal drift under adaptive accumulation (scenarios 07, 08); OpenAI perfectly stable. Drift is bounded (~22 bits) and non-monotonic. | Drift affects utility consistency, not privacy. No accumulation observed at N=3. Longer experiments needed (N=20-100). | Bounded channels limit accumulation even when model behaviour varies |
 | 2026-02-26 | Model profile immutability: Option A (hash-named files) vs Option B (lockfile). Option A adds indirection and breaks human readability; Option B gives equivalent enforcement with a simpler model. | Use lockfile approach (Option B). Relay refuses to start on hash mismatch. Lockfile regenerated by explicit CLI command only. | Simplest mechanism that achieves the enforcement goal |
 | 2026-02-26 | Digit/currency guard is defense-in-depth, not primary privacy control. Fires only on schema regression or provider structured-output bug. | Documented threat model explicitly in code and decision log. Guard uses Unicode categories (Nd, Sc) not ASCII-only. Hardcoded schema ID for Phase 1; migrates to PolicyBundle in Phase 2. | Defense-in-depth must be explicitly classified to prevent over-trust |
+| 2026-02-27 | Relay sessions required synchrony coincidence — both agents online simultaneously. Blocked real-world usage. | Added relay-mediated async inbox with durable invites (7-day TTL), fail-closed agent auth, constant-shape errors. Types prototyped in relay crate with `version: "1"` — extract to VFC only after live session validates wire format. | Simplest mechanism that achieves the enforcement goal |

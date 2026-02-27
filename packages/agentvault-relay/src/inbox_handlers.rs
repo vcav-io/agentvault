@@ -172,12 +172,15 @@ pub async fn inbox_events_handler(
             match serde_json::to_string(&event) {
                 Ok(data) => Some(Ok(Event::default().event(event_name).data(data))),
                 Err(e) => {
-                    eprintln!("SSE: failed to serialize InboxEvent: {e} — event dropped");
+                    tracing::error!(error = %e, "SSE: failed to serialize InboxEvent — event dropped");
                     None
                 }
             }
         }
-        Err(_) => None, // Skip lagged events (SSE is lossy)
+        Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
+            tracing::warn!(skipped = n, "SSE: receiver lagged, events dropped");
+            None
+        }
     });
 
     Ok(Sse::new(stream).keep_alive(

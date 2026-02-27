@@ -46,17 +46,19 @@ pub struct Invite {
     pub contract_hash: String,
     pub provider: String,
     pub purpose_code: String,
-    pub status: InviteStatus,
+    /// Invariant-coupled fields below are `pub(crate)` to prevent external code
+    /// from bypassing the state machine in `InboxStore`.
+    pub(crate) status: InviteStatus,
     pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub(crate) updated_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
     /// Session linkage — populated on accept, immutable thereafter.
-    pub session_id: Option<String>,
+    pub(crate) session_id: Option<String>,
     /// All 4 session tokens — populated on accept, immutable thereafter.
     /// Redacted per-caller in responses (each side sees only their role's tokens).
-    pub session_tokens: Option<SessionTokens>,
+    pub(crate) session_tokens: Option<SessionTokens>,
     /// Reason code for decline.
-    pub decline_reason_code: Option<DeclineReasonCode>,
+    pub(crate) decline_reason_code: Option<DeclineReasonCode>,
 }
 
 // ============================================================================
