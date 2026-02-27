@@ -186,3 +186,50 @@ describe('cancelInvite', () => {
     expect(opts.method).toBe('POST');
   });
 });
+
+// ============================================================================
+// Error path tests (C2: relayFetch throws RelayHttpError on non-2xx)
+// ============================================================================
+
+describe('error handling', () => {
+  it('throws on 401 Unauthorized', async () => {
+    mockFetch.mockResolvedValueOnce(mockResponse({ error: 'UNAUTHORIZED' }, 401));
+
+    await expect(pollInbox(config, 'bad-token')).rejects.toThrow('Relay HTTP 401');
+  });
+
+  it('throws on 409 Conflict', async () => {
+    mockFetch.mockResolvedValueOnce(
+      mockResponse({ error: 'Invite state conflict: cannot accept' }, 409),
+    );
+
+    await expect(acceptInvite(config, 'inv_abc', token)).rejects.toThrow('Relay HTTP 409');
+  });
+
+  it('throws on 500 Internal Server Error', async () => {
+    mockFetch.mockResolvedValueOnce(mockResponse({ error: 'Internal error' }, 500));
+
+    await expect(createInvite(config, {
+      to_agent_id: 'bob',
+      contract: { purpose_code: 'COMPATIBILITY' },
+      provider: 'anthropic',
+      purpose_code: 'COMPATIBILITY',
+    }, token)).rejects.toThrow('Relay HTTP 500');
+  });
+
+  it('error includes response body', async () => {
+    mockFetch.mockResolvedValueOnce(
+      mockResponse({ error: 'UNAUTHORIZED' }, 401),
+    );
+
+    try {
+      await getInvite(config, 'inv_abc', 'bad-token');
+      expect.fail('should have thrown');
+    } catch (err: unknown) {
+      const e = err as { status: number; body: string; name: string };
+      expect(e.name).toBe('RelayHttpError');
+      expect(e.status).toBe(401);
+      expect(e.body).toContain('UNAUTHORIZED');
+    }
+  });
+});

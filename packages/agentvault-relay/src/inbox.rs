@@ -66,10 +66,22 @@ impl InboxStore {
                 "cannot send invite to self".to_string(),
             ));
         }
+        if request.to_agent_id.is_empty() {
+            return Err(RelayError::ContractValidation(
+                "to_agent_id must not be empty".to_string(),
+            ));
+        }
+        if request.purpose_code.is_empty() {
+            return Err(RelayError::ContractValidation(
+                "purpose_code must not be empty".to_string(),
+            ));
+        }
         let contract_hash = compute_contract_hash(&request.contract)?;
         let now = Utc::now();
-        let invite_ttl_chrono =
-            chrono::Duration::from_std(self.invite_ttl).unwrap_or(chrono::Duration::days(7));
+        let invite_ttl_chrono = chrono::Duration::from_std(self.invite_ttl).unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "invite TTL conversion overflow, falling back to 7 days");
+            chrono::Duration::days(7)
+        });
         let expires_at = now + invite_ttl_chrono;
         let invite_id = generate_invite_id();
 
@@ -101,6 +113,10 @@ impl InboxStore {
             .or_default()
             .push(invite_id.clone());
 
+        // Insert invite BEFORE emitting SSE event so that subscribers who
+        // immediately call GET /invites/:id can find it.
+        store.invites.insert(invite_id.clone(), invite);
+
         // Emit event to recipient
         let event = self.build_event_locked(
             &mut store,
@@ -110,8 +126,6 @@ impl InboxStore {
             from_agent_id,
         );
         self.emit_event_locked(&store, &request.to_agent_id, event);
-
-        store.invites.insert(invite_id.clone(), invite);
 
         Ok(CreateInviteResponse {
             invite_id,
@@ -386,8 +400,10 @@ impl InboxStore {
     /// 2. EXPIRED for > gc_grace → deleted
     pub async fn reap_expired(&self) -> usize {
         let now = Utc::now();
-        let gc_grace_chrono =
-            chrono::Duration::from_std(self.gc_grace).unwrap_or(chrono::Duration::hours(24));
+        let gc_grace_chrono = chrono::Duration::from_std(self.gc_grace).unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "GC grace conversion overflow, falling back to 24 hours");
+            chrono::Duration::hours(24)
+        });
 
         let mut store = self.inner.lock().await;
         let mut expired_count = 0;
@@ -483,8 +499,10 @@ impl InboxStore {
 
     fn emit_event_locked(&self, store: &InboxStoreInner, agent_id: &str, event: InboxEvent) {
         if let Some(sender) = store.event_channels.get(agent_id) {
-            // Best-effort: if no subscribers or buffer full, event is dropped (SSE is lossy)
-            let _ = sender.send(event);
+            // Best-effort: SSE is lossy. Log only when active subscribers miss events.
+            if sender.send(event).is_err() && sender.receiver_count() > 0 {
+                tracing::warn!(agent_id, "SSE event dropped (buffer full)");
+            }
         }
     }
 }

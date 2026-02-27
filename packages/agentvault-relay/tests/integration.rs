@@ -18,7 +18,11 @@ use ed25519_dalek::SigningKey;
 use tower::ServiceExt;
 
 use agentvault_relay::{
-    agent_registry::AgentRegistry, build_router, inbox::InboxStore, session::SessionStore, AppState,
+    agent_registry::{AgentRegistry, RegisteredAgent},
+    build_router,
+    inbox::InboxStore,
+    session::SessionStore,
+    AppState,
 };
 
 /// Build a test signing key (deterministic).
@@ -1402,4 +1406,294 @@ async fn test_submit_without_contract_hash_still_works() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+// ============================================================================
+// Inbox endpoint integration tests
+// ============================================================================
+
+/// Build an AppState with agent registry populated for inbox testing.
+fn inbox_test_app_state() -> AppState {
+    let (prompt_dir, _) = setup_prompt_program("inbox_test");
+    let registry = AgentRegistry::from_agents(vec![
+        RegisteredAgent {
+            agent_id: "alice".to_string(),
+            inbox_token: "alice_token_123".to_string(),
+            public_key_hex: None,
+        },
+        RegisteredAgent {
+            agent_id: "bob".to_string(),
+            inbox_token: "bob_token_456".to_string(),
+            public_key_hex: None,
+        },
+    ])
+    .unwrap();
+    AppState {
+        signing_key: test_signing_key(),
+        anthropic_api_key: "test-key".to_string(),
+        anthropic_model_id: "test-model".to_string(),
+        anthropic_base_url: Some("http://localhost:9999".to_string()),
+        openai_api_key: None,
+        openai_model_id: "gpt-4o".to_string(),
+        openai_base_url: None,
+        prompt_program_dir: prompt_dir,
+        session_store: SessionStore::new(Duration::from_secs(600)),
+        enforcement_policy_hash: "0".repeat(64),
+        agent_registry: registry,
+        inbox_store: InboxStore::new(Duration::from_secs(600)),
+    }
+}
+
+fn inbox_create_body() -> String {
+    serde_json::json!({
+        "to_agent_id": "bob",
+        "contract": {
+            "purpose_code": "COMPATIBILITY",
+            "output_schema_id": "test",
+            "output_schema": {"type": "object"},
+            "participants": ["alice", "bob"],
+            "prompt_template_hash": "a".repeat(64),
+            "metadata": null
+        },
+        "provider": "anthropic",
+        "purpose_code": "COMPATIBILITY"
+    })
+    .to_string()
+}
+
+#[tokio::test]
+async fn test_inbox_create_invite_happy_path() {
+    let state = Arc::new(inbox_test_app_state());
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/invites")
+                .header("content-type", "application/json")
+                .header("authorization", "Bearer alice_token_123")
+                .body(Body::from(inbox_create_body()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1024 * 64)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(body["invite_id"].as_str().unwrap().starts_with("inv_"));
+    assert_eq!(body["status"], "PENDING");
+}
+
+#[tokio::test]
+async fn test_inbox_create_invite_no_auth_returns_401() {
+    let state = Arc::new(inbox_test_app_state());
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/invites")
+                .header("content-type", "application/json")
+                .body(Body::from(inbox_create_body()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_inbox_create_invite_wrong_token_returns_401() {
+    let state = Arc::new(inbox_test_app_state());
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/invites")
+                .header("content-type", "application/json")
+                .header("authorization", "Bearer invalid_token")
+                .body(Body::from(inbox_create_body()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// C3: InviteNotFound returns 401 (constant-shape — indistinguishable from bad token).
+#[tokio::test]
+async fn test_inbox_invite_not_found_returns_401_constant_shape() {
+    let state = Arc::new(inbox_test_app_state());
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/invites/inv_nonexistent")
+                .header("authorization", "Bearer alice_token_123")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // InviteNotFound maps to 401 UNAUTHORIZED (constant-shape security).
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1024 * 64)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    // Same error body as bad-token 401
+    assert_eq!(body["error"], "UNAUTHORIZED");
+}
+
+#[tokio::test]
+async fn test_inbox_list_inbox_returns_ok() {
+    let state = Arc::new(inbox_test_app_state());
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/inbox")
+                .header("authorization", "Bearer bob_token_456")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1024 * 64)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(body["invites"].as_array().unwrap().is_empty());
+    assert_eq!(body["latest_event_id"], 0);
+}
+
+/// Cross-agent isolation: Alice cannot see Bob's inbox.
+#[tokio::test]
+async fn test_inbox_cross_agent_isolation() {
+    let state = Arc::new(inbox_test_app_state());
+
+    // Create an invite to Bob via the store directly
+    let create_req = agentvault_relay::inbox_types::CreateInviteRequest {
+        to_agent_id: "bob".to_string(),
+        contract: agentvault_relay::types::Contract {
+            purpose_code: vault_family_types::Purpose::Compatibility,
+            output_schema_id: "test".to_string(),
+            output_schema: serde_json::json!({"type": "object"}),
+            participants: vec!["alice".to_string(), "bob".to_string()],
+            prompt_template_hash: "a".repeat(64),
+            entropy_budget_bits: None,
+            timing_class: None,
+            metadata: serde_json::Value::Null,
+            model_profile_id: None,
+        },
+        provider: "anthropic".to_string(),
+        purpose_code: "COMPATIBILITY".to_string(),
+        from_agent_pubkey: None,
+    };
+    state
+        .inbox_store
+        .create_invite("alice", &create_req, None)
+        .await
+        .unwrap();
+
+    let app = build_router(state);
+
+    // Alice's inbox should be empty (invite is TO bob, not TO alice)
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/inbox")
+                .header("authorization", "Bearer alice_token_123")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1024 * 64)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(body["invites"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn test_inbox_accept_creates_session() {
+    let state = Arc::new(inbox_test_app_state());
+
+    // Create invite via store
+    let create_req = agentvault_relay::inbox_types::CreateInviteRequest {
+        to_agent_id: "bob".to_string(),
+        contract: agentvault_relay::types::Contract {
+            purpose_code: vault_family_types::Purpose::Compatibility,
+            output_schema_id: "test".to_string(),
+            output_schema: serde_json::json!({"type": "object"}),
+            participants: vec!["alice".to_string(), "bob".to_string()],
+            prompt_template_hash: "a".repeat(64),
+            entropy_budget_bits: None,
+            timing_class: None,
+            metadata: serde_json::Value::Null,
+            model_profile_id: None,
+        },
+        provider: "anthropic".to_string(),
+        purpose_code: "COMPATIBILITY".to_string(),
+        from_agent_pubkey: None,
+    };
+    let inv = state
+        .inbox_store
+        .create_invite("alice", &create_req, None)
+        .await
+        .unwrap();
+
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/invites/{}/accept", inv.invite_id))
+                .header("content-type", "application/json")
+                .header("authorization", "Bearer bob_token_456")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1024 * 64)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(body["session_id"].as_str().is_some());
+    assert!(body["responder_submit_token"].as_str().is_some());
+    assert!(body["responder_read_token"].as_str().is_some());
 }

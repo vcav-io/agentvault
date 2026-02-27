@@ -648,10 +648,17 @@ async function phasePollInvite(
     return failedResponse(handle, 'SESSION_ERROR', 'POLL_INVITE phase requires RelayInboxTransport.');
   }
 
+  if (!handle.inviteId) {
+    return failedResponse(handle, 'SESSION_ERROR', 'Missing inviteId in POLL_INVITE phase.');
+  }
+  if (!handle.relayUrl) {
+    return failedResponse(handle, 'SESSION_ERROR', 'Missing relayUrl in POLL_INVITE phase.');
+  }
+
   const callDeadline = Date.now() + CALL_BUDGET_MS;
 
   while (Date.now() < callDeadline) {
-    const detail = await transport.getInviteDetail(handle.inviteId!);
+    const detail = await transport.getInviteDetail(handle.inviteId);
 
     if (detail.status === 'ACCEPTED') {
       // Validate required session fields before using them
@@ -668,13 +675,13 @@ async function phasePollInvite(
         initiatorRead: detail.read_token,
       };
 
-      writeLastSessionFile(handle.sessionId, 'INITIATOR', detail.read_token, handle.relayUrl!);
+      writeLastSessionFile(handle.sessionId, 'INITIATOR', detail.read_token, handle.relayUrl);
 
       // Submit initiator input
-      const config = { relay_url: handle.relayUrl! };
+      const config = { relay_url: handle.relayUrl };
       await rawSubmitInput(
         config,
-        handle.sessionId!,
+        handle.sessionId,
         handle.tokens.submit,
         'initiator',
         handle.myInput ?? '',
@@ -711,11 +718,15 @@ async function phasePollRelay(
     return failedResponse(handle, 'RELAY_TIMEOUT', 'Relay session timed out. Call agentvault.relay_signal INITIATE to retry.');
   }
 
-  const config = { relay_url: handle.relayUrl! };
+  if (!handle.relayUrl || !handle.sessionId || !handle.tokens?.initiatorRead) {
+    return failedResponse(handle, 'SESSION_ERROR', 'Missing session data in POLL_RELAY phase.');
+  }
+
+  const config = { relay_url: handle.relayUrl };
   const output = await pollUntilDone(
     config,
-    handle.sessionId!,
-    handle.tokens!.initiatorRead!,
+    handle.sessionId,
+    handle.tokens.initiatorRead,
     POLL_INTERVAL_MS,
     CALL_BUDGET_MS,
   );
@@ -812,6 +823,8 @@ async function phaseDiscover(
       // Filter by payload type — accept both legacy and relay inbox invites
       const isRelayInbox = payloadType === RELAY_INBOX_PAYLOAD_TYPE;
       if (payloadType !== 'VCAV_E_INVITE_V1' && !isRelayInbox) continue;
+      // Relay inbox invites require RelayInboxTransport to accept
+      if (isRelayInbox && !(transport instanceof RelayInboxTransport)) continue;
       // If handle already has a bound inviteId, only match that
       if (handle.inviteId && invite.invite_id !== handle.inviteId) continue;
 
@@ -912,7 +925,14 @@ async function phaseJoin(
     return failedResponse(handle, 'RELAY_TIMEOUT', 'Relay session timed out. Ask the initiator to retry.');
   }
 
-  const config = { relay_url: handle.relayUrl! };
+  if (!handle.relayUrl) {
+    return failedResponse(handle, 'SESSION_ERROR', 'Missing relayUrl in JOIN phase.');
+  }
+  if (!handle.inviteId) {
+    return failedResponse(handle, 'SESSION_ERROR', 'Missing inviteId in JOIN phase.');
+  }
+
+  const config = { relay_url: handle.relayUrl };
 
   // Submit input if not yet done (uses stored myInput from handle, not args)
   if (!handle.submitted) {
@@ -920,7 +940,7 @@ async function phaseJoin(
     // For legacy transports: tokens are already in handle from phaseDiscover.
     if (!handle.sessionId || !handle.tokens) {
       // No session tokens yet — must be relay inbox path. Accept to get them.
-      const result = await transport.acceptInvite(handle.inviteId!);
+      const result = await transport.acceptInvite(handle.inviteId);
       if (isAcceptResult(result)) {
         handle.sessionId = result.session_id;
         handle.tokens = {
@@ -942,13 +962,13 @@ async function phaseJoin(
     );
     handle.submitted = true;
 
-    writeLastSessionFile(handle.sessionId!, 'RESPONDER', handle.tokens!.read, handle.relayUrl!);
+    writeLastSessionFile(handle.sessionId!, 'RESPONDER', handle.tokens!.read, handle.relayUrl);
 
     // Accept the orchestrator invite after successful submit (legacy transports only).
     // For relay inbox, accept was already called above.
     if (handle.tokens && !(transport instanceof RelayInboxTransport)) {
       try {
-        await transport.acceptInvite(handle.inviteId!);
+        await transport.acceptInvite(handle.inviteId);
       } catch (err) {
         // Accept failure is non-fatal — relay session proceeds regardless.
         // But log for operator diagnostics (auth errors, connectivity).
