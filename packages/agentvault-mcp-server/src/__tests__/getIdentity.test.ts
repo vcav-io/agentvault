@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { handleGetIdentity } from '../tools/getIdentity.js';
+import { handleGetIdentity, type InboxService } from '../tools/getIdentity.js';
 import type { NormalizedKnownAgent } from '../tools/relaySignal.js';
 
 describe('handleGetIdentity', () => {
@@ -17,38 +17,104 @@ describe('handleGetIdentity', () => {
     }
   });
 
-  it('returns agent_id from env', () => {
+  it('returns agent_id from env', async () => {
     process.env['VCAV_AGENT_ID'] = 'test-agent-123';
-    const result = handleGetIdentity([]);
+    const result = await handleGetIdentity([]);
     expect(result.ok).toBe(true);
     expect(result.data?.agent_id).toBe('test-agent-123');
   });
 
-  it('returns undefined agent_id when env not set', () => {
-    const result = handleGetIdentity([]);
+  it('returns undefined agent_id when env not set', async () => {
+    const result = await handleGetIdentity([]);
     expect(result.ok).toBe(true);
     expect(result.data?.agent_id).toBeUndefined();
   });
 
-  it('returns the known_agents array', () => {
+  it('returns the known_agents array', async () => {
     const knownAgents: NormalizedKnownAgent[] = [
       { agent_id: 'agent-a', aliases: ['alice', 'a'] },
       { agent_id: 'agent-b', aliases: ['bob'] },
     ];
-    const result = handleGetIdentity(knownAgents);
+    const result = await handleGetIdentity(knownAgents);
     expect(result.ok).toBe(true);
     expect(result.data?.known_agents).toEqual(knownAgents);
   });
 
-  it('works with empty known_agents', () => {
-    const result = handleGetIdentity([]);
+  it('works with empty known_agents', async () => {
+    const result = await handleGetIdentity([]);
     expect(result.ok).toBe(true);
     expect(result.data?.known_agents).toEqual([]);
   });
 
-  it('returns SUCCESS status', () => {
-    const result = handleGetIdentity([]);
+  it('returns SUCCESS status', async () => {
+    const result = await handleGetIdentity([]);
     expect(result.status).toBe('SUCCESS');
     expect(result.error).toBeNull();
+  });
+
+  describe('inbox integration', () => {
+    it('omits pending_invites without inboxService', async () => {
+      const result = await handleGetIdentity([]);
+      expect(result.ok).toBe(true);
+      expect(result.data).not.toHaveProperty('pending_invites');
+      expect(result.data).not.toHaveProperty('next_action');
+      expect(result.data).not.toHaveProperty('inbox_hint');
+    });
+
+    it('returns pending_invites: 0 with no pending invites', async () => {
+      const inboxService: InboxService = {
+        checkInbox: async () => ({ invites: [] }),
+      };
+      const result = await handleGetIdentity([], inboxService);
+      expect(result.ok).toBe(true);
+      expect(result.data?.pending_invites).toBe(0);
+      expect(result.data).not.toHaveProperty('next_action');
+      expect(result.data).not.toHaveProperty('inbox_hint');
+    });
+
+    it('returns next_action and inbox_hint with 1 pending invite', async () => {
+      const inboxService: InboxService = {
+        checkInbox: async () => ({ invites: [{ invite_id: 'inv-1' }] }),
+      };
+      const result = await handleGetIdentity([], inboxService);
+      expect(result.ok).toBe(true);
+      expect(result.data?.pending_invites).toBe(1);
+      expect(result.data?.next_action).toEqual({
+        tool: 'agentvault.relay_signal',
+        args: { mode: 'RESPOND' },
+        reason: 'pending_invite',
+      });
+      expect(result.data?.inbox_hint).toBe(
+        'You have 1 pending invite(s). Use agentvault.relay_signal in RESPOND mode to review.',
+      );
+    });
+
+    it('returns correct count with 3 pending invites', async () => {
+      const inboxService: InboxService = {
+        checkInbox: async () => ({
+          invites: [
+            { invite_id: 'inv-1' },
+            { invite_id: 'inv-2' },
+            { invite_id: 'inv-3' },
+          ],
+        }),
+      };
+      const result = await handleGetIdentity([], inboxService);
+      expect(result.ok).toBe(true);
+      expect(result.data?.pending_invites).toBe(3);
+      expect(result.data?.inbox_hint).toContain('3 pending invite(s)');
+      expect(result.data?.next_action?.reason).toBe('pending_invite');
+    });
+
+    it('omits pending_invites when inboxService throws', async () => {
+      const inboxService: InboxService = {
+        checkInbox: async () => { throw new Error('network error'); },
+      };
+      const result = await handleGetIdentity([], inboxService);
+      expect(result.ok).toBe(true);
+      expect(result.data).not.toHaveProperty('pending_invites');
+      expect(result.data).not.toHaveProperty('next_action');
+      expect(result.data).not.toHaveProperty('inbox_hint');
+    });
   });
 });
