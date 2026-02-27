@@ -1,0 +1,174 @@
+# Getting Started
+
+## How it works
+
+```
+  Agent A                    Relay                    Agent B
+    │                          │                          │
+    │   submit input ────────► │ ◄──────── submit input   │
+    │                          │                          │
+    │                    ┌─────┴─────┐                    │
+    │                    │  assemble  │                    │
+    │                    │   prompt   │                    │
+    │                    │  call LLM  │                    │
+    │                    │  validate  │                    │
+    │                    │  against   │                    │
+    │                    │  schema +  │                    │
+    │                    │  guardian  │                    │
+    │                    │  policy    │                    │
+    │                    └─────┬─────┘                    │
+    │                          │                          │
+    │   ◄──── output + receipt ┼ receipt + output ────►   │
+    │                          │                          │
+    ▼                          ▼                          ▼
+              Verifier confirms receipt signature
+```
+
+Both agents submit structured input. The relay assembles a prompt from a content-addressed template, calls the model, validates the output against a JSON Schema, applies guardian rules, and returns the bounded output with a signed receipt. Neither agent sees the other's raw input.
+
+## Prerequisites
+
+- Rust 1.88.0+ (see `rust-toolchain.toml`)
+- An Anthropic API key (or OpenAI API key)
+- The [vault-family-core](https://github.com/vcav-io/vault-family-core) dependency resolves automatically via Cargo git dependency
+
+## Environment variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ANTHROPIC_API_KEY` | Yes | — | Anthropic API key |
+| `VCAV_PORT` | No | `3100` | Port the relay listens on |
+| `VCAV_MODEL_ID` | No | `claude-sonnet-4-5-20250929` | Anthropic model to use |
+| `VCAV_SIGNING_KEY_HEX` | No | ephemeral | 64-char hex Ed25519 signing key. If unset, generates a random key on each start (receipts won't verify across restarts) |
+| `VCAV_PROMPT_PROGRAM_DIR` | No | `prompt_programs` | Directory containing prompt programs and lockfiles |
+| `VCAV_SESSION_TTL_SECS` | No | `600` | Session expiry in seconds |
+| `OPENAI_API_KEY` | No | — | Enables the OpenAI provider |
+| `VCAV_OPENAI_MODEL_ID` | No | `gpt-4o` | OpenAI model to use |
+| `ANTHROPIC_BASE_URL` | No | — | Override Anthropic API base URL (for proxies) |
+| `OPENAI_BASE_URL` | No | — | Override OpenAI API base URL (for proxies) |
+
+## Start the relay
+
+```bash
+# Build
+cargo build --workspace
+
+# Generate a persistent signing key (recommended)
+export VCAV_SIGNING_KEY_HEX=$(openssl rand -hex 32)
+
+# Set your API key
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# Start
+cargo run -p agentvault-relay
+```
+
+The relay starts on port 3100 by default. Verify with:
+
+```bash
+curl http://localhost:3100/health
+```
+
+Response:
+```json
+{
+  "status": "ok",
+  "version": "0.1.0",
+  "git_sha": "...",
+  "execution_lane": "API_MEDIATED"
+}
+```
+
+## Run a bilateral session
+
+A bilateral session has four steps: create, submit inputs, poll, retrieve output.
+
+### 1. Create a session
+
+```bash
+curl -s -X POST http://localhost:3100/sessions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "contract": {
+      "purpose_code": "COMPATIBILITY",
+      "output_schema_id": "vcav_e_compatibility_signal_v2",
+      "output_schema": { ... },
+      "participants": ["alice", "bob"],
+      "prompt_template_hash": "<sha256 of your prompt program>"
+    },
+    "provider": "anthropic"
+  }'
+```
+
+Response includes four bearer tokens:
+```json
+{
+  "session_id": "...",
+  "contract_hash": "...",
+  "initiator_submit_token": "...",
+  "initiator_read_token": "...",
+  "responder_submit_token": "...",
+  "responder_read_token": "..."
+}
+```
+
+### 2. Submit inputs (both parties)
+
+Each party submits their input using their submit token:
+
+```bash
+# Initiator
+curl -s -X POST http://localhost:3100/sessions/$SESSION_ID/input \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $INITIATOR_SUBMIT_TOKEN" \
+  -d '{
+    "role": "alice",
+    "context": { "profile": "..." },
+    "expected_contract_hash": "..."
+  }'
+
+# Responder
+curl -s -X POST http://localhost:3100/sessions/$SESSION_ID/input \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $RESPONDER_SUBMIT_TOKEN" \
+  -d '{
+    "role": "bob",
+    "context": { "profile": "..." }
+  }'
+```
+
+When both inputs are received, inference starts automatically.
+
+### 3. Poll for completion
+
+```bash
+curl -s http://localhost:3100/sessions/$SESSION_ID/status \
+  -H "Authorization: Bearer $INITIATOR_READ_TOKEN"
+```
+
+States: `Created` → `Partial` → `Processing` → `Completed` (or `Aborted`).
+
+### 4. Retrieve output and receipt
+
+```bash
+curl -s http://localhost:3100/sessions/$SESSION_ID/output \
+  -H "Authorization: Bearer $INITIATOR_READ_TOKEN"
+```
+
+Response:
+```json
+{
+  "state": "Completed",
+  "abort_reason": null,
+  "output": { "...bounded signal..." },
+  "receipt": { "...full receipt..." },
+  "receipt_signature": "...hex Ed25519 signature..."
+}
+```
+
+The receipt contains: `contract_hash`, `guardian_policy_hash`, `prompt_template_hash`, `model_profile_hash`, `runtime_hash`, the output, and entropy accounting. See the [API Reference](api-reference.md) for full details.
+
+## Next steps
+
+- [API Reference](api-reference.md) — full endpoint documentation
+- [Roadmap](roadmap.md) — design principles and what's coming next
