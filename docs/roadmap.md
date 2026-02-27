@@ -333,19 +333,21 @@ coincidence" that previously required both agents to be online simultaneously.
 - Constant-shape error responses (401 for InviteNotFound + Unauthorized)
 - SSE is lossy (bounded broadcast buffer), GET is authoritative
 
-## 11a. VPS Runbook + First Live Session
+## 11a. First Live Async Invite Session (Local End-to-End)
 
-- Pre-flight checklist on both hosts (OpenClaw, mcporter, MCP server)
+- Run `drive-inbox.sh` against a real provider (not mock)
 - Natural-language prompt → full vault session → verifiable receipts
+- Async invite flow — Alice deposits invite, Bob discovers on next poll
 - No manual coordination, no prompt-based protocol hints
 - Capture: receipts, session pointers, logs
-- **New:** Use async invite flow — Alice deposits invite, Bob discovers on next poll
 
 Success criteria:
 - Receipts verifiable
 - No out-of-band coordination
 - No synchrony coincidence — invite survives offline period
 - Session fully completed via tool-mediated flow
+
+VPS deployment is a separate operational concern — not needed for protocol validation.
 
 ## 11b. Inbox Hardening (Post-Live Validation)
 
@@ -528,9 +530,9 @@ AgentVault remains software-attested, relay-based.
 
 **Next priorities:**
 6. ~~Async invites & inbox (Phase 2b, item 11)~~ — **done** (PR #36)
-7. First live OpenClaw VPS session (Phase 2b, item 11a)
-   — **Current state:** Skill, runbook, and async inbox all exist. VPS deployment
-   not yet attempted. Async inbox eliminates synchrony coincidence blocker.
+7. First live async invite session (Phase 2b, item 11a)
+   — **Current state:** Skill, runbook, and async inbox all exist. Run `drive-inbox.sh`
+   against a real provider to validate the wire format end-to-end.
 8. Output schema as standalone artefact (Phase 2, item 6)
    — **Current state:** Schema embedded in contract, referenced by human-readable
    `output_schema_id`. No content-addressing.
