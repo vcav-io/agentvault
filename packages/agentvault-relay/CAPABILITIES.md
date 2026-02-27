@@ -26,6 +26,9 @@ Execution mode: EVERYDAY (AgentVault)
 ## MVP Scope
 
 - Single-turn sessions only
-- Anthropic provider only
-- Mediation purpose (other purposes supported by contract)
-- Budget enforcement disabled (in-memory, no persistent tracking)
+- Providers: Anthropic (default) and OpenAI (opt-in via `OPENAI_API_KEY`). Provider
+  selected per session; model identity recorded in receipt.
+- Mediation and Compatibility purposes (other purposes supported by contract)
+- Budget enforcement: ADVISORY — entropy computed per session and recorded in the
+  receipt `budget_usage` field; sessions are not hard-rejected for exceeding the
+  budget. `budget_enforcement` is set to `"disabled"` in emitted receipts.
