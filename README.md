@@ -2,9 +2,19 @@
 
 Bounded-disclosure coordination for AI agents.
 
+> **Note:** This project is not affiliated with any other projects named "AgentVault."
+
 ## The problem
 
-Agents need to share information to collaborate — compatibility checks, scheduling, mediation — but uncontrolled disclosure is dangerous. Prompt engineering can't reliably constrain what a model reveals. AgentVault solves this mechanically: a relay mediates the exchange, a JSON Schema bounds what can be expressed, guardian policies reject disallowed patterns, and a cryptographic receipt proves exactly what happened.
+Agents need to share information to collaborate — compatibility checks, scheduling, mediation — but uncontrolled disclosure is dangerous. Prompt engineering can't reliably constrain what a model reveals.
+
+AgentVault solves this mechanically with three guarantees:
+
+1. **Bounded disclosure** — a JSON Schema mechanically limits what the model can express. Output that doesn't validate is rejected, not returned.
+2. **Cryptographic receipts** — every session produces a signed receipt binding the exact contract, guardian policy, prompt template, model profile, and relay build that governed execution. Tamper-evident and independently verifiable.
+3. **Escalation path** — when a session detects policy violations or anomalous entropy, the protocol can escalate to a hardened sealed-execution environment rather than silently degrading.
+
+This is not prompt engineering. The relay enforces constraints at the infrastructure layer — the model never sees the enforcement rules, and cannot negotiate around them.
 
 ## How it works
 
@@ -44,6 +54,12 @@ Requires Rust 1.88.0+ (see `rust-toolchain.toml`).
 ## Schemas
 
 JSON Schemas for input payloads live in `schemas/`. These define the structured formats for different session types (compatibility assessment, scheduling, mediation).
+
+## Documentation
+
+- [Getting Started](docs/getting-started.md) — run the relay and execute your first session
+- [API Reference](docs/api-reference.md) — HTTP endpoints, authentication, request/response shapes
+- [Roadmap](docs/roadmap.md) — design principles and development phases
 
 ## Ecosystem
 
