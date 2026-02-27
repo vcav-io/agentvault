@@ -1105,4 +1105,45 @@ mod tests {
             .await;
         assert!(matches!(result, Err(RelayError::Unauthorized)));
     }
+
+    #[tokio::test]
+    async fn test_accept_expired_invite_returns_conflict() {
+        let store = InboxStore::new(Duration::from_millis(1));
+        let session_store = SessionStore::new(Duration::from_secs(600));
+
+        let invite_resp = store
+            .create_invite("alice", &test_create_request(), None)
+            .await
+            .unwrap();
+
+        // Wait for TTL then reap to transition PENDING → EXPIRED
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        store.reap_expired().await;
+
+        // Accepting an expired invite should fail
+        let result = store
+            .accept_invite(&invite_resp.invite_id, "bob", None, &session_store)
+            .await;
+        assert!(matches!(result, Err(RelayError::InviteStateConflict(_))));
+    }
+
+    #[tokio::test]
+    async fn test_create_invite_empty_to_agent_id_rejected() {
+        let store = InboxStore::new(Duration::from_secs(604800));
+        let mut request = test_create_request();
+        request.to_agent_id = "".to_string();
+
+        let result = store.create_invite("alice", &request, None).await;
+        assert!(matches!(result, Err(RelayError::ContractValidation(_))));
+    }
+
+    #[tokio::test]
+    async fn test_create_invite_empty_purpose_code_rejected() {
+        let store = InboxStore::new(Duration::from_secs(604800));
+        let mut request = test_create_request();
+        request.purpose_code = "".to_string();
+
+        let result = store.create_invite("alice", &request, None).await;
+        assert!(matches!(result, Err(RelayError::ContractValidation(_))));
+    }
 }

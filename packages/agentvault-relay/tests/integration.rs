@@ -1697,3 +1697,146 @@ async fn test_inbox_accept_creates_session() {
     assert!(body["responder_submit_token"].as_str().is_some());
     assert!(body["responder_read_token"].as_str().is_some());
 }
+
+/// Helper to create an invite via the store (reduces boilerplate).
+async fn create_test_invite(state: &AppState) -> String {
+    let create_req = agentvault_relay::inbox_types::CreateInviteRequest {
+        to_agent_id: "bob".to_string(),
+        contract: agentvault_relay::types::Contract {
+            purpose_code: vault_family_types::Purpose::Compatibility,
+            output_schema_id: "test".to_string(),
+            output_schema: serde_json::json!({"type": "object"}),
+            participants: vec!["alice".to_string(), "bob".to_string()],
+            prompt_template_hash: "a".repeat(64),
+            entropy_budget_bits: None,
+            timing_class: None,
+            metadata: serde_json::Value::Null,
+            model_profile_id: None,
+        },
+        provider: "anthropic".to_string(),
+        purpose_code: "COMPATIBILITY".to_string(),
+        from_agent_pubkey: None,
+    };
+    state
+        .inbox_store
+        .create_invite("alice", &create_req, None)
+        .await
+        .unwrap()
+        .invite_id
+}
+
+#[tokio::test]
+async fn test_inbox_decline_returns_ok() {
+    let state = Arc::new(inbox_test_app_state());
+    let invite_id = create_test_invite(&state).await;
+
+    let app = build_router(state);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/invites/{invite_id}/decline"))
+                .header("content-type", "application/json")
+                .header("authorization", "Bearer bob_token_456")
+                .body(Body::from(r#"{"reason_code": "BUSY"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1024 * 64)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(body["status"], "DECLINED");
+}
+
+#[tokio::test]
+async fn test_inbox_cancel_returns_ok() {
+    let state = Arc::new(inbox_test_app_state());
+    let invite_id = create_test_invite(&state).await;
+
+    let app = build_router(state);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/invites/{invite_id}/cancel"))
+                .header("authorization", "Bearer alice_token_123")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1024 * 64)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(body["status"], "CANCELED");
+}
+
+/// Accept a canceled invite → 409 CONFLICT.
+#[tokio::test]
+async fn test_inbox_accept_canceled_returns_409() {
+    let state = Arc::new(inbox_test_app_state());
+    let invite_id = create_test_invite(&state).await;
+
+    // Cancel it first via the store
+    state
+        .inbox_store
+        .cancel_invite(&invite_id, "alice")
+        .await
+        .unwrap();
+
+    let app = build_router(state);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/invites/{invite_id}/accept"))
+                .header("content-type", "application/json")
+                .header("authorization", "Bearer bob_token_456")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+}
+
+/// Cancel an accepted invite → 409 CONFLICT.
+#[tokio::test]
+async fn test_inbox_cancel_accepted_returns_409() {
+    let state = Arc::new(inbox_test_app_state());
+    let invite_id = create_test_invite(&state).await;
+
+    // Accept it first via the store
+    state
+        .inbox_store
+        .accept_invite(&invite_id, "bob", None, &state.session_store)
+        .await
+        .unwrap();
+
+    let app = build_router(state);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/invites/{invite_id}/cancel"))
+                .header("authorization", "Bearer alice_token_123")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+}

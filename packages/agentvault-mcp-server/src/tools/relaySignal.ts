@@ -888,7 +888,9 @@ async function phaseDiscover(
         }
       } else {
         // Legacy: extract session tokens from invite payload.
-        const payload = invite.payload!;
+        // (payload was validated by the filter above — this guard is defensive)
+        const payload = invite.payload;
+        if (!payload || typeof payload !== 'object') continue;
         handle.sessionId = payload['session_id'] as string;
         handle.relayUrl = handle.relayUrl ?? payload['relay_url'] as string;
         handle.tokens = {
@@ -980,11 +982,16 @@ async function phaseJoin(
     }
   }
 
+  // Guard against corrupted resume token missing session data
+  if (!handle.sessionId || !handle.tokens?.read) {
+    return failedResponse(handle, 'SESSION_ERROR', 'Missing session data for JOIN poll phase.');
+  }
+
   // Poll relay for result
   const output = await pollUntilDone(
     config,
-    handle.sessionId!,
-    handle.tokens!.read,
+    handle.sessionId,
+    handle.tokens.read,
     POLL_INTERVAL_MS,
     CALL_BUDGET_MS,
   );
