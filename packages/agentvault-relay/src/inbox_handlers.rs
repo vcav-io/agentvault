@@ -162,10 +162,20 @@ pub async fn inbox_events_handler(
 
     let stream = BroadcastStream::new(rx).filter_map(|result| match result {
         Ok(event) => {
-            let data = serde_json::to_string(&event).unwrap_or_default();
-            Some(Ok(Event::default()
-                .event(format!("{:?}", event.event_type).to_ascii_lowercase())
-                .data(data)))
+            let event_name = match event.event_type {
+                InboxEventType::InviteCreated => "invite_created",
+                InboxEventType::InviteAccepted => "invite_accepted",
+                InboxEventType::InviteDeclined => "invite_declined",
+                InboxEventType::InviteExpired => "invite_expired",
+                InboxEventType::InviteCanceled => "invite_canceled",
+            };
+            match serde_json::to_string(&event) {
+                Ok(data) => Some(Ok(Event::default().event(event_name).data(data))),
+                Err(e) => {
+                    eprintln!("SSE: failed to serialize InboxEvent: {e} — event dropped");
+                    None
+                }
+            }
         }
         Err(_) => None, // Skip lagged events (SSE is lossy)
     });

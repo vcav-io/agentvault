@@ -72,7 +72,6 @@ export async function pollInbox(
   const params = new URLSearchParams();
   if (query?.status) params.set('status', query.status);
   if (query?.from_agent_id) params.set('from_agent_id', query.from_agent_id);
-  if (query?.since_event_id !== undefined) params.set('since_event_id', String(query.since_event_id));
   if (query?.limit !== undefined) params.set('limit', String(query.limit));
   const qs = params.toString();
   const path = qs ? `/inbox?${qs}` : '/inbox';

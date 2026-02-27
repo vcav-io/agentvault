@@ -84,17 +84,18 @@ export interface InviteSummary {
 }
 
 export interface InviteDetailResponse {
-  version: string;
   invite_id: string;
   from_agent_id: string;
   to_agent_id: string;
   from_agent_pubkey?: string;
-  contract_hash: string;
-  purpose_code: string;
   status: InviteStatus;
+  purpose_code: string;
+  contract_hash: string;
+  provider: string;
   created_at: string;
   updated_at: string;
   expires_at: string;
+  decline_reason_code?: DeclineReasonCode;
   session_id?: string;
   submit_token?: string;
   read_token?: string;
@@ -139,6 +140,5 @@ export interface DeclineInviteRequest {
 export interface InboxQuery {
   status?: InviteStatus;
   from_agent_id?: string;
-  since_event_id?: number;
   limit?: number;
 }

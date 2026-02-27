@@ -91,14 +91,12 @@ describe('pollInbox', () => {
     await pollInbox(config, token, {
       status: 'PENDING',
       from_agent_id: 'alice',
-      since_event_id: 5,
       limit: 10,
     });
 
     const [url] = mockFetch.mock.calls[0];
     expect(url).toContain('status=PENDING');
     expect(url).toContain('from_agent_id=alice');
-    expect(url).toContain('since_event_id=5');
     expect(url).toContain('limit=10');
   });
 });
@@ -106,11 +104,13 @@ describe('pollInbox', () => {
 describe('getInvite', () => {
   it('sends GET /invites/:id with bearer token', async () => {
     const body = {
-      version: '1',
       invite_id: 'inv_abc',
       from_agent_id: 'alice',
       to_agent_id: 'bob',
       status: 'PENDING',
+      purpose_code: 'COMPATIBILITY',
+      contract_hash: 'hash123',
+      provider: 'anthropic',
     };
     mockFetch.mockResolvedValueOnce(mockResponse(body));
 

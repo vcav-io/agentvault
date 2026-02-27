@@ -654,15 +654,21 @@ async function phasePollInvite(
     const detail = await transport.getInviteDetail(handle.inviteId!);
 
     if (detail.status === 'ACCEPTED') {
+      // Validate required session fields before using them
+      if (!detail.session_id || !detail.submit_token || !detail.read_token) {
+        return failedResponse(handle, 'SESSION_ERROR',
+          'Invite accepted but relay returned incomplete session data (missing session_id, submit_token, or read_token).');
+      }
+
       // Extract initiator session tokens
       handle.sessionId = detail.session_id;
       handle.tokens = {
-        submit: detail.submit_token!,
+        submit: detail.submit_token,
         read: '', // initiator doesn't use responder read token
-        initiatorRead: detail.read_token!,
+        initiatorRead: detail.read_token,
       };
 
-      writeLastSessionFile(handle.sessionId!, 'INITIATOR', detail.read_token!, handle.relayUrl!);
+      writeLastSessionFile(handle.sessionId, 'INITIATOR', detail.read_token, handle.relayUrl!);
 
       // Submit initiator input
       const config = { relay_url: handle.relayUrl! };
@@ -940,7 +946,7 @@ async function phaseJoin(
 
     // Accept the orchestrator invite after successful submit (legacy transports only).
     // For relay inbox, accept was already called above.
-    if (handle.tokens && transport instanceof RelayInboxTransport === false) {
+    if (handle.tokens && !(transport instanceof RelayInboxTransport)) {
       try {
         await transport.acceptInvite(handle.inviteId!);
       } catch (err) {

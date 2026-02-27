@@ -197,10 +197,16 @@ impl InboxStore {
 
         // Idempotent: if already ACCEPTED, return same tokens
         if invite.status == InviteStatus::Accepted {
-            let tokens = invite.session_tokens.as_ref().unwrap();
+            let tokens = invite.session_tokens.as_ref().ok_or_else(|| {
+                RelayError::Internal("accepted invite missing session_tokens".into())
+            })?;
+            let session_id = invite
+                .session_id
+                .clone()
+                .ok_or_else(|| RelayError::Internal("accepted invite missing session_id".into()))?;
             return Ok(AcceptInviteResponse {
                 invite_id: invite_id.to_string(),
-                session_id: invite.session_id.clone().unwrap(),
+                session_id,
                 contract_hash: invite.contract_hash.clone(),
                 responder_submit_token: tokens.responder_submit.clone(),
                 responder_read_token: tokens.responder_read.clone(),
@@ -538,7 +544,6 @@ mod tests {
         let query = InboxQuery {
             status: None,
             from_agent_id: None,
-            since_event_id: None,
             limit: None,
         };
         let response = store.list_inbox("bob", &query).await;
@@ -557,7 +562,6 @@ mod tests {
         let query = InboxQuery {
             status: None,
             from_agent_id: None,
-            since_event_id: None,
             limit: None,
         };
         let response = store.list_inbox("bob", &query).await;
@@ -580,7 +584,6 @@ mod tests {
         let query = InboxQuery {
             status: Some(InviteStatus::Accepted),
             from_agent_id: None,
-            since_event_id: None,
             limit: None,
         };
         let response = store.list_inbox("bob", &query).await;
@@ -590,7 +593,6 @@ mod tests {
         let query = InboxQuery {
             status: Some(InviteStatus::Pending),
             from_agent_id: None,
-            since_event_id: None,
             limit: None,
         };
         let response = store.list_inbox("bob", &query).await;
@@ -609,7 +611,6 @@ mod tests {
         let query = InboxQuery {
             status: None,
             from_agent_id: Some("charlie".to_string()),
-            since_event_id: None,
             limit: None,
         };
         let response = store.list_inbox("bob", &query).await;
@@ -619,7 +620,6 @@ mod tests {
         let query = InboxQuery {
             status: None,
             from_agent_id: Some("alice".to_string()),
-            since_event_id: None,
             limit: None,
         };
         let response = store.list_inbox("bob", &query).await;
@@ -864,7 +864,6 @@ mod tests {
         let query = InboxQuery {
             status: None,
             from_agent_id: None,
-            since_event_id: None,
             limit: None,
         };
         let response = store.list_inbox("charlie", &query).await;
@@ -999,7 +998,6 @@ mod tests {
         let query = InboxQuery {
             status: Some(InviteStatus::Expired),
             from_agent_id: None,
-            since_event_id: None,
             limit: None,
         };
         let response = store.list_inbox("bob", &query).await;
@@ -1062,7 +1060,6 @@ mod tests {
         let query = InboxQuery {
             status: None,
             from_agent_id: None,
-            since_event_id: None,
             limit: None,
         };
         let response = store.list_inbox("bob", &query).await;

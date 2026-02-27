@@ -154,11 +154,13 @@ describe('RelayInboxTransport', () => {
   describe('getInviteDetail', () => {
     it('calls GET /invites/:id', async () => {
       mockFetch.mockResolvedValueOnce(mockResponse({
-        version: '1',
         invite_id: 'inv_abc',
         from_agent_id: 'alice',
         to_agent_id: 'bob',
         status: 'ACCEPTED',
+        purpose_code: 'COMPATIBILITY',
+        contract_hash: 'hash123',
+        provider: 'anthropic',
         session_id: 'sess_123',
         submit_token: 'is_tok',
         read_token: 'ir_tok',

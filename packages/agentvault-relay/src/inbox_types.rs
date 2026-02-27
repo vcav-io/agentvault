@@ -160,15 +160,15 @@ pub struct DeclineInviteRequest {
 }
 
 /// Filter params for GET /inbox. Consistent naming across Rust + TS.
+///
+/// Note: `since_event_id` cursor filtering is not yet implemented.
+/// The field is intentionally omitted until the store tracks per-invite event IDs.
 #[derive(Debug, Deserialize)]
 pub struct InboxQuery {
     #[serde(default)]
     pub status: Option<InviteStatus>,
     #[serde(default)]
     pub from_agent_id: Option<String>,
-    /// Monotonic event ID for cursor-based recovery.
-    #[serde(default)]
-    pub since_event_id: Option<u64>,
     #[serde(default)]
     pub limit: Option<usize>,
 }
