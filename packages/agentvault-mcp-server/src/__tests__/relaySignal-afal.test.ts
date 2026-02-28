@@ -125,14 +125,16 @@ describe('INITIATE with AFAL', () => {
 });
 
 describe('legacy payload type guard (isRelayInvitePayload)', () => {
-  it('skips legacy invite with missing payload fields', async () => {
+  it('skips legacy invite when payload fields are truthy non-strings', async () => {
+    // session_id: true passes the pre-filter's truthiness check but fails
+    // the type guard's typeof === 'string' check — this exercises isRelayInvitePayload
     const invite: AfalInviteMessage = {
-      invite_id: 'inv-missing',
+      invite_id: 'inv-truthy',
       from_agent_id: 'bob-demo',
       payload_type: 'VCAV_E_INVITE_V1',
       template_id: 'mediation-demo.v1.standard',
       payload: {
-        // session_id missing entirely
+        session_id: true, // truthy but not string — passes pre-filter, fails type guard
         responder_submit_token: 'sub-tok',
         responder_read_token: 'read-tok',
         relay_url: 'http://relay.test',
@@ -146,7 +148,7 @@ describe('legacy payload type guard (isRelayInvitePayload)', () => {
       transport,
     );
 
-    // Invite is skipped due to missing session_id — should still be in DISCOVER
+    // Invite passes pre-filter but is rejected by isRelayInvitePayload type guard
     expect(result.status).toBe('PENDING');
     const data = result.data as { phase: string };
     expect(data.phase).toBe('DISCOVER');

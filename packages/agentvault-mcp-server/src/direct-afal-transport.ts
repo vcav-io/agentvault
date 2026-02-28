@@ -382,7 +382,12 @@ export class DirectAfalTransport implements AfalTransport {
       );
     }
 
-    const descriptor = raw as unknown as AgentDescriptor;
+    if (!isAgentDescriptor(raw)) {
+      throw new Error(
+        `Peer descriptor from ${this.config.peerDescriptorUrl} is malformed: failed structural validation`,
+      );
+    }
+    const descriptor = raw;
 
     const verified = verifyMessage(
       DOMAIN_PREFIXES.DESCRIPTOR,
