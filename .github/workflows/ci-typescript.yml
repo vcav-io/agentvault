@@ -18,9 +18,9 @@ jobs:
 
       # TODO: After validating lint rules are not noisy (~1 week), add lint as required status check.
       # When promoting, also check vcav repo's ci-lint.yml (vcav-io/vcav) to promote both repos symmetrically.
-      - name: Lint agentvault-client
+      - name: Lint & build agentvault-client
         working-directory: packages/agentvault-client
-        run: npm ci && npm run lint
+        run: npm ci && npm run lint && npm run build
 
       - name: Lint agentvault-mcp-server
         working-directory: packages/agentvault-mcp-server
