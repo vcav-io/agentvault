@@ -4,9 +4,9 @@ pub mod entropy;
 pub mod error;
 pub mod inbox;
 pub mod inbox_handlers;
-pub mod inbox_types;
 #[cfg(feature = "persistence")]
 pub mod inbox_sqlite;
+pub mod inbox_types;
 pub mod prompt_program;
 pub mod provider;
 pub mod relay;
@@ -24,6 +24,7 @@ use axum::{
 use ed25519_dalek::SigningKey;
 
 use crate::agent_registry::AgentRegistry;
+use crate::enforcement_policy::RelayEnforcementPolicy;
 use crate::error::RelayError;
 use crate::inbox::InboxStore;
 use crate::relay::compute_contract_hash;
@@ -46,8 +47,9 @@ pub struct AppState {
     pub openai_base_url: Option<String>,
     pub prompt_program_dir: String,
     pub session_store: SessionStore,
-    /// Content hash of the loaded enforcement policy.
-    /// Phase A: declared only — enforcement wired in Phase B.
+    /// Loaded enforcement policy — rules read at runtime by the output guard.
+    pub enforcement_policy: RelayEnforcementPolicy,
+    /// Content hash of the loaded enforcement policy (bound into receipts).
     pub enforcement_policy_hash: String,
     /// Agent registry for inbox authentication.
     pub agent_registry: AgentRegistry,
@@ -95,6 +97,7 @@ async fn capabilities_handler(State(state): State<Arc<AppState>>) -> Json<Capabi
             .collect(),
         entropy_enforcement: "ADVISORY",
         receipt_schema_version: receipt_core::SCHEMA_VERSION,
+        enforcement_capabilities: enforcement_policy::supported_capability_strings(),
     })
 }
 

@@ -142,4 +142,5 @@ pub struct CapabilitiesResponse {
     pub purposes: Vec<String>,
     pub entropy_enforcement: &'static str,
     pub receipt_schema_version: &'static str,
+    pub enforcement_capabilities: Vec<String>,
 }

@@ -75,60 +75,106 @@ fn is_currency_symbol(c: char) -> bool {
     )
 }
 
-/// GATE rule: reject output if any string value contains Unicode numeric characters
-/// (category Nd) or currency symbols (category Sc).
+use crate::enforcement_policy::{EnforcementClass, EnforcementRule, RuleScopeKind, RuleType};
+
+/// Validate output against all enforcement rules from the loaded policy.
 ///
 /// **Threat model**: This is a defense-in-depth backstop / schema regression detector,
 /// not the primary privacy control. The primary control is the all-enum schema with
 /// `additionalProperties: false`. This guard fires only if the schema is misconfigured,
 /// weakened, or a provider structured-output bug bypasses enum constraints.
 ///
-/// **Scope**: Scans JSON string values only. JSON number literals (e.g. `{"confidence": 3}`)
+/// **Scope**: Relay-global — rules apply to ALL output schemas, not just COMPAT v2.
+/// Scans JSON string values only. JSON number literals (e.g. `{"confidence": 3}`)
 /// are NOT checked — schema validation runs first and rejects non-string types where
-/// string enums are expected. If the schema is later weakened to allow numeric types,
-/// this guard will NOT catch numeric-typed values. The `test_schema_rejects_numeric_literal_before_gate`
-/// test regression-proofs this assumption.
-///
-/// **Phase 1 only**: Scoped to `vcav_e_compatibility_signal_v2` via hardcoded schema ID.
-/// Will migrate to PolicyBundle configuration in Phase 2.
-fn validate_output_policy_gate(
+/// string enums are expected.
+fn validate_output_enforcement_rules(
     output: &serde_json::Value,
-    output_schema_id: &str,
+    rules: &[EnforcementRule],
 ) -> Result<(), RelayError> {
-    if output_schema_id != "vcav_e_compatibility_signal_v2" {
-        return Ok(());
-    }
-
-    // At the top level, skip `schema_version` — it is a structural metadata field
-    // constrained to a single-value enum (e.g. ["2"]) with 0 bits of entropy.
-    // This matches the verify.sh post-hoc check behavior (line 406).
-    if let serde_json::Value::Object(map) = output {
-        for (key, value) in map {
-            if key == "schema_version" {
-                continue;
-            }
-            if json_strings_contain_forbidden(value) {
-                tracing::warn!(
-                    gate = "digit_currency",
-                    output_schema_id,
-                    "policy gate rejected output"
-                );
-                return Err(RelayError::PolicyGate("digit_currency_gate".into()));
+    for rule in rules {
+        match rule.rule_type {
+            RuleType::UnicodeCategoryReject => {
+                if json_strings_contain_category(output, &rule.value, &rule.scope) {
+                    match rule.classification {
+                        EnforcementClass::Gate => {
+                            tracing::warn!(rule_id = %rule.rule_id, "GATE rule violated");
+                            return Err(RelayError::PolicyGate(rule.rule_id.clone()));
+                        }
+                        EnforcementClass::Advisory => {
+                            tracing::warn!(
+                                rule_id = %rule.rule_id,
+                                category = %rule.value,
+                                "ADVISORY enforcement rule violated (non-blocking)"
+                            );
+                        }
+                    }
+                }
             }
         }
     }
-
     Ok(())
 }
 
-/// Recursively check if any string value in the JSON contains forbidden characters
-/// (Unicode numeric or currency symbols).
-fn json_strings_contain_forbidden(value: &serde_json::Value) -> bool {
+/// Check if top-level value contains forbidden characters per scope rules.
+///
+/// For `AllStringValues` scope: applies skip_keys at the top-level object only.
+/// If the top-level value is an Array, applies skip_keys to nothing (arrays have
+/// no keys) — the array elements are checked recursively via `json_value_contains_category`.
+fn json_strings_contain_category(
+    value: &serde_json::Value,
+    category: &str,
+    scope: &crate::enforcement_policy::RuleScope,
+) -> bool {
+    match &scope.kind {
+        RuleScopeKind::AllStringValues => match value {
+            serde_json::Value::Object(map) => map.iter().any(|(key, val)| {
+                if scope.skip_keys.contains(key) {
+                    return false;
+                }
+                json_value_contains_category(val, category)
+            }),
+            serde_json::Value::Array(arr) => arr
+                .iter()
+                .any(|v| json_value_contains_category(v, category)),
+            _ => json_value_contains_category(value, category),
+        },
+    }
+}
+
+/// Recursively check if any string value in the JSON contains a character
+/// matching the given unicode category.
+fn json_value_contains_category(value: &serde_json::Value, category: &str) -> bool {
     match value {
-        serde_json::Value::String(s) => s.chars().any(|c| c.is_numeric() || is_currency_symbol(c)),
-        serde_json::Value::Array(arr) => arr.iter().any(json_strings_contain_forbidden),
-        serde_json::Value::Object(map) => map.values().any(json_strings_contain_forbidden),
+        serde_json::Value::String(s) => s.chars().any(|c| unicode_category_contains(c, category)),
+        serde_json::Value::Array(arr) => arr
+            .iter()
+            .any(|v| json_value_contains_category(v, category)),
+        serde_json::Value::Object(map) => map
+            .values()
+            .any(|v| json_value_contains_category(v, category)),
         _ => false,
+    }
+}
+
+/// Check if a character belongs to the given unicode general category.
+///
+/// **Nd handling**: `c.is_numeric()` is a conservative superset of Unicode category Nd.
+/// It covers Nd (decimal digits) ∪ Nl (letter numbers like Roman numerals) ∪ No (other
+/// numbers like superscripts). This is intentional for defense-in-depth: narrowing to
+/// exact Nd would *relax* the guard by allowing Nl/No characters through. A future
+/// contributor should NOT "fix" this to exact Nd without understanding that doing so
+/// weakens the security boundary.
+fn unicode_category_contains(c: char, category: &str) -> bool {
+    match category {
+        "Nd" => c.is_numeric(),
+        "Sc" => is_currency_symbol(c),
+        _ => {
+            // Startup validation (`validate_rule_categories`) ensures this is unreachable.
+            // debug_assert catches regressions in tests without adding a runtime error path.
+            debug_assert!(false, "unsupported unicode category: {category}");
+            false
+        }
     }
 }
 
@@ -210,8 +256,8 @@ pub async fn relay_core(
     // 8. Validate output against schema
     validate_output_schema(&output, &contract.output_schema)?;
 
-    // 8b. Policy gate: reject forbidden characters in string values (GATE rule)
-    validate_output_policy_gate(&output, &contract.output_schema_id)?;
+    // 8b. Enforcement rules: reject forbidden characters in string values
+    validate_output_enforcement_rules(&output, &state.enforcement_policy.rules)?;
 
     // 9. Compute entropy (advisory — logged but not enforced)
     let entropy_bits = calculate_schema_entropy_upper_bound(&contract.output_schema)
@@ -258,7 +304,6 @@ pub async fn relay_core(
     let model_weights_hash = hex::encode(Sha256::digest(b"api-mediated-no-local-weights"));
     // inference_config_hash: honest "n/a" — relay is API-mediated; no local inference
     let inference_config_hash = hex::encode(Sha256::digest(b"api-mediated-no-local-inference"));
-    // Phase A: declared only — enforcement wired in Phase B
     let guardian_policy_hash = state.enforcement_policy_hash.clone();
 
     // Load model profile hash if contract specifies one
@@ -562,17 +607,59 @@ mod tests {
     }
 
     // ========================================================================
-    // Policy gate tests (digit/currency guard)
+    // Enforcement rule tests (policy-driven guard)
     // ========================================================================
 
-    const COMPAT_V2_SCHEMA_ID: &str = "vcav_e_compatibility_signal_v2";
+    use crate::enforcement_policy::{
+        EnforcementClass, EnforcementRule, RuleScope, RuleScopeKind, RuleType,
+    };
+
+    fn nd_gate_rule() -> EnforcementRule {
+        EnforcementRule {
+            rule_id: "no_digits".to_string(),
+            rule_type: RuleType::UnicodeCategoryReject,
+            value: "Nd".to_string(),
+            scope: RuleScope {
+                kind: RuleScopeKind::AllStringValues,
+                skip_keys: vec!["schema_version".to_string()],
+            },
+            classification: EnforcementClass::Gate,
+        }
+    }
+
+    fn sc_gate_rule() -> EnforcementRule {
+        EnforcementRule {
+            rule_id: "no_currency_symbols".to_string(),
+            rule_type: RuleType::UnicodeCategoryReject,
+            value: "Sc".to_string(),
+            scope: RuleScope {
+                kind: RuleScopeKind::AllStringValues,
+                skip_keys: vec!["schema_version".to_string()],
+            },
+            classification: EnforcementClass::Gate,
+        }
+    }
+
+    fn nd_advisory_rule() -> EnforcementRule {
+        EnforcementRule {
+            rule_id: "no_digits_advisory".to_string(),
+            rule_type: RuleType::UnicodeCategoryReject,
+            value: "Nd".to_string(),
+            scope: RuleScope {
+                kind: RuleScopeKind::AllStringValues,
+                skip_keys: vec![],
+            },
+            classification: EnforcementClass::Advisory,
+        }
+    }
 
     #[test]
     fn test_policy_gate_rejects_digits() {
         let output = serde_json::json!({
             "compatibility_signal": "STRONG_MATCH_42"
         });
-        let err = validate_output_policy_gate(&output, COMPAT_V2_SCHEMA_ID).unwrap_err();
+        let rules = vec![nd_gate_rule()];
+        let err = validate_output_enforcement_rules(&output, &rules).unwrap_err();
         assert!(matches!(err, RelayError::PolicyGate(_)));
     }
 
@@ -582,17 +669,19 @@ mod tests {
         let output = serde_json::json!({
             "compatibility_signal": "MATCH\u{FF10}"
         });
-        let err = validate_output_policy_gate(&output, COMPAT_V2_SCHEMA_ID).unwrap_err();
+        let rules = vec![nd_gate_rule()];
+        let err = validate_output_enforcement_rules(&output, &rules).unwrap_err();
         assert!(matches!(err, RelayError::PolicyGate(_)));
     }
 
     #[test]
     fn test_policy_gate_rejects_currency() {
+        let rules = vec![sc_gate_rule()];
         for symbol in ["£", "$", "€"] {
             let output = serde_json::json!({
                 "compatibility_signal": format!("MATCH{symbol}")
             });
-            let err = validate_output_policy_gate(&output, COMPAT_V2_SCHEMA_ID).unwrap_err();
+            let err = validate_output_enforcement_rules(&output, &rules).unwrap_err();
             assert!(
                 matches!(err, RelayError::PolicyGate(_)),
                 "should reject currency symbol: {symbol}"
@@ -606,7 +695,8 @@ mod tests {
             "compatibility_signal": "STRONG_MATCH",
             "primary_reasons": ["SECTOR_MATCH", "SIZE_7K"]
         });
-        let err = validate_output_policy_gate(&output, COMPAT_V2_SCHEMA_ID).unwrap_err();
+        let rules = vec![nd_gate_rule()];
+        let err = validate_output_enforcement_rules(&output, &rules).unwrap_err();
         assert!(matches!(err, RelayError::PolicyGate(_)));
     }
 
@@ -623,17 +713,122 @@ mod tests {
             "blocking_reasons": [],
             "next_step": "PROCEED"
         });
-        assert!(validate_output_policy_gate(&output, COMPAT_V2_SCHEMA_ID).is_ok());
+        let rules = vec![nd_gate_rule(), sc_gate_rule()];
+        assert!(validate_output_enforcement_rules(&output, &rules).is_ok());
     }
 
     #[test]
-    fn test_policy_gate_ignores_non_compat() {
+    fn test_advisory_rule_does_not_block() {
         let output = serde_json::json!({
-            "decision": "PROCEED_42",
-            "amount": "$100"
+            "field": "has_digit_7"
         });
-        // Non-COMPAT v2 schema: gate does not fire
-        assert!(validate_output_policy_gate(&output, "vault_result_mediation").is_ok());
+        let rules = vec![nd_advisory_rule()];
+        assert!(
+            validate_output_enforcement_rules(&output, &rules).is_ok(),
+            "ADVISORY rule should log but not block"
+        );
+    }
+
+    #[test]
+    fn test_empty_rules_passes() {
+        let output = serde_json::json!({
+            "anything": "goes_42_$$$"
+        });
+        let rules: Vec<EnforcementRule> = vec![];
+        assert!(validate_output_enforcement_rules(&output, &rules).is_ok());
+    }
+
+    #[test]
+    fn test_skip_keys_from_policy() {
+        let output = serde_json::json!({
+            "schema_version": "2",
+            "signal": "CLEAN"
+        });
+        let rules = vec![nd_gate_rule()];
+        assert!(
+            validate_output_enforcement_rules(&output, &rules).is_ok(),
+            "skip_keys should exclude schema_version containing '2'"
+        );
+    }
+
+    #[test]
+    fn test_mixed_gate_advisory() {
+        // Both a GATE Nd rule and ADVISORY Sc rule. The digit triggers GATE → error.
+        let output = serde_json::json!({
+            "field": "has_digit_7"
+        });
+        let rules = vec![nd_gate_rule(), nd_advisory_rule()];
+        let err = validate_output_enforcement_rules(&output, &rules).unwrap_err();
+        assert!(
+            matches!(err, RelayError::PolicyGate(_)),
+            "GATE rule should fire even when ADVISORY violations exist"
+        );
+    }
+
+    #[test]
+    fn test_mediation_output_passes_nd_sc_rules() {
+        // Clean MEDIATION-shaped output with no digits/currency passes enforcement.
+        let output = serde_json::json!({
+            "outcome": "AGREEMENT",
+            "terms": ["FAIR_SPLIT", "MUTUAL_BENEFIT"],
+            "summary": "Both parties agree to proceed"
+        });
+        let rules = vec![nd_gate_rule(), sc_gate_rule()];
+        assert!(validate_output_enforcement_rules(&output, &rules).is_ok());
+    }
+
+    #[test]
+    fn test_mediation_output_rejects_digit() {
+        // MEDIATION-shaped output with digit is rejected — scope expansion enforced.
+        let output = serde_json::json!({
+            "outcome": "AGREEMENT",
+            "terms": ["SPLIT_50_50"]
+        });
+        let rules = vec![nd_gate_rule()];
+        let err = validate_output_enforcement_rules(&output, &rules).unwrap_err();
+        assert!(matches!(err, RelayError::PolicyGate(_)));
+    }
+
+    #[test]
+    fn test_top_level_array_checked() {
+        // Top-level array should be recursed without skip_keys.
+        let output = serde_json::json!(["CLEAN", "HAS_DIGIT_7"]);
+        let rules = vec![nd_gate_rule()];
+        let err = validate_output_enforcement_rules(&output, &rules).unwrap_err();
+        assert!(matches!(err, RelayError::PolicyGate(_)));
+    }
+
+    #[test]
+    fn test_nested_skip_key_not_skipped() {
+        // A nested object key named "schema_version" containing a digit IS checked.
+        // skip_keys only applies at the top level.
+        let output = serde_json::json!({
+            "wrapper": {
+                "schema_version": "2"
+            }
+        });
+        let rules = vec![nd_gate_rule()];
+        let err = validate_output_enforcement_rules(&output, &rules).unwrap_err();
+        assert!(
+            matches!(err, RelayError::PolicyGate(_)),
+            "nested 'schema_version' key should not be skipped"
+        );
+    }
+
+    #[test]
+    fn test_nd_includes_numeric_letter() {
+        // Roman numeral Ⅳ (U+2163, Nl category) IS caught by "Nd" rule.
+        // This proves the conservative superset (is_numeric covers Nd ∪ Nl ∪ No)
+        // is intentional and locked in.
+        let output = serde_json::json!({
+            "field": "VALUE_\u{2163}"
+        });
+        let rules = vec![nd_gate_rule()];
+        let err = validate_output_enforcement_rules(&output, &rules).unwrap_err();
+        assert!(
+            matches!(err, RelayError::PolicyGate(_)),
+            "Nl character should be caught by conservative Nd superset"
+        );
     }
 
     #[test]

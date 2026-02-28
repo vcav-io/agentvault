@@ -106,10 +106,7 @@ impl InboxStore {
             .map_err(|e| RelayError::ServiceUnavailable(format!("db thread: {e}")))?
             .map_err(|e| RelayError::Internal(format!("sqlite load_all: {e}")))?;
 
-        tracing::info!(
-            invites = invites.len(),
-            "SQLite: loaded inbox into memory"
-        );
+        tracing::info!(invites = invites.len(), "SQLite: loaded inbox into memory");
 
         Ok(Self {
             inner: Arc::new(RwLock::new(InboxStoreInner {
@@ -222,7 +219,9 @@ impl InboxStore {
             let count = *counter;
             // Fire-and-forget: counter persistence is best-effort
             tokio::spawn(async move {
-                let _ = tokio::task::spawn_blocking(move || db.upsert_event_counter(&agent_id, count)).await;
+                let _ =
+                    tokio::task::spawn_blocking(move || db.upsert_event_counter(&agent_id, count))
+                        .await;
             });
         }
 
@@ -403,9 +402,10 @@ impl InboxStore {
             let cached_tokens = invite.session_tokens.as_ref().ok_or_else(|| {
                 RelayError::Internal("accepted invite missing session_tokens".into())
             })?;
-            let cached_session_id = invite.session_id.clone().ok_or_else(|| {
-                RelayError::Internal("accepted invite missing session_id".into())
-            })?;
+            let cached_session_id = invite
+                .session_id
+                .clone()
+                .ok_or_else(|| RelayError::Internal("accepted invite missing session_id".into()))?;
             return Ok(AcceptInviteResponse {
                 invite_id: invite_id.to_string(),
                 session_id: cached_session_id,
@@ -484,7 +484,8 @@ impl InboxStore {
             let agent = from_agent_id.clone();
             let count = *counter;
             tokio::spawn(async move {
-                let _ = tokio::task::spawn_blocking(move || db.upsert_event_counter(&agent, count)).await;
+                let _ = tokio::task::spawn_blocking(move || db.upsert_event_counter(&agent, count))
+                    .await;
             });
         }
 
@@ -584,7 +585,8 @@ impl InboxStore {
             let agent = from_agent_id.clone();
             let count = *counter;
             tokio::spawn(async move {
-                let _ = tokio::task::spawn_blocking(move || db.upsert_event_counter(&agent, count)).await;
+                let _ = tokio::task::spawn_blocking(move || db.upsert_event_counter(&agent, count))
+                    .await;
             });
         }
 
@@ -632,19 +634,13 @@ impl InboxStore {
 
         // Extract data for SQLite write-through before dropping invite borrow
         #[cfg(feature = "persistence")]
-        let sqlite_payload = self.db.as_ref().map(|_| {
-            (
-                invite_id.to_string(),
-                invite.status,
-                invite.updated_at,
-            )
-        });
+        let sqlite_payload = self
+            .db
+            .as_ref()
+            .map(|_| (invite_id.to_string(), invite.status, invite.updated_at));
 
         // NLL: invite borrow ends here; all needed data extracted above.
-        let counter = store
-            .event_counters
-            .entry(to_agent_id.clone())
-            .or_insert(0);
+        let counter = store.event_counters.entry(to_agent_id.clone()).or_insert(0);
         *counter += 1;
         let event = InboxEvent {
             event_id: *counter,
@@ -674,7 +670,8 @@ impl InboxStore {
             let agent = to_agent_id.clone();
             let count = *counter;
             tokio::spawn(async move {
-                let _ = tokio::task::spawn_blocking(move || db.upsert_event_counter(&agent, count)).await;
+                let _ = tokio::task::spawn_blocking(move || db.upsert_event_counter(&agent, count))
+                    .await;
             });
         }
 
@@ -735,10 +732,7 @@ impl InboxStore {
         // Build SSE events for newly expired invites while holding write lock
         let mut expire_events: Vec<(String, InboxEvent)> = Vec::new();
         for (invite_id, to_agent_id, from_agent_id) in &newly_expired {
-            let counter = store
-                .event_counters
-                .entry(to_agent_id.clone())
-                .or_insert(0);
+            let counter = store.event_counters.entry(to_agent_id.clone()).or_insert(0);
             *counter += 1;
             expire_events.push((
                 to_agent_id.clone(),
@@ -1570,14 +1564,10 @@ mod tests {
                 .unwrap()
         };
 
-        let (list_result, accept_result) = tokio::join!(
-            async move {
-                is1.list_inbox("bob", &q).await
-            },
-            async move {
+        let (list_result, accept_result) =
+            tokio::join!(async move { is1.list_inbox("bob", &q).await }, async move {
                 is2.accept_invite(&first_id, "bob", None, &ss).await
-            }
-        );
+            });
 
         assert!(list_result.invites.len() >= 1);
         assert!(accept_result.is_ok());

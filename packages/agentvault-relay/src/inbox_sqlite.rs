@@ -175,14 +175,13 @@ impl SqliteDb {
                 let session_tokens_json: Option<String> = row.get(12)?;
                 let decline_str: Option<String> = row.get(13)?;
 
-                let contract: Contract =
-                    serde_json::from_str(&contract_json).map_err(|e| {
-                        rusqlite::Error::FromSqlConversionFailure(
-                            4,
-                            rusqlite::types::Type::Text,
-                            Box::new(e),
-                        )
-                    })?;
+                let contract: Contract = serde_json::from_str(&contract_json).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        4,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?;
 
                 let status = str_to_status(&status_str).map_err(|e| {
                     rusqlite::Error::FromSqlConversionFailure(
@@ -226,9 +225,8 @@ impl SqliteDb {
                     .as_deref()
                     .and_then(|j| serde_json::from_str(j).ok());
 
-                let decline_reason_code = decline_str
-                    .as_deref()
-                    .and_then(|s| str_to_decline(s).ok());
+                let decline_reason_code =
+                    decline_str.as_deref().and_then(|s| str_to_decline(s).ok());
 
                 Ok(Invite {
                     version: "1".to_string(),

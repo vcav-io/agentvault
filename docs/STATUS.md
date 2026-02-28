@@ -90,41 +90,42 @@ unconstrained information channel identified in red team testing (see `docs/red-
 - Health endpoint (`GET /health`) now returns `git_sha` field
 - Receipts no longer claim unverifiable runtime provenance
 
-## RelayEnforcementPolicy (Phase 2, Phase A)
+## RelayEnforcementPolicy (Phase 2, Phase A + B)
 
-**Status: Implemented** (2026-02-26)
+**Status: Implemented** (Phase A: 2026-02-26, Phase B: 2026-02-28)
 
-`RelayEnforcementPolicy` is a first-class, content-addressed artefact. The existing
-hardcoded digit/currency guard is unchanged (Phase A: declared only — enforcement
-wired in Phase B).
+`RelayEnforcementPolicy` is a first-class, content-addressed artefact. Phase B wired
+the output guard to read rules from the policy config at runtime, replacing the
+hardcoded digit/currency guard.
 
-- `src/enforcement_policy.rs` — `RelayEnforcementPolicy`, `EnforcementRule`, `RuleType` (enum),
-  `RuleScopeKind` (enum), `EnforcementClass` (enum), `EntropyConstraints`,
-  `content_hash()` (RFC 8785 JCS), `load_enforcement_policy()`,
+- `src/enforcement_policy.rs` — `RelayEnforcementPolicy` (with `policy_scope: "RELAY_GLOBAL"`),
+  `EnforcementRule`, `RuleType` (enum), `RuleScopeKind` (enum), `EnforcementClass` (enum),
+  `EntropyConstraints`, `content_hash()` (RFC 8785 JCS), `load_enforcement_policy()`,
   `validate_enforcement_lockfile()` (fail-closed), `generate_enforcement_lockfile()`,
-  `derive_required_capabilities()`, `validate_capabilities()`
+  `derive_required_capabilities()`, `validate_capabilities()` / `validate_capabilities_with()`,
+  `validate_policy_scope()`, `validate_rule_categories()`,
+  `supported_capability_strings()`, `CAP_UNICODE_CATEGORY_REJECT` constant
 - `src/error.rs` — `RelayError::EnforcementPolicy(String)` variant
-- `src/lib.rs` — `AppState.enforcement_policy_hash` field
-- `src/relay.rs` — `guardian_policy_hash` now uses real enforcement policy content hash
-  (comment: "Phase A: declared only — enforcement wired in Phase B")
-- `src/main.rs` — startup validates lockfile (fail-closed), loads policy, validates
-  capabilities, logs `policy_id` + `hash`
-- `prompt_programs/relay_policies/compatibility_safe_v1.json` — example policy
+- `src/lib.rs` — `AppState.enforcement_policy` + `AppState.enforcement_policy_hash` fields;
+  `/capabilities` endpoint includes `enforcement_capabilities`
+- `src/relay.rs` — `validate_output_enforcement_rules()` reads rules from policy config;
+  `unicode_category_contains()` dispatches by category; relay-global scope (all schemas);
+  `EnforcementClass::Gate` → error, `EnforcementClass::Advisory` → log only;
+  `skip_keys` from config (top-level only)
+- `src/types.rs` — `CapabilitiesResponse.enforcement_capabilities` field
+- `src/main.rs` — startup validates lockfile, scope, rule categories, capabilities;
+  zero-rules warning; logs rule count and scope
+- `prompt_programs/relay_policies/compatibility_safe_v1.json` — policy with `policy_scope`
 - `prompt_programs/relay_policies/relay_policies.lock` — committed lockfile
 - `examples/gen_enforcement_lockfile.rs` — CLI: `cargo run --example gen_enforcement_lockfile -- <dir>`
-- 17 unit tests covering: serde round-trip, unknown rule type rejected, example policy
-  deserializes, content hash determinism, capability derivation, lockfile (valid/mismatch/
-  missing-fails/dev-override/skip-without-dev), generate round-trip,
-  `test_receipt_binds_declared_enforcement_hash`
+- 28 unit tests (enforcement_policy.rs) + 12 policy gate tests (relay.rs) covering:
+  serde round-trip, scope/category/capability validation, lockfile validation,
+  GATE/ADVISORY dispatch, skip_keys, empty rules, mixed rules, mediation scope expansion,
+  top-level arrays, nested skip_key not skipped, Nl/No conservative superset
 
 ### Lockfile dev override
 Missing lockfile fails closed by default. To skip in development:
 set BOTH `VCAV_ENFORCEMENT_LOCKFILE_SKIP=1` AND `VCAV_ENV=dev`.
-
-### What Phase A does NOT do
-- Does not change enforcement behaviour (hardcoded guard still runs independently)
-- Does not read rules from policy config at runtime
-- Does not enforce `model_profile_allowlist` or `provider_allowlist`
 
 ## Model Profile Immutability (Phase 1, item 3)
 
@@ -215,7 +216,7 @@ immediately — no `while` loops, no `sleep()`, no `pollUntilDone()` in INITIATE
 
 ### Open
 
-- [x] Deterministic policy gate — relay-side digit/currency guard (GATE rule, Unicode Nd/Sc categories, scoped to COMPAT v2)
+- [x] Deterministic policy gate — relay-side enforcement guard (Phase B: reads rules from policy config, relay-global scope)
 - [x] MCP get_identity inbox count (Agent UX) — PR #41
 - [x] Wire format validation against real provider (roadmap item 11a)
 - [x] Heartbeat-safe relay_signal — non-blocking phases, session state files, resume_strategy
