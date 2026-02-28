@@ -32,7 +32,7 @@ pub enum AbortReason {
 }
 
 /// Token set for a session. Split by capability (submit vs read) and role.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SessionTokens {
     pub initiator_submit: String,
     pub initiator_read: String,

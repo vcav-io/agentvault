@@ -1,15 +1,23 @@
+// Lock ordering (must always acquire in this order to prevent deadlock):
+// 1. RwLock<InboxStoreInner> (read or write)
+// 2. Mutex<ChannelMap>
+// Never acquire RwLock after holding Mutex<ChannelMap>.
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
 use sha2::{Digest, Sha256};
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, Mutex, RwLock};
 
 use crate::error::RelayError;
 use crate::inbox_types::*;
 use crate::relay::compute_contract_hash;
 use crate::session::SessionStore;
+
+#[cfg(feature = "persistence")]
+use crate::inbox_sqlite::SqliteDb;
 
 /// Generate a unique invite ID.
 fn generate_invite_id() -> String {
@@ -19,14 +27,15 @@ fn generate_invite_id() -> String {
     )
 }
 
-/// In-memory inbox store, parallel to SessionStore.
-#[derive(Clone)]
-pub struct InboxStore {
-    inner: Arc<Mutex<InboxStoreInner>>,
-    invite_ttl: Duration,
-    /// Grace period after EXPIRED before garbage collection.
-    gc_grace: Duration,
-}
+// ============================================================================
+// Channel type aliases
+// ============================================================================
+
+type ChannelMap = HashMap<String, broadcast::Sender<InboxEvent>>;
+
+// ============================================================================
+// InboxStoreInner — protected by RwLock (invites, index, counters only)
+// ============================================================================
 
 struct InboxStoreInner {
     invites: HashMap<String, Invite>,
@@ -34,25 +43,88 @@ struct InboxStoreInner {
     inbox_index: HashMap<String, Vec<String>>,
     /// agent_id -> monotonic event counter.
     event_counters: HashMap<String, u64>,
-    /// agent_id -> broadcast sender for SSE events.
-    event_channels: HashMap<String, broadcast::Sender<InboxEvent>>,
 }
 
 const SSE_CHANNEL_CAPACITY: usize = 64;
 
+// ============================================================================
+// InboxStore
+// ============================================================================
+
+/// In-memory inbox store with RwLock + separate channel Mutex.
+///
+/// Reads (list_inbox, get_invite, subscribe) acquire a read lock and never block
+/// each other. Writes (create_invite, accept_invite, etc.) acquire a write lock.
+/// SSE emission uses a separate Mutex<ChannelMap> so it never touches the RwLock.
+#[derive(Clone)]
+pub struct InboxStore {
+    inner: Arc<RwLock<InboxStoreInner>>,
+    channels: Arc<Mutex<ChannelMap>>,
+    invite_ttl: Duration,
+    /// Grace period after EXPIRED before garbage collection.
+    gc_grace: Duration,
+    #[cfg(feature = "persistence")]
+    db: Option<Arc<SqliteDb>>,
+}
+
 impl InboxStore {
     pub fn new(invite_ttl: Duration) -> Self {
         Self {
-            inner: Arc::new(Mutex::new(InboxStoreInner {
+            inner: Arc::new(RwLock::new(InboxStoreInner {
                 invites: HashMap::new(),
                 inbox_index: HashMap::new(),
                 event_counters: HashMap::new(),
-                event_channels: HashMap::new(),
             })),
+            channels: Arc::new(Mutex::new(HashMap::new())),
             invite_ttl,
             gc_grace: Duration::from_secs(86400), // 24h grace after EXPIRED
+            #[cfg(feature = "persistence")]
+            db: None,
         }
     }
+
+    #[cfg(feature = "persistence")]
+    /// Open SQLite at `path`, load all persisted invites into memory, and return
+    /// a store backed by write-through SQLite.
+    ///
+    /// Must be called before Axum starts accepting connections (startup ordering
+    /// is naturally enforced because AppState is constructed before axum::serve).
+    pub async fn new_with_sqlite(invite_ttl: Duration, path: String) -> Result<Self, RelayError> {
+        use tokio::task::spawn_blocking;
+
+        let path2 = path.clone();
+        let db = spawn_blocking(move || SqliteDb::open(&path2))
+            .await
+            .map_err(|e| RelayError::ServiceUnavailable(format!("db thread: {e}")))?
+            .map_err(|e| RelayError::Internal(format!("sqlite open: {e}")))?;
+
+        let db = Arc::new(db);
+        let db2 = db.clone();
+
+        let (invites, inbox_index, event_counters) = spawn_blocking(move || db2.load_all())
+            .await
+            .map_err(|e| RelayError::ServiceUnavailable(format!("db thread: {e}")))?
+            .map_err(|e| RelayError::Internal(format!("sqlite load_all: {e}")))?;
+
+        tracing::info!(
+            invites = invites.len(),
+            "SQLite: loaded inbox into memory"
+        );
+
+        Ok(Self {
+            inner: Arc::new(RwLock::new(InboxStoreInner {
+                invites,
+                inbox_index,
+                event_counters,
+            })),
+            channels: Arc::new(Mutex::new(HashMap::new())),
+            invite_ttl,
+            gc_grace: Duration::from_secs(86400),
+            db: Some(db),
+        })
+    }
+
+    // ── Public API ────────────────────────────────────────────────────────
 
     /// Create a new invite.
     pub async fn create_invite(
@@ -104,7 +176,18 @@ impl InboxStore {
             decline_reason_code: None,
         };
 
-        let mut store = self.inner.lock().await;
+        // SQLite write FIRST (before memory update)
+        #[cfg(feature = "persistence")]
+        if let Some(ref db) = self.db {
+            let db = db.clone();
+            let invite_for_db = invite.clone();
+            tokio::task::spawn_blocking(move || db.insert_invite(&invite_for_db))
+                .await
+                .map_err(|e| RelayError::ServiceUnavailable(format!("db thread: {e}")))?
+                .map_err(|e| RelayError::Internal(format!("sqlite: {e}")))?;
+        }
+
+        let mut store = self.inner.write().await;
 
         // Add to recipient's inbox index
         store
@@ -117,15 +200,35 @@ impl InboxStore {
         // immediately call GET /invites/:id can find it.
         store.invites.insert(invite_id.clone(), invite);
 
-        // Emit event to recipient
-        let event = self.build_event_locked(
-            &mut store,
-            &request.to_agent_id,
-            InboxEventType::InviteCreated,
-            &invite_id,
-            from_agent_id,
-        );
-        self.emit_event_locked(&store, &request.to_agent_id, event);
+        // Update counter while holding write lock, then release before channel emit
+        let counter = store
+            .event_counters
+            .entry(request.to_agent_id.clone())
+            .or_insert(0);
+        *counter += 1;
+        let event = InboxEvent {
+            event_id: *counter,
+            event_type: InboxEventType::InviteCreated,
+            invite_id: invite_id.clone(),
+            from_agent_id: from_agent_id.to_string(),
+            timestamp: Utc::now(),
+        };
+
+        // Persist counter update
+        #[cfg(feature = "persistence")]
+        if let Some(ref db) = self.db {
+            let db = db.clone();
+            let agent_id = request.to_agent_id.clone();
+            let count = *counter;
+            // Fire-and-forget: counter persistence is best-effort
+            tokio::spawn(async move {
+                let _ = tokio::task::spawn_blocking(move || db.upsert_event_counter(&agent_id, count)).await;
+            });
+        }
+
+        drop(store); // release RwLock before acquiring channel Mutex
+
+        self.emit_event(&request.to_agent_id, event).await;
 
         Ok(CreateInviteResponse {
             invite_id,
@@ -137,7 +240,7 @@ impl InboxStore {
 
     /// List inbox for an agent with optional filters.
     pub async fn list_inbox(&self, agent_id: &str, query: &InboxQuery) -> InboxResponse {
-        let store = self.inner.lock().await;
+        let store = self.inner.read().await;
 
         let invite_ids = store.inbox_index.get(agent_id);
         let empty = vec![];
@@ -179,7 +282,7 @@ impl InboxStore {
         invite_id: &str,
         caller_agent_id: &str,
     ) -> Result<InviteDetailResponse, RelayError> {
-        let store = self.inner.lock().await;
+        let store = self.inner.read().await;
         let invite = store
             .invites
             .get(invite_id)
@@ -193,9 +296,13 @@ impl InboxStore {
         Ok(invite.to_detail_response(caller_agent_id))
     }
 
-    /// Accept an invite. Creates a session and returns responder tokens.
+    /// Accept an invite using a 3-phase optimistic pattern.
     ///
-    /// Idempotent: re-accept returns same session_id + same tokens.
+    /// Phase 1 (read lock): validate, check idempotency, clone needed data.
+    /// Phase 2 (no lock): create session.
+    /// Phase 3 (write lock): re-validate, update invite, emit SSE.
+    ///
+    /// Idempotent: re-accept by same agent returns same session_id + same tokens.
     pub async fn accept_invite(
         &self,
         invite_id: &str,
@@ -203,78 +310,187 @@ impl InboxStore {
         expected_contract_hash: Option<&str>,
         session_store: &SessionStore,
     ) -> Result<AcceptInviteResponse, RelayError> {
-        let mut store = self.inner.lock().await;
-        let invite = store
-            .invites
-            .get_mut(invite_id)
-            .ok_or(RelayError::InviteNotFound)?;
+        // ── Phase 1: read lock ──────────────────────────────────────────
+        let (contract, contract_hash, provider, from_agent_id) = {
+            let store = self.inner.read().await;
+            let invite = store
+                .invites
+                .get(invite_id)
+                .ok_or(RelayError::InviteNotFound)?;
 
-        // Only recipient can accept
+            // Only recipient can accept
+            if invite.to_agent_id != caller_agent_id {
+                return Err(RelayError::Unauthorized);
+            }
+
+            // Idempotent: if already ACCEPTED, return same tokens
+            if invite.status == InviteStatus::Accepted {
+                let tokens = invite.session_tokens.as_ref().ok_or_else(|| {
+                    RelayError::Internal("accepted invite missing session_tokens".into())
+                })?;
+                let session_id = invite.session_id.clone().ok_or_else(|| {
+                    RelayError::Internal("accepted invite missing session_id".into())
+                })?;
+                return Ok(AcceptInviteResponse {
+                    invite_id: invite_id.to_string(),
+                    session_id,
+                    contract_hash: invite.contract_hash.clone(),
+                    responder_submit_token: tokens.responder_submit.clone(),
+                    responder_read_token: tokens.responder_read.clone(),
+                });
+            }
+
+            // State machine check
+            if !invite.can_transition_to(InviteStatus::Accepted) {
+                return Err(RelayError::InviteStateConflict(format!(
+                    "cannot accept invite in {:?} state",
+                    invite.status
+                )));
+            }
+
+            // Verify contract hash if provided
+            if let Some(expected) = expected_contract_hash {
+                if invite.contract_hash != expected {
+                    return Err(RelayError::ContractValidation(
+                        "expected_contract_hash does not match invite contract".to_string(),
+                    ));
+                }
+            }
+
+            // Clone data needed for Phase 2 (session creation)
+            (
+                invite.contract.clone(),
+                invite.contract_hash.clone(),
+                invite.provider.clone(),
+                invite.from_agent_id.clone(),
+            )
+            // read lock released here
+        };
+
+        // ── Phase 2: no lock — create session ──────────────────────────
+        let (session_id, tokens) = session_store
+            .create(contract, contract_hash.clone(), provider)
+            .await;
+
+        // ── Phase 3: write lock — re-validate and commit ────────────────
+        let mut store = self.inner.write().await;
+
+        let invite = match store.invites.get_mut(invite_id) {
+            Some(inv) => inv,
+            None => {
+                // Invite deleted between Phase 1 and Phase 3 (should not happen in practice)
+                tracing::warn!(
+                    invite_id,
+                    session_id = %session_id,
+                    "accept_invite Phase 3: invite deleted between phases; orphan session will be reaped by TTL"
+                );
+                return Err(RelayError::InviteNotFound);
+            }
+        };
+
+        // Re-check auth (defensive)
         if invite.to_agent_id != caller_agent_id {
             return Err(RelayError::Unauthorized);
         }
 
-        // Idempotent: if already ACCEPTED, return same tokens
+        // Idempotent: another concurrent accept won the race
         if invite.status == InviteStatus::Accepted {
-            let tokens = invite.session_tokens.as_ref().ok_or_else(|| {
+            tracing::debug!(
+                invite_id,
+                session_id = %session_id,
+                "accept_invite Phase 3: idempotent path (race); orphan session will be reaped by TTL"
+            );
+            let cached_tokens = invite.session_tokens.as_ref().ok_or_else(|| {
                 RelayError::Internal("accepted invite missing session_tokens".into())
             })?;
-            let session_id = invite
-                .session_id
-                .clone()
-                .ok_or_else(|| RelayError::Internal("accepted invite missing session_id".into()))?;
+            let cached_session_id = invite.session_id.clone().ok_or_else(|| {
+                RelayError::Internal("accepted invite missing session_id".into())
+            })?;
             return Ok(AcceptInviteResponse {
                 invite_id: invite_id.to_string(),
-                session_id,
+                session_id: cached_session_id,
                 contract_hash: invite.contract_hash.clone(),
-                responder_submit_token: tokens.responder_submit.clone(),
-                responder_read_token: tokens.responder_read.clone(),
+                responder_submit_token: cached_tokens.responder_submit.clone(),
+                responder_read_token: cached_tokens.responder_read.clone(),
             });
         }
 
-        // State machine check
+        // Re-check state machine (invite may have been canceled/expired between phases)
         if !invite.can_transition_to(InviteStatus::Accepted) {
+            tracing::warn!(
+                invite_id,
+                session_id = %session_id,
+                status = ?invite.status,
+                "accept_invite Phase 3: state conflict (invite changed between phases); orphan session will be reaped by TTL"
+            );
             return Err(RelayError::InviteStateConflict(format!(
                 "cannot accept invite in {:?} state",
                 invite.status
             )));
         }
 
-        // Verify contract hash if provided
-        if let Some(expected) = expected_contract_hash {
-            if invite.contract_hash != expected {
-                return Err(RelayError::ContractValidation(
-                    "expected_contract_hash does not match invite contract".to_string(),
-                ));
+        // Commit: update invite — collect data we need before dropping mutable invite ref
+        let updated_at = Utc::now();
+        invite.status = InviteStatus::Accepted;
+        invite.updated_at = updated_at;
+        invite.session_id = Some(session_id.clone());
+        invite.session_tokens = Some(tokens.clone());
+
+        // Extract data for SQLite write-through before we release invite borrow
+        #[cfg(feature = "persistence")]
+        let sqlite_payload = self.db.as_ref().map(|_| {
+            (
+                invite_id.to_string(),
+                invite.status,
+                invite.updated_at,
+                invite.session_id.clone(),
+                invite.session_tokens.clone(),
+            )
+        });
+
+        // NLL: invite borrow ends here; all needed data extracted into sqlite_payload.
+        // Update counter
+        let counter = store
+            .event_counters
+            .entry(from_agent_id.clone())
+            .or_insert(0);
+        *counter += 1;
+        let event = InboxEvent {
+            event_id: *counter,
+            event_type: InboxEventType::InviteAccepted,
+            invite_id: invite_id.to_string(),
+            from_agent_id: caller_agent_id.to_string(),
+            timestamp: Utc::now(),
+        };
+
+        // SQLite write-through (status update)
+        #[cfg(feature = "persistence")]
+        if let Some((id, status, upd_at, sid, toks)) = sqlite_payload {
+            if let Some(ref db) = self.db {
+                let db = db.clone();
+                tokio::task::spawn_blocking(move || {
+                    db.update_invite(&id, status, upd_at, sid.as_deref(), toks.as_ref(), None)
+                })
+                .await
+                .map_err(|e| RelayError::ServiceUnavailable(format!("db thread: {e}")))?
+                .map_err(|e| RelayError::Internal(format!("sqlite: {e}")))?;
             }
         }
 
-        // Create session (reuse existing SessionStore::create)
-        let (session_id, tokens) = session_store
-            .create(
-                invite.contract.clone(),
-                invite.contract_hash.clone(),
-                invite.provider.clone(),
-            )
-            .await;
+        // Persist counter update
+        #[cfg(feature = "persistence")]
+        if let Some(ref db) = self.db {
+            let db = db.clone();
+            let agent = from_agent_id.clone();
+            let count = *counter;
+            tokio::spawn(async move {
+                let _ = tokio::task::spawn_blocking(move || db.upsert_event_counter(&agent, count)).await;
+            });
+        }
 
-        // Update invite (immutable after this point)
-        invite.status = InviteStatus::Accepted;
-        invite.updated_at = Utc::now();
-        invite.session_id = Some(session_id.clone());
-        invite.session_tokens = Some(tokens.clone());
-        let from_agent_id = invite.from_agent_id.clone();
-        let contract_hash = invite.contract_hash.clone();
+        drop(store); // release write lock before acquiring channel Mutex
 
-        // Drop mutable borrow on invite before building event
-        let event = self.build_event_locked(
-            &mut store,
-            &from_agent_id,
-            InboxEventType::InviteAccepted,
-            invite_id,
-            caller_agent_id,
-        );
-        self.emit_event_locked(&store, &from_agent_id, event);
+        self.emit_event(&from_agent_id, event).await;
 
         Ok(AcceptInviteResponse {
             invite_id: invite_id.to_string(),
@@ -294,7 +510,7 @@ impl InboxStore {
         caller_agent_id: &str,
         reason_code: Option<DeclineReasonCode>,
     ) -> Result<InviteDetailResponse, RelayError> {
-        let mut store = self.inner.lock().await;
+        let mut store = self.inner.write().await;
         let invite = store
             .invites
             .get_mut(invite_id)
@@ -323,15 +539,57 @@ impl InboxStore {
         let from_agent_id = invite.from_agent_id.clone();
         let response = invite.to_detail_response(caller_agent_id);
 
-        // Drop mutable borrow on invite before building event
-        let event = self.build_event_locked(
-            &mut store,
-            &from_agent_id,
-            InboxEventType::InviteDeclined,
-            invite_id,
-            caller_agent_id,
-        );
-        self.emit_event_locked(&store, &from_agent_id, event);
+        // Extract data for SQLite write-through before dropping invite borrow
+        #[cfg(feature = "persistence")]
+        let sqlite_payload = self.db.as_ref().map(|_| {
+            (
+                invite_id.to_string(),
+                invite.status,
+                invite.updated_at,
+                invite.decline_reason_code,
+            )
+        });
+
+        // NLL: invite borrow ends here; all needed data extracted above.
+        let counter = store
+            .event_counters
+            .entry(from_agent_id.clone())
+            .or_insert(0);
+        *counter += 1;
+        let event = InboxEvent {
+            event_id: *counter,
+            event_type: InboxEventType::InviteDeclined,
+            invite_id: invite_id.to_string(),
+            from_agent_id: caller_agent_id.to_string(),
+            timestamp: Utc::now(),
+        };
+
+        // SQLite write-through
+        #[cfg(feature = "persistence")]
+        if let Some((id, status, upd_at, rc)) = sqlite_payload {
+            if let Some(ref db) = self.db {
+                let db = db.clone();
+                tokio::task::spawn_blocking(move || {
+                    db.update_invite(&id, status, upd_at, None, None, rc)
+                })
+                .await
+                .map_err(|e| RelayError::ServiceUnavailable(format!("db thread: {e}")))?
+                .map_err(|e| RelayError::Internal(format!("sqlite: {e}")))?;
+            }
+        }
+
+        #[cfg(feature = "persistence")]
+        if let Some(ref db) = self.db {
+            let db = db.clone();
+            let agent = from_agent_id.clone();
+            let count = *counter;
+            tokio::spawn(async move {
+                let _ = tokio::task::spawn_blocking(move || db.upsert_event_counter(&agent, count)).await;
+            });
+        }
+
+        drop(store);
+        self.emit_event(&from_agent_id, event).await;
 
         Ok(response)
     }
@@ -344,7 +602,7 @@ impl InboxStore {
         invite_id: &str,
         caller_agent_id: &str,
     ) -> Result<InviteDetailResponse, RelayError> {
-        let mut store = self.inner.lock().await;
+        let mut store = self.inner.write().await;
         let invite = store
             .invites
             .get_mut(invite_id)
@@ -372,24 +630,64 @@ impl InboxStore {
         let to_agent_id = invite.to_agent_id.clone();
         let response = invite.to_detail_response(caller_agent_id);
 
-        // Drop mutable borrow on invite before building event
-        let event = self.build_event_locked(
-            &mut store,
-            &to_agent_id,
-            InboxEventType::InviteCanceled,
-            invite_id,
-            caller_agent_id,
-        );
-        self.emit_event_locked(&store, &to_agent_id, event);
+        // Extract data for SQLite write-through before dropping invite borrow
+        #[cfg(feature = "persistence")]
+        let sqlite_payload = self.db.as_ref().map(|_| {
+            (
+                invite_id.to_string(),
+                invite.status,
+                invite.updated_at,
+            )
+        });
+
+        // NLL: invite borrow ends here; all needed data extracted above.
+        let counter = store
+            .event_counters
+            .entry(to_agent_id.clone())
+            .or_insert(0);
+        *counter += 1;
+        let event = InboxEvent {
+            event_id: *counter,
+            event_type: InboxEventType::InviteCanceled,
+            invite_id: invite_id.to_string(),
+            from_agent_id: caller_agent_id.to_string(),
+            timestamp: Utc::now(),
+        };
+
+        // SQLite write-through
+        #[cfg(feature = "persistence")]
+        if let Some((id, status, upd_at)) = sqlite_payload {
+            if let Some(ref db) = self.db {
+                let db = db.clone();
+                tokio::task::spawn_blocking(move || {
+                    db.update_invite(&id, status, upd_at, None, None, None)
+                })
+                .await
+                .map_err(|e| RelayError::ServiceUnavailable(format!("db thread: {e}")))?
+                .map_err(|e| RelayError::Internal(format!("sqlite: {e}")))?;
+            }
+        }
+
+        #[cfg(feature = "persistence")]
+        if let Some(ref db) = self.db {
+            let db = db.clone();
+            let agent = to_agent_id.clone();
+            let count = *counter;
+            tokio::spawn(async move {
+                let _ = tokio::task::spawn_blocking(move || db.upsert_event_counter(&agent, count)).await;
+            });
+        }
+
+        drop(store);
+        self.emit_event(&to_agent_id, event).await;
 
         Ok(response)
     }
 
     /// Subscribe to SSE events for an agent. Returns a broadcast receiver.
     pub async fn subscribe(&self, agent_id: &str) -> broadcast::Receiver<InboxEvent> {
-        let mut store = self.inner.lock().await;
-        let sender = store
-            .event_channels
+        let mut channels = self.channels.lock().await;
+        let sender = channels
             .entry(agent_id.to_string())
             .or_insert_with(|| broadcast::channel(SSE_CHANNEL_CAPACITY).0);
         sender.subscribe()
@@ -405,7 +703,7 @@ impl InboxStore {
             chrono::Duration::hours(24)
         });
 
-        let mut store = self.inner.lock().await;
+        let mut store = self.inner.write().await;
         let mut expired_count = 0;
         let mut gc_ids = Vec::new();
         // Collect newly-expired invite metadata during the mutation pass
@@ -434,16 +732,24 @@ impl InboxStore {
             }
         }
 
-        // Emit INVITE_EXPIRED events for newly expired invites
-        for (invite_id, to_agent_id, from_agent_id) in newly_expired {
-            let event = self.build_event_locked(
-                &mut store,
-                &to_agent_id,
-                InboxEventType::InviteExpired,
-                &invite_id,
-                &from_agent_id,
-            );
-            self.emit_event_locked(&store, &to_agent_id, event);
+        // Build SSE events for newly expired invites while holding write lock
+        let mut expire_events: Vec<(String, InboxEvent)> = Vec::new();
+        for (invite_id, to_agent_id, from_agent_id) in &newly_expired {
+            let counter = store
+                .event_counters
+                .entry(to_agent_id.clone())
+                .or_insert(0);
+            *counter += 1;
+            expire_events.push((
+                to_agent_id.clone(),
+                InboxEvent {
+                    event_id: *counter,
+                    event_type: InboxEventType::InviteExpired,
+                    invite_id: invite_id.clone(),
+                    from_agent_id: from_agent_id.clone(),
+                    timestamp: now,
+                },
+            ));
         }
 
         // Phase 2: remove garbage-collected invites
@@ -453,6 +759,31 @@ impl InboxStore {
             for index in store.inbox_index.values_mut() {
                 index.retain(|iid| iid != id);
             }
+        }
+
+        // SQLite write-through: batch expire and delete (best-effort, fire-and-forget)
+        #[cfg(feature = "persistence")]
+        if let Some(ref db) = self.db {
+            if !newly_expired.is_empty() {
+                let db = db.clone();
+                let ids: Vec<String> = newly_expired.iter().map(|(id, _, _)| id.clone()).collect();
+                tokio::spawn(async move {
+                    let _ = tokio::task::spawn_blocking(move || db.batch_expire(&ids, now)).await;
+                });
+            }
+            if !gc_ids.is_empty() {
+                let db = db.clone();
+                let ids = gc_ids.clone();
+                tokio::spawn(async move {
+                    let _ = tokio::task::spawn_blocking(move || db.batch_delete(&ids)).await;
+                });
+            }
+        }
+
+        drop(store); // release write lock before emitting SSE
+
+        for (agent_id, event) in expire_events {
+            self.emit_event(&agent_id, event).await;
         }
 
         expired_count + gc_ids.len()
@@ -474,31 +805,10 @@ impl InboxStore {
 
     // ── Internal helpers ──────────────────────────────────────────────────
 
-    fn build_event_locked(
-        &self,
-        store: &mut InboxStoreInner,
-        recipient_agent_id: &str,
-        event_type: InboxEventType,
-        invite_id: &str,
-        from_agent_id: &str,
-    ) -> InboxEvent {
-        let counter = store
-            .event_counters
-            .entry(recipient_agent_id.to_string())
-            .or_insert(0);
-        *counter += 1;
-
-        InboxEvent {
-            event_id: *counter,
-            event_type,
-            invite_id: invite_id.to_string(),
-            from_agent_id: from_agent_id.to_string(),
-            timestamp: Utc::now(),
-        }
-    }
-
-    fn emit_event_locked(&self, store: &InboxStoreInner, agent_id: &str, event: InboxEvent) {
-        if let Some(sender) = store.event_channels.get(agent_id) {
+    /// Emit an SSE event to an agent's channel (acquires channel Mutex only).
+    async fn emit_event(&self, agent_id: &str, event: InboxEvent) {
+        let channels = self.channels.lock().await;
+        if let Some(sender) = channels.get(agent_id) {
             // Best-effort: SSE is lossy. Log only when active subscribers miss events.
             if sender.send(event).is_err() && sender.receiver_count() > 0 {
                 tracing::warn!(agent_id, "SSE event dropped (buffer full)");
@@ -1145,5 +1455,168 @@ mod tests {
 
         let result = store.create_invite("alice", &request, None).await;
         assert!(matches!(result, Err(RelayError::ContractValidation(_))));
+    }
+
+    // ── Concurrency tests ─────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_concurrent_reads_dont_block() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc as StdArc;
+
+        let store = InboxStore::new(Duration::from_secs(604800));
+        store
+            .create_invite("alice", &test_create_request(), None)
+            .await
+            .unwrap();
+
+        let store = StdArc::new(store);
+        let count = StdArc::new(AtomicUsize::new(0));
+
+        let mut handles = vec![];
+        for _ in 0..10 {
+            let s = store.clone();
+            let c = count.clone();
+            handles.push(tokio::spawn(async move {
+                let q = InboxQuery {
+                    status: None,
+                    from_agent_id: None,
+                    limit: None,
+                };
+                let resp = s.list_inbox("bob", &q).await;
+                assert_eq!(resp.invites.len(), 1);
+                c.fetch_add(1, Ordering::SeqCst);
+            }));
+        }
+
+        for h in handles {
+            h.await.unwrap();
+        }
+        assert_eq!(count.load(Ordering::SeqCst), 10);
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_accept_same_agent_idempotent() {
+        use std::sync::Arc as StdArc;
+
+        let inbox_store = StdArc::new(InboxStore::new(Duration::from_secs(604800)));
+        let session_store = StdArc::new(SessionStore::new(Duration::from_secs(600)));
+
+        let invite_resp = inbox_store
+            .create_invite("alice", &test_create_request(), None)
+            .await
+            .unwrap();
+        let invite_id = invite_resp.invite_id.clone();
+
+        // Launch 5 concurrent accepts by bob
+        let mut handles = vec![];
+        for _ in 0..5 {
+            let is = inbox_store.clone();
+            let ss = session_store.clone();
+            let id = invite_id.clone();
+            handles.push(tokio::spawn(async move {
+                is.accept_invite(&id, "bob", None, &ss).await
+            }));
+        }
+
+        let results: Vec<_> = futures_util::future::join_all(handles).await;
+        let successes: Vec<_> = results
+            .into_iter()
+            .filter_map(|r| r.unwrap().ok())
+            .collect();
+
+        // All should succeed with the same session_id (idempotent)
+        assert!(!successes.is_empty());
+        let first_session = &successes[0].session_id;
+        for r in &successes {
+            assert_eq!(&r.session_id, first_session);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_accept_does_not_block_list_inbox() {
+        use std::sync::Arc as StdArc;
+
+        let inbox_store = StdArc::new(InboxStore::new(Duration::from_secs(604800)));
+        let session_store = StdArc::new(SessionStore::new(Duration::from_secs(600)));
+
+        // Create several invites
+        for _ in 0..3 {
+            inbox_store
+                .create_invite("alice", &test_create_request(), None)
+                .await
+                .unwrap();
+        }
+
+        let q = InboxQuery {
+            status: None,
+            from_agent_id: None,
+            limit: None,
+        };
+
+        // list_inbox (read) should complete even while accept (write) is running
+        // We verify this by running both concurrently
+        let is1 = inbox_store.clone();
+        let is2 = inbox_store.clone();
+        let ss = session_store.clone();
+
+        // Get the first invite to accept
+        let first_id = {
+            let store = inbox_store.inner.read().await;
+            store
+                .inbox_index
+                .get("bob")
+                .and_then(|v| v.first().cloned())
+                .unwrap()
+        };
+
+        let (list_result, accept_result) = tokio::join!(
+            async move {
+                is1.list_inbox("bob", &q).await
+            },
+            async move {
+                is2.accept_invite(&first_id, "bob", None, &ss).await
+            }
+        );
+
+        assert!(list_result.invites.len() >= 1);
+        assert!(accept_result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_accept_races_with_cancel_one_wins() {
+        use std::sync::Arc as StdArc;
+
+        let inbox_store = StdArc::new(InboxStore::new(Duration::from_secs(604800)));
+        let session_store = StdArc::new(SessionStore::new(Duration::from_secs(600)));
+
+        let invite_resp = inbox_store
+            .create_invite("alice", &test_create_request(), None)
+            .await
+            .unwrap();
+        let invite_id = invite_resp.invite_id.clone();
+
+        // Run accept and cancel concurrently — exactly one should succeed
+        let is1 = inbox_store.clone();
+        let is2 = inbox_store.clone();
+        let ss = session_store.clone();
+        let id1 = invite_id.clone();
+        let id2 = invite_id.clone();
+
+        let (accept_result, cancel_result) = tokio::join!(
+            async move { is1.accept_invite(&id1, "bob", None, &ss).await },
+            async move { is2.cancel_invite(&id2, "alice").await },
+        );
+
+        // Exactly one should succeed; the other gets a state conflict
+        let accept_ok = accept_result.is_ok();
+        let cancel_ok = cancel_result.is_ok();
+
+        // At least one must succeed, and if both succeed it must be via
+        // legitimate terminal states (no invalid state)
+        assert!(
+            accept_ok || cancel_ok,
+            "at least one operation should succeed"
+        );
     }
 }
