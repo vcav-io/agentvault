@@ -1,11 +1,13 @@
 use serde::{Deserialize, Serialize};
-use vault_family_types::Purpose;
 
 use crate::session::{AbortReason, SessionState};
 
 // ============================================================================
 // Core types (shared between single-shot and bilateral)
 // ============================================================================
+
+// Contract is now defined in vault-family-types. Re-export for use within crate.
+pub use vault_family_types::Contract;
 
 /// One party's input to the relay.
 #[derive(Debug, Clone, Deserialize)]
@@ -24,24 +26,6 @@ pub struct ModelProfile {
     pub model_family: String,
     pub reasoning_mode: String,
     pub structured_output: bool,
-}
-
-/// Contract describing the session terms.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Contract {
-    pub purpose_code: Purpose,
-    pub output_schema_id: String,
-    pub output_schema: serde_json::Value,
-    pub participants: Vec<String>,
-    pub prompt_template_hash: String,
-    #[serde(default)]
-    pub entropy_budget_bits: Option<u32>,
-    #[serde(default)]
-    pub timing_class: Option<String>,
-    #[serde(default)]
-    pub metadata: serde_json::Value,
-    #[serde(default)]
-    pub model_profile_id: Option<String>,
 }
 
 // ============================================================================
