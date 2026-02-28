@@ -675,17 +675,38 @@ result_json="$(printf '%s\n' "${analyser_output}" | tail -1)"
 verdict="$(node -e "
 const r = JSON.parse(process.argv[1]);
 process.stdout.write(r.verdict);
-" -- "${result_json}" 2>/dev/null || echo "UNKNOWN")"
+" -- "${result_json}" 2>/dev/null)" || {
+  log_warn "Verdict extraction failed — result_json may be malformed. Defaulting to UNKNOWN."
+  verdict="UNKNOWN"
+}
+if [[ -z "${verdict}" ]]; then
+  log_warn "Verdict field missing from analyser output — defaulting to UNKNOWN"
+  verdict="UNKNOWN"
+fi
 
 narrowing_detected="$(node -e "
 const r = JSON.parse(process.argv[1]);
 process.stdout.write(String(r.narrowingDetected));
-" -- "${result_json}" 2>/dev/null || echo "false")"
+" -- "${result_json}" 2>/dev/null)" || {
+  log_warn "narrowingDetected extraction failed — defaulting to false"
+  narrowing_detected="false"
+}
+if [[ -z "${narrowing_detected}" ]]; then
+  log_warn "narrowingDetected field missing from analyser output — defaulting to false"
+  narrowing_detected="false"
+fi
 
 experiment_noisy="$(node -e "
 const r = JSON.parse(process.argv[1]);
 process.stdout.write(String(r.experimentNoisy));
-" -- "${result_json}" 2>/dev/null || echo "false")"
+" -- "${result_json}" 2>/dev/null)" || {
+  log_warn "experimentNoisy extraction failed — defaulting to false"
+  experiment_noisy="false"
+}
+if [[ -z "${experiment_noisy}" ]]; then
+  log_warn "experimentNoisy field missing from analyser output — defaulting to false"
+  experiment_noisy="false"
+fi
 
 # ---------------------------------------------------------------------------
 # Log per-step results

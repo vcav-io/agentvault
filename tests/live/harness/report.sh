@@ -50,10 +50,20 @@ generate_report() {
   local bob_session_file="${BOB_DIR:-${HOME}/vcav-test/bob}/.agentvault/last_session.json"
 
   if [[ -f "${alice_session_file}" ]]; then
-    alice_session_id="\"$(node -e "const fs=require('fs');try{const s=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));process.stdout.write(s.session_id??'unknown')}catch{process.stdout.write('unknown')}" -- "${alice_session_file}" 2>/dev/null || echo "unknown")\""
+    local _alice_raw
+    _alice_raw="$(node -e "const fs=require('fs');try{const s=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));process.stdout.write(s.session_id??'unknown')}catch(e){if(e.code!=='ENOENT')process.stderr.write('session_id extraction failed: '+e.message+'\n');process.stdout.write('unknown')}" -- "${alice_session_file}" 2>/dev/null)" || {
+      log_warn "alice session_id extraction crashed — using fallback 'unknown'"
+      _alice_raw="unknown"
+    }
+    alice_session_id="\"${_alice_raw}\""
   fi
   if [[ -f "${bob_session_file}" ]]; then
-    bob_session_id="\"$(node -e "const fs=require('fs');try{const s=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));process.stdout.write(s.session_id??'unknown')}catch{process.stdout.write('unknown')}" -- "${bob_session_file}" 2>/dev/null || echo "unknown")\""
+    local _bob_raw
+    _bob_raw="$(node -e "const fs=require('fs');try{const s=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));process.stdout.write(s.session_id??'unknown')}catch(e){if(e.code!=='ENOENT')process.stderr.write('session_id extraction failed: '+e.message+'\n');process.stdout.write('unknown')}" -- "${bob_session_file}" 2>/dev/null)" || {
+      log_warn "bob session_id extraction crashed — using fallback 'unknown'"
+      _bob_raw="unknown"
+    }
+    bob_session_id="\"${_bob_raw}\""
   fi
 
   # Collect receipt fields if available
@@ -101,13 +111,22 @@ const s=[];process.stdin.on('data',c=>s.push(c));
 process.stdin.on('end',()=>{
   const checks=JSON.parse(s.join(''));
   process.stdout.write(String(checks.filter(c=>c.passed).length));
-});" 2>/dev/null || echo 0)"
+});" 2>/dev/null)" || {
+      log_warn "pass_count extraction crashed — report may show 0/0 counts"
+      pass_count=0
+    }
     fail_count="$(echo "${checks_json}" | node -e "
 const s=[];process.stdin.on('data',c=>s.push(c));
 process.stdin.on('end',()=>{
   const checks=JSON.parse(s.join(''));
   process.stdout.write(String(checks.filter(c=>!c.passed).length));
-});" 2>/dev/null || echo 0)"
+});" 2>/dev/null)" || {
+      log_warn "fail_count extraction crashed — report may show 0/0 counts"
+      fail_count=0
+    }
+    if [[ "${pass_count}" -eq 0 && "${fail_count}" -eq 0 && "${checks_json}" != "[]" ]]; then
+      log_warn "pass/fail extraction returned 0/0 but checks were present — possible parse error"
+    fi
   fi
 
   cat >"${run_dir}/report.md" <<MARKDOWN
@@ -153,7 +172,10 @@ process.stdin.on('end',()=>{
   const checks=JSON.parse(s.join(''));
   const rt=checks.filter(c=>c.name && c.name.startsWith('red_team_'));
   process.stdout.write(rt.length > 0 ? 'true' : 'false');
-});" 2>/dev/null || echo "false")"
+});" 2>/dev/null)" || {
+    log_warn "has_red_team detection crashed — Red Team Assessment section may be silently omitted"
+    has_red_team="false"
+  }
 
   if [[ "${has_red_team}" == "true" ]]; then
     echo "" >>"${run_dir}/report.md"
@@ -176,7 +198,9 @@ process.stdin.on('end',()=>{
     const evidence = (c.detail || '\u2014').replace(/\\s*\\[[A-Z0-9_-]+\\]\$/, '');
     process.stdout.write('| ' + c.name.replace('red_team_', '') + ' | ' + result + ' | ' + fc + ' | ' + evidence + ' |\\n');
   }
-});" 2>/dev/null >>"${run_dir}/report.md" || true
+});" 2>/dev/null >>"${run_dir}/report.md" || {
+      log_warn "Red team table rendering crashed — table body may be empty (headers only)"
+    }
 
     log_info "Red Team Assessment table appended to report.md"
   fi
