@@ -227,5 +227,5 @@ immediately — no `while` loops, no `sleep()`, no `pollUntilDone()` in INITIATE
 - [x] CI integration for TypeScript packages (PR #43)
 - [ ] Extract inbox protocol types to VFC (#39)
 - [x] Inbox hardening: `relayFetch` timeout wrapping, `res.json()` runtime validation (PR #45, #40 items 1-2)
-- [ ] Inbox hardening: mutex splitting, persistent storage (#40 items 3-4)
+- [x] Inbox hardening: mutex splitting, persistent storage (#40 items 3-4)
 - [x] OpenClaw two-agent live test with heartbeat-driven inbox discovery (2026-02-28, Alice+Bob VPSes via mcporter)

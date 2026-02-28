@@ -39,6 +39,9 @@ pub enum RelayError {
 
     #[error("Invite state conflict: {0}")]
     InviteStateConflict(String),
+
+    #[error("Service unavailable: {0}")]
+    ServiceUnavailable(String),
 }
 
 impl RelayError {
@@ -58,6 +61,7 @@ impl RelayError {
                 StatusCode::UNAUTHORIZED
             }
             RelayError::InviteStateConflict(_) => StatusCode::CONFLICT,
+            RelayError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
         }
     }
 }
@@ -71,6 +75,7 @@ impl IntoResponse for RelayError {
                 "UNAUTHORIZED".to_string()
             }
             RelayError::PolicyGate(_) => "OUTPUT_POLICY_VIOLATION".to_string(),
+            RelayError::ServiceUnavailable(_) => "SERVICE_UNAVAILABLE".to_string(),
             other => other.to_string(),
         };
         let body = serde_json::json!({

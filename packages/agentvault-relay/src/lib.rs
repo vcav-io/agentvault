@@ -5,6 +5,8 @@ pub mod error;
 pub mod inbox;
 pub mod inbox_handlers;
 pub mod inbox_types;
+#[cfg(feature = "persistence")]
+pub mod inbox_sqlite;
 pub mod prompt_program;
 pub mod provider;
 pub mod relay;

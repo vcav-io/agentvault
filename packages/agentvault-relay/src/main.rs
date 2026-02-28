@@ -174,11 +174,37 @@ async fn main() {
         }
     };
 
+    // Feature-gate warning: VCAV_INBOX_DB_PATH set but persistence not compiled
+    if std::env::var("VCAV_INBOX_DB_PATH").is_ok() {
+        #[cfg(not(feature = "persistence"))]
+        tracing::warn!(
+            "VCAV_INBOX_DB_PATH is set but binary was compiled without 'persistence' feature. \
+             Using in-memory inbox. Rebuild with --features persistence to enable SQLite."
+        );
+    }
+
     // Create inbox store with configurable TTL (default 7 days)
     let invite_ttl_secs: u64 = std::env::var("VCAV_INVITE_TTL_SECS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(604800);
+
+    #[cfg(feature = "persistence")]
+    let inbox_store = match std::env::var("VCAV_INBOX_DB_PATH") {
+        Ok(path) => {
+            tracing::info!(path = %path, "Opening SQLite inbox database");
+            match InboxStore::new_with_sqlite(Duration::from_secs(invite_ttl_secs), path).await {
+                Ok(store) => store,
+                Err(e) => {
+                    tracing::error!(error = %e, "failed to open SQLite inbox — refusing to start");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Err(_) => InboxStore::new(Duration::from_secs(invite_ttl_secs)),
+    };
+
+    #[cfg(not(feature = "persistence"))]
     let inbox_store = InboxStore::new(Duration::from_secs(invite_ttl_secs));
 
     // Start background inbox reaper
