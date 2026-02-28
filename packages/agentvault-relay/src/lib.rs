@@ -2,7 +2,6 @@
 
 pub mod agent_registry;
 pub mod enforcement_policy;
-pub mod entropy;
 pub mod error;
 pub mod inbox;
 pub mod inbox_handlers;

@@ -1,4 +1,4 @@
-use crate::entropy::calculate_schema_entropy_upper_bound;
+use entropy_core::calculate_schema_entropy_upper_bound;
 use chrono::Utc;
 use receipt_core::{BudgetUsageRecord, ExecutionLane, Receipt, ReceiptStatus, SignalClass};
 use sha2::{Digest, Sha256};
