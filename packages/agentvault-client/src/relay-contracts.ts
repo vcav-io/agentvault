@@ -215,3 +215,13 @@ export function computeRelayContractHash(contract: object): string {
   const canonical = canonicalize(contract);
   return bytesToHex(sha256(canonical));
 }
+
+/**
+ * Compute SHA-256 hash of an output schema using RFC 8785 (JCS)
+ * canonicalization. Matches the Rust relay's `compute_output_schema_hash`.
+ * The hash is bound into receipts as `output_schema_hash`.
+ */
+export function computeOutputSchemaHash(schema: object): string {
+  const canonical = canonicalize(schema);
+  return bytesToHex(sha256(canonical));
+}

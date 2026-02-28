@@ -19,6 +19,16 @@ const MAX_TOKENS: u32 = 256;
 /// Falls back to "unknown" in environments where .git/ is not present.
 const GIT_SHA: &str = env!("VCAV_GIT_SHA");
 
+/// Compute SHA-256 hash of an output schema using JCS canonicalization.
+/// Bound into receipts as `output_schema_hash`.
+pub fn compute_output_schema_hash(schema: &serde_json::Value) -> Result<String, RelayError> {
+    let canonical = receipt_core::canonicalize_serializable(schema)
+        .map_err(|e| RelayError::ContractValidation(format!("schema canonicalization: {e}")))?;
+    let mut hasher = Sha256::new();
+    hasher.update(canonical.as_bytes());
+    Ok(hex::encode(hasher.finalize()))
+}
+
 /// Compute SHA-256 hash of canonical contract JSON for receipt binding.
 pub fn compute_contract_hash(contract: &Contract) -> Result<String, RelayError> {
     let canonical = receipt_core::canonicalize_serializable(contract)
@@ -828,6 +838,130 @@ mod tests {
         assert!(
             matches!(err, RelayError::PolicyGate(_)),
             "Nl character should be caught by conservative Nd superset"
+        );
+    }
+
+    // ========================================================================
+    // Schema hash tests (content-addressing and cross-language parity)
+    // ========================================================================
+
+    #[test]
+    fn test_schema_hash_immutable() {
+        let mut schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "mediation_signal": {
+                    "type": "string",
+                    "enum": ["ALIGNMENT_POSSIBLE", "PARTIAL_ALIGNMENT", "FUNDAMENTAL_DISAGREEMENT",
+                             "NEEDS_FACILITATION", "INSUFFICIENT_SIGNAL"]
+                }
+            },
+            "required": ["mediation_signal"],
+            "additionalProperties": false
+        });
+
+        let h1 = compute_output_schema_hash(&schema).unwrap();
+        let h2 = compute_output_schema_hash(&schema).unwrap();
+        assert_eq!(h1, h2, "same schema must produce the same hash");
+
+        // Mutate the schema and verify the hash changes
+        schema
+            .as_object_mut()
+            .unwrap()
+            .insert("description".to_string(), serde_json::json!("mutated"));
+        let h3 = compute_output_schema_hash(&schema).unwrap();
+        assert_ne!(h1, h3, "mutated schema must produce a different hash");
+    }
+
+    #[test]
+    fn test_contract_hash_captures_schema_content() {
+        let base_contract = Contract {
+            purpose_code: vault_family_types::Purpose::Mediation,
+            output_schema_id: "vcav_e_mediation_signal_v2".to_string(),
+            output_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "signal": { "type": "string", "enum": ["A", "B"] }
+                },
+                "required": ["signal"],
+                "additionalProperties": false
+            }),
+            participants: vec!["alice".to_string(), "bob".to_string()],
+            prompt_template_hash: "a".repeat(64),
+            entropy_budget_bits: None,
+            timing_class: None,
+            metadata: serde_json::Value::Null,
+            model_profile_id: None,
+        };
+
+        let mut alt_contract = base_contract.clone();
+        alt_contract.output_schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "signal": { "type": "string", "enum": ["X", "Y", "Z"] }
+            },
+            "required": ["signal"],
+            "additionalProperties": false
+        });
+
+        let h1 = compute_contract_hash(&base_contract).unwrap();
+        let h2 = compute_contract_hash(&alt_contract).unwrap();
+        assert_ne!(h1, h2, "contracts with different output_schema must have different contract hashes");
+    }
+
+    #[test]
+    fn test_cross_language_schema_hash_parity() {
+        // Constructs the MEDIATION schema matching schemas/output/vcav_e_mediation_signal_v2.schema.json
+        // exactly. Hash verified against TypeScript computeOutputSchemaHash (JCS + SHA-256).
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "mediation_signal": {
+                    "type": "string",
+                    "enum": [
+                        "ALIGNMENT_POSSIBLE",
+                        "PARTIAL_ALIGNMENT",
+                        "FUNDAMENTAL_DISAGREEMENT",
+                        "NEEDS_FACILITATION",
+                        "INSUFFICIENT_SIGNAL"
+                    ]
+                },
+                "common_ground_code": {
+                    "type": "string",
+                    "enum": [
+                        "GOAL_ALIGNMENT",
+                        "RESOURCE_ALIGNMENT",
+                        "RELATIONSHIP_CONTINUITY",
+                        "VALUE_ALIGNMENT",
+                        "OPERATIONAL_ALIGNMENT",
+                        "NO_COMMON_GROUND_DETECTED"
+                    ]
+                },
+                "next_step_signal": {
+                    "type": "string",
+                    "enum": [
+                        "DIRECT_DIALOGUE",
+                        "STRUCTURED_NEGOTIATION",
+                        "THIRD_PARTY_FACILITATION",
+                        "COOLING_PERIOD",
+                        "SEEK_CLARIFICATION"
+                    ]
+                },
+                "confidence_band": {
+                    "type": "string",
+                    "enum": ["LOW", "MEDIUM", "HIGH"]
+                }
+            },
+            "required": ["mediation_signal", "common_ground_code", "next_step_signal", "confidence_band"],
+            "additionalProperties": false
+        });
+
+        let hash = compute_output_schema_hash(&schema).unwrap();
+        assert_eq!(
+            hash,
+            "0d25ea011d60a30156796b7e510caa804068bd4c01faa2f637def7dd07d5b3f6",
+            "MEDIATION schema hash must match TypeScript computeOutputSchemaHash \
+             (schemas/output/vcav_e_mediation_signal_v2.schema.json)"
         );
     }
 
