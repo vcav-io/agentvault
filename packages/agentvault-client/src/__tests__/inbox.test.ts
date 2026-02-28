@@ -12,6 +12,8 @@ import {
   acceptInvite,
   declineInvite,
   cancelInvite,
+  RelayTimeoutError,
+  RelayValidationError,
 } from '../inbox.js';
 import type { RelayClientConfig } from '../types.js';
 
@@ -40,6 +42,20 @@ function mockResponse(data: unknown, status = 200): Response {
     text: () => Promise.resolve(JSON.stringify(data)),
   } as unknown as Response;
 }
+
+/** Minimal valid InviteDetailResponse for tests that don't care about fields. */
+const validInviteDetail = {
+  invite_id: 'inv_abc',
+  from_agent_id: 'alice',
+  to_agent_id: 'bob',
+  status: 'PENDING',
+  purpose_code: 'COMPATIBILITY',
+  contract_hash: 'hash123',
+  provider: 'anthropic',
+  created_at: '2026-03-01T00:00:00Z',
+  updated_at: '2026-03-01T00:00:00Z',
+  expires_at: '2026-03-06T00:00:00Z',
+};
 
 describe('createInvite', () => {
   it('sends POST /invites with bearer token', async () => {
@@ -103,16 +119,7 @@ describe('pollInbox', () => {
 
 describe('getInvite', () => {
   it('sends GET /invites/:id with bearer token', async () => {
-    const body = {
-      invite_id: 'inv_abc',
-      from_agent_id: 'alice',
-      to_agent_id: 'bob',
-      status: 'PENDING',
-      purpose_code: 'COMPATIBILITY',
-      contract_hash: 'hash123',
-      provider: 'anthropic',
-    };
-    mockFetch.mockResolvedValueOnce(mockResponse(body));
+    mockFetch.mockResolvedValueOnce(mockResponse(validInviteDetail));
 
     const result = await getInvite(config, 'inv_abc', token);
 
@@ -164,7 +171,7 @@ describe('acceptInvite', () => {
 
 describe('declineInvite', () => {
   it('sends POST /invites/:id/decline with reason', async () => {
-    mockFetch.mockResolvedValueOnce(mockResponse({ status: 'DECLINED' }));
+    mockFetch.mockResolvedValueOnce(mockResponse({ ...validInviteDetail, status: 'DECLINED' }));
 
     await declineInvite(config, 'inv_abc', token, 'BUSY');
 
@@ -177,7 +184,7 @@ describe('declineInvite', () => {
 
 describe('cancelInvite', () => {
   it('sends POST /invites/:id/cancel', async () => {
-    mockFetch.mockResolvedValueOnce(mockResponse({ status: 'CANCELED' }));
+    mockFetch.mockResolvedValueOnce(mockResponse({ ...validInviteDetail, status: 'CANCELED' }));
 
     await cancelInvite(config, 'inv_abc', token);
 
@@ -230,6 +237,118 @@ describe('error handling', () => {
       expect(e.name).toBe('RelayHttpError');
       expect(e.status).toBe(401);
       expect(e.body).toContain('UNAUTHORIZED');
+    }
+  });
+});
+
+// ============================================================================
+// Timeout wrapping (C3: AbortError → RelayTimeoutError)
+// ============================================================================
+
+describe('timeout handling', () => {
+  it('wraps AbortError into RelayTimeoutError with duration', async () => {
+    const abortErr = new DOMException('The operation was aborted.', 'AbortError');
+    mockFetch.mockRejectedValueOnce(abortErr);
+
+    const shortConfig: RelayClientConfig = { relay_url: 'http://localhost:3100', timeout_ms: 5000 };
+
+    try {
+      await pollInbox(shortConfig, token);
+      expect.fail('should have thrown');
+    } catch (err: unknown) {
+      expect(err).toBeInstanceOf(RelayTimeoutError);
+      const te = err as RelayTimeoutError;
+      expect(te.timeoutMs).toBe(5000);
+      expect(te.message).toContain('5000ms');
+      expect(te.name).toBe('RelayTimeoutError');
+    }
+  });
+
+  it('uses default 30000ms when timeout_ms not set', async () => {
+    const abortErr = new DOMException('The operation was aborted.', 'AbortError');
+    mockFetch.mockRejectedValueOnce(abortErr);
+
+    try {
+      await pollInbox(config, token);
+      expect.fail('should have thrown');
+    } catch (err: unknown) {
+      expect(err).toBeInstanceOf(RelayTimeoutError);
+      const te = err as RelayTimeoutError;
+      expect(te.timeoutMs).toBe(30_000);
+      expect(te.message).toContain('30000ms');
+    }
+  });
+});
+
+// ============================================================================
+// Runtime validation (C4: malformed responses throw RelayValidationError)
+// ============================================================================
+
+describe('runtime validation', () => {
+  it('throws RelayValidationError when createInvite response missing invite_id', async () => {
+    mockFetch.mockResolvedValueOnce(mockResponse({ contract_hash: 'h', status: 'PENDING', expires_at: 'x' }));
+
+    await expect(createInvite(config, {
+      to_agent_id: 'bob',
+      contract: {},
+      provider: 'anthropic',
+      purpose_code: 'COMPATIBILITY',
+    }, token)).rejects.toThrow(RelayValidationError);
+  });
+
+  it('throws RelayValidationError when pollInbox response missing invites', async () => {
+    mockFetch.mockResolvedValueOnce(mockResponse({ latest_event_id: 0 }));
+
+    await expect(pollInbox(config, token)).rejects.toThrow(RelayValidationError);
+  });
+
+  it('throws RelayValidationError when pollInbox invites is not array', async () => {
+    mockFetch.mockResolvedValueOnce(mockResponse({ invites: 'bad', latest_event_id: 0 }));
+
+    await expect(pollInbox(config, token)).rejects.toThrow(RelayValidationError);
+  });
+
+  it('throws RelayValidationError when getInvite response missing required fields', async () => {
+    mockFetch.mockResolvedValueOnce(mockResponse({ invite_id: 'inv_abc' }));
+
+    await expect(getInvite(config, 'inv_abc', token)).rejects.toThrow(RelayValidationError);
+  });
+
+  it('throws RelayValidationError when acceptInvite response missing session_id', async () => {
+    mockFetch.mockResolvedValueOnce(mockResponse({
+      invite_id: 'inv_abc',
+      contract_hash: 'h',
+      responder_submit_token: 'rs',
+      responder_read_token: 'rr',
+      // session_id missing
+    }));
+
+    await expect(acceptInvite(config, 'inv_abc', token)).rejects.toThrow(RelayValidationError);
+  });
+
+  it('throws RelayValidationError when response is null', async () => {
+    mockFetch.mockResolvedValueOnce(mockResponse(null));
+
+    await expect(pollInbox(config, token)).rejects.toThrow(RelayValidationError);
+  });
+
+  it('throws RelayValidationError when response is an array', async () => {
+    mockFetch.mockResolvedValueOnce(mockResponse([]));
+
+    await expect(pollInbox(config, token)).rejects.toThrow(RelayValidationError);
+  });
+
+  it('error message includes field name', async () => {
+    mockFetch.mockResolvedValueOnce(mockResponse({ latest_event_id: 0 }));
+
+    try {
+      await pollInbox(config, token);
+      expect.fail('should have thrown');
+    } catch (err: unknown) {
+      expect(err).toBeInstanceOf(RelayValidationError);
+      const ve = err as RelayValidationError;
+      expect(ve.message).toContain('invites');
+      expect(ve.name).toBe('RelayValidationError');
     }
   });
 });

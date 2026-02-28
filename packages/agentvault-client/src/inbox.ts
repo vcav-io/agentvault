@@ -25,6 +25,20 @@ class RelayHttpError extends Error {
   }
 }
 
+export class RelayTimeoutError extends Error {
+  constructor(public readonly timeoutMs: number) {
+    super(`Relay request timed out after ${timeoutMs}ms`);
+    this.name = 'RelayTimeoutError';
+  }
+}
+
+export class RelayValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RelayValidationError';
+  }
+}
+
 async function relayFetch(
   config: RelayClientConfig,
   path: string,
@@ -41,10 +55,70 @@ async function relayFetch(
       throw new RelayHttpError(res.status, body);
     }
     return res;
+  } catch (err) {
+    if (err instanceof RelayHttpError) throw err;
+    // AbortController fires on timeout — wrap with a descriptive error
+    if (
+      err instanceof Error &&
+      (err.name === 'AbortError' || err.name === 'TimeoutError')
+    ) {
+      throw new RelayTimeoutError(timeoutMs);
+    }
+    throw err;
   } finally {
     clearTimeout(timer);
   }
 }
+
+// ── Runtime validators ────────────────────────────────────────────────────
+
+function requireFields(obj: unknown, fields: string[], typeName: string): Record<string, unknown> {
+  if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
+    throw new RelayValidationError(
+      `${typeName}: expected object, got ${obj === null ? 'null' : typeof obj}`,
+    );
+  }
+  const record = obj as Record<string, unknown>;
+  for (const field of fields) {
+    if (!(field in record)) {
+      throw new RelayValidationError(`${typeName}: missing required field "${field}"`);
+    }
+  }
+  return record;
+}
+
+function validateCreateInviteResponse(raw: unknown): CreateInviteResponse {
+  const r = requireFields(raw, ['invite_id', 'contract_hash', 'status', 'expires_at'], 'CreateInviteResponse');
+  return r as unknown as CreateInviteResponse;
+}
+
+function validateInboxResponse(raw: unknown): InboxResponse {
+  const r = requireFields(raw, ['invites', 'latest_event_id'], 'InboxResponse');
+  if (!Array.isArray(r.invites)) {
+    throw new RelayValidationError('InboxResponse: "invites" must be an array');
+  }
+  return r as unknown as InboxResponse;
+}
+
+function validateInviteDetailResponse(raw: unknown): InviteDetailResponse {
+  const r = requireFields(
+    raw,
+    ['invite_id', 'from_agent_id', 'to_agent_id', 'status', 'purpose_code', 'contract_hash', 'provider', 'created_at', 'updated_at', 'expires_at'],
+    'InviteDetailResponse',
+  );
+  return r as unknown as InviteDetailResponse;
+}
+
+function validateAcceptInviteResponse(raw: unknown): AcceptInviteResponse {
+  const r = requireFields(
+    raw,
+    ['invite_id', 'session_id', 'contract_hash', 'responder_submit_token', 'responder_read_token'],
+    'AcceptInviteResponse',
+  );
+  return r as unknown as AcceptInviteResponse;
+}
+
+// ── Public functions ──────────────────────────────────────────────────────
 
 /** POST /invites — create a new invite. */
 export async function createInvite(
@@ -60,7 +134,7 @@ export async function createInvite(
     },
     body: JSON.stringify(request),
   });
-  return res.json() as Promise<CreateInviteResponse>;
+  return validateCreateInviteResponse(await res.json());
 }
 
 /** GET /inbox — list inbox with optional filters. */
@@ -79,7 +153,7 @@ export async function pollInbox(
     method: 'GET',
     headers: { Authorization: `Bearer ${inboxToken}` },
   });
-  return res.json() as Promise<InboxResponse>;
+  return validateInboxResponse(await res.json());
 }
 
 /** GET /invites/:id — get invite detail (caller-dependent redaction). */
@@ -92,7 +166,7 @@ export async function getInvite(
     method: 'GET',
     headers: { Authorization: `Bearer ${inboxToken}` },
   });
-  return res.json() as Promise<InviteDetailResponse>;
+  return validateInviteDetailResponse(await res.json());
 }
 
 /** POST /invites/:id/accept — accept an invite (creates session, returns tokens). */
@@ -114,7 +188,7 @@ export async function acceptInvite(
     },
     body: JSON.stringify(payload),
   });
-  return res.json() as Promise<AcceptInviteResponse>;
+  return validateAcceptInviteResponse(await res.json());
 }
 
 /** POST /invites/:id/decline — decline an invite. */
@@ -136,7 +210,7 @@ export async function declineInvite(
     },
     body: JSON.stringify(payload),
   });
-  return res.json() as Promise<InviteDetailResponse>;
+  return validateInviteDetailResponse(await res.json());
 }
 
 /** POST /invites/:id/cancel — cancel an invite (sender only). */
@@ -153,5 +227,5 @@ export async function cancelInvite(
     },
     body: JSON.stringify({}),
   });
-  return res.json() as Promise<InviteDetailResponse>;
+  return validateInviteDetailResponse(await res.json());
 }
