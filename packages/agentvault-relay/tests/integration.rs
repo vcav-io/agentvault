@@ -20,10 +20,49 @@ use tower::ServiceExt;
 use agentvault_relay::{
     agent_registry::{AgentRegistry, RegisteredAgent},
     build_router,
+    enforcement_policy::{
+        EnforcementClass, EnforcementRule, RelayEnforcementPolicy, RuleScope, RuleScopeKind,
+        RuleType,
+    },
     inbox::InboxStore,
     session::SessionStore,
     AppState,
 };
+
+/// Build a minimal enforcement policy for tests.
+fn test_enforcement_policy() -> RelayEnforcementPolicy {
+    RelayEnforcementPolicy {
+        policy_version: "1".to_string(),
+        policy_id: "test_policy".to_string(),
+        policy_scope: "RELAY_GLOBAL".to_string(),
+        model_profile_allowlist: vec![],
+        provider_allowlist: vec![],
+        max_output_tokens: None,
+        rules: vec![
+            EnforcementRule {
+                rule_id: "no_digits".to_string(),
+                rule_type: RuleType::UnicodeCategoryReject,
+                value: "Nd".to_string(),
+                scope: RuleScope {
+                    kind: RuleScopeKind::AllStringValues,
+                    skip_keys: vec!["schema_version".to_string()],
+                },
+                classification: EnforcementClass::Gate,
+            },
+            EnforcementRule {
+                rule_id: "no_currency_symbols".to_string(),
+                rule_type: RuleType::UnicodeCategoryReject,
+                value: "Sc".to_string(),
+                scope: RuleScope {
+                    kind: RuleScopeKind::AllStringValues,
+                    skip_keys: vec!["schema_version".to_string()],
+                },
+                classification: EnforcementClass::Gate,
+            },
+        ],
+        entropy_constraints: None,
+    }
+}
 
 /// Build a test signing key (deterministic).
 fn test_signing_key() -> SigningKey {
@@ -42,6 +81,7 @@ fn test_app_state(mock_base_url: &str, prompt_dir: &str) -> AppState {
         openai_base_url: None,
         prompt_program_dir: prompt_dir.to_string(),
         session_store: SessionStore::new(Duration::from_secs(600)),
+        enforcement_policy: test_enforcement_policy(),
         enforcement_policy_hash: "0".repeat(64),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
@@ -898,6 +938,7 @@ async fn test_submit_token_is_one_time_use() {
         openai_base_url: None,
         prompt_program_dir: "/tmp".to_string(),
         session_store: state.session_store.clone(),
+        enforcement_policy: test_enforcement_policy(),
         enforcement_policy_hash: "0".repeat(64),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
@@ -1075,6 +1116,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         openai_base_url: None,
         prompt_program_dir: prompt_dir.clone(),
         session_store: state.session_store.clone(),
+        enforcement_policy: test_enforcement_policy(),
         enforcement_policy_hash: "0".repeat(64),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
@@ -1120,6 +1162,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         openai_base_url: None,
         prompt_program_dir: prompt_dir.clone(),
         session_store: state.session_store.clone(),
+        enforcement_policy: test_enforcement_policy(),
         enforcement_policy_hash: "0".repeat(64),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
@@ -1179,6 +1222,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         openai_base_url: None,
         prompt_program_dir: prompt_dir.clone(),
         session_store: state.session_store.clone(),
+        enforcement_policy: test_enforcement_policy(),
         enforcement_policy_hash: "0".repeat(64),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
@@ -1257,6 +1301,7 @@ async fn test_submit_with_correct_contract_hash_succeeds() {
         openai_base_url: None,
         prompt_program_dir: "/tmp".to_string(),
         session_store: state.session_store.clone(),
+        enforcement_policy: test_enforcement_policy(),
         enforcement_policy_hash: "0".repeat(64),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
@@ -1317,6 +1362,7 @@ async fn test_submit_with_wrong_contract_hash_rejected() {
         openai_base_url: None,
         prompt_program_dir: "/tmp".to_string(),
         session_store: state.session_store.clone(),
+        enforcement_policy: test_enforcement_policy(),
         enforcement_policy_hash: "0".repeat(64),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
@@ -1378,6 +1424,7 @@ async fn test_submit_without_contract_hash_still_works() {
         openai_base_url: None,
         prompt_program_dir: "/tmp".to_string(),
         session_store: state.session_store.clone(),
+        enforcement_policy: test_enforcement_policy(),
         enforcement_policy_hash: "0".repeat(64),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
@@ -1438,6 +1485,7 @@ fn inbox_test_app_state() -> AppState {
         openai_base_url: None,
         prompt_program_dir: prompt_dir,
         session_store: SessionStore::new(Duration::from_secs(600)),
+        enforcement_policy: test_enforcement_policy(),
         enforcement_policy_hash: "0".repeat(64),
         agent_registry: registry,
         inbox_store: InboxStore::new(Duration::from_secs(600)),

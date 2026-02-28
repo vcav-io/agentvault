@@ -1,6 +1,7 @@
 {
   "policy_version": "1",
   "policy_id": "compatibility_safe_v1",
+  "policy_scope": "RELAY_GLOBAL",
   "model_profile_allowlist": ["api-claude-sonnet-v1"],
   "provider_allowlist": ["anthropic", "openai"],
   "max_output_tokens": null,

@@ -11,13 +11,13 @@ use crate::error::RelayError;
 
 /// Content-addressed relay enforcement policy.
 ///
-/// This is Phase A: the artefact is loaded, hashed, and bound into receipts.
-/// The existing hardcoded digit/currency guard continues to run unchanged.
-/// Phase B will wire the guard to read from this config.
+/// Rules are read at runtime by `validate_output_enforcement_rules` in relay.rs.
+/// The policy hash is bound into every receipt via `guardian_policy_hash`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelayEnforcementPolicy {
     pub policy_version: String,
     pub policy_id: String,
+    pub policy_scope: String,
     #[serde(default)]
     pub model_profile_allowlist: Vec<String>,
     #[serde(default)]
@@ -84,8 +84,56 @@ pub enum EnforcementClass {
 }
 
 // ============================================================================
+// Policy scope
+// ============================================================================
+
+const POLICY_SCOPE_RELAY_GLOBAL: &str = "RELAY_GLOBAL";
+
+/// Validate that the policy declares a known scope.
+///
+/// The only supported scope is `RELAY_GLOBAL` — rules apply to all output schemas.
+pub fn validate_policy_scope(policy: &RelayEnforcementPolicy) -> Result<(), RelayError> {
+    if policy.policy_scope != POLICY_SCOPE_RELAY_GLOBAL {
+        return Err(RelayError::EnforcementPolicy(format!(
+            "unsupported policy_scope '{}' — only '{}' is supported",
+            policy.policy_scope, POLICY_SCOPE_RELAY_GLOBAL,
+        )));
+    }
+    Ok(())
+}
+
+// ============================================================================
+// Rule category validation (startup check)
+// ============================================================================
+
+/// Unicode categories supported by the relay's enforcement guard.
+const SUPPORTED_CATEGORIES: &[&str] = &["Nd", "Sc"];
+
+/// Validate that all rules reference supported unicode categories.
+///
+/// Called at startup. Unknown categories cause a startup failure (fail-closed).
+pub fn validate_rule_categories(policy: &RelayEnforcementPolicy) -> Result<(), RelayError> {
+    for rule in &policy.rules {
+        match rule.rule_type {
+            RuleType::UnicodeCategoryReject => {
+                if !SUPPORTED_CATEGORIES.contains(&rule.value.as_str()) {
+                    return Err(RelayError::EnforcementPolicy(format!(
+                        "rule '{}' references unsupported unicode category '{}' — supported: {:?}",
+                        rule.rule_id, rule.value, SUPPORTED_CATEGORIES,
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+// ============================================================================
 // Capabilities
 // ============================================================================
+
+/// Stable versioned capability strings exposed via `/capabilities`.
+pub const CAP_UNICODE_CATEGORY_REJECT: &str = "enforcement.unicode_category_reject.v1";
 
 /// Capabilities that the relay can support.
 ///
@@ -108,6 +156,15 @@ fn supported_capabilities() -> HashSet<RelayCapability> {
     caps.insert(RelayCapability::MaxOutputTokensEnforcement);
     caps.insert(RelayCapability::EntropyBudgetEnforcement);
     caps
+}
+
+/// Return the list of enforcement capability strings for the `/capabilities` endpoint.
+///
+/// Only capabilities with runtime enforcement (output guard) are exposed here.
+/// Capabilities used only for startup validation (e.g. provider allowlist checks)
+/// are intentionally omitted — they are internal invariants, not external contracts.
+pub fn supported_capability_strings() -> Vec<String> {
+    vec![CAP_UNICODE_CATEGORY_REJECT.to_string()]
 }
 
 /// Derive required capabilities from a policy.
@@ -144,22 +201,30 @@ pub fn derive_required_capabilities(policy: &RelayEnforcementPolicy) -> HashSet<
     caps
 }
 
-/// Validate that all required capabilities are supported by this relay.
+/// Validate that all required capabilities are in the supported set.
 ///
-/// Fails closed: if any required capability is unsupported, returns an error.
-pub fn validate_capabilities(policy: &RelayEnforcementPolicy) -> Result<(), RelayError> {
-    let required = derive_required_capabilities(policy);
-    let supported = supported_capabilities();
-
-    for cap in &required {
+/// Testable inner function — takes explicit required/supported sets.
+pub fn validate_capabilities_with(
+    required: &HashSet<RelayCapability>,
+    supported: &HashSet<RelayCapability>,
+) -> Result<(), RelayError> {
+    for cap in required {
         if !supported.contains(cap) {
             return Err(RelayError::EnforcementPolicy(format!(
                 "policy requires unsupported capability: {cap:?}"
             )));
         }
     }
-
     Ok(())
+}
+
+/// Validate that all required capabilities are supported by this relay.
+///
+/// Fails closed: if any required capability is unsupported, returns an error.
+pub fn validate_capabilities(policy: &RelayEnforcementPolicy) -> Result<(), RelayError> {
+    let required = derive_required_capabilities(policy);
+    let supported = supported_capabilities();
+    validate_capabilities_with(&required, &supported)
 }
 
 // ============================================================================
@@ -439,6 +504,7 @@ mod tests {
         RelayEnforcementPolicy {
             policy_version: "1".to_string(),
             policy_id: "compatibility_safe_v1".to_string(),
+            policy_scope: "RELAY_GLOBAL".to_string(),
             model_profile_allowlist: vec!["api-claude-sonnet-v1".to_string()],
             provider_allowlist: vec!["anthropic".to_string(), "openai".to_string()],
             max_output_tokens: None,
@@ -582,6 +648,7 @@ mod tests {
         let policy = RelayEnforcementPolicy {
             policy_version: "1".to_string(),
             policy_id: "empty".to_string(),
+            policy_scope: "RELAY_GLOBAL".to_string(),
             model_profile_allowlist: vec![],
             provider_allowlist: vec![],
             max_output_tokens: None,
@@ -926,7 +993,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Receipt binding (declared, Phase A)
+    // Receipt binding
     // -----------------------------------------------------------------------
 
     #[test]
@@ -939,8 +1006,6 @@ mod tests {
         let policy = sample_policy();
         let enforcement_hash = content_hash(&policy).unwrap();
 
-        // Build a receipt with guardian_policy_hash = enforcement policy content hash
-        // Phase A: declared only — enforcement wired in Phase B
         let runtime_hash = hex::encode(Sha256::digest(b"test-git-sha"));
         let model_weights_hash = hex::encode(Sha256::digest(b"api-mediated-no-local-weights"));
         let inference_config_hash = hex::encode(Sha256::digest(b"api-mediated-no-local-inference"));
@@ -977,8 +1042,89 @@ mod tests {
 
         assert_eq!(
             unsigned.guardian_policy_hash, enforcement_hash,
-            "receipt guardian_policy_hash must equal enforcement policy content hash (Phase A: declared)"
+            "receipt guardian_policy_hash must equal enforcement policy content hash"
         );
         assert_eq!(enforcement_hash.len(), 64, "hash should be 64 hex chars");
+
+        // Changing a policy field must change the bound hash.
+        let mut modified = sample_policy();
+        modified.policy_id = "modified_v1".to_string();
+        let modified_hash = content_hash(&modified).unwrap();
+        assert_ne!(
+            enforcement_hash, modified_hash,
+            "modifying policy must change the content hash bound into receipts"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Policy scope validation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_policy_scope_relay_global_accepted() {
+        let policy = sample_policy();
+        assert!(validate_policy_scope(&policy).is_ok());
+    }
+
+    #[test]
+    fn test_policy_scope_unknown_rejected() {
+        let mut policy = sample_policy();
+        policy.policy_scope = "SCHEMA_SPECIFIC".to_string();
+        let err = validate_policy_scope(&policy).unwrap_err();
+        assert!(
+            err.to_string().contains("unsupported policy_scope"),
+            "unknown scope should fail: {err}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Rule category validation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_validate_rule_categories_rejects_unknown() {
+        let mut policy = sample_policy();
+        policy.rules.push(EnforcementRule {
+            rule_id: "bad_category".to_string(),
+            rule_type: RuleType::UnicodeCategoryReject,
+            value: "Zz".to_string(),
+            scope: RuleScope {
+                kind: RuleScopeKind::AllStringValues,
+                skip_keys: vec![],
+            },
+            classification: EnforcementClass::Gate,
+        });
+        let err = validate_rule_categories(&policy).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("unsupported unicode category 'Zz'"),
+            "unknown category should fail: {err}"
+        );
+    }
+
+    #[test]
+    fn test_validate_rule_categories_accepts_nd_and_sc() {
+        let policy = sample_policy();
+        assert!(validate_rule_categories(&policy).is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // Capability rejection path (#53)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_validate_capabilities_rejects_unsupported() {
+        // Craft a required set with a capability not in the supported set.
+        let mut required = HashSet::new();
+        required.insert(RelayCapability::UnicodeCategoryReject);
+
+        // supported set is intentionally empty
+        let supported = HashSet::new();
+
+        let err = validate_capabilities_with(&required, &supported).unwrap_err();
+        assert!(
+            err.to_string().contains("unsupported capability"),
+            "missing capability should fail: {err}"
+        );
     }
 }

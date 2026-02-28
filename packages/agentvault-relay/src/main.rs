@@ -104,9 +104,29 @@ async fn main() {
         }
     };
 
+    if let Err(e) = enforcement_policy::validate_policy_scope(&loaded_policy) {
+        tracing::error!(error = %e, "enforcement policy scope validation failed — refusing to start");
+        std::process::exit(1);
+    }
+
+    if let Err(e) = enforcement_policy::validate_rule_categories(&loaded_policy) {
+        tracing::error!(error = %e, "enforcement policy contains unsupported rule categories — refusing to start");
+        std::process::exit(1);
+    }
+
     if let Err(e) = enforcement_policy::validate_capabilities(&loaded_policy) {
         tracing::error!(error = %e, "enforcement policy requires unsupported capabilities — refusing to start");
         std::process::exit(1);
+    }
+
+    if loaded_policy.rules.is_empty() {
+        tracing::warn!("0 enforcement rules loaded — guard disabled");
+    } else {
+        tracing::info!(
+            rule_count = loaded_policy.rules.len(),
+            scope = %loaded_policy.policy_scope,
+            "Enforcement rules apply to all output schemas"
+        );
     }
 
     let enforcement_policy_hash = match enforcement_policy::content_hash(&loaded_policy) {
@@ -224,6 +244,7 @@ async fn main() {
         openai_base_url,
         prompt_program_dir: prompt_dir,
         session_store,
+        enforcement_policy: loaded_policy,
         enforcement_policy_hash,
         agent_registry,
         inbox_store,
