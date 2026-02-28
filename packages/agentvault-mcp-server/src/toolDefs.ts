@@ -8,9 +8,12 @@ export const IDENTITY_TOOLS = [
   {
     name: 'agentvault.get_identity',
     description:
-      'Returns this agent\'s identity (agent_id) and the list of known agents ' +
-      'available for relay sessions. Call this before agentvault.relay_signal ' +
-      'to confirm your agent_id and discover counterparty aliases.',
+      'Returns this agent\'s identity (agent_id), known agents available for ' +
+      'relay sessions, and inbox status (pending invite count). When ' +
+      'pending_invites > 0, next_action tells you which tool to call.\n\n' +
+      'Call this first to confirm your agent_id and check for pending invites. ' +
+      'If pending_invites > 0: call agentvault.relay_signal in RESPOND mode ' +
+      'to review and accept invites.',
     inputSchema: {
       type: 'object' as const,
       properties: {},
