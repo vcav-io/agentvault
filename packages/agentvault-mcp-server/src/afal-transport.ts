@@ -48,7 +48,7 @@ export interface AfalTransport {
 
   checkInbox(): Promise<{ invites: AfalInviteMessage[] }>;
 
-  acceptInvite(inviteId: string): Promise<AcceptResult | void>;
+  acceptInvite(inviteId: string): Promise<AcceptResult | undefined>;
 
   readonly agentId: string;
 }
@@ -221,7 +221,8 @@ export class OrchestratorInboxAdapter implements AfalTransport {
     return { invites };
   }
 
-  async acceptInvite(inviteId: string): Promise<void> {
+  async acceptInvite(inviteId: string): Promise<AcceptResult | undefined> {
     await this.transport.acceptInvite(inviteId);
+    return undefined;
   }
 }

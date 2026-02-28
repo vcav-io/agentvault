@@ -9,7 +9,7 @@
  * evaluates admission policy, and enqueues admitted proposals for checkInbox().
  */
 
-import type { AfalTransport, AfalInviteMessage } from './afal-transport.js';
+import type { AfalTransport, AfalInviteMessage, AcceptResult } from './afal-transport.js';
 import type { AfalPropose, RelayInvitePayload } from './afal-types.js';
 import { signMessage, verifyMessage, DOMAIN_PREFIXES, contentHash } from './afal-signing.js';
 import { AfalResponder } from './afal-responder.js';
@@ -298,7 +298,7 @@ export class DirectAfalTransport implements AfalTransport {
     return { invites };
   }
 
-  async acceptInvite(inviteId: string): Promise<void> {
+  async acceptInvite(inviteId: string): Promise<AcceptResult | undefined> {
     // RESPOND mode: no-op — we already sent ADMIT synchronously in handlePropose
     if (this.responder) {
       return;
