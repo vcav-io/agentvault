@@ -48,6 +48,17 @@ export interface NormalizedKnownAgent {
   aliases: string[];
 }
 
+function isRelayInvitePayload(
+  payload: Record<string, unknown>,
+): payload is Record<string, unknown> & RelayInvitePayload {
+  return (
+    typeof payload['session_id'] === 'string' &&
+    typeof payload['responder_submit_token'] === 'string' &&
+    typeof payload['responder_read_token'] === 'string' &&
+    typeof payload['relay_url'] === 'string'
+  );
+}
+
 // ── Configuration ───────────────────────────────────────────────────────
 
 /**
@@ -1255,12 +1266,12 @@ async function phaseDiscover(
       // Legacy: extract session tokens from invite payload.
       // (payload was validated by the filter above — this guard is defensive)
       const payload = invite.payload;
-      if (!payload || typeof payload !== 'object') continue;
-      handle.sessionId = payload['session_id'] as string;
-      handle.relayUrl = handle.relayUrl ?? payload['relay_url'] as string;
+      if (!payload || typeof payload !== 'object' || !isRelayInvitePayload(payload)) continue;
+      handle.sessionId = payload.session_id;
+      handle.relayUrl = handle.relayUrl ?? payload.relay_url;
       handle.tokens = {
-        submit: payload['responder_submit_token'] as string,
-        read: payload['responder_read_token'] as string,
+        submit: payload.responder_submit_token,
+        read: payload.responder_read_token,
       };
     }
 

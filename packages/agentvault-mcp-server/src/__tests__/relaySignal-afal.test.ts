@@ -124,6 +124,62 @@ describe('INITIATE with AFAL', () => {
   });
 });
 
+describe('legacy payload type guard (isRelayInvitePayload)', () => {
+  it('skips legacy invite with missing payload fields', async () => {
+    const invite: AfalInviteMessage = {
+      invite_id: 'inv-missing',
+      from_agent_id: 'bob-demo',
+      payload_type: 'VCAV_E_INVITE_V1',
+      template_id: 'mediation-demo.v1.standard',
+      payload: {
+        // session_id missing entirely
+        responder_submit_token: 'sub-tok',
+        responder_read_token: 'read-tok',
+        relay_url: 'http://relay.test',
+      },
+    };
+
+    const transport = createMockAfalTransport([invite]);
+
+    const result = await handleRelaySignal(
+      { mode: 'RESPOND', from: 'bob-demo', expected_purpose: 'MEDIATION', my_input: 'hi' },
+      transport,
+    );
+
+    // Invite is skipped due to missing session_id — should still be in DISCOVER
+    expect(result.status).toBe('PENDING');
+    const data = result.data as { phase: string };
+    expect(data.phase).toBe('DISCOVER');
+  });
+
+  it('skips legacy invite when payload fields are non-string', async () => {
+    const invite: AfalInviteMessage = {
+      invite_id: 'inv-badtype',
+      from_agent_id: 'bob-demo',
+      payload_type: 'VCAV_E_INVITE_V1',
+      template_id: 'mediation-demo.v1.standard',
+      payload: {
+        session_id: 42, // should be string
+        responder_submit_token: 'sub-tok',
+        responder_read_token: 'read-tok',
+        relay_url: 'http://relay.test',
+      },
+    };
+
+    const transport = createMockAfalTransport([invite]);
+
+    const result = await handleRelaySignal(
+      { mode: 'RESPOND', from: 'bob-demo', expected_purpose: 'MEDIATION', my_input: 'hi' },
+      transport,
+    );
+
+    // Invite is skipped due to non-string session_id — should still be in DISCOVER
+    expect(result.status).toBe('PENDING');
+    const data = result.data as { phase: string };
+    expect(data.phase).toBe('DISCOVER');
+  });
+});
+
 describe('RESPOND with AFAL', () => {
   it('extracts AfalPropose from enriched inbox invite', async () => {
     const afalPropose: AfalPropose = {
