@@ -221,10 +221,11 @@ immediately — no `while` loops, no `sleep()`, no `pollUntilDone()` in INITIATE
 - [x] Heartbeat-safe relay_signal — non-blocking phases, session state files, resume_strategy
 - [ ] Client-side enum rendering — deterministic template converting enum tuples to human-friendly sentences
 - [ ] Derivable `next_step` — make it a function of other fields rather than model-chosen
-- [ ] Safe-default fallback refactor — replace `2>/dev/null || echo "safe"` with fail-safe defaults (#14)
+- [x] Safe-default fallback refactor — fail-loud for security checks, log-and-degrade for reporting (PR #44, #14)
 - [ ] Paraphrase stability tooling (variant B prompts per scenario)
 - [ ] Category C (meta-protocol leakage) — blocked on relay metadata observer endpoint
-- [ ] CI integration for TypeScript packages
-- [ ] Extract inbox protocol types to VFC — blocked on OpenClaw two-agent live session (see roadmap item 11c)
-- [ ] Inbox hardening: `relayFetch` timeout wrapping, `res.json()` runtime validation, mutex splitting, persistent storage
-- [ ] OpenClaw two-agent live test with heartbeat-driven inbox discovery
+- [x] CI integration for TypeScript packages (PR #43)
+- [ ] Extract inbox protocol types to VFC (#39)
+- [x] Inbox hardening: `relayFetch` timeout wrapping, `res.json()` runtime validation (PR #45, #40 items 1-2)
+- [ ] Inbox hardening: mutex splitting, persistent storage (#40 items 3-4)
+- [x] OpenClaw two-agent live test with heartbeat-driven inbox discovery (2026-02-28, Alice+Bob VPSes via mcporter)
