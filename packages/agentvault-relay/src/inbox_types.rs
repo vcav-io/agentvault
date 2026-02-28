@@ -1,28 +1,14 @@
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 
 use crate::session::SessionTokens;
 use crate::types::Contract;
 
-// ============================================================================
-// Invite status
-// ============================================================================
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum InviteStatus {
-    Pending,
-    Accepted,
-    Declined,
-    Expired,
-    Canceled,
-}
-
-impl InviteStatus {
-    pub fn is_terminal(self) -> bool {
-        !matches!(self, InviteStatus::Pending)
-    }
-}
+// Re-export all protocol types from vault-family-types for use within this crate.
+pub use vault_family_types::{
+    AcceptInviteRequest, AcceptInviteResponse, CreateInviteRequest, CreateInviteResponse,
+    DeclineInviteRequest, DeclineReasonCode, InboxEvent, InboxEventType, InboxQuery,
+    InboxResponse, InviteDetailResponse, InviteStatus, InviteSummary,
+};
 
 // ============================================================================
 // Invite (internal)
@@ -59,161 +45,6 @@ pub struct Invite {
     pub(crate) session_tokens: Option<SessionTokens>,
     /// Reason code for decline.
     pub(crate) decline_reason_code: Option<DeclineReasonCode>,
-}
-
-// ============================================================================
-// InviteSummary (wire format for list responses)
-// ============================================================================
-
-/// Lightweight invite listing. No contract body, no session tokens.
-#[derive(Debug, Clone, Serialize)]
-pub struct InviteSummary {
-    pub invite_id: String,
-    pub from_agent_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub from_agent_pubkey: Option<String>,
-    pub status: InviteStatus,
-    pub purpose_code: String,
-    pub contract_hash: String,
-    pub created_at: DateTime<Utc>,
-    pub expires_at: DateTime<Utc>,
-}
-
-// ============================================================================
-// InboxEvent (SSE)
-// ============================================================================
-
-#[derive(Debug, Clone, Serialize)]
-pub struct InboxEvent {
-    /// Per-recipient monotonic event ID for cursor-based recovery.
-    pub event_id: u64,
-    pub event_type: InboxEventType,
-    pub invite_id: String,
-    pub from_agent_id: String,
-    pub timestamp: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum InboxEventType {
-    InviteCreated,
-    InviteAccepted,
-    InviteDeclined,
-    InviteExpired,
-    InviteCanceled,
-}
-
-// ============================================================================
-// Request / response types
-// ============================================================================
-
-#[derive(Debug, Deserialize)]
-pub struct CreateInviteRequest {
-    pub to_agent_id: String,
-    pub contract: Contract,
-    #[serde(default = "default_provider")]
-    pub provider: String,
-    pub purpose_code: String,
-    /// Sender's public key (hex). Optional — if omitted, the registry's key is used.
-    #[serde(default)]
-    pub from_agent_pubkey: Option<String>,
-}
-
-fn default_provider() -> String {
-    "anthropic".to_string()
-}
-
-#[derive(Debug, Serialize)]
-pub struct CreateInviteResponse {
-    pub invite_id: String,
-    pub contract_hash: String,
-    pub status: InviteStatus,
-    pub expires_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AcceptInviteRequest {
-    /// Optional: verify contract hash before accepting.
-    #[serde(default)]
-    pub expected_contract_hash: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct AcceptInviteResponse {
-    pub invite_id: String,
-    pub session_id: String,
-    pub contract_hash: String,
-    pub responder_submit_token: String,
-    pub responder_read_token: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum DeclineReasonCode {
-    Busy,
-    NotInterested,
-    Invalid,
-    Other,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct DeclineInviteRequest {
-    #[serde(default)]
-    pub reason_code: Option<DeclineReasonCode>,
-}
-
-/// Filter params for GET /inbox. Consistent naming across Rust + TS.
-///
-/// Note: `since_event_id` cursor filtering is not yet implemented.
-/// The field is intentionally omitted until the store tracks per-invite event IDs.
-#[derive(Debug, Deserialize)]
-pub struct InboxQuery {
-    #[serde(default)]
-    pub status: Option<InviteStatus>,
-    #[serde(default)]
-    pub from_agent_id: Option<String>,
-    #[serde(default)]
-    pub limit: Option<usize>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct InboxResponse {
-    pub invites: Vec<InviteSummary>,
-    /// Per-recipient monotonic event ID. Client passes this as `since_event_id`
-    /// on next poll for deterministic recovery of missed events.
-    pub latest_event_id: u64,
-}
-
-/// Caller-dependent invite detail response.
-///
-/// Token redaction rules:
-/// - Recipient sees everything EXCEPT initiator tokens
-/// - Sender sees everything EXCEPT responder tokens
-/// - Pre-accept: neither side sees any session tokens
-/// - Post-accept: each side sees only their own role's tokens
-#[derive(Debug, Serialize)]
-pub struct InviteDetailResponse {
-    pub invite_id: String,
-    pub from_agent_id: String,
-    pub to_agent_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub from_agent_pubkey: Option<String>,
-    pub status: InviteStatus,
-    pub purpose_code: String,
-    pub contract_hash: String,
-    pub provider: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub expires_at: DateTime<Utc>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub decline_reason_code: Option<DeclineReasonCode>,
-    // Session linkage (populated after accept, redacted per caller)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub submit_token: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub read_token: Option<String>,
 }
 
 impl Invite {

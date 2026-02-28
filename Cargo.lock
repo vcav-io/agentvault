@@ -5,7 +5,7 @@ version = 4
 [[package]]
 name = "afal-core"
 version = "0.1.0"
-source = "git+https://github.com/vcav-io/vault-family-core?rev=7cc43e65b17f5af4b026eed7992d2c5de6b189f1#7cc43e65b17f5af4b026eed7992d2c5de6b189f1"
+source = "git+https://github.com/vcav-io/vault-family-core?rev=b78d71ac88caefedc168ff800c47d974377c0572#b78d71ac88caefedc168ff800c47d974377c0572"
 dependencies = [
  "chrono",
  "ed25519-dalek",
@@ -422,7 +422,7 @@ dependencies = [
 [[package]]
 name = "entropy-core"
 version = "0.1.0"
-source = "git+https://github.com/vcav-io/vault-family-core?rev=7cc43e65b17f5af4b026eed7992d2c5de6b189f1#7cc43e65b17f5af4b026eed7992d2c5de6b189f1"
+source = "git+https://github.com/vcav-io/vault-family-core?rev=b78d71ac88caefedc168ff800c47d974377c0572#b78d71ac88caefedc168ff800c47d974377c0572"
 dependencies = [
  "chrono",
  "receipt-core",
@@ -1448,7 +1448,7 @@ dependencies = [
 [[package]]
 name = "receipt-core"
 version = "0.1.0"
-source = "git+https://github.com/vcav-io/vault-family-core?rev=7cc43e65b17f5af4b026eed7992d2c5de6b189f1#7cc43e65b17f5af4b026eed7992d2c5de6b189f1"
+source = "git+https://github.com/vcav-io/vault-family-core?rev=b78d71ac88caefedc168ff800c47d974377c0572#b78d71ac88caefedc168ff800c47d974377c0572"
 dependencies = [
  "base64",
  "chrono",
@@ -2243,8 +2243,9 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 [[package]]
 name = "vault-family-types"
 version = "0.1.0"
-source = "git+https://github.com/vcav-io/vault-family-core?rev=7cc43e65b17f5af4b026eed7992d2c5de6b189f1#7cc43e65b17f5af4b026eed7992d2c5de6b189f1"
+source = "git+https://github.com/vcav-io/vault-family-core?rev=b78d71ac88caefedc168ff800c47d974377c0572#b78d71ac88caefedc168ff800c47d974377c0572"
 dependencies = [
+ "chrono",
  "serde",
  "serde_json",
  "sha2",
@@ -2260,7 +2261,7 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 [[package]]
 name = "verifier-core"
 version = "0.1.0"
-source = "git+https://github.com/vcav-io/vault-family-core?rev=7cc43e65b17f5af4b026eed7992d2c5de6b189f1#7cc43e65b17f5af4b026eed7992d2c5de6b189f1"
+source = "git+https://github.com/vcav-io/vault-family-core?rev=b78d71ac88caefedc168ff800c47d974377c0572#b78d71ac88caefedc168ff800c47d974377c0572"
 dependencies = [
  "base64",
  "ed25519-dalek",
