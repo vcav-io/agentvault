@@ -219,8 +219,8 @@ immediately — no `while` loops, no `sleep()`, no `pollUntilDone()` in INITIATE
 - [x] MCP get_identity inbox count (Agent UX) — PR #41
 - [x] Wire format validation against real provider (roadmap item 11a)
 - [x] Heartbeat-safe relay_signal — non-blocking phases, session state files, resume_strategy
-- [ ] Client-side enum rendering — deterministic template converting enum tuples to human-friendly sentences
-- [ ] Derivable `next_step` — make it a function of other fields rather than model-chosen
+- [x] Client-side enum rendering — all 8 COMPAT v2 fields documented in interpretation_context.signal_fields (PR compat-v2-rendering)
+- [x] Derivable `next_step` — deriveCompatNextStep() pure function; derived_fields in InterpretationContext; COMPAT only, gated on purpose (PR compat-v2-rendering)
 - [x] Safe-default fallback refactor — fail-loud for security checks, log-and-degrade for reporting (PR #44, #14)
 - [ ] Paraphrase stability tooling (variant B prompts per scenario)
 - [ ] Category C (meta-protocol leakage) — blocked on relay metadata observer endpoint
