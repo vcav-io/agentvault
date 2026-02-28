@@ -13,5 +13,7 @@ dist/
 
 .agentvault/
 
+.playwright-mcp/
+
 # Ignore screenshot files at repo root only
 /*.png

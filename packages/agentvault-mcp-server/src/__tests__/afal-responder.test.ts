@@ -102,8 +102,13 @@ describe('AfalResponder', () => {
       const result = responder.handlePropose(body);
       const keys = Object.keys(result.response).sort();
       expect(keys).toEqual([
-        'admission_tier', 'admission_version', 'admit_token_id',
-        'expires_at', 'outcome', 'proposal_id', 'signature',
+        'admission_tier',
+        'admission_version',
+        'admit_token_id',
+        'expires_at',
+        'outcome',
+        'proposal_id',
+        'signature',
       ]);
     });
 
@@ -134,7 +139,11 @@ describe('AfalResponder', () => {
   describe('handlePropose — DENY', () => {
     it('DENYs flat M3 body (UNSUPPORTED)', () => {
       const propose = makePropose();
-      const signed = signMessage(DOMAIN_PREFIXES.PROPOSE, propose as unknown as Record<string, unknown>, PROPOSER_SEED);
+      const signed = signMessage(
+        DOMAIN_PREFIXES.PROPOSE,
+        propose as unknown as Record<string, unknown>,
+        PROPOSER_SEED,
+      );
       const result = responder.handlePropose(signed);
       expect(result.outcome).toBe('DENY');
       expect(result.response['deny_code']).toBe('UNSUPPORTED');
@@ -144,8 +153,12 @@ describe('AfalResponder', () => {
       const result = responder.handlePropose({ not: 'wrapped' });
       const keys = Object.keys(result.response).sort();
       expect(keys).toEqual([
-        'admission_version', 'deny_code', 'expires_at',
-        'outcome', 'proposal_id', 'signature',
+        'admission_version',
+        'deny_code',
+        'expires_at',
+        'outcome',
+        'proposal_id',
+        'signature',
       ]);
     });
 

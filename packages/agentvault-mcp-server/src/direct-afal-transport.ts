@@ -9,14 +9,9 @@
  * evaluates admission policy, and enqueues admitted proposals for checkInbox().
  */
 
-import type { AfalTransport, AfalInviteMessage } from './afal-transport.js';
+import type { AfalTransport, AfalInviteMessage, AcceptResult } from './afal-transport.js';
 import type { AfalPropose, RelayInvitePayload } from './afal-types.js';
-import {
-  signMessage,
-  verifyMessage,
-  DOMAIN_PREFIXES,
-  contentHash,
-} from './afal-signing.js';
+import { signMessage, verifyMessage, DOMAIN_PREFIXES, contentHash } from './afal-signing.js';
 import { AfalResponder } from './afal-responder.js';
 import type { AdmissionPolicy } from './afal-responder.js';
 import { AfalHttpServer } from './afal-http-server.js';
@@ -55,11 +50,16 @@ export function isAgentDescriptor(value: unknown): value is AgentDescriptor {
     typeof v.agent_id === 'string' &&
     typeof v.issued_at === 'string' &&
     typeof v.expires_at === 'string' &&
-    typeof v.identity_key === 'object' && v.identity_key !== null &&
-    typeof v.envelope_key === 'object' && v.envelope_key !== null &&
-    typeof v.endpoints === 'object' && v.endpoints !== null &&
-    typeof v.capabilities === 'object' && v.capabilities !== null &&
-    typeof v.policy_commitments === 'object' && v.policy_commitments !== null
+    typeof v.identity_key === 'object' &&
+    v.identity_key !== null &&
+    typeof v.envelope_key === 'object' &&
+    v.envelope_key !== null &&
+    typeof v.endpoints === 'object' &&
+    v.endpoints !== null &&
+    typeof v.capabilities === 'object' &&
+    v.capabilities !== null &&
+    typeof v.policy_commitments === 'object' &&
+    v.policy_commitments !== null
   );
 }
 
@@ -99,7 +99,9 @@ export class DirectAfalTransport implements AfalTransport {
       // requires re-signing with the agent's seed.
       const bindAddr = config.respondMode.bindAddress ?? '127.0.0.1';
       const base = `http://${bindAddr}:${config.respondMode.httpPort}`;
-      const { signature: _, ...unsignedDescriptor } = config.localDescriptor as AgentDescriptor & { signature?: string };
+      const { signature: _, ...unsignedDescriptor } = config.localDescriptor as AgentDescriptor & {
+        signature?: string;
+      };
       const descriptorWithEndpoints = {
         ...unsignedDescriptor,
         endpoints: {
@@ -143,7 +145,9 @@ export class DirectAfalTransport implements AfalTransport {
     if (this.config.respondMode?.httpPort === 0) {
       const bindAddr = this.config.respondMode.bindAddress ?? '127.0.0.1';
       const base = `http://${bindAddr}:${this.httpServer.port}`;
-      const { signature: _s, ...unsigned } = this.httpServer.localDescriptor as AgentDescriptor & { signature?: string };
+      const { signature: _s, ...unsigned } = this.httpServer.localDescriptor as AgentDescriptor & {
+        signature?: string;
+      };
       const updated = {
         ...unsigned,
         endpoints: {
@@ -294,7 +298,7 @@ export class DirectAfalTransport implements AfalTransport {
     return { invites };
   }
 
-  async acceptInvite(inviteId: string): Promise<void> {
+  async acceptInvite(inviteId: string): Promise<AcceptResult | undefined> {
     // RESPOND mode: no-op — we already sent ADMIT synchronously in handlePropose
     if (this.responder) {
       return;
@@ -363,20 +367,31 @@ export class DirectAfalTransport implements AfalTransport {
     try {
       raw = (await response.json()) as Record<string, unknown>;
     } catch {
-      throw new Error(
-        `Peer descriptor from ${this.config.peerDescriptorUrl} returned non-JSON`,
-      );
+      throw new Error(`Peer descriptor from ${this.config.peerDescriptorUrl} returned non-JSON`);
     }
 
     // Validate required nested structure before trusting the cast
-    const identityKey = (raw as Record<string, unknown>).identity_key as Record<string, unknown> | undefined;
-    if (!identityKey || typeof identityKey !== 'object' || typeof identityKey.public_key_hex !== 'string') {
+    const identityKey = (raw as Record<string, unknown>).identity_key as
+      | Record<string, unknown>
+      | undefined;
+    if (
+      !identityKey ||
+      typeof identityKey !== 'object' ||
+      typeof identityKey.public_key_hex !== 'string'
+    ) {
       throw new Error(
         `Peer descriptor from ${this.config.peerDescriptorUrl} is malformed: missing or invalid identity_key.public_key_hex`,
       );
     }
-    const endpoints = (raw as Record<string, unknown>).endpoints as Record<string, unknown> | undefined;
-    if (!endpoints || typeof endpoints !== 'object' || typeof endpoints.propose !== 'string' || typeof endpoints.commit !== 'string') {
+    const endpoints = (raw as Record<string, unknown>).endpoints as
+      | Record<string, unknown>
+      | undefined;
+    if (
+      !endpoints ||
+      typeof endpoints !== 'object' ||
+      typeof endpoints.propose !== 'string' ||
+      typeof endpoints.commit !== 'string'
+    ) {
       throw new Error(
         `Peer descriptor from ${this.config.peerDescriptorUrl} is malformed: missing required endpoints (propose, commit)`,
       );

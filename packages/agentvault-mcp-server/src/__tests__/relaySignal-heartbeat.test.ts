@@ -80,7 +80,11 @@ beforeEach(() => {
 
 afterEach(() => {
   // Clean up temp dir
-  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  try {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  } catch {
+    /* ignore */
+  }
   delete process.env['VCAV_WORKDIR'];
 });
 
@@ -285,19 +289,21 @@ describe('session state files', () => {
 
   it('attempt_count resets to 0 on phase change', async () => {
     // Use RESPOND mode with an invite to see phase change from DISCOVER → JOIN
-    const invites: AfalInviteMessage[] = [{
-      invite_id: 'inv-test',
-      from_agent_id: 'bob-demo',
-      payload_type: 'VCAV_E_INVITE_V1',
-      payload: {
-        session_id: 'sess-join',
-        responder_submit_token: 'sub-tok',
-        responder_read_token: 'read-tok',
-        relay_url: 'http://relay.test',
+    const invites: AfalInviteMessage[] = [
+      {
+        invite_id: 'inv-test',
+        from_agent_id: 'bob-demo',
+        payload_type: 'VCAV_E_INVITE_V1',
+        payload: {
+          session_id: 'sess-join',
+          responder_submit_token: 'sub-tok',
+          responder_read_token: 'read-tok',
+          relay_url: 'http://relay.test',
+        },
+        contract_hash: 'relay-hash-mock',
+        template_id: 'mediation-demo.v1.standard',
       },
-      contract_hash: 'relay-hash-mock',
-      template_id: 'mediation-demo.v1.standard',
-    }];
+    ];
     const transport = createMockAfalTransport(invites);
 
     const result = await handleRelaySignal(
@@ -484,19 +490,21 @@ describe('non-blocking phases', () => {
   });
 
   it('phaseDiscover returns IMMEDIATE when invite found (phase transitions to JOIN)', async () => {
-    const invites: AfalInviteMessage[] = [{
-      invite_id: 'inv-test',
-      from_agent_id: 'bob-demo',
-      payload_type: 'VCAV_E_INVITE_V1',
-      payload: {
-        session_id: 'sess-join',
-        responder_submit_token: 'sub-tok',
-        responder_read_token: 'read-tok',
-        relay_url: 'http://relay.test',
+    const invites: AfalInviteMessage[] = [
+      {
+        invite_id: 'inv-test',
+        from_agent_id: 'bob-demo',
+        payload_type: 'VCAV_E_INVITE_V1',
+        payload: {
+          session_id: 'sess-join',
+          responder_submit_token: 'sub-tok',
+          responder_read_token: 'read-tok',
+          relay_url: 'http://relay.test',
+        },
+        contract_hash: 'relay-hash-mock',
+        template_id: 'mediation-demo.v1.standard',
       },
-      contract_hash: 'relay-hash-mock',
-      template_id: 'mediation-demo.v1.standard',
-    }];
+    ];
     const transport = createMockAfalTransport(invites);
 
     const result = await handleRelaySignal(

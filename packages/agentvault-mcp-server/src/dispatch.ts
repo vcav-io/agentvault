@@ -20,7 +20,11 @@ export async function dispatch(
     }
     case 'agentvault.relay_signal': {
       const { handleRelaySignal } = await import('./tools/relaySignal.js');
-      return handleRelaySignal(args as Parameters<typeof handleRelaySignal>[0], transport, knownAgents);
+      return handleRelaySignal(
+        args as Parameters<typeof handleRelaySignal>[0],
+        transport,
+        knownAgents,
+      );
     }
     default:
       throw new Error(`Unknown tool: ${toolName}`);

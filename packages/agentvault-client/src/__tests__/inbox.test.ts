@@ -67,12 +67,16 @@ describe('createInvite', () => {
     };
     mockFetch.mockResolvedValueOnce(mockResponse(body));
 
-    const result = await createInvite(config, {
-      to_agent_id: 'bob',
-      contract: { purpose_code: 'COMPATIBILITY' },
-      provider: 'anthropic',
-      purpose_code: 'COMPATIBILITY',
-    }, token);
+    const result = await createInvite(
+      config,
+      {
+        to_agent_id: 'bob',
+        contract: { purpose_code: 'COMPATIBILITY' },
+        provider: 'anthropic',
+        purpose_code: 'COMPATIBILITY',
+      },
+      token,
+    );
 
     expect(result.invite_id).toBe('inv_abc');
     expect(result.status).toBe('PENDING');
@@ -153,13 +157,15 @@ describe('acceptInvite', () => {
   });
 
   it('sends expected_contract_hash when provided', async () => {
-    mockFetch.mockResolvedValueOnce(mockResponse({
-      invite_id: 'inv_abc',
-      session_id: 'sess_123',
-      contract_hash: 'hash123',
-      responder_submit_token: 'rs',
-      responder_read_token: 'rr',
-    }));
+    mockFetch.mockResolvedValueOnce(
+      mockResponse({
+        invite_id: 'inv_abc',
+        session_id: 'sess_123',
+        contract_hash: 'hash123',
+        responder_submit_token: 'rs',
+        responder_read_token: 'rr',
+      }),
+    );
 
     await acceptInvite(config, 'inv_abc', token, 'expected_hash');
 
@@ -216,18 +222,22 @@ describe('error handling', () => {
   it('throws on 500 Internal Server Error', async () => {
     mockFetch.mockResolvedValueOnce(mockResponse({ error: 'Internal error' }, 500));
 
-    await expect(createInvite(config, {
-      to_agent_id: 'bob',
-      contract: { purpose_code: 'COMPATIBILITY' },
-      provider: 'anthropic',
-      purpose_code: 'COMPATIBILITY',
-    }, token)).rejects.toThrow('Relay HTTP 500');
+    await expect(
+      createInvite(
+        config,
+        {
+          to_agent_id: 'bob',
+          contract: { purpose_code: 'COMPATIBILITY' },
+          provider: 'anthropic',
+          purpose_code: 'COMPATIBILITY',
+        },
+        token,
+      ),
+    ).rejects.toThrow('Relay HTTP 500');
   });
 
   it('error includes response body', async () => {
-    mockFetch.mockResolvedValueOnce(
-      mockResponse({ error: 'UNAUTHORIZED' }, 401),
-    );
+    mockFetch.mockResolvedValueOnce(mockResponse({ error: 'UNAUTHORIZED' }, 401));
 
     try {
       await getInvite(config, 'inv_abc', 'bad-token');
@@ -286,14 +296,22 @@ describe('timeout handling', () => {
 
 describe('runtime validation', () => {
   it('throws RelayValidationError when createInvite response missing invite_id', async () => {
-    mockFetch.mockResolvedValueOnce(mockResponse({ contract_hash: 'h', status: 'PENDING', expires_at: 'x' }));
+    mockFetch.mockResolvedValueOnce(
+      mockResponse({ contract_hash: 'h', status: 'PENDING', expires_at: 'x' }),
+    );
 
-    await expect(createInvite(config, {
-      to_agent_id: 'bob',
-      contract: {},
-      provider: 'anthropic',
-      purpose_code: 'COMPATIBILITY',
-    }, token)).rejects.toThrow(RelayValidationError);
+    await expect(
+      createInvite(
+        config,
+        {
+          to_agent_id: 'bob',
+          contract: {},
+          provider: 'anthropic',
+          purpose_code: 'COMPATIBILITY',
+        },
+        token,
+      ),
+    ).rejects.toThrow(RelayValidationError);
   });
 
   it('throws RelayValidationError when pollInbox response missing invites', async () => {
@@ -315,13 +333,15 @@ describe('runtime validation', () => {
   });
 
   it('throws RelayValidationError when acceptInvite response missing session_id', async () => {
-    mockFetch.mockResolvedValueOnce(mockResponse({
-      invite_id: 'inv_abc',
-      contract_hash: 'h',
-      responder_submit_token: 'rs',
-      responder_read_token: 'rr',
-      // session_id missing
-    }));
+    mockFetch.mockResolvedValueOnce(
+      mockResponse({
+        invite_id: 'inv_abc',
+        contract_hash: 'h',
+        responder_submit_token: 'rs',
+        responder_read_token: 'rr',
+        // session_id missing
+      }),
+    );
 
     await expect(acceptInvite(config, 'inv_abc', token)).rejects.toThrow(RelayValidationError);
   });

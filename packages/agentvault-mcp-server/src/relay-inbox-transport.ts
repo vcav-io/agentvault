@@ -11,12 +11,7 @@
  * - acceptInvite returns AcceptResult with session tokens (not void)
  */
 
-import {
-  createInvite,
-  pollInbox,
-  getInvite,
-  acceptInvite,
-} from 'agentvault-client/inbox';
+import { createInvite, pollInbox, getInvite, acceptInvite } from 'agentvault-client/inbox';
 import type {
   RelayClientConfig,
   CreateInviteRequest,
@@ -105,14 +100,10 @@ export class RelayInboxTransport implements AfalTransport {
 
   /**
    * Accept an invite via the relay's accept endpoint.
-   * Returns AcceptResult with session tokens (unlike other transports which return void).
+   * Returns AcceptResult with session tokens (unlike other transports which return undefined).
    */
   async acceptInvite(inviteId: string): Promise<AcceptResult> {
-    const response = await acceptInvite(
-      this.config,
-      inviteId,
-      this.inboxToken,
-    );
+    const response = await acceptInvite(this.config, inviteId, this.inboxToken);
     return {
       session_id: response.session_id,
       submit_token: response.responder_submit_token,

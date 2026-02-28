@@ -58,10 +58,7 @@ async function relayFetch(
   } catch (err) {
     if (err instanceof RelayHttpError) throw err;
     // AbortController fires on timeout — wrap with a descriptive error
-    if (
-      err instanceof Error &&
-      (err.name === 'AbortError' || err.name === 'TimeoutError')
-    ) {
+    if (err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
       throw new RelayTimeoutError(timeoutMs);
     }
     throw err;
@@ -88,7 +85,11 @@ function requireFields(obj: unknown, fields: string[], typeName: string): Record
 }
 
 function validateCreateInviteResponse(raw: unknown): CreateInviteResponse {
-  const r = requireFields(raw, ['invite_id', 'contract_hash', 'status', 'expires_at'], 'CreateInviteResponse');
+  const r = requireFields(
+    raw,
+    ['invite_id', 'contract_hash', 'status', 'expires_at'],
+    'CreateInviteResponse',
+  );
   return r as unknown as CreateInviteResponse;
 }
 
@@ -103,7 +104,18 @@ function validateInboxResponse(raw: unknown): InboxResponse {
 function validateInviteDetailResponse(raw: unknown): InviteDetailResponse {
   const r = requireFields(
     raw,
-    ['invite_id', 'from_agent_id', 'to_agent_id', 'status', 'purpose_code', 'contract_hash', 'provider', 'created_at', 'updated_at', 'expires_at'],
+    [
+      'invite_id',
+      'from_agent_id',
+      'to_agent_id',
+      'status',
+      'purpose_code',
+      'contract_hash',
+      'provider',
+      'created_at',
+      'updated_at',
+      'expires_at',
+    ],
     'InviteDetailResponse',
   );
   return r as unknown as InviteDetailResponse;

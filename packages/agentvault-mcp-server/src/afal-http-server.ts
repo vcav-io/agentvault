@@ -95,7 +95,12 @@ export class AfalHttpServer {
     this.inflight++;
 
     let doneCalled = false;
-    const done = () => { if (!doneCalled) { doneCalled = true; this.inflight--; } };
+    const done = () => {
+      if (!doneCalled) {
+        doneCalled = true;
+        this.inflight--;
+      }
+    };
     const method = req.method ?? '';
     const url = req.url ?? '';
 

@@ -92,7 +92,9 @@ describe('AFAL M4 E2E', () => {
   });
 
   /** Start Bob (RESPOND) and return the descriptor URL for Alice to use. */
-  async function startResponder(trustedAgents: { agentId: string; publicKeyHex: string }[]): Promise<string> {
+  async function startResponder(
+    trustedAgents: { agentId: string; publicKeyHex: string }[],
+  ): Promise<string> {
     const bobDescriptor = makeDescriptor('bob-test', BOB_PUBKEY, BOB_SEED);
 
     transportB = new DirectAfalTransport({
@@ -120,9 +122,7 @@ describe('AFAL M4 E2E', () => {
   }
 
   it('full PROPOSE → ADMIT → COMMIT → checkInbox flow', async () => {
-    const peerUrl = await startResponder([
-      { agentId: 'alice-test', publicKeyHex: ALICE_PUBKEY },
-    ]);
+    const peerUrl = await startResponder([{ agentId: 'alice-test', publicKeyHex: ALICE_PUBKEY }]);
 
     const aliceDescriptor = makeDescriptor('alice-test', ALICE_PUBKEY, ALICE_SEED);
 

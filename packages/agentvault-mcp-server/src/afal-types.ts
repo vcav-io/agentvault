@@ -81,11 +81,23 @@ export function hasAfalDraft(
  * - signature: not available at hash time
  */
 const HASHABLE_FIELDS = new Set([
-  'proposal_version', 'nonce', 'timestamp', 'from', 'to',
-  'purpose_code', 'lane_id', 'output_schema_id', 'output_schema_version',
-  'requested_budget_tier', 'requested_entropy_bits',
-  'model_profile_id', 'model_profile_version', 'admission_tier_requested',
-  'descriptor_hash', 'model_profile_hash', 'prev_receipt_hash',
+  'proposal_version',
+  'nonce',
+  'timestamp',
+  'from',
+  'to',
+  'purpose_code',
+  'lane_id',
+  'output_schema_id',
+  'output_schema_version',
+  'requested_budget_tier',
+  'requested_entropy_bits',
+  'model_profile_id',
+  'model_profile_version',
+  'admission_tier_requested',
+  'descriptor_hash',
+  'model_profile_hash',
+  'prev_receipt_hash',
 ]);
 
 /**

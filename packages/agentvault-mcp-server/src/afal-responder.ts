@@ -140,9 +140,7 @@ export class AfalResponder {
     // 5. Look up proposer in trustedAgents
     //    In M4, LOW_TRUST behaves as DENY unless proposer is in trustedAgents
     //    (no descriptor-fetch path yet).
-    const trustedAgent = this.config.policy.trustedAgents.find(
-      (a) => a.agentId === propose.from,
-    );
+    const trustedAgent = this.config.policy.trustedAgents.find((a) => a.agentId === propose.from);
     if (!trustedAgent) {
       return this.deny(proposalId, 'UNTRUSTED', now);
     }
@@ -221,7 +219,11 @@ export class AfalResponder {
     const from = commit['from'];
     const proposalId = commit['proposal_id'];
 
-    if (typeof admitTokenId !== 'string' || typeof from !== 'string' || typeof proposalId !== 'string') {
+    if (
+      typeof admitTokenId !== 'string' ||
+      typeof from !== 'string' ||
+      typeof proposalId !== 'string'
+    ) {
       return { ok: false, error: 'Missing required COMMIT fields' };
     }
 
@@ -260,7 +262,9 @@ export class AfalResponder {
   ): { outcome: 'DENY'; response: Record<string, unknown> } {
     console.error(
       `AfalResponder DENY: code=${denyCode}, proposal=${proposalId}, agentId=${this.config.agentId}` +
-      (denyCode === 'INTEGRITY' ? ` (proposal_id mismatch: claimed=${proposalId.slice(0, 16)}…)` : ''),
+        (denyCode === 'INTEGRITY'
+          ? ` (proposal_id mismatch: claimed=${proposalId.slice(0, 16)}…)`
+          : ''),
     );
     const expiresAtIso = new Date(nowMs + ADMIT_TTL_MS).toISOString();
     const denyUnsigned: Record<string, unknown> = {
@@ -270,7 +274,10 @@ export class AfalResponder {
       deny_code: denyCode,
       expires_at: expiresAtIso,
     };
-    return { outcome: 'DENY', response: signMessage(DOMAIN_PREFIXES.DENY, denyUnsigned, this.config.seedHex) };
+    return {
+      outcome: 'DENY',
+      response: signMessage(DOMAIN_PREFIXES.DENY, denyUnsigned, this.config.seedHex),
+    };
   }
 
   private gcExpired(): void {
@@ -301,18 +308,29 @@ function isWrappedBody(
   if (!body || typeof body !== 'object') return false;
   const b = body as Record<string, unknown>;
   return (
-    b['propose'] != null && typeof b['propose'] === 'object' && !Array.isArray(b['propose']) &&
-    b['relay'] != null && typeof b['relay'] === 'object' && !Array.isArray(b['relay'])
+    b['propose'] != null &&
+    typeof b['propose'] === 'object' &&
+    !Array.isArray(b['propose']) &&
+    b['relay'] != null &&
+    typeof b['relay'] === 'object' &&
+    !Array.isArray(b['relay'])
   );
 }
 
 function parseRelay(raw: Record<string, unknown>): RelayInvitePayload | null {
-  const { session_id, responder_submit_token, responder_read_token, relay_url } = raw as Record<string, string>;
+  const { session_id, responder_submit_token, responder_read_token, relay_url } = raw as Record<
+    string,
+    string
+  >;
   if (
-    typeof session_id !== 'string' || !session_id ||
-    typeof responder_submit_token !== 'string' || !responder_submit_token ||
-    typeof responder_read_token !== 'string' || !responder_read_token ||
-    typeof relay_url !== 'string' || !relay_url
+    typeof session_id !== 'string' ||
+    !session_id ||
+    typeof responder_submit_token !== 'string' ||
+    !responder_submit_token ||
+    typeof responder_read_token !== 'string' ||
+    !responder_read_token ||
+    typeof relay_url !== 'string' ||
+    !relay_url
   ) {
     return null;
   }
@@ -320,10 +338,20 @@ function parseRelay(raw: Record<string, unknown>): RelayInvitePayload | null {
 }
 
 const REQUIRED_PROPOSE_STRINGS = [
-  'proposal_version', 'proposal_id', 'nonce', 'timestamp',
-  'from', 'to', 'purpose_code', 'lane_id', 'output_schema_id',
-  'output_schema_version', 'requested_budget_tier',
-  'model_profile_id', 'model_profile_version', 'admission_tier_requested',
+  'proposal_version',
+  'proposal_id',
+  'nonce',
+  'timestamp',
+  'from',
+  'to',
+  'purpose_code',
+  'lane_id',
+  'output_schema_id',
+  'output_schema_version',
+  'requested_budget_tier',
+  'model_profile_id',
+  'model_profile_version',
+  'admission_tier_requested',
 ] as const;
 
 function parsePropose(raw: Record<string, unknown>): AfalPropose | null {
@@ -349,8 +377,12 @@ function parsePropose(raw: Record<string, unknown>): AfalPropose | null {
     model_profile_version: raw['model_profile_version'] as string,
     admission_tier_requested: raw['admission_tier_requested'] as string,
     ...(typeof raw['descriptor_hash'] === 'string' && { descriptor_hash: raw['descriptor_hash'] }),
-    ...(typeof raw['model_profile_hash'] === 'string' && { model_profile_hash: raw['model_profile_hash'] }),
-    ...(typeof raw['prev_receipt_hash'] === 'string' && { prev_receipt_hash: raw['prev_receipt_hash'] }),
+    ...(typeof raw['model_profile_hash'] === 'string' && {
+      model_profile_hash: raw['model_profile_hash'],
+    }),
+    ...(typeof raw['prev_receipt_hash'] === 'string' && {
+      prev_receipt_hash: raw['prev_receipt_hash'],
+    }),
     ...(typeof raw['signature'] === 'string' && { signature: raw['signature'] }),
   };
 }

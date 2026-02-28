@@ -30,7 +30,11 @@ function makeDescriptor(): AgentDescriptor {
     capabilities: { supported_body_formats: ['wrapped_v1'], supports_commit: true },
     policy_commitments: {},
   };
-  return signMessage(DOMAIN_PREFIXES.DESCRIPTOR, unsigned as Record<string, unknown>, RESPONDER_SEED) as unknown as AgentDescriptor;
+  return signMessage(
+    DOMAIN_PREFIXES.DESCRIPTOR,
+    unsigned as Record<string, unknown>,
+    RESPONDER_SEED,
+  ) as unknown as AgentDescriptor;
 }
 
 function makePolicy(): AdmissionPolicy {
@@ -74,7 +78,11 @@ function makeRelay(): RelayInvitePayload {
 
 function makeWrappedBody(): { propose: Record<string, unknown>; relay: RelayInvitePayload } {
   const propose = makePropose();
-  const signed = signMessage(DOMAIN_PREFIXES.PROPOSE, propose as unknown as Record<string, unknown>, PROPOSER_SEED);
+  const signed = signMessage(
+    DOMAIN_PREFIXES.PROPOSE,
+    propose as unknown as Record<string, unknown>,
+    PROPOSER_SEED,
+  );
   return { propose: signed, relay: makeRelay() };
 }
 
@@ -99,7 +107,9 @@ describe('AfalHttpServer', () => {
     });
     await server.start();
     // Get actual port from the underlying server
-    const addr = (server as unknown as { server: { address(): { port: number } } }).server.address();
+    const addr = (
+      server as unknown as { server: { address(): { port: number } } }
+    ).server.address();
     baseUrl = `http://127.0.0.1:${addr.port}`;
   });
 
@@ -112,7 +122,9 @@ describe('AfalHttpServer', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body['agent_id']).toBe('bob-test');
-    expect((body['capabilities'] as Record<string, unknown>)['supported_body_formats']).toEqual(['wrapped_v1']);
+    expect((body['capabilities'] as Record<string, unknown>)['supported_body_formats']).toEqual([
+      'wrapped_v1',
+    ]);
   });
 
   it('POST /afal/propose returns ADMIT for valid body', async () => {
@@ -129,7 +141,11 @@ describe('AfalHttpServer', () => {
 
   it('POST /afal/propose returns DENY for flat M3 body', async () => {
     const propose = makePropose();
-    const signed = signMessage(DOMAIN_PREFIXES.PROPOSE, propose as unknown as Record<string, unknown>, PROPOSER_SEED);
+    const signed = signMessage(
+      DOMAIN_PREFIXES.PROPOSE,
+      propose as unknown as Record<string, unknown>,
+      PROPOSER_SEED,
+    );
     const res = await fetch(`${baseUrl}/afal/propose`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
