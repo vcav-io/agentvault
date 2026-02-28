@@ -40,8 +40,8 @@ import type { InviteTransport } from './invite-transport.js';
 import { OrchestratorInboxAdapter } from './afal-transport.js';
 import type { AfalTransport } from './afal-transport.js';
 import type { NormalizedKnownAgent } from './tools/relaySignal.js';
-import { DirectAfalTransport } from './direct-afal-transport.js';
-import type { DirectAfalTransportConfig, AgentDescriptor } from './direct-afal-transport.js';
+import { DirectAfalTransport, isAgentDescriptor } from './direct-afal-transport.js';
+import type { DirectAfalTransportConfig } from './direct-afal-transport.js';
 import { RelayInboxTransport } from './relay-inbox-transport.js';
 import { signMessage, DOMAIN_PREFIXES } from './afal-signing.js';
 import type { AdmissionPolicy, TrustedAgent } from './afal-responder.js';
@@ -150,11 +150,15 @@ function buildDirectTransportFromEnv(): DirectAfalTransport | null {
     capabilities: { supported_body_formats: ['wrapped_v1'], supports_commit: true },
     policy_commitments: {},
   };
-  const localDescriptor = signMessage(
+  const localDescriptorRaw = signMessage(
     DOMAIN_PREFIXES.DESCRIPTOR,
     descriptorUnsigned,
     seedHex,
-  ) as unknown as AgentDescriptor;
+  );
+  if (!isAgentDescriptor(localDescriptorRaw)) {
+    throw new Error('signMessage produced invalid AgentDescriptor');
+  }
+  const localDescriptor = localDescriptorRaw;
 
   const config: DirectAfalTransportConfig = {
     agentId,

@@ -47,6 +47,22 @@ export interface AgentDescriptor {
   signature?: string;
 }
 
+export function isAgentDescriptor(value: unknown): value is AgentDescriptor {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.descriptor_version === 'string' &&
+    typeof v.agent_id === 'string' &&
+    typeof v.issued_at === 'string' &&
+    typeof v.expires_at === 'string' &&
+    typeof v.identity_key === 'object' && v.identity_key !== null &&
+    typeof v.envelope_key === 'object' && v.envelope_key !== null &&
+    typeof v.endpoints === 'object' && v.endpoints !== null &&
+    typeof v.capabilities === 'object' && v.capabilities !== null &&
+    typeof v.policy_commitments === 'object' && v.policy_commitments !== null
+  );
+}
+
 // ── DirectAfalTransport ────────────────────────────────────────────────────
 
 export interface DirectAfalTransportConfig {
@@ -92,11 +108,15 @@ export class DirectAfalTransport implements AfalTransport {
           commit: `${base}/afal/commit`,
         },
       };
-      const signedDescriptor = signMessage(
+      const signedDescriptorRaw = signMessage(
         DOMAIN_PREFIXES.DESCRIPTOR,
         descriptorWithEndpoints as unknown as Record<string, unknown>,
         config.seedHex,
-      ) as unknown as AgentDescriptor;
+      );
+      if (!isAgentDescriptor(signedDescriptorRaw)) {
+        throw new Error('signMessage produced invalid AgentDescriptor in constructor');
+      }
+      const signedDescriptor = signedDescriptorRaw;
 
       this.httpServer = new AfalHttpServer({
         port: config.respondMode.httpPort,
@@ -132,12 +152,15 @@ export class DirectAfalTransport implements AfalTransport {
           commit: `${base}/afal/commit`,
         },
       };
-      const reSigned = signMessage(
+      const reSignedRaw = signMessage(
         DOMAIN_PREFIXES.DESCRIPTOR,
         updated as unknown as Record<string, unknown>,
         this.config.seedHex,
-      ) as unknown as AgentDescriptor;
-      this.httpServer.setDescriptor(reSigned);
+      );
+      if (!isAgentDescriptor(reSignedRaw)) {
+        throw new Error('signMessage produced invalid AgentDescriptor in start()');
+      }
+      this.httpServer.setDescriptor(reSignedRaw);
     }
   }
 
@@ -359,7 +382,12 @@ export class DirectAfalTransport implements AfalTransport {
       );
     }
 
-    const descriptor = raw as unknown as AgentDescriptor;
+    if (!isAgentDescriptor(raw)) {
+      throw new Error(
+        `Peer descriptor from ${this.config.peerDescriptorUrl} is malformed: failed structural validation`,
+      );
+    }
+    const descriptor = raw;
 
     const verified = verifyMessage(
       DOMAIN_PREFIXES.DESCRIPTOR,

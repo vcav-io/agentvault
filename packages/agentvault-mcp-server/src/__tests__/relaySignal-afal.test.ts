@@ -124,6 +124,64 @@ describe('INITIATE with AFAL', () => {
   });
 });
 
+describe('legacy payload type guard (isRelayInvitePayload)', () => {
+  it('skips legacy invite when payload fields are truthy non-strings', async () => {
+    // session_id: true passes the pre-filter's truthiness check but fails
+    // the type guard's typeof === 'string' check — this exercises isRelayInvitePayload
+    const invite: AfalInviteMessage = {
+      invite_id: 'inv-truthy',
+      from_agent_id: 'bob-demo',
+      payload_type: 'VCAV_E_INVITE_V1',
+      template_id: 'mediation-demo.v1.standard',
+      payload: {
+        session_id: true, // truthy but not string — passes pre-filter, fails type guard
+        responder_submit_token: 'sub-tok',
+        responder_read_token: 'read-tok',
+        relay_url: 'http://relay.test',
+      },
+    };
+
+    const transport = createMockAfalTransport([invite]);
+
+    const result = await handleRelaySignal(
+      { mode: 'RESPOND', from: 'bob-demo', expected_purpose: 'MEDIATION', my_input: 'hi' },
+      transport,
+    );
+
+    // Invite passes pre-filter but is rejected by isRelayInvitePayload type guard
+    expect(result.status).toBe('PENDING');
+    const data = result.data as { phase: string };
+    expect(data.phase).toBe('DISCOVER');
+  });
+
+  it('skips legacy invite when payload fields are non-string', async () => {
+    const invite: AfalInviteMessage = {
+      invite_id: 'inv-badtype',
+      from_agent_id: 'bob-demo',
+      payload_type: 'VCAV_E_INVITE_V1',
+      template_id: 'mediation-demo.v1.standard',
+      payload: {
+        session_id: 42, // should be string
+        responder_submit_token: 'sub-tok',
+        responder_read_token: 'read-tok',
+        relay_url: 'http://relay.test',
+      },
+    };
+
+    const transport = createMockAfalTransport([invite]);
+
+    const result = await handleRelaySignal(
+      { mode: 'RESPOND', from: 'bob-demo', expected_purpose: 'MEDIATION', my_input: 'hi' },
+      transport,
+    );
+
+    // Invite is skipped due to non-string session_id — should still be in DISCOVER
+    expect(result.status).toBe('PENDING');
+    const data = result.data as { phase: string };
+    expect(data.phase).toBe('DISCOVER');
+  });
+});
+
 describe('RESPOND with AFAL', () => {
   it('extracts AfalPropose from enriched inbox invite', async () => {
     const afalPropose: AfalPropose = {
