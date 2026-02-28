@@ -159,6 +159,10 @@ fn supported_capabilities() -> HashSet<RelayCapability> {
 }
 
 /// Return the list of enforcement capability strings for the `/capabilities` endpoint.
+///
+/// Only capabilities with runtime enforcement (output guard) are exposed here.
+/// Capabilities used only for startup validation (e.g. provider allowlist checks)
+/// are intentionally omitted — they are internal invariants, not external contracts.
 pub fn supported_capability_strings() -> Vec<String> {
     vec![CAP_UNICODE_CATEGORY_REJECT.to_string()]
 }
