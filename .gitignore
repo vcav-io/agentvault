@@ -12,3 +12,6 @@ dist/
 !.claude/settings.json
 
 .agentvault/
+
+# Ignore screenshot files at repo root only
+/*.png
