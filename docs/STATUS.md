@@ -162,14 +162,69 @@ invites while Bob is offline; Bob discovers them on next poll.
 - `tests/live/drive-inbox.sh` — Live test with offline delay proof
 - 141 unit tests, 34 integration tests, 27 TS tests
 
+## get_identity Inbox Status (PR #41, 2026-02-28)
+
+**Status: Implemented**
+
+`get_identity` now polls the inbox (when `RelayInboxTransport` is active) and returns
+`pending_invites`, `next_action`, and `inbox_hint`. Enables agents to discover pending
+invites without out-of-band instruction.
+
+- `InboxService` interface in `tools/getIdentity.ts` — structural typing, no import coupling
+- `next_action` field: `{ tool, args, reason }` — machine-readable breadcrumb
+- Best-effort polling: omits `pending_invites` entirely on failure (never emits false 0)
+- `dispatch.ts` passes transport as optional `InboxService`
+- Tool description updated to mention inbox status
+- OpenClaw skill Step 1 updated to document new fields
+- 5 new unit tests (no service, 0 pending, 1 pending, 3 pending, service throws)
+
+### Wire format validation (roadmap item 11a)
+
+`drive-inbox.sh --provider anthropic --delay 10` — 27/27 checks pass. Full async
+invite → accept → session → output flow validated against real Anthropic provider
+with 10s offline delay.
+
+### Two-agent live test: OpenClaw heartbeat, not Claude Code
+
+Claude Code is request-response — no event loop to discover invites while idle.
+OpenClaw's heartbeat (periodic `HEARTBEAT.md` check) is the right primitive.
+`tests/live/HEARTBEAT.md` template added. See `tests/live/README.md`.
+
+## Heartbeat-Safe relay_signal (Phase 2c)
+
+**Status: Implemented** (2026-02-28)
+
+Refactored `relay_signal` from blocking polling loops to single-check-then-return
+for OpenClaw heartbeat compatibility. Each phase function checks once and returns
+immediately — no `while` loops, no `sleep()`, no `pollUntilDone()` in INITIATE/RESPOND.
+
+- `relaySignal.ts` — non-blocking `phasePollInvite`, `phasePollRelay`, `phaseDiscover`,
+  `phaseJoin`; replaced `CALL_BUDGET_MS`/`OVERALL_TIMEOUT_MS`/`POLL_INTERVAL_MS` with
+  single `HANDLE_TTL_MS` (30 min handle validity window)
+- `resume_strategy` field on AWAITING responses: `IMMEDIATE` (relay processing) or
+  `DEFERRED` (waiting for counterparty, resume on next heartbeat)
+- Per-session state files: `.agentvault/sessions/<handle_id>.json` + rebuilt
+  `.agentvault/active_sessions.json` index with urgency sorting
+- `VCAV_WORKDIR` env var for workspace directory targeting
+- `SKILL.md` — heartbeat-safe resume instructions, per-turn IMMEDIATE budget (5 calls / 20s),
+  progress detection, heartbeat integration section
+- `HEARTBEAT.md` — multi-step checklist with active session check before inbox poll
+- `provision-vps.sh` — `VCAV_WORKDIR` in mcporter config
+- 20 new unit tests covering resume_strategy, session state files, index sorting,
+  crash recovery, VCAV_WORKDIR, HANDLE_TTL_MS, non-blocking phase behavior
+
 ### Open
 
 - [x] Deterministic policy gate — relay-side digit/currency guard (GATE rule, Unicode Nd/Sc categories, scoped to COMPAT v2)
+- [x] MCP get_identity inbox count (Agent UX) — PR #41
+- [x] Wire format validation against real provider (roadmap item 11a)
+- [x] Heartbeat-safe relay_signal — non-blocking phases, session state files, resume_strategy
 - [ ] Client-side enum rendering — deterministic template converting enum tuples to human-friendly sentences
 - [ ] Derivable `next_step` — make it a function of other fields rather than model-chosen
 - [ ] Safe-default fallback refactor — replace `2>/dev/null || echo "safe"` with fail-safe defaults (#14)
 - [ ] Paraphrase stability tooling (variant B prompts per scenario)
 - [ ] Category C (meta-protocol leakage) — blocked on relay metadata observer endpoint
 - [ ] CI integration for TypeScript packages
-- [ ] Extract inbox protocol types to VFC — blocked on first live session (see roadmap item 11c)
+- [ ] Extract inbox protocol types to VFC — blocked on OpenClaw two-agent live session (see roadmap item 11c)
 - [ ] Inbox hardening: `relayFetch` timeout wrapping, `res.json()` runtime validation, mutex splitting, persistent storage
+- [ ] OpenClaw two-agent live test with heartbeat-driven inbox discovery
