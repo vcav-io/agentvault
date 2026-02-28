@@ -137,7 +137,7 @@ fn setup_prompt_program(test_name: &str) -> (String, String) {
 
 #[test]
 fn test_receipt_construction_and_signature_verification() {
-    use agentvault_relay::entropy::calculate_schema_entropy_upper_bound;
+    use entropy_core::calculate_schema_entropy_upper_bound;
     use chrono::Utc;
     use receipt_core::{
         BudgetUsageRecord, ExecutionLane, ModelIdentity, Receipt, ReceiptStatus, SignalClass,
@@ -273,7 +273,7 @@ fn test_receipt_execution_lane_is_api_mediated() {
 
 #[test]
 fn test_entropy_computation_for_mediation_schema() {
-    use agentvault_relay::entropy::calculate_schema_entropy_upper_bound;
+    use entropy_core::calculate_schema_entropy_upper_bound;
 
     let schema = mediation_schema();
     let entropy = calculate_schema_entropy_upper_bound(&schema).unwrap();
@@ -1887,4 +1887,27 @@ async fn test_inbox_cancel_accepted_returns_409() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::CONFLICT);
+}
+
+// ============================================================================
+// entropy-core smoke test (AV #61)
+// ============================================================================
+
+/// Verify that the relay correctly calls through to entropy_core::calculate_schema_entropy_upper_bound
+/// with a real schema. This catches AV-specific regressions if the upstream crate API changes.
+#[test]
+fn entropy_core_smoke_test() {
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "choice": {
+                "type": "string",
+                "enum": ["a", "b", "c"]
+            }
+        },
+        "required": ["choice"],
+        "additionalProperties": false
+    });
+    let bits = entropy_core::calculate_schema_entropy_upper_bound(&schema).unwrap();
+    assert!(bits > 0, "should calculate non-zero entropy for enum schema");
 }
