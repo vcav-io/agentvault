@@ -109,6 +109,14 @@ export interface EpistemicLimits {
   invalid_claims: string[];
 }
 
+export interface DerivedField {
+  field: string;
+  value: string;
+  rule_summary: string;
+  model_value: string;
+  agrees?: boolean;
+}
+
 export interface InterpretationContext {
   purpose: string;
   signal_description: string;
@@ -119,6 +127,7 @@ export interface InterpretationContext {
     contract_hash: string | null;
     receipt_available: boolean;
   };
+  derived_fields?: DerivedField[];
 }
 
 export interface RelaySignalOutput {
@@ -233,34 +242,102 @@ function compatibilityContext(handle: RelayHandle): InterpretationContext {
   return {
     purpose: 'COMPATIBILITY',
     signal_description:
-      'Bounded compatibility signal indicating degree of match between two parties\' private criteria, ' +
-      'without revealing what those criteria were.',
+      'Bounded compatibility signal from private relay computation. Indicates degree of match ' +
+      'between two parties\' criteria across multiple dimensions without revealing what those ' +
+      'criteria were. Also includes a deterministic derivation of next_step from other signal dimensions.',
     signal_fields: [
       {
         field: 'compatibility_signal',
-        description: 'Degree of match between criteria.',
+        description: 'Overall degree of match between criteria.',
         values: {
-          STRONG_MATCH: 'High overlap.',
-          PARTIAL_MATCH: 'Meaningful overlap with gaps.',
-          WEAK_MATCH: 'Limited overlap.',
+          STRONG_MATCH: 'High overlap across dimensions.',
+          PARTIAL_MATCH: 'Meaningful overlap with gaps in some dimensions.',
+          WEAK_MATCH: 'Limited overlap; significant gaps present.',
           NO_MATCH: 'Criteria incompatible.',
         },
       },
       {
-        field: 'overlap_summary',
-        description: 'Relay-generated summary of what the overlap consists of (not extracted from either input).',
+        field: 'thesis_fit',
+        description: 'Alignment on thesis or sector dimension.',
+        values: {
+          ALIGNED: 'Strong alignment on this dimension.',
+          PARTIAL: 'Partial alignment; some gap.',
+          MISALIGNED: 'Significant misalignment on this dimension.',
+          UNKNOWN: 'Insufficient signal to assess.',
+        },
+      },
+      {
+        field: 'size_fit',
+        description: 'Compatibility on size dimension.',
+        values: {
+          WITHIN_BAND: 'Size is within acceptable range.',
+          TOO_LOW: 'Size is below acceptable range.',
+          TOO_HIGH: 'Size is above acceptable range.',
+          UNKNOWN: 'Insufficient signal to assess.',
+        },
+      },
+      {
+        field: 'stage_fit',
+        description: 'Alignment on stage dimension.',
+        values: {
+          ALIGNED: 'Strong alignment on this dimension.',
+          PARTIAL: 'Partial alignment; some gap.',
+          MISALIGNED: 'Significant misalignment on this dimension.',
+          UNKNOWN: 'Insufficient signal to assess.',
+        },
+      },
+      {
+        field: 'confidence',
+        description: 'Relay confidence in the signal given inputs provided.',
+        values: { LOW: 'Low confidence.', MEDIUM: 'Moderate confidence.', HIGH: 'High confidence.' },
+      },
+      {
+        field: 'primary_reasons',
+        description: 'Positive factors supporting the compatibility signal (up to 3).',
+        values: {
+          SECTOR_MATCH: 'Sector alignment detected.',
+          SIZE_COMPATIBLE: 'Size within acceptable range.',
+          STAGE_COMPATIBLE: 'Stage alignment detected.',
+          GEOGRAPHIC_PROXIMITY: 'Geographic alignment detected.',
+          EXPERIENCE_RELEVANCE: 'Relevant experience alignment.',
+          TIMELINE_COMPATIBLE: 'Timeline alignment detected.',
+        },
+      },
+      {
+        field: 'blocking_reasons',
+        description: 'Hard blockers that prevent compatibility (up to 2). Empty if none.',
+        values: {
+          SIZE_INCOMPATIBLE: 'Size is outside acceptable range.',
+          SECTOR_MISMATCH: 'Sector mismatch detected.',
+          STAGE_MISMATCH: 'Stage mismatch detected.',
+          GEOGRAPHY_MISMATCH: 'Geographic mismatch detected.',
+          TIMELINE_CONFLICT: 'Timeline conflict detected.',
+          STRUCTURE_INCOMPATIBLE: 'Structural incompatibility detected.',
+        },
+      },
+      {
+        field: 'next_step',
+        description: 'Model-chosen next step. See derived_fields for deterministic derivation.',
+        values: {
+          PROCEED: 'Proceed with engagement.',
+          PROCEED_WITH_CAVEATS: 'Proceed but address identified gaps.',
+          ASK_FOR_PUBLIC_INFO: 'Gather more publicly available information before deciding.',
+          DO_NOT_PROCEED: 'Do not proceed with engagement.',
+        },
       },
     ],
     epistemic_limits: {
       valid_claims: [
         'The protocol does not expose raw inputs to counterparties.',
-        'The overlap_summary was generated by the relay, not extracted from either party\'s input.',
+        'Only a bounded signal is produced — not a summary of either input.',
         `This session is cryptographically receipted (session_id=${handle.sessionId ?? 'n/a'}).`,
+        'derived_fields.value is a deterministic function of other signal fields — it is not an opinion or recommendation.',
       ],
       invalid_claims: [
         '"Bob never saw your input" — the relay enforces privacy at its boundary, but cannot control what the counterparty\'s agent does with the relay output.',
         '"The counterparty\'s specific criteria are known" — the protocol does not expose them.',
         '"The other party doesn\'t know about…" — overclaims beyond protocol guarantees.',
+        '\'The vault recommends X\' — derived_fields are a deterministic function of the signal, not a recommendation from the protocol or relay.',
       ],
     },
     provenance: {
@@ -294,10 +371,102 @@ function customContext(handle: RelayHandle): InterpretationContext {
   };
 }
 
-function buildInterpretationContext(handle: RelayHandle): InterpretationContext {
+/** Pure function: deterministic derivation of next_step from COMPAT v2 signal fields.
+ *  Returns null if the compatibility_signal is unknown/missing (no derivation possible). */
+export function deriveCompatNextStep(output: Record<string, unknown>): DerivedField | null {
+  const blockingReasons = (output['blocking_reasons'] as string[] | undefined) ?? [];
+  const signal = output['compatibility_signal'] as string | undefined;
+  const confidence = output['confidence'] as string | undefined;
+  const thesis = output['thesis_fit'] as string | undefined;
+  const size = output['size_fit'] as string | undefined;
+  const stage = output['stage_fit'] as string | undefined;
+  const primaryReasons = (output['primary_reasons'] as string[] | undefined) ?? [];
+  const modelValue = output['next_step'] as string | undefined;
+
+  let derivedValue: string;
+  let ruleSummary: string;
+
+  // Rule 1: blocking reasons present
+  if (blockingReasons.length > 0) {
+    derivedValue = 'DO_NOT_PROCEED';
+    ruleSummary = 'Blocking reasons present.';
+  }
+  // Rule 2: NO_MATCH signal
+  else if (signal === 'NO_MATCH') {
+    derivedValue = 'DO_NOT_PROCEED';
+    ruleSummary = 'compatibility_signal is NO_MATCH.';
+  }
+  // Rule 3: STRONG_MATCH
+  else if (signal === 'STRONG_MATCH') {
+    if (
+      confidence === 'HIGH' &&
+      thesis === 'ALIGNED' &&
+      size === 'WITHIN_BAND' &&
+      stage === 'ALIGNED' &&
+      primaryReasons.length >= 2
+    ) {
+      derivedValue = 'PROCEED';
+      ruleSummary = 'STRONG_MATCH with HIGH confidence, all dimensions ALIGNED, and at least 2 primary reasons.';
+    } else {
+      derivedValue = 'PROCEED_WITH_CAVEATS';
+      ruleSummary = 'STRONG_MATCH but not all conditions met for full PROCEED.';
+    }
+  }
+  // Rule 4: PARTIAL_MATCH
+  else if (signal === 'PARTIAL_MATCH') {
+    const weakDims = [thesis, size, stage].filter(
+      v => v === 'MISALIGNED' || v === 'UNKNOWN',
+    ).length;
+    if (weakDims >= 2) {
+      derivedValue = 'ASK_FOR_PUBLIC_INFO';
+      ruleSummary = 'PARTIAL_MATCH with 2 or more weak dimensions (MISALIGNED or UNKNOWN).';
+    } else {
+      derivedValue = 'PROCEED_WITH_CAVEATS';
+      ruleSummary = 'PARTIAL_MATCH with fewer than 2 weak dimensions.';
+    }
+  }
+  // Rule 5: WEAK_MATCH
+  else if (signal === 'WEAK_MATCH') {
+    if (confidence === 'LOW') {
+      derivedValue = 'ASK_FOR_PUBLIC_INFO';
+      ruleSummary = 'WEAK_MATCH with LOW confidence.';
+    } else {
+      derivedValue = 'DO_NOT_PROCEED';
+      ruleSummary = 'WEAK_MATCH with confidence above LOW.';
+    }
+  }
+  // Fallback: unknown or missing signal
+  else {
+    return null;
+  }
+
+  const result: DerivedField = {
+    field: 'next_step',
+    value: derivedValue,
+    rule_summary: ruleSummary,
+    model_value: modelValue ?? '',
+  };
+
+  if (modelValue !== undefined) {
+    result.agrees = derivedValue === modelValue;
+  }
+
+  return result;
+}
+
+function buildInterpretationContext(handle: RelayHandle, output?: Record<string, unknown>): InterpretationContext {
   switch (handle.purpose) {
     case 'MEDIATION': return mediationContext(handle);
-    case 'COMPATIBILITY': return compatibilityContext(handle);
+    case 'COMPATIBILITY': {
+      const ctx = compatibilityContext(handle);
+      if (output !== undefined) {
+        const derived = deriveCompatNextStep(output);
+        if (derived !== null) {
+          ctx.derived_fields = [derived];
+        }
+      }
+      return ctx;
+    }
     default: return customContext(handle);
   }
 }
@@ -652,7 +821,7 @@ function completedResponse(
       ],
       redact: ['resume_token', 'my_input'],
     },
-    interpretation_context: buildInterpretationContext(handle),
+    interpretation_context: buildInterpretationContext(handle, output.output as Record<string, unknown> | undefined),
   });
 }
 

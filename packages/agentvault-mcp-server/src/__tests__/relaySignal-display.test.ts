@@ -47,6 +47,16 @@ vi.mock('agentvault-client/contracts', () => ({
         metadata: { scenario: 'cofounder-mediation', version: '3' },
       };
     }
+    if (purpose === 'COMPATIBILITY') {
+      return {
+        purpose_code: 'COMPATIBILITY',
+        output_schema_id: 'vcav_e_compatibility_signal_v2',
+        participants,
+        entropy_budget_bits: 32,
+        model_profile_id: 'api-claude-sonnet-v1',
+        metadata: { scenario: 'scheduling-compatibility', version: '2' },
+      };
+    }
     return undefined;
   }),
   listRelayPurposes: vi.fn().mockReturnValue(['MEDIATION', 'COMPATIBILITY']),
@@ -332,5 +342,181 @@ describe('failedResponse display directives', () => {
     const data = result.data as RelaySignalOutput;
     expect(data.resume_token).toBeNull();
     expect(data.resume_token_display).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// COMPATIBILITY integration tests
+// ---------------------------------------------------------------------------
+
+const COMPAT_OUTPUT = {
+  schema_version: '2',
+  compatibility_signal: 'STRONG_MATCH',
+  thesis_fit: 'ALIGNED',
+  size_fit: 'WITHIN_BAND',
+  stage_fit: 'ALIGNED',
+  confidence: 'HIGH',
+  primary_reasons: ['SECTOR_MATCH', 'SIZE_COMPATIBLE'],
+  blocking_reasons: [],
+  next_step: 'PROCEED',
+};
+
+async function initiateCompatAndResume(transport: AfalTransport): Promise<{ resumeToken: string }> {
+  const initiateResult = await handleRelaySignal(
+    { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'COMPATIBILITY', my_input: 'hello' },
+    transport,
+  );
+  const resumeToken = (initiateResult.data as RelaySignalOutput).resume_token!;
+  return { resumeToken };
+}
+
+describe('COMPATIBILITY interpretation_context', () => {
+  it('signal_fields covers all 8 COMPAT v2 fields', async () => {
+    const transport = createMockAfalTransport();
+    const { resumeToken } = await initiateCompatAndResume(transport);
+
+    mockGetStatus.mockResolvedValueOnce({ state: 'COMPLETED' });
+    mockGetOutput.mockResolvedValueOnce({ state: 'COMPLETED', output: COMPAT_OUTPUT });
+
+    const result = await handleRelaySignal({ resume_token: resumeToken }, transport);
+    const data = result.data as RelaySignalOutput;
+    const ctx = data.interpretation_context!;
+
+    expect(ctx.purpose).toBe('COMPATIBILITY');
+    const fieldNames = ctx.signal_fields.map(f => f.field);
+    expect(fieldNames).toContain('compatibility_signal');
+    expect(fieldNames).toContain('thesis_fit');
+    expect(fieldNames).toContain('size_fit');
+    expect(fieldNames).toContain('stage_fit');
+    expect(fieldNames).toContain('confidence');
+    expect(fieldNames).toContain('primary_reasons');
+    expect(fieldNames).toContain('blocking_reasons');
+    expect(fieldNames).toContain('next_step');
+    expect(fieldNames).not.toContain('overlap_summary');
+    expect(fieldNames).toHaveLength(8);
+  });
+
+  it('derived_fields included with correct structure for COMPATIBILITY', async () => {
+    const transport = createMockAfalTransport();
+    const { resumeToken } = await initiateCompatAndResume(transport);
+
+    mockGetStatus.mockResolvedValueOnce({ state: 'COMPLETED' });
+    mockGetOutput.mockResolvedValueOnce({ state: 'COMPLETED', output: COMPAT_OUTPUT });
+
+    const result = await handleRelaySignal({ resume_token: resumeToken }, transport);
+    const data = result.data as RelaySignalOutput;
+    const ctx = data.interpretation_context!;
+
+    expect(ctx.derived_fields).toBeDefined();
+    expect(ctx.derived_fields!.length).toBeGreaterThan(0);
+    const df = ctx.derived_fields![0];
+    expect(df.field).toBe('next_step');
+    expect(df.value).toBe('PROCEED');
+    expect(df.model_value).toBe('PROCEED');
+    expect(df.agrees).toBe(true);
+    expect(typeof df.rule_summary).toBe('string');
+    expect(df.rule_summary.length).toBeGreaterThan(0);
+  });
+
+  it('derived_fields.rule_summary contains no prescriptive language', async () => {
+    const transport = createMockAfalTransport();
+    const { resumeToken } = await initiateCompatAndResume(transport);
+
+    mockGetStatus.mockResolvedValueOnce({ state: 'COMPLETED' });
+    mockGetOutput.mockResolvedValueOnce({ state: 'COMPLETED', output: COMPAT_OUTPUT });
+
+    const result = await handleRelaySignal({ resume_token: resumeToken }, transport);
+    const data = result.data as RelaySignalOutput;
+    const df = data.interpretation_context!.derived_fields![0];
+    expect(df.rule_summary).not.toMatch(/recommend|advise|suggest|should/i);
+  });
+
+  it('epistemic_limits.invalid_claims includes derived_fields authority guardrail', async () => {
+    const transport = createMockAfalTransport();
+    const { resumeToken } = await initiateCompatAndResume(transport);
+
+    mockGetStatus.mockResolvedValueOnce({ state: 'COMPLETED' });
+    mockGetOutput.mockResolvedValueOnce({ state: 'COMPLETED', output: COMPAT_OUTPUT });
+
+    const result = await handleRelaySignal({ resume_token: resumeToken }, transport);
+    const data = result.data as RelaySignalOutput;
+    const invalidClaims = data.interpretation_context!.epistemic_limits.invalid_claims.join(' ');
+    expect(invalidClaims).toMatch(/derived_fields/i);
+    expect(invalidClaims).toMatch(/deterministic/i);
+  });
+
+  it('overlap_summary is absent from COMPATIBILITY context', async () => {
+    const transport = createMockAfalTransport();
+    const { resumeToken } = await initiateCompatAndResume(transport);
+
+    mockGetStatus.mockResolvedValueOnce({ state: 'COMPLETED' });
+    mockGetOutput.mockResolvedValueOnce({ state: 'COMPLETED', output: COMPAT_OUTPUT });
+
+    const result = await handleRelaySignal({ resume_token: resumeToken }, transport);
+    const data = result.data as RelaySignalOutput;
+    const ctx = data.interpretation_context!;
+
+    const fieldNames = ctx.signal_fields.map(f => f.field);
+    expect(fieldNames).not.toContain('overlap_summary');
+    const allText = JSON.stringify(ctx);
+    expect(allText).not.toContain('overlap_summary');
+  });
+
+  it('MEDIATION context has NO derived_fields', async () => {
+    const transport = createMockAfalTransport();
+    const { resumeToken } = await initiateAndResume(transport);
+
+    mockGetStatus.mockResolvedValueOnce({ state: 'COMPLETED' });
+    mockGetOutput.mockResolvedValueOnce({
+      state: 'COMPLETED',
+      output: { mediation_signal: 'ALIGNMENT_POSSIBLE' },
+    });
+
+    const result = await handleRelaySignal({ resume_token: resumeToken }, transport);
+    const data = result.data as RelaySignalOutput;
+    expect(data.interpretation_context!.derived_fields).toBeUndefined();
+  });
+
+  it('derived_fields omitted when signal is unknown (no derivation)', async () => {
+    const transport = createMockAfalTransport();
+    const { resumeToken } = await initiateCompatAndResume(transport);
+
+    mockGetStatus.mockResolvedValueOnce({ state: 'COMPLETED' });
+    mockGetOutput.mockResolvedValueOnce({
+      state: 'COMPLETED',
+      output: {
+        ...COMPAT_OUTPUT,
+        compatibility_signal: 'UNKNOWN_SIGNAL',
+        blocking_reasons: [],
+      },
+    });
+
+    const result = await handleRelaySignal({ resume_token: resumeToken }, transport);
+    const data = result.data as RelaySignalOutput;
+    expect(data.interpretation_context!.derived_fields).toBeUndefined();
+  });
+
+  it('agrees is false in derived_fields when model disagrees with derivation', async () => {
+    const transport = createMockAfalTransport();
+    const { resumeToken } = await initiateCompatAndResume(transport);
+
+    // NO_MATCH should derive DO_NOT_PROCEED; model says PROCEED
+    mockGetStatus.mockResolvedValueOnce({ state: 'COMPLETED' });
+    mockGetOutput.mockResolvedValueOnce({
+      state: 'COMPLETED',
+      output: {
+        ...COMPAT_OUTPUT,
+        compatibility_signal: 'NO_MATCH',
+        blocking_reasons: [],
+        next_step: 'PROCEED',
+      },
+    });
+
+    const result = await handleRelaySignal({ resume_token: resumeToken }, transport);
+    const data = result.data as RelaySignalOutput;
+    const df = data.interpretation_context!.derived_fields![0];
+    expect(df.value).toBe('DO_NOT_PROCEED');
+    expect(df.model_value).toBe('PROCEED');
+    expect(df.agrees).toBe(false);
   });
 });

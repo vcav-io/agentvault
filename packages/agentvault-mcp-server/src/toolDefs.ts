@@ -31,7 +31,7 @@ export const RELAY_TOOLS = [
       'only the bounded signal and a cryptographic receipt.\n\n' +
       'Available purposes: MEDIATION (bounded mediation signal: mediation_signal, ' +
       'common_ground, suggested_next_step), COMPATIBILITY (bounded compatibility ' +
-      'signal: compatibility_signal, overlap_summary).\n\n' +
+      'signal: compatibility_signal, thesis_fit, size_fit, stage_fit, confidence, primary_reasons, blocking_reasons, next_step).\n\n' +
       'PROTOCOL:\n' +
       '- First call: provide mode, counterparty/from, purpose/expected_purpose, my_input.\n' +
       '- If action_required = CALL_AGAIN: you MUST call again with ONLY resume_token.\n' +
