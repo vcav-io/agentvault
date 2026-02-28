@@ -16,12 +16,12 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { buildSuccess, buildError, type ToolResponse, type ErrorCode } from '../envelope.js';
+import { createAndSubmit, pollUntilDone, joinAndWait } from 'agentvault-client';
 import {
-  createAndSubmit,
-  pollUntilDone,
-  joinAndWait,
-} from 'agentvault-client';
-import { submitInput as rawSubmitInput, getStatus as httpGetStatus, getOutput as httpGetOutput } from 'agentvault-client/http';
+  submitInput as rawSubmitInput,
+  getStatus as httpGetStatus,
+  getOutput as httpGetOutput,
+} from 'agentvault-client/http';
 import type { SessionOutputResponse } from 'agentvault-client';
 import {
   buildRelayContract,
@@ -187,7 +187,7 @@ function mediationContext(handle: RelayHandle): InterpretationContext {
     purpose: 'MEDIATION',
     signal_description:
       'Bounded mediation signal from private relay computation. Indicates alignment degree ' +
-      'and suggested next step without revealing either party\'s input.',
+      "and suggested next step without revealing either party's input.",
     signal_fields: [
       {
         field: 'mediation_signal',
@@ -215,7 +215,11 @@ function mediationContext(handle: RelayHandle): InterpretationContext {
       {
         field: 'confidence_band',
         description: 'Relay confidence in the signal given inputs provided.',
-        values: { LOW: 'Low confidence.', MEDIUM: 'Moderate confidence.', HIGH: 'High confidence.' },
+        values: {
+          LOW: 'Low confidence.',
+          MEDIUM: 'Moderate confidence.',
+          HIGH: 'High confidence.',
+        },
       },
       {
         field: 'next_step_signal',
@@ -254,7 +258,7 @@ function compatibilityContext(handle: RelayHandle): InterpretationContext {
     purpose: 'COMPATIBILITY',
     signal_description:
       'Bounded compatibility signal from private relay computation. Indicates degree of match ' +
-      'between two parties\' criteria across multiple dimensions without revealing what those ' +
+      "between two parties' criteria across multiple dimensions without revealing what those " +
       'criteria were. Also includes a deterministic derivation of next_step from other signal dimensions.',
     signal_fields: [
       {
@@ -300,7 +304,11 @@ function compatibilityContext(handle: RelayHandle): InterpretationContext {
       {
         field: 'confidence',
         description: 'Relay confidence in the signal given inputs provided.',
-        values: { LOW: 'Low confidence.', MEDIUM: 'Moderate confidence.', HIGH: 'High confidence.' },
+        values: {
+          LOW: 'Low confidence.',
+          MEDIUM: 'Moderate confidence.',
+          HIGH: 'High confidence.',
+        },
       },
       {
         field: 'primary_reasons',
@@ -348,7 +356,7 @@ function compatibilityContext(handle: RelayHandle): InterpretationContext {
         '"Bob never saw your input" — the relay enforces privacy at its boundary, but cannot control what the counterparty\'s agent does with the relay output.',
         '"The counterparty\'s specific criteria are known" — the protocol does not expose them.',
         '"The other party doesn\'t know about…" — overclaims beyond protocol guarantees.',
-        '\'The vault recommends X\' — derived_fields are a deterministic function of the signal, not a recommendation from the protocol or relay.',
+        "'The vault recommends X' — derived_fields are a deterministic function of the signal, not a recommendation from the protocol or relay.",
       ],
     },
     provenance: {
@@ -417,7 +425,8 @@ export function deriveCompatNextStep(output: Record<string, unknown>): DerivedFi
       primaryReasons.length >= 2
     ) {
       derivedValue = 'PROCEED';
-      ruleSummary = 'STRONG_MATCH with HIGH confidence, all dimensions ALIGNED, and at least 2 primary reasons.';
+      ruleSummary =
+        'STRONG_MATCH with HIGH confidence, all dimensions ALIGNED, and at least 2 primary reasons.';
     } else {
       derivedValue = 'PROCEED_WITH_CAVEATS';
       ruleSummary = 'STRONG_MATCH but not all conditions met for full PROCEED.';
@@ -426,7 +435,7 @@ export function deriveCompatNextStep(output: Record<string, unknown>): DerivedFi
   // Rule 4: PARTIAL_MATCH
   else if (signal === 'PARTIAL_MATCH') {
     const weakDims = [thesis, size, stage].filter(
-      v => v === 'MISALIGNED' || v === 'UNKNOWN',
+      (v) => v === 'MISALIGNED' || v === 'UNKNOWN',
     ).length;
     if (weakDims >= 2) {
       derivedValue = 'ASK_FOR_PUBLIC_INFO';
@@ -465,9 +474,13 @@ export function deriveCompatNextStep(output: Record<string, unknown>): DerivedFi
   return result;
 }
 
-function buildInterpretationContext(handle: RelayHandle, output?: Record<string, unknown>): InterpretationContext {
+function buildInterpretationContext(
+  handle: RelayHandle,
+  output?: Record<string, unknown>,
+): InterpretationContext {
   switch (handle.purpose) {
-    case 'MEDIATION': return mediationContext(handle);
+    case 'MEDIATION':
+      return mediationContext(handle);
     case 'COMPATIBILITY': {
       const ctx = compatibilityContext(handle);
       if (output !== undefined) {
@@ -478,7 +491,8 @@ function buildInterpretationContext(handle: RelayHandle, output?: Record<string,
       }
       return ctx;
     }
-    default: return customContext(handle);
+    default:
+      return customContext(handle);
   }
 }
 
@@ -487,9 +501,7 @@ function buildInterpretationContext(handle: RelayHandle, output?: Record<string,
 function resolveRelayUrl(argsUrl?: string): string {
   const url = argsUrl ?? process.env['VCAV_RELAY_URL'];
   if (!url) {
-    throw new Error(
-      'relay_url is required (or set VCAV_RELAY_URL environment variable)',
-    );
+    throw new Error('relay_url is required (or set VCAV_RELAY_URL environment variable)');
   }
   return url;
 }
@@ -512,7 +524,10 @@ function mapRelayError(error: unknown): { code: ErrorCode; detail: string } {
       };
     }
     if (msg.includes('Proposal denied')) {
-      return { code: 'SESSION_ERROR', detail: `Counterparty explicitly denied the proposal. ${msg}` };
+      return {
+        code: 'SESSION_ERROR',
+        detail: `Counterparty explicitly denied the proposal. ${msg}`,
+      };
     }
     if (msg.includes('relay_url')) {
       return { code: 'INVALID_INPUT', detail: msg };
@@ -541,7 +556,10 @@ function writeLastSessionFile(
       relay_url: relayUrl,
       timestamp: new Date().toISOString(),
     };
-    fs.writeFileSync(tmpPath, JSON.stringify(record, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+    fs.writeFileSync(tmpPath, JSON.stringify(record, null, 2) + '\n', {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
     fs.renameSync(tmpPath, finalPath);
   } catch (err) {
     // Non-fatal — log but do not fail the relay operation
@@ -591,7 +609,7 @@ function resolveWorkdir(): string {
   if (!process.env['VCAV_WORKDIR']) {
     console.warn(
       `[VCAV WARNING] VCAV_WORKDIR not set — writing session state to ${dir}. ` +
-      'The heartbeat agent may not find these files. Set VCAV_WORKDIR to your workspace directory.',
+        'The heartbeat agent may not find these files. Set VCAV_WORKDIR to your workspace directory.',
     );
   }
   return dir;
@@ -624,14 +642,17 @@ function atomicWriteJson(filePath: string, data: unknown): void {
   const dir = path.dirname(filePath);
   fs.mkdirSync(dir, { recursive: true });
   const tmpPath = `${filePath}.tmp`;
-  fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+  fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2) + '\n', {
+    encoding: 'utf8',
+    mode: 0o600,
+  });
   fs.renameSync(tmpPath, filePath);
 }
 
 function rebuildSessionIndex(sessionsDir: string, indexPath: string): void {
   const entries: SessionStateEntry[] = [];
   try {
-    const files = fs.readdirSync(sessionsDir).filter(f => f.endsWith('.json'));
+    const files = fs.readdirSync(sessionsDir).filter((f) => f.endsWith('.json'));
     for (const file of files) {
       try {
         const raw = fs.readFileSync(path.join(sessionsDir, file), 'utf8');
@@ -642,7 +663,9 @@ function rebuildSessionIndex(sessionsDir: string, indexPath: string): void {
             fs.unlinkSync(path.join(sessionsDir, file));
           } catch (unlinkErr) {
             if ((unlinkErr as NodeJS.ErrnoException).code !== 'ENOENT') {
-              console.warn(`rebuildSessionIndex: failed to remove expired file ${file}: ${unlinkErr instanceof Error ? unlinkErr.message : String(unlinkErr)}`);
+              console.warn(
+                `rebuildSessionIndex: failed to remove expired file ${file}: ${unlinkErr instanceof Error ? unlinkErr.message : String(unlinkErr)}`,
+              );
             }
           }
           continue;
@@ -655,20 +678,24 @@ function rebuildSessionIndex(sessionsDir: string, indexPath: string): void {
         });
       } catch (readErr) {
         if ((readErr as NodeJS.ErrnoException).code !== 'ENOENT') {
-          console.warn(`rebuildSessionIndex: skipping unreadable session file ${file}: ${readErr instanceof Error ? readErr.message : String(readErr)}`);
+          console.warn(
+            `rebuildSessionIndex: skipping unreadable session file ${file}: ${readErr instanceof Error ? readErr.message : String(readErr)}`,
+          );
         }
       }
     }
   } catch (dirErr) {
     if ((dirErr as NodeJS.ErrnoException).code !== 'ENOENT') {
-      console.error(`rebuildSessionIndex: failed to read sessions directory ${sessionsDir}: ${dirErr instanceof Error ? dirErr.message : String(dirErr)}`);
+      console.error(
+        `rebuildSessionIndex: failed to read sessions directory ${sessionsDir}: ${dirErr instanceof Error ? dirErr.message : String(dirErr)}`,
+      );
     }
   }
 
   // Sort: IMMEDIATE before DEFERRED, within IMMEDIATE oldest updated_at first,
   // within DEFERRED earliest due_at first, tie-break by handle_id
   entries.sort((a, b) => {
-    const stratOrder = (s: ResumeStrategy) => s === 'IMMEDIATE' ? 0 : 1;
+    const stratOrder = (s: ResumeStrategy) => (s === 'IMMEDIATE' ? 0 : 1);
     const stratCmp = stratOrder(a.resume_strategy) - stratOrder(b.resume_strategy);
     if (stratCmp !== 0) return stratCmp;
     if (a.resume_strategy === 'IMMEDIATE') {
@@ -714,7 +741,8 @@ function writeSessionStateFile(
     }
 
     // Reset attempt_count on phase change, otherwise increment
-    const attemptCount = (existingPhase && existingPhase !== handle.phase) ? 0 : existingAttemptCount + 1;
+    const attemptCount =
+      existingPhase && existingPhase !== handle.phase ? 0 : existingAttemptCount + 1;
 
     const state: SessionStateFile = {
       handle_id: handle.id,
@@ -752,7 +780,9 @@ function removeSessionStateFile(handle: RelayHandle): void {
       fs.unlinkSync(filePath);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.warn(`removeSessionStateFile: failed to delete ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+        console.warn(
+          `removeSessionStateFile: failed to delete ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
     rebuildSessionIndex(sessionsDir, indexPath);
@@ -773,9 +803,7 @@ function awaitingResponse(
   const strategy = opts?.strategy ?? 'IMMEDIATE';
   const seconds = opts?.seconds ?? 5;
   const token = encodeRelayToken(handle, getResumeTokenSecret());
-  const resumeTokenDisplay = token.length > 16
-    ? `${token.slice(0, 12)}…${token.slice(-4)}`
-    : token;
+  const resumeTokenDisplay = token.length > 16 ? `${token.slice(0, 12)}…${token.slice(-4)}` : token;
 
   writeSessionStateFile(handle, token, strategy, seconds);
 
@@ -832,7 +860,10 @@ function completedResponse(
       ],
       redact: ['resume_token', 'my_input'],
     },
-    interpretation_context: buildInterpretationContext(handle, output.output as Record<string, unknown> | undefined),
+    interpretation_context: buildInterpretationContext(
+      handle,
+      output.output as Record<string, unknown> | undefined,
+    ),
   });
 }
 
@@ -892,15 +923,19 @@ async function phaseInvite(
       return buildError('INVALID_INPUT', (e as Error).message);
     }
     if (!built) {
-      return buildError('INVALID_INPUT',
-        `Unknown purpose "${args.purpose}". Available: ${listRelayPurposes().join(', ')}`);
+      return buildError(
+        'INVALID_INPUT',
+        `Unknown purpose "${args.purpose}". Available: ${listRelayPurposes().join(', ')}`,
+      );
     }
     contract = built;
     relayContract = built;
     purposeHint = args.purpose;
   } else {
-    return buildError('INVALID_INPUT',
-      `INITIATE requires purpose (${listRelayPurposes().join(', ')}) or contract`);
+    return buildError(
+      'INVALID_INPUT',
+      `INITIATE requires purpose (${listRelayPurposes().join(', ')}) or contract`,
+    );
   }
 
   // ── Relay inbox path ──────────────────────────────────────────────────
@@ -921,7 +956,10 @@ async function phaseInvite(
     handle.purpose = purposeHint ?? undefined;
     handle.myInput = args.my_input;
     handle.phase = 'POLL_INVITE';
-    return awaitingResponse(handle, 'Invite created. Waiting for counterparty to accept.', { strategy: 'DEFERRED', seconds: 120 });
+    return awaitingResponse(handle, 'Invite created. Waiting for counterparty to accept.', {
+      strategy: 'DEFERRED',
+      seconds: 120,
+    });
   }
 
   const relayUrl = resolveRelayUrl(args.relay_url);
@@ -931,7 +969,9 @@ async function phaseInvite(
   const created = await createAndSubmit(config, contract, args.my_input ?? '', 'initiator');
 
   // 2. Build AfalPropose from purpose and contract template (reuses `relayContract` from above)
-  const templateId = purposeHint ? (PURPOSE_TO_TEMPLATE[purposeHint] ?? 'mediation-demo.v1.standard') : 'mediation-demo.v1.standard';
+  const templateId = purposeHint
+    ? (PURPOSE_TO_TEMPLATE[purposeHint] ?? 'mediation-demo.v1.standard')
+    : 'mediation-demo.v1.standard';
 
   const proposeFields: Omit<AfalPropose, 'proposal_id'> = {
     proposal_version: '1',
@@ -993,7 +1033,10 @@ async function phaseInvite(
   }
 
   handle.phase = 'POLL_RELAY';
-  return awaitingResponse(handle, 'Relay session created. Waiting for counterparty to join.', { strategy: 'IMMEDIATE', seconds: 5 });
+  return awaitingResponse(handle, 'Relay session created. Waiting for counterparty to join.', {
+    strategy: 'IMMEDIATE',
+    seconds: 5,
+  });
 }
 
 /**
@@ -1007,11 +1050,19 @@ async function phasePollInvite(
   transport: AfalTransport,
 ): Promise<ToolResponse<RelaySignalOutput>> {
   if (Date.now() > handle.timeoutDeadline) {
-    return failedResponse(handle, 'RELAY_TIMEOUT', 'Timed out waiting for invite acceptance. Call agentvault.relay_signal INITIATE to retry.');
+    return failedResponse(
+      handle,
+      'RELAY_TIMEOUT',
+      'Timed out waiting for invite acceptance. Call agentvault.relay_signal INITIATE to retry.',
+    );
   }
 
   if (!(transport instanceof RelayInboxTransport)) {
-    return failedResponse(handle, 'SESSION_ERROR', 'POLL_INVITE phase requires RelayInboxTransport.');
+    return failedResponse(
+      handle,
+      'SESSION_ERROR',
+      'POLL_INVITE phase requires RelayInboxTransport.',
+    );
   }
 
   if (!handle.inviteId) {
@@ -1026,8 +1077,11 @@ async function phasePollInvite(
   if (detail.status === 'ACCEPTED') {
     // Validate required session fields before using them
     if (!detail.session_id || !detail.submit_token || !detail.read_token) {
-      return failedResponse(handle, 'SESSION_ERROR',
-        'Invite accepted but relay returned incomplete session data (missing session_id, submit_token, or read_token).');
+      return failedResponse(
+        handle,
+        'SESSION_ERROR',
+        'Invite accepted but relay returned incomplete session data (missing session_id, submit_token, or read_token).',
+      );
     }
 
     // Extract initiator session tokens
@@ -1058,10 +1112,18 @@ async function phasePollInvite(
       console.error(
         `phasePollInvite: input submit failed after invite accepted: ${submitErr instanceof Error ? submitErr.message : String(submitErr)}`,
       );
-      return awaitingResponse(handle, 'Invite accepted but input submission failed (transient). Will retry on next check.', { strategy: 'IMMEDIATE', seconds: 5 });
+      return awaitingResponse(
+        handle,
+        'Invite accepted but input submission failed (transient). Will retry on next check.',
+        { strategy: 'IMMEDIATE', seconds: 5 },
+      );
     }
 
-    return awaitingResponse(handle, 'Counterparty accepted. Input submitted. Waiting for relay session to complete.', { strategy: 'IMMEDIATE', seconds: 5 });
+    return awaitingResponse(
+      handle,
+      'Counterparty accepted. Input submitted. Waiting for relay session to complete.',
+      { strategy: 'IMMEDIATE', seconds: 5 },
+    );
   }
 
   if (detail.status === 'DECLINED') {
@@ -1075,18 +1137,23 @@ async function phasePollInvite(
   }
 
   // Still PENDING — return immediately, let heartbeat check again later
-  return awaitingResponse(handle, 'Waiting for counterparty to accept invite.', { strategy: 'DEFERRED', seconds: 120 });
+  return awaitingResponse(handle, 'Waiting for counterparty to accept invite.', {
+    strategy: 'DEFERRED',
+    seconds: 120,
+  });
 }
 
 /**
  * POLL_RELAY phase — single status check, no blocking loop.
  * Heartbeat-safe: checks relay status once and returns immediately.
  */
-async function phasePollRelay(
-  handle: RelayHandle,
-): Promise<ToolResponse<RelaySignalOutput>> {
+async function phasePollRelay(handle: RelayHandle): Promise<ToolResponse<RelaySignalOutput>> {
   if (Date.now() > handle.timeoutDeadline) {
-    return failedResponse(handle, 'RELAY_TIMEOUT', 'Relay session timed out. Call agentvault.relay_signal INITIATE to retry.');
+    return failedResponse(
+      handle,
+      'RELAY_TIMEOUT',
+      'Relay session timed out. Call agentvault.relay_signal INITIATE to retry.',
+    );
   }
 
   if (!handle.relayUrl || !handle.sessionId || !handle.tokens?.initiatorRead) {
@@ -1104,7 +1171,11 @@ async function phasePollRelay(
       console.error(
         `phasePollRelay: session ${handle.sessionId} COMPLETED but output fetch failed: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
       );
-      return awaitingResponse(handle, 'Session completed but output fetch failed (transient). Will retry.', { strategy: 'IMMEDIATE', seconds: 5 });
+      return awaitingResponse(
+        handle,
+        'Session completed but output fetch failed (transient). Will retry.',
+        { strategy: 'IMMEDIATE', seconds: 5 },
+      );
     }
   }
 
@@ -1120,7 +1191,10 @@ async function phasePollRelay(
   }
 
   // Still processing — return immediately, caller decides when to check again
-  return awaitingResponse(handle, 'Relay processing. Waiting for session to complete.', { strategy: 'IMMEDIATE', seconds: 5 });
+  return awaitingResponse(handle, 'Relay processing. Waiting for session to complete.', {
+    strategy: 'IMMEDIATE',
+    seconds: 5,
+  });
 }
 
 async function phaseRetryPropose(
@@ -1146,11 +1220,10 @@ async function phaseRetryPropose(
     await transport.sendPropose(params);
   } catch (err) {
     if (isRetryableTransportError(err)) {
-      return awaitingResponse(
-        handle,
-        'Counterparty still not reachable. Will keep trying.',
-        { strategy: 'DEFERRED', seconds: 60 },
-      );
+      return awaitingResponse(handle, 'Counterparty still not reachable. Will keep trying.', {
+        strategy: 'DEFERRED',
+        seconds: 60,
+      });
     }
     // Non-retryable error (e.g. DENY response) — fail
     const detail = err instanceof Error ? err.message : String(err);
@@ -1160,7 +1233,11 @@ async function phaseRetryPropose(
   // PROPOSE succeeded — advance to relay polling
   handle.phase = 'POLL_RELAY';
   handle.retryState = undefined;
-  return awaitingResponse(handle, 'Invite delivered. Waiting for counterparty to join relay session.', { strategy: 'IMMEDIATE', seconds: 5 });
+  return awaitingResponse(
+    handle,
+    'Invite delivered. Waiting for counterparty to join relay session.',
+    { strategy: 'IMMEDIATE', seconds: 5 },
+  );
 }
 
 // ── RESPOND Phases ──────────────────────────────────────────────────────
@@ -1177,7 +1254,11 @@ async function phaseDiscover(
 ): Promise<ToolResponse<RelaySignalOutput>> {
   // Check overall timeout
   if (Date.now() > handle.timeoutDeadline) {
-    return failedResponse(handle, 'RELAY_TIMEOUT', 'Timed out waiting for relay invite. Ask the initiator to retry.');
+    return failedResponse(
+      handle,
+      'RELAY_TIMEOUT',
+      'Timed out waiting for relay invite. Ask the initiator to retry.',
+    );
   }
 
   const response = await transport.checkInbox();
@@ -1209,7 +1290,13 @@ async function phaseDiscover(
     if (!isRelayInbox) {
       const payload = invite.payload;
       if (!payload || typeof payload !== 'object') continue;
-      if (!payload['session_id'] || !payload['responder_submit_token'] || !payload['responder_read_token'] || !payload['relay_url']) continue;
+      if (
+        !payload['session_id'] ||
+        !payload['responder_submit_token'] ||
+        !payload['responder_read_token'] ||
+        !payload['relay_url']
+      )
+        continue;
     }
 
     // Check expected_contract_hash if provided (direct hash comparison)
@@ -1219,7 +1306,11 @@ async function phaseDiscover(
     }
 
     // AFAL-enriched path: validate purpose_code from parsed AfalPropose
-    if (invite.afalPropose?.purpose_code && handle.expectedPurpose && !handle.expectedContractHash) {
+    if (
+      invite.afalPropose?.purpose_code &&
+      handle.expectedPurpose &&
+      !handle.expectedContractHash
+    ) {
       if (invite.afalPropose.purpose_code !== handle.expectedPurpose) {
         foundSenderInviteWithContractMismatch = true;
         continue;
@@ -1240,13 +1331,16 @@ async function phaseDiscover(
     if (handle.expectedPurpose) {
       const myId = process.env['VCAV_AGENT_ID'] ?? '';
       try {
-        const relayContract = buildRelayContract(handle.expectedPurpose, [handle.counterparty, myId]);
+        const relayContract = buildRelayContract(handle.expectedPurpose, [
+          handle.counterparty,
+          myId,
+        ]);
         if (relayContract) relayContractHash = computeRelayContractHash(relayContract);
       } catch (err) {
         // Non-fatal — relay will verify on submit, but log for diagnostics
         console.error(
           `phaseDiscover: failed to compute relay contract hash for purpose=${handle.expectedPurpose}: ` +
-          `${err instanceof Error ? err.message : String(err)}`,
+            `${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
@@ -1276,18 +1370,27 @@ async function phaseDiscover(
     }
 
     handle.phase = 'JOIN';
-    return awaitingResponse(handle, 'Relay invite found. Joining session.', { strategy: 'IMMEDIATE', seconds: 0 });
+    return awaitingResponse(handle, 'Relay invite found. Joining session.', {
+      strategy: 'IMMEDIATE',
+      seconds: 0,
+    });
   }
 
   // If sender sent invites but all failed contract matching, fail fast.
   // Transition handle to FAILED to prevent stale handle leak.
   if (foundSenderInviteWithContractMismatch) {
-    return failedResponse(handle, 'CONTRACT_MISMATCH',
-      'Invite contract does not match expected contract.');
+    return failedResponse(
+      handle,
+      'CONTRACT_MISMATCH',
+      'Invite contract does not match expected contract.',
+    );
   }
 
   // No invite found yet — return immediately, let heartbeat check again later
-  return awaitingResponse(handle, 'No invite yet. Waiting for relay invite from counterparty.', { strategy: 'DEFERRED', seconds: 120 });
+  return awaitingResponse(handle, 'No invite yet. Waiting for relay invite from counterparty.', {
+    strategy: 'DEFERRED',
+    seconds: 120,
+  });
 }
 
 async function phaseJoin(
@@ -1296,7 +1399,11 @@ async function phaseJoin(
 ): Promise<ToolResponse<RelaySignalOutput>> {
   // Check overall timeout
   if (Date.now() > handle.timeoutDeadline) {
-    return failedResponse(handle, 'RELAY_TIMEOUT', 'Relay session timed out. Ask the initiator to retry.');
+    return failedResponse(
+      handle,
+      'RELAY_TIMEOUT',
+      'Relay session timed out. Ask the initiator to retry.',
+    );
   }
 
   if (!handle.relayUrl) {
@@ -1322,7 +1429,11 @@ async function phaseJoin(
           read: result.read_token,
         };
       } else {
-        return failedResponse(handle, 'SESSION_ERROR', 'acceptInvite did not return session tokens.');
+        return failedResponse(
+          handle,
+          'SESSION_ERROR',
+          'acceptInvite did not return session tokens.',
+        );
       }
     }
 
@@ -1348,7 +1459,7 @@ async function phaseJoin(
         // But log for operator diagnostics (auth errors, connectivity).
         console.error(
           `phaseJoin: acceptInvite failed for invite=${handle.inviteId}: ` +
-          `${err instanceof Error ? err.message : String(err)}`,
+            `${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
@@ -1370,7 +1481,11 @@ async function phaseJoin(
       console.error(
         `phaseJoin: session ${handle.sessionId} COMPLETED but output fetch failed: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
       );
-      return awaitingResponse(handle, 'Session completed but output fetch failed (transient). Will retry.', { strategy: 'IMMEDIATE', seconds: 5 });
+      return awaitingResponse(
+        handle,
+        'Session completed but output fetch failed (transient). Will retry.',
+        { strategy: 'IMMEDIATE', seconds: 5 },
+      );
     }
   }
 
@@ -1386,14 +1501,15 @@ async function phaseJoin(
   }
 
   // Still processing — return immediately, caller decides when to check again
-  return awaitingResponse(handle, 'Waiting for relay session to complete.', { strategy: 'IMMEDIATE', seconds: 5 });
+  return awaitingResponse(handle, 'Waiting for relay session to complete.', {
+    strategy: 'IMMEDIATE',
+    seconds: 5,
+  });
 }
 
 // ── Legacy Modes (unchanged) ────────────────────────────────────────────
 
-async function handleCreate(
-  args: RelaySignalArgs,
-): Promise<ToolResponse<RelaySignalCreateData>> {
+async function handleCreate(args: RelaySignalArgs): Promise<ToolResponse<RelaySignalCreateData>> {
   if (!args.contract) {
     return buildError('INVALID_INPUT', 'contract is required for CREATE mode');
   }
@@ -1413,20 +1529,25 @@ async function handleCreate(
   });
 }
 
-async function handleJoin(
-  args: RelaySignalArgs,
-): Promise<ToolResponse<RelaySignalJoinData>> {
+async function handleJoin(args: RelaySignalArgs): Promise<ToolResponse<RelaySignalJoinData>> {
   if (!args.session_id) return buildError('INVALID_INPUT', 'session_id is required for JOIN mode');
-  if (!args.submit_token) return buildError('INVALID_INPUT', 'submit_token is required for JOIN mode');
+  if (!args.submit_token)
+    return buildError('INVALID_INPUT', 'submit_token is required for JOIN mode');
   if (!args.read_token) return buildError('INVALID_INPUT', 'read_token is required for JOIN mode');
-  if (!args.contract_hash) return buildError('INVALID_INPUT', 'contract_hash is required for JOIN mode');
+  if (!args.contract_hash)
+    return buildError('INVALID_INPUT', 'contract_hash is required for JOIN mode');
 
   const relayUrl = resolveRelayUrl(args.relay_url);
   const config = { relay_url: relayUrl };
 
   const output = await joinAndWait(
-    config, args.session_id, args.submit_token, args.read_token,
-    args.contract_hash, args.my_input ?? '', 'responder',
+    config,
+    args.session_id,
+    args.submit_token,
+    args.read_token,
+    args.contract_hash,
+    args.my_input ?? '',
+    'responder',
   );
 
   return buildSuccess('COMPLETE', {
@@ -1440,7 +1561,7 @@ async function handleJoin(
 
 /** Check if any args besides resume_token are provided. */
 function hasExtraArgs(args: RelaySignalArgs): boolean {
-  const keys = Object.keys(args).filter(k => k !== 'resume_token');
+  const keys = Object.keys(args).filter((k) => k !== 'resume_token');
   return keys.length > 0;
 }
 
@@ -1456,14 +1577,19 @@ export async function handleRelaySignal(
     // ── Resume path ─────────────────────────────────────────────────
     if (args.resume_token) {
       if (hasExtraArgs(args)) {
-        return buildError('INVALID_INPUT',
-          'When resume_token is provided, do NOT include any other args (mode, my_input, counterparty, etc.).');
+        return buildError(
+          'INVALID_INPUT',
+          'When resume_token is provided, do NOT include any other args (mode, my_input, counterparty, etc.).',
+        );
       }
 
       const agentId = transport?.agentId ?? process.env['VCAV_AGENT_ID'] ?? '';
       const handle = decodeRelayToken(args.resume_token, agentId, getResumeTokenSecret());
       if (!handle) {
-        return buildError('INVALID_INPUT', 'Invalid or expired resume_token. Start a new relay_signal call.');
+        return buildError(
+          'INVALID_INPUT',
+          'Invalid or expired resume_token. Start a new relay_signal call.',
+        );
       }
 
       if (!transport) {
@@ -1485,7 +1611,10 @@ export async function handleRelaySignal(
         case 'COMPLETED':
         case 'ABORTED':
         case 'FAILED':
-          return buildError('INVALID_INPUT', `Handle is in terminal state: ${handle.phase}. Start a new call.`);
+          return buildError(
+            'INVALID_INPUT',
+            `Handle is in terminal state: ${handle.phase}. Start a new call.`,
+          );
         default:
           return buildError('SESSION_ERROR', `Unexpected handle phase: ${handle.phase}`);
       }
@@ -1499,7 +1628,10 @@ export async function handleRelaySignal(
     switch (args.mode) {
       case 'INITIATE': {
         if (!transport) {
-          return buildError('SESSION_ERROR', 'INITIATE mode requires AfalTransport (agent mode only)');
+          return buildError(
+            'SESSION_ERROR',
+            'INITIATE mode requires AfalTransport (agent mode only)',
+          );
         }
         if (!args.counterparty) {
           return buildError('INVALID_INPUT', 'counterparty is required for INITIATE mode');
@@ -1512,20 +1644,27 @@ export async function handleRelaySignal(
         const inputHash = hashInput(args.my_input ?? '');
         let contractHashForKey: string;
         if (args.contract) {
-          contractHashForKey = createHash('sha256').update(JSON.stringify(args.contract)).digest('hex');
+          contractHashForKey = createHash('sha256')
+            .update(JSON.stringify(args.contract))
+            .digest('hex');
         } else if (args.purpose) {
           const built = buildRelayContract(args.purpose, [agentId, counterparty]);
           contractHashForKey = built ? computeRelayContractHash(built) : args.purpose;
         } else {
           contractHashForKey = '';
         }
-        const idempotencyKey = computeRelayIdempotencyKey(agentId, [contractHashForKey, counterparty, inputHash]);
+        const idempotencyKey = computeRelayIdempotencyKey(agentId, [
+          contractHashForKey,
+          counterparty,
+          inputHash,
+        ]);
 
         // Check for existing handle
         const existing = findExistingRelayHandle(agentId, 'INITIATOR', idempotencyKey);
         if (existing) {
           // Reattach — route to current phase
-          if (existing.phase === 'PROPOSE_RETRY') return await phaseRetryPropose(existing, transport);
+          if (existing.phase === 'PROPOSE_RETRY')
+            return await phaseRetryPropose(existing, transport);
           if (existing.phase === 'POLL_INVITE') return await phasePollInvite(existing, transport);
           if (existing.phase === 'POLL_RELAY') return await phasePollRelay(existing);
           return awaitingResponse(existing, 'Reattached to existing relay session.');
@@ -1546,10 +1685,16 @@ export async function handleRelaySignal(
 
       case 'RESPOND': {
         if (!transport) {
-          return buildError('SESSION_ERROR', 'RESPOND mode requires AfalTransport (agent mode only)');
+          return buildError(
+            'SESSION_ERROR',
+            'RESPOND mode requires AfalTransport (agent mode only)',
+          );
         }
         if (!args.from) {
-          return buildError('INVALID_INPUT', 'from is required for RESPOND mode (agent ID of expected sender)');
+          return buildError(
+            'INVALID_INPUT',
+            'from is required for RESPOND mode (agent ID of expected sender)',
+          );
         }
 
         const from = resolveAgentAlias(args.from, knownAgents);
@@ -1558,7 +1703,11 @@ export async function handleRelaySignal(
         // Compute idempotency key
         const inputHash = hashInput(args.my_input ?? '');
         const purposeOrHash = args.expected_purpose ?? args.expected_contract_hash ?? '';
-        const idempotencyKey = computeRelayIdempotencyKey(agentId, [from, purposeOrHash, inputHash]);
+        const idempotencyKey = computeRelayIdempotencyKey(agentId, [
+          from,
+          purposeOrHash,
+          inputHash,
+        ]);
 
         // Check for existing handle
         const existing = findExistingRelayHandle(agentId, 'RESPONDER', idempotencyKey);
@@ -1570,16 +1719,20 @@ export async function handleRelaySignal(
 
         // Validate that we have expected_purpose or expected_contract_hash
         if (!args.expected_purpose && !args.expected_contract_hash) {
-          return buildError('INVALID_INPUT',
-            'RESPOND requires expected_purpose or expected_contract_hash.');
+          return buildError(
+            'INVALID_INPUT',
+            'RESPOND requires expected_purpose or expected_contract_hash.',
+          );
         }
 
         // Validate expected_purpose is a known purpose code
         if (args.expected_purpose) {
           const knownPurposes = listRelayPurposes();
           if (!knownPurposes.includes(args.expected_purpose)) {
-            return buildError('INVALID_INPUT',
-              `Unknown purpose "${args.expected_purpose}". Available: ${knownPurposes.join(', ')}`);
+            return buildError(
+              'INVALID_INPUT',
+              `Unknown purpose "${args.expected_purpose}". Available: ${knownPurposes.join(', ')}`,
+            );
           }
         }
 
@@ -1619,10 +1772,12 @@ export async function handleRelaySignal(
       const workdir = process.env['VCAV_WORKDIR'] ?? process.cwd();
       const debugDir = path.join(workdir, '.agentvault');
       fs.mkdirSync(debugDir, { recursive: true });
-      const entry = `[${new Date().toISOString()}] error_code=${code} detail=${detail} raw=${error instanceof Error ? error.stack ?? error.message : String(error)}\n`;
+      const entry = `[${new Date().toISOString()}] error_code=${code} detail=${detail} raw=${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`;
       fs.appendFileSync(path.join(debugDir, 'relay-debug.log'), entry, 'utf8');
     } catch (logErr) {
-      console.error(`handleRelaySignal: failed to write diagnostic log: ${logErr instanceof Error ? logErr.message : String(logErr)}`);
+      console.error(
+        `handleRelaySignal: failed to write diagnostic log: ${logErr instanceof Error ? logErr.message : String(logErr)}`,
+      );
     }
     return buildError(code, detail);
   }

@@ -52,10 +52,7 @@ export interface ToolResponse<T = unknown> {
 /**
  * Build a success response with constant shape
  */
-export function buildSuccess<T>(
-  status: StatusCode,
-  data: T
-): ToolResponse<T> {
+export function buildSuccess<T>(status: StatusCode, data: T): ToolResponse<T> {
   return {
     ok: true,
     status,
@@ -91,7 +88,7 @@ const RETRYABLE_BY_DEFAULT: Record<ErrorCode, boolean> = {
 export function buildError(
   code: ErrorCode,
   detail: string,
-  retryable?: boolean
+  retryable?: boolean,
 ): ToolResponse<never> {
   return {
     ok: false,

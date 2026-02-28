@@ -54,20 +54,22 @@ describe('RelayInboxTransport', () => {
 
   describe('checkInbox', () => {
     it('polls GET /inbox?status=PENDING and maps to AfalInviteMessage', async () => {
-      mockFetch.mockResolvedValueOnce(mockResponse({
-        invites: [
-          {
-            invite_id: 'inv_abc',
-            from_agent_id: 'alice',
-            status: 'PENDING',
-            purpose_code: 'COMPATIBILITY',
-            contract_hash: 'hash123',
-            created_at: '2026-02-27T00:00:00Z',
-            expires_at: '2026-03-06T00:00:00Z',
-          },
-        ],
-        latest_event_id: 1,
-      }));
+      mockFetch.mockResolvedValueOnce(
+        mockResponse({
+          invites: [
+            {
+              invite_id: 'inv_abc',
+              from_agent_id: 'alice',
+              status: 'PENDING',
+              purpose_code: 'COMPATIBILITY',
+              contract_hash: 'hash123',
+              created_at: '2026-02-27T00:00:00Z',
+              expires_at: '2026-03-06T00:00:00Z',
+            },
+          ],
+          latest_event_id: 1,
+        }),
+      );
 
       const transport = createTransport();
       const result = await transport.checkInbox();
@@ -88,10 +90,12 @@ describe('RelayInboxTransport', () => {
     });
 
     it('returns empty when no invites', async () => {
-      mockFetch.mockResolvedValueOnce(mockResponse({
-        invites: [],
-        latest_event_id: 0,
-      }));
+      mockFetch.mockResolvedValueOnce(
+        mockResponse({
+          invites: [],
+          latest_event_id: 0,
+        }),
+      );
 
       const transport = createTransport();
       const result = await transport.checkInbox();
@@ -101,13 +105,15 @@ describe('RelayInboxTransport', () => {
 
   describe('acceptInvite', () => {
     it('calls POST /invites/:id/accept and returns AcceptResult', async () => {
-      mockFetch.mockResolvedValueOnce(mockResponse({
-        invite_id: 'inv_abc',
-        session_id: 'sess_123',
-        contract_hash: 'hash123',
-        responder_submit_token: 'rs_tok',
-        responder_read_token: 'rr_tok',
-      }));
+      mockFetch.mockResolvedValueOnce(
+        mockResponse({
+          invite_id: 'inv_abc',
+          session_id: 'sess_123',
+          contract_hash: 'hash123',
+          responder_submit_token: 'rs_tok',
+          responder_read_token: 'rr_tok',
+        }),
+      );
 
       const transport = createTransport();
       const result = await transport.acceptInvite('inv_abc');
@@ -125,12 +131,14 @@ describe('RelayInboxTransport', () => {
 
   describe('createRelayInvite', () => {
     it('calls POST /invites with contract', async () => {
-      mockFetch.mockResolvedValueOnce(mockResponse({
-        invite_id: 'inv_xyz',
-        contract_hash: 'hash456',
-        status: 'PENDING',
-        expires_at: '2026-03-06T00:00:00Z',
-      }));
+      mockFetch.mockResolvedValueOnce(
+        mockResponse({
+          invite_id: 'inv_xyz',
+          contract_hash: 'hash456',
+          status: 'PENDING',
+          expires_at: '2026-03-06T00:00:00Z',
+        }),
+      );
 
       const transport = createTransport();
       const result = await transport.createRelayInvite({
@@ -153,18 +161,20 @@ describe('RelayInboxTransport', () => {
 
   describe('getInviteDetail', () => {
     it('calls GET /invites/:id', async () => {
-      mockFetch.mockResolvedValueOnce(mockResponse({
-        invite_id: 'inv_abc',
-        from_agent_id: 'alice',
-        to_agent_id: 'bob',
-        status: 'ACCEPTED',
-        purpose_code: 'COMPATIBILITY',
-        contract_hash: 'hash123',
-        provider: 'anthropic',
-        session_id: 'sess_123',
-        submit_token: 'is_tok',
-        read_token: 'ir_tok',
-      }));
+      mockFetch.mockResolvedValueOnce(
+        mockResponse({
+          invite_id: 'inv_abc',
+          from_agent_id: 'alice',
+          to_agent_id: 'bob',
+          status: 'ACCEPTED',
+          purpose_code: 'COMPATIBILITY',
+          contract_hash: 'hash123',
+          provider: 'anthropic',
+          session_id: 'sess_123',
+          submit_token: 'is_tok',
+          read_token: 'ir_tok',
+        }),
+      );
 
       const transport = createTransport();
       const detail = await transport.getInviteDetail('inv_abc');

@@ -6,19 +6,10 @@
  */
 
 /** Wire format matches Rust `#[serde(rename_all = "SCREAMING_SNAKE_CASE")]`. */
-export type SessionState =
-  | 'CREATED'
-  | 'PARTIAL'
-  | 'PROCESSING'
-  | 'COMPLETED'
-  | 'ABORTED';
+export type SessionState = 'CREATED' | 'PARTIAL' | 'PROCESSING' | 'COMPLETED' | 'ABORTED';
 
 /** Wire format matches Rust `#[serde(rename_all = "SCREAMING_SNAKE_CASE")]`. */
-export type AbortReason =
-  | 'TIMEOUT'
-  | 'SCHEMA_VALIDATION'
-  | 'PROVIDER_ERROR'
-  | 'CONTRACT_MISMATCH';
+export type AbortReason = 'TIMEOUT' | 'SCHEMA_VALIDATION' | 'PROVIDER_ERROR' | 'CONTRACT_MISMATCH';
 
 export interface RelayClientConfig {
   relay_url: string;
@@ -59,18 +50,9 @@ export interface SessionOutputResponse {
 // ── Inbox Types ──────────────────────────────────────────────────────────
 
 /** Wire format matches Rust `#[serde(rename_all = "SCREAMING_SNAKE_CASE")]`. */
-export type InviteStatus =
-  | 'PENDING'
-  | 'ACCEPTED'
-  | 'DECLINED'
-  | 'EXPIRED'
-  | 'CANCELED';
+export type InviteStatus = 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'EXPIRED' | 'CANCELED';
 
-export type DeclineReasonCode =
-  | 'BUSY'
-  | 'NOT_INTERESTED'
-  | 'INVALID'
-  | 'OTHER';
+export type DeclineReasonCode = 'BUSY' | 'NOT_INTERESTED' | 'INVALID' | 'OTHER';
 
 export interface InviteSummary {
   invite_id: string;

@@ -11,7 +11,6 @@ describe('dispatch', () => {
 });
 
 describe('handleRelaySignal input validation', () => {
-
   it('requires mode on fresh call', async () => {
     const result = await handleRelaySignal({});
     expect(result.ok).toBe(false);

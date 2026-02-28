@@ -42,15 +42,34 @@ const TEMPLATES: Record<string, ContractTemplate> = {
       properties: {
         mediation_signal: {
           type: 'string',
-          enum: ['ALIGNMENT_POSSIBLE', 'PARTIAL_ALIGNMENT', 'FUNDAMENTAL_DISAGREEMENT', 'NEEDS_FACILITATION', 'INSUFFICIENT_SIGNAL'],
+          enum: [
+            'ALIGNMENT_POSSIBLE',
+            'PARTIAL_ALIGNMENT',
+            'FUNDAMENTAL_DISAGREEMENT',
+            'NEEDS_FACILITATION',
+            'INSUFFICIENT_SIGNAL',
+          ],
         },
         common_ground_code: {
           type: 'string',
-          enum: ['GOAL_ALIGNMENT', 'RESOURCE_ALIGNMENT', 'RELATIONSHIP_CONTINUITY', 'VALUE_ALIGNMENT', 'OPERATIONAL_ALIGNMENT', 'NO_COMMON_GROUND_DETECTED'],
+          enum: [
+            'GOAL_ALIGNMENT',
+            'RESOURCE_ALIGNMENT',
+            'RELATIONSHIP_CONTINUITY',
+            'VALUE_ALIGNMENT',
+            'OPERATIONAL_ALIGNMENT',
+            'NO_COMMON_GROUND_DETECTED',
+          ],
         },
         next_step_signal: {
           type: 'string',
-          enum: ['DIRECT_DIALOGUE', 'STRUCTURED_NEGOTIATION', 'THIRD_PARTY_FACILITATION', 'COOLING_PERIOD', 'SEEK_CLARIFICATION'],
+          enum: [
+            'DIRECT_DIALOGUE',
+            'STRUCTURED_NEGOTIATION',
+            'THIRD_PARTY_FACILITATION',
+            'COOLING_PERIOD',
+            'SEEK_CLARIFICATION',
+          ],
         },
         confidence_band: {
           type: 'string',

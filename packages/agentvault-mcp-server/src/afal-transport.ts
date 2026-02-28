@@ -107,8 +107,10 @@ export class OrchestratorInboxAdapter implements AfalTransport {
 
     // Include optional fields only if present (absent vs placeholder rule)
     if (propose.descriptor_hash !== undefined) draft['descriptor_hash'] = propose.descriptor_hash;
-    if (propose.model_profile_hash !== undefined) draft['model_profile_hash'] = propose.model_profile_hash;
-    if (propose.prev_receipt_hash !== undefined) draft['prev_receipt_hash'] = propose.prev_receipt_hash;
+    if (propose.model_profile_hash !== undefined)
+      draft['model_profile_hash'] = propose.model_profile_hash;
+    if (propose.prev_receipt_hash !== undefined)
+      draft['prev_receipt_hash'] = propose.prev_receipt_hash;
     // signature is always omitted in M2 (compliance: UNSIGNED)
 
     await this.transport.sendInvite({
@@ -147,19 +149,27 @@ export class OrchestratorInboxAdapter implements AfalTransport {
 
         // Validate all required string fields are present and correctly typed
         const requiredStrings = [
-          'proposal_version', 'proposal_id', 'nonce', 'timestamp',
-          'from', 'to', 'purpose_code', 'lane_id', 'output_schema_id',
-          'output_schema_version', 'requested_budget_tier',
-          'model_profile_id', 'model_profile_version', 'admission_tier_requested',
+          'proposal_version',
+          'proposal_id',
+          'nonce',
+          'timestamp',
+          'from',
+          'to',
+          'purpose_code',
+          'lane_id',
+          'output_schema_id',
+          'output_schema_version',
+          'requested_budget_tier',
+          'model_profile_id',
+          'model_profile_version',
+          'admission_tier_requested',
         ] as const;
 
-        const missingField = requiredStrings.find(
-          (f) => typeof draft[f] !== 'string' || !draft[f],
-        );
+        const missingField = requiredStrings.find((f) => typeof draft[f] !== 'string' || !draft[f]);
         if (missingField || typeof draft['requested_entropy_bits'] !== 'number') {
           console.error(
             `checkInbox: malformed afal_propose_draft in invite ${invite.invite_id}, ` +
-            `invalid field: ${missingField ?? 'requested_entropy_bits'}. Treating as legacy.`,
+              `invalid field: ${missingField ?? 'requested_entropy_bits'}. Treating as legacy.`,
           );
           return invite;
         }
@@ -181,9 +191,15 @@ export class OrchestratorInboxAdapter implements AfalTransport {
           model_profile_version: draft['model_profile_version'] as string,
           admission_tier_requested: draft['admission_tier_requested'] as string,
           // Optional fields — only set if present and correctly typed
-          ...(typeof draft['descriptor_hash'] === 'string' && { descriptor_hash: draft['descriptor_hash'] }),
-          ...(typeof draft['model_profile_hash'] === 'string' && { model_profile_hash: draft['model_profile_hash'] }),
-          ...(typeof draft['prev_receipt_hash'] === 'string' && { prev_receipt_hash: draft['prev_receipt_hash'] }),
+          ...(typeof draft['descriptor_hash'] === 'string' && {
+            descriptor_hash: draft['descriptor_hash'],
+          }),
+          ...(typeof draft['model_profile_hash'] === 'string' && {
+            model_profile_hash: draft['model_profile_hash'],
+          }),
+          ...(typeof draft['prev_receipt_hash'] === 'string' && {
+            prev_receipt_hash: draft['prev_receipt_hash'],
+          }),
           ...(typeof draft['signature'] === 'string' && { signature: draft['signature'] }),
         };
 
@@ -193,7 +209,7 @@ export class OrchestratorInboxAdapter implements AfalTransport {
         if (claimed !== expected) {
           console.error(
             `checkInbox: proposal_id mismatch in invite ${invite.invite_id}: ` +
-            `claimed=${claimed.slice(0, 16)}… expected=${expected.slice(0, 16)}…. Treating as legacy.`,
+              `claimed=${claimed.slice(0, 16)}… expected=${expected.slice(0, 16)}…. Treating as legacy.`,
           );
           return invite;
         }

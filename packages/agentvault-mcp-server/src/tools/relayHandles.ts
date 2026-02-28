@@ -51,9 +51,9 @@ export interface RelayHandle {
 }
 
 interface RelayTokenPayload {
-  h: string;  // handle ID
-  a: string;  // agentId
-  t: number;  // issuedAt (epoch ms)
+  h: string; // handle ID
+  a: string; // agentId
+  t: number; // issuedAt (epoch ms)
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -65,11 +65,7 @@ const PRUNE_GRACE_MS = 10 * 60 * 1000; // 10 minutes past timeout
 
 const handles = new Map<string, RelayHandle>();
 
-const TERMINAL_PHASES: ReadonlySet<RelayPhase> = new Set([
-  'COMPLETED',
-  'ABORTED',
-  'FAILED',
-]);
+const TERMINAL_PHASES: ReadonlySet<RelayPhase> = new Set(['COMPLETED', 'ABORTED', 'FAILED']);
 
 function isExpiredWithGrace(handle: RelayHandle): boolean {
   return Date.now() > handle.timeoutDeadline + PRUNE_GRACE_MS;
@@ -141,7 +137,9 @@ export function decodeRelayToken(
     }
     parsed = obj as RelayTokenPayload;
   } catch (err) {
-    console.error(`Relay token decode: parse error: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(
+      `Relay token decode: parse error: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return null;
   }
 
@@ -173,7 +171,9 @@ export function decodeRelayToken(
  * RESPOND:  parts = [from, expectedPurpose ?? expectedContractHash, sha256(myInput)]
  */
 export function computeRelayIdempotencyKey(agentId: string, parts: string[]): string {
-  return createHash('sha256').update(agentId + parts.join('|')).digest('hex');
+  return createHash('sha256')
+    .update(agentId + parts.join('|'))
+    .digest('hex');
 }
 
 // ── Find Existing Handle ───────────────────────────────────────────────────
@@ -217,7 +217,9 @@ export function createRelayHandle(params: CreateRelayHandleParams): RelayHandle 
     pruneRelayHandles();
     const countAfterPrune = countActiveHandlesForAgent(params.agentId);
     if (countAfterPrune >= MAX_HANDLES_PER_AGENT) {
-      throw new Error(`Handle limit reached: agent ${params.agentId} has ${countAfterPrune} active handles (max ${MAX_HANDLES_PER_AGENT})`);
+      throw new Error(
+        `Handle limit reached: agent ${params.agentId} has ${countAfterPrune} active handles (max ${MAX_HANDLES_PER_AGENT})`,
+      );
     }
   }
 

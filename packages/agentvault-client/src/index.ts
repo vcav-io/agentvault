@@ -11,11 +11,7 @@ import {
   getStatus as httpGetStatus,
   getOutput as httpGetOutput,
 } from './http.js';
-import type {
-  RelayClientConfig,
-  CreateSessionResponse,
-  SessionOutputResponse,
-} from './types.js';
+import type { RelayClientConfig, CreateSessionResponse, SessionOutputResponse } from './types.js';
 
 export type { RelayClientConfig, SessionOutputResponse } from './types.js';
 export type { CreateSessionResponse } from './types.js';
@@ -46,13 +42,7 @@ export async function createAndSubmit(
   role: string,
 ): Promise<CreateAndSubmitResult> {
   const session: CreateSessionResponse = await httpCreateSession(config, contract);
-  await httpSubmitInput(
-    config,
-    session.session_id,
-    session.initiator_submit_token,
-    role,
-    myInput,
-  );
+  await httpSubmitInput(config, session.session_id, session.initiator_submit_token, role, myInput);
   return {
     sessionId: session.session_id,
     contractHash: session.contract_hash,

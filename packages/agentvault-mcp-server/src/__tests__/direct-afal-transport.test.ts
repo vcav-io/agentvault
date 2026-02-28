@@ -37,7 +37,11 @@ function makeDescriptor(
     policy_commitments: {},
     ...overrides,
   };
-  return signMessage(DOMAIN_PREFIXES.DESCRIPTOR, unsigned as Record<string, unknown>, seedHex) as unknown as AgentDescriptor;
+  return signMessage(
+    DOMAIN_PREFIXES.DESCRIPTOR,
+    unsigned as Record<string, unknown>,
+    seedHex,
+  ) as unknown as AgentDescriptor;
 }
 
 function makeLocalDescriptor(): AgentDescriptor {
@@ -174,7 +178,10 @@ describe('DirectAfalTransport', () => {
       expect(url).toBe('http://peer.example.com/afal/propose');
       expect(init.method).toBe('POST');
 
-      const body = JSON.parse(init.body as string) as { propose: Record<string, unknown>; relay: Record<string, unknown> };
+      const body = JSON.parse(init.body as string) as {
+        propose: Record<string, unknown>;
+        relay: Record<string, unknown>;
+      };
       expect(typeof body.propose['signature']).toBe('string');
       expect(body.propose['from']).toBe('alice-test');
       expect(body.propose['to']).toBe('bob-test');
@@ -190,7 +197,12 @@ describe('DirectAfalTransport', () => {
         json: () => Promise.resolve(admit),
       });
 
-      await transport.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' });
+      await transport.sendPropose({
+        propose,
+        relay: makeRelay(),
+        templateId: 't',
+        budgetTier: 'SMALL',
+      });
 
       const stored = transport._getStoredAdmit(propose.proposal_id);
       expect(stored).toBeDefined();
@@ -208,7 +220,12 @@ describe('DirectAfalTransport', () => {
         json: () => Promise.resolve(admit),
       });
 
-      await transport.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' });
+      await transport.sendPropose({
+        propose,
+        relay: makeRelay(),
+        templateId: 't',
+        budgetTier: 'SMALL',
+      });
 
       const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
       const body = JSON.parse(init.body as string) as { propose: Record<string, unknown> };
@@ -224,7 +241,12 @@ describe('DirectAfalTransport', () => {
         json: () => Promise.resolve(admit),
       });
 
-      await transport.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' });
+      await transport.sendPropose({
+        propose,
+        relay: makeRelay(),
+        templateId: 't',
+        budgetTier: 'SMALL',
+      });
 
       const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
       const body = JSON.parse(init.body as string) as { propose: Record<string, unknown> };
@@ -240,7 +262,12 @@ describe('DirectAfalTransport', () => {
         json: () => Promise.resolve(admit),
       });
 
-      await transport.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' });
+      await transport.sendPropose({
+        propose,
+        relay: makeRelay(),
+        templateId: 't',
+        budgetTier: 'SMALL',
+      });
 
       const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
       const body = JSON.parse(init.body as string) as { propose: Record<string, unknown> };
@@ -257,7 +284,12 @@ describe('DirectAfalTransport', () => {
         json: () => Promise.resolve(admit),
       });
 
-      await transport.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' });
+      await transport.sendPropose({
+        propose,
+        relay: makeRelay(),
+        templateId: 't',
+        budgetTier: 'SMALL',
+      });
 
       const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
       const body = JSON.parse(init.body as string) as { propose: Record<string, unknown> };
@@ -273,7 +305,12 @@ describe('DirectAfalTransport', () => {
         json: () => Promise.resolve(admit),
       });
 
-      await transport.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' });
+      await transport.sendPropose({
+        propose,
+        relay: makeRelay(),
+        templateId: 't',
+        budgetTier: 'SMALL',
+      });
 
       const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
       const body = JSON.parse(init.body as string) as { propose: Record<string, unknown> };
@@ -304,7 +341,12 @@ describe('DirectAfalTransport', () => {
         json: () => Promise.resolve(admit),
       });
 
-      await fresh.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' });
+      await fresh.sendPropose({
+        propose,
+        relay: makeRelay(),
+        templateId: 't',
+        budgetTier: 'SMALL',
+      });
 
       // Verify the wire message did NOT include descriptor_hash or model_profile_hash
       const sentBody = JSON.parse(mockFetch.mock.calls[1][1].body as string);
@@ -329,7 +371,12 @@ describe('DirectAfalTransport', () => {
       });
 
       await expect(
-        transport.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' }),
+        transport.sendPropose({
+          propose,
+          relay: makeRelay(),
+          templateId: 't',
+          budgetTier: 'SMALL',
+        }),
       ).rejects.toThrow(/Proposal denied \(deny_code=/);
     });
 
@@ -343,7 +390,12 @@ describe('DirectAfalTransport', () => {
       });
 
       try {
-        await transport.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' });
+        await transport.sendPropose({
+          propose,
+          relay: makeRelay(),
+          templateId: 't',
+          budgetTier: 'SMALL',
+        });
       } catch {
         // expected
       }
@@ -370,7 +422,12 @@ describe('DirectAfalTransport', () => {
       });
 
       await expect(
-        transport.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' }),
+        transport.sendPropose({
+          propose,
+          relay: makeRelay(),
+          templateId: 't',
+          budgetTier: 'SMALL',
+        }),
       ).rejects.toThrow('ADMIT signature verification failed');
     });
 
@@ -389,7 +446,12 @@ describe('DirectAfalTransport', () => {
       });
 
       await expect(
-        transport.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' }),
+        transport.sendPropose({
+          propose,
+          relay: makeRelay(),
+          templateId: 't',
+          budgetTier: 'SMALL',
+        }),
       ).rejects.toThrow('DENY signature verification failed');
     });
   });
@@ -407,7 +469,12 @@ describe('DirectAfalTransport', () => {
       });
 
       await expect(
-        transport.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' }),
+        transport.sendPropose({
+          propose,
+          relay: makeRelay(),
+          templateId: 't',
+          budgetTier: 'SMALL',
+        }),
       ).rejects.toThrow('PROPOSE rejected: 400 Bad Request');
     });
 
@@ -420,7 +487,12 @@ describe('DirectAfalTransport', () => {
       });
 
       await expect(
-        transport.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' }),
+        transport.sendPropose({
+          propose,
+          relay: makeRelay(),
+          templateId: 't',
+          budgetTier: 'SMALL',
+        }),
       ).rejects.toThrow('Unexpected response outcome: REDIRECT');
     });
   });
@@ -437,7 +509,12 @@ describe('DirectAfalTransport', () => {
         ok: true,
         json: () => Promise.resolve(admit),
       });
-      await transport.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' });
+      await transport.sendPropose({
+        propose,
+        relay: makeRelay(),
+        templateId: 't',
+        budgetTier: 'SMALL',
+      });
 
       // Now send COMMIT
       mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) });
@@ -465,7 +542,12 @@ describe('DirectAfalTransport', () => {
         ok: true,
         json: () => Promise.resolve(admit),
       });
-      await transport.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' });
+      await transport.sendPropose({
+        propose,
+        relay: makeRelay(),
+        templateId: 't',
+        budgetTier: 'SMALL',
+      });
 
       mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) });
       await transport.acceptInvite(propose.proposal_id);
@@ -487,7 +569,12 @@ describe('DirectAfalTransport', () => {
         ok: true,
         json: () => Promise.resolve(admit),
       });
-      await transport.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' });
+      await transport.sendPropose({
+        propose,
+        relay: makeRelay(),
+        templateId: 't',
+        budgetTier: 'SMALL',
+      });
 
       mockFetch.mockResolvedValueOnce({
         ok: false,
@@ -527,7 +614,12 @@ describe('DirectAfalTransport', () => {
         json: () => Promise.resolve(admit),
       });
 
-      await fresh.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' });
+      await fresh.sendPropose({
+        propose,
+        relay: makeRelay(),
+        templateId: 't',
+        budgetTier: 'SMALL',
+      });
 
       expect(mockFetch).toHaveBeenCalledTimes(2);
       const [descriptorUrl] = mockFetch.mock.calls[0] as [string];
@@ -553,7 +645,12 @@ describe('DirectAfalTransport', () => {
         ok: true,
         json: () => Promise.resolve(admit1),
       });
-      await fresh.sendPropose({ propose: propose1, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' });
+      await fresh.sendPropose({
+        propose: propose1,
+        relay: makeRelay(),
+        templateId: 't',
+        budgetTier: 'SMALL',
+      });
 
       // Second sendPropose: should NOT re-fetch descriptor
       const propose2 = makePropose({ nonce: 'b'.repeat(64) });
@@ -562,7 +659,12 @@ describe('DirectAfalTransport', () => {
         ok: true,
         json: () => Promise.resolve(admit2),
       });
-      await fresh.sendPropose({ propose: propose2, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' });
+      await fresh.sendPropose({
+        propose: propose2,
+        relay: makeRelay(),
+        templateId: 't',
+        budgetTier: 'SMALL',
+      });
 
       // 3 calls total: 1 descriptor + 2 propose POSTs
       expect(mockFetch).toHaveBeenCalledTimes(3);
@@ -586,7 +688,12 @@ describe('DirectAfalTransport', () => {
         json: () => Promise.resolve(admit),
       });
 
-      await transport.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' });
+      await transport.sendPropose({
+        propose,
+        relay: makeRelay(),
+        templateId: 't',
+        budgetTier: 'SMALL',
+      });
 
       expect(mockFetch).toHaveBeenCalledTimes(2);
     });

@@ -73,9 +73,7 @@ function createMockAfalTransport(invites: AfalInviteMessage[] = []): AfalTranspo
 }
 
 /** Helper: INITIATE then resume to reach completedResponse or failedResponse. */
-async function initiateAndResume(
-  transport: AfalTransport,
-): Promise<{ resumeToken: string }> {
+async function initiateAndResume(transport: AfalTransport): Promise<{ resumeToken: string }> {
   const initiateResult = await handleRelaySignal(
     { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'hello' },
     transport,
@@ -173,7 +171,7 @@ describe('completedResponse display directives', () => {
 
     const result = await handleRelaySignal({ resume_token: resumeToken }, transport);
     const data = result.data as RelaySignalOutput;
-    const fields = data.interpretation_context!.signal_fields.map(f => f.field);
+    const fields = data.interpretation_context!.signal_fields.map((f) => f.field);
     expect(fields).toContain('mediation_signal');
     expect(fields).toContain('common_ground_code');
     expect(fields).toContain('confidence_band');
@@ -383,7 +381,7 @@ describe('COMPATIBILITY interpretation_context', () => {
     const ctx = data.interpretation_context!;
 
     expect(ctx.purpose).toBe('COMPATIBILITY');
-    const fieldNames = ctx.signal_fields.map(f => f.field);
+    const fieldNames = ctx.signal_fields.map((f) => f.field);
     expect(fieldNames).toContain('compatibility_signal');
     expect(fieldNames).toContain('thesis_fit');
     expect(fieldNames).toContain('size_fit');
@@ -456,7 +454,7 @@ describe('COMPATIBILITY interpretation_context', () => {
     const data = result.data as RelaySignalOutput;
     const ctx = data.interpretation_context!;
 
-    const fieldNames = ctx.signal_fields.map(f => f.field);
+    const fieldNames = ctx.signal_fields.map((f) => f.field);
     expect(fieldNames).not.toContain('overlap_summary');
     const allText = JSON.stringify(ctx);
     expect(allText).not.toContain('overlap_summary');

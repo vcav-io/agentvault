@@ -92,11 +92,7 @@ describe('handleGetIdentity', () => {
     it('returns correct count with 3 pending invites', async () => {
       const inboxService: InboxService = {
         checkInbox: async () => ({
-          invites: [
-            { invite_id: 'inv-1' },
-            { invite_id: 'inv-2' },
-            { invite_id: 'inv-3' },
-          ],
+          invites: [{ invite_id: 'inv-1' }, { invite_id: 'inv-2' }, { invite_id: 'inv-3' }],
         }),
       };
       const result = await handleGetIdentity([], inboxService);
@@ -108,7 +104,9 @@ describe('handleGetIdentity', () => {
 
     it('omits pending_invites when inboxService throws', async () => {
       const inboxService: InboxService = {
-        checkInbox: async () => { throw new Error('network error'); },
+        checkInbox: async () => {
+          throw new Error('network error');
+        },
       };
       const result = await handleGetIdentity([], inboxService);
       expect(result.ok).toBe(true);

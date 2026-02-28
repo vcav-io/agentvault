@@ -28,10 +28,7 @@ import { fileURLToPath } from 'node:url';
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
+import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
 import { buildError } from './envelope.js';
 import { RELAY_TOOLS, IDENTITY_TOOLS } from './toolDefs.js';
@@ -63,8 +60,9 @@ export function createAgentVaultServer(
   knownAgents: NormalizedKnownAgent[] = [],
   directTransport?: AfalTransport,
 ): Server {
-  const afalTransport: AfalTransport | undefined = directTransport
-    ?? (inviteTransport ? new OrchestratorInboxAdapter(inviteTransport) : undefined);
+  const afalTransport: AfalTransport | undefined =
+    directTransport ??
+    (inviteTransport ? new OrchestratorInboxAdapter(inviteTransport) : undefined);
 
   const server = new Server(
     {
@@ -96,7 +94,12 @@ export function createAgentVaultServer(
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       return {
-        content: [{ type: 'text', text: JSON.stringify(buildError('UNKNOWN_ERROR', errorMessage), null, 2) }],
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(buildError('UNKNOWN_ERROR', errorMessage), null, 2),
+          },
+        ],
         isError: true,
       };
     }
@@ -150,11 +153,7 @@ function buildDirectTransportFromEnv(): DirectAfalTransport | null {
     capabilities: { supported_body_formats: ['wrapped_v1'], supports_commit: true },
     policy_commitments: {},
   };
-  const localDescriptorRaw = signMessage(
-    DOMAIN_PREFIXES.DESCRIPTOR,
-    descriptorUnsigned,
-    seedHex,
-  );
+  const localDescriptorRaw = signMessage(DOMAIN_PREFIXES.DESCRIPTOR, descriptorUnsigned, seedHex);
   if (!isAgentDescriptor(localDescriptorRaw)) {
     throw new Error('signMessage produced invalid AgentDescriptor');
   }
@@ -186,7 +185,9 @@ function buildDirectTransportFromEnv(): DirectAfalTransport | null {
         }
         for (const entry of parsed) {
           if (typeof entry?.agentId !== 'string' || typeof entry?.publicKeyHex !== 'string') {
-            console.error('VCAV_AFAL_TRUSTED_AGENTS entries must have string agentId and publicKeyHex');
+            console.error(
+              'VCAV_AFAL_TRUSTED_AGENTS entries must have string agentId and publicKeyHex',
+            );
             return null;
           }
         }
@@ -198,7 +199,9 @@ function buildDirectTransportFromEnv(): DirectAfalTransport | null {
     }
 
     const allowedPurposes = (process.env['VCAV_AFAL_ALLOWED_PURPOSES'] ?? 'MEDIATION')
-      .split(',').map((s) => s.trim()).filter(Boolean);
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
 
     const policy: AdmissionPolicy = {
       trustedAgents,
@@ -251,20 +254,16 @@ function buildRelayInboxTransportFromEnv(): RelayInboxTransport | null {
   if (!inboxToken) {
     throw new Error(
       'VCAV_INBOX_TOKEN is required when VCAV_INBOX_TRANSPORT=relay. ' +
-      'Set the inbox token or remove VCAV_INBOX_TRANSPORT to use a different mode.',
+        'Set the inbox token or remove VCAV_INBOX_TRANSPORT to use a different mode.',
     );
   }
   const agentId = process.env['VCAV_AGENT_ID'];
   if (!agentId) {
-    throw new Error(
-      'VCAV_AGENT_ID is required when VCAV_INBOX_TRANSPORT=relay.',
-    );
+    throw new Error('VCAV_AGENT_ID is required when VCAV_INBOX_TRANSPORT=relay.');
   }
   const relayUrl = process.env['VCAV_RELAY_URL'];
   if (!relayUrl) {
-    throw new Error(
-      'VCAV_RELAY_URL is required when VCAV_INBOX_TRANSPORT=relay.',
-    );
+    throw new Error('VCAV_RELAY_URL is required when VCAV_INBOX_TRANSPORT=relay.');
   }
   return new RelayInboxTransport({ agentId, inboxToken, relayUrl });
 }
@@ -291,7 +290,9 @@ async function main() {
   }
 
   if (relayInboxTransport) {
-    console.error(`Relay Inbox Transport active (agent: ${relayInboxTransport.agentId}, relay: ${relayInboxTransport.relayUrl})`);
+    console.error(
+      `Relay Inbox Transport active (agent: ${relayInboxTransport.agentId}, relay: ${relayInboxTransport.relayUrl})`,
+    );
   }
 
   const transport = new StdioServerTransport();
@@ -299,7 +300,9 @@ async function main() {
   console.error('AgentVault MCP Server running on stdio');
 
   if (!chosenTransport) {
-    console.error('Note: INITIATE/RESPOND modes require a transport. Set VCAV_INBOX_TRANSPORT=relay + VCAV_INBOX_TOKEN, or VCAV_AFAL_SEED_HEX. Only CREATE/JOIN modes available in standalone mode.');
+    console.error(
+      'Note: INITIATE/RESPOND modes require a transport. Set VCAV_INBOX_TRANSPORT=relay + VCAV_INBOX_TOKEN, or VCAV_AFAL_SEED_HEX. Only CREATE/JOIN modes available in standalone mode.',
+    );
   }
 
   // Graceful shutdown
@@ -322,8 +325,7 @@ async function main() {
 // When imported as a library, createAgentVaultServer is the API.
 // realpathSync resolves npm bin symlinks so the check works after `npm install -g`.
 const currentFile = fileURLToPath(import.meta.url);
-const isDirectExecution = process.argv[1] &&
-  realpathSync(process.argv[1]) === currentFile;
+const isDirectExecution = process.argv[1] && realpathSync(process.argv[1]) === currentFile;
 if (isDirectExecution) {
   if (process.argv.includes('--print-config')) {
     const config = {
