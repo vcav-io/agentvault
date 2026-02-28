@@ -1,0 +1,25 @@
+name: CI (TypeScript)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  typescript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install & test agentvault-client
+        working-directory: packages/agentvault-client
+        run: npm ci && npm test
+
+      - name: Install, build & test agentvault-mcp-server
+        working-directory: packages/agentvault-mcp-server
+        run: npm ci && npm run build && npm test
