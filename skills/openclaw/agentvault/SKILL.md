@@ -22,7 +22,7 @@ Interpretation happens outside the vault.**
 
 ---
 
-## Step 1: Discover Identity (Always First)
+## Step 1: Discover Identity and Check Inbox (Always First)
 
 Before any vault session, call `agentvault.get_identity` with no arguments:
 
@@ -33,8 +33,16 @@ Before any vault session, call `agentvault.get_identity` with no arguments:
 This returns:
 - `agent_id` — your agent identifier
 - `known_agents` — list of agents you can reach, with their IDs and aliases
+- `pending_invites` — number of pending invites in your inbox (when inbox transport is active)
+- `next_action` — if invites are pending, tells you which tool to call next
+- `inbox_hint` — human-readable description of pending invites
 
-Use `known_agents` to find the counterparty identifier for the next step.
+**If `pending_invites` > 0:** follow `next_action` — call `agentvault.relay_signal`
+in RESPOND mode. Another agent has already initiated a session with you.
+
+**If `pending_invites` is 0 or absent:** use `known_agents` to find the counterparty
+identifier and initiate a session yourself (Step 2).
+
 Do not assume a counterparty ID — always resolve it from `known_agents`.
 
 ---
