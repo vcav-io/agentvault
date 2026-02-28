@@ -458,7 +458,13 @@ function rebuildSessionIndex(sessionsDir: string, indexPath: string): void {
         const state: SessionStateFile = JSON.parse(raw);
         // Clean up expired sessions during rebuild
         if (state.expires_at && new Date(state.expires_at).getTime() < Date.now()) {
-          try { fs.unlinkSync(path.join(sessionsDir, file)); } catch { /* best effort */ }
+          try {
+            fs.unlinkSync(path.join(sessionsDir, file));
+          } catch (unlinkErr) {
+            if ((unlinkErr as NodeJS.ErrnoException).code !== 'ENOENT') {
+              console.warn(`rebuildSessionIndex: failed to remove expired file ${file}: ${unlinkErr instanceof Error ? unlinkErr.message : String(unlinkErr)}`);
+            }
+          }
           continue;
         }
         entries.push({
@@ -467,12 +473,16 @@ function rebuildSessionIndex(sessionsDir: string, indexPath: string): void {
           due_at: state.due_at,
           updated_at: state.updated_at,
         });
-      } catch {
-        // Skip malformed files
+      } catch (readErr) {
+        if ((readErr as NodeJS.ErrnoException).code !== 'ENOENT') {
+          console.warn(`rebuildSessionIndex: skipping unreadable session file ${file}: ${readErr instanceof Error ? readErr.message : String(readErr)}`);
+        }
       }
     }
-  } catch {
-    // Sessions dir may not exist yet
+  } catch (dirErr) {
+    if ((dirErr as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.error(`rebuildSessionIndex: failed to read sessions directory ${sessionsDir}: ${dirErr instanceof Error ? dirErr.message : String(dirErr)}`);
+    }
   }
 
   // Sort: IMMEDIATE before DEFERRED, within IMMEDIATE oldest updated_at first,
@@ -558,7 +568,13 @@ function removeSessionStateFile(handle: RelayHandle): void {
     const sessionsDir = path.join(workdir, '.agentvault', 'sessions');
     const indexPath = path.join(workdir, '.agentvault', 'active_sessions.json');
     const filePath = path.join(sessionsDir, `${handle.id}.json`);
-    try { fs.unlinkSync(filePath); } catch { /* may not exist */ }
+    try {
+      fs.unlinkSync(filePath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.warn(`removeSessionStateFile: failed to delete ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
     rebuildSessionIndex(sessionsDir, indexPath);
   } catch (err) {
     console.error(
@@ -844,18 +860,27 @@ async function phasePollInvite(
 
     writeLastSessionFile(handle.sessionId, 'INITIATOR', detail.read_token, handle.relayUrl);
 
+    // Commit phase before submit so retries route to POLL_RELAY (not back here)
+    handle.phase = 'POLL_RELAY';
+
     // Submit initiator input
     const config = { relay_url: handle.relayUrl };
-    await rawSubmitInput(
-      config,
-      handle.sessionId,
-      handle.tokens.submit,
-      'initiator',
-      handle.myInput ?? '',
-      handle.contractHash,
-    );
+    try {
+      await rawSubmitInput(
+        config,
+        handle.sessionId,
+        handle.tokens.submit,
+        'initiator',
+        handle.myInput ?? '',
+        handle.contractHash,
+      );
+    } catch (submitErr) {
+      console.error(
+        `phasePollInvite: input submit failed after invite accepted: ${submitErr instanceof Error ? submitErr.message : String(submitErr)}`,
+      );
+      return awaitingResponse(handle, 'Invite accepted but input submission failed (transient). Will retry on next check.', { strategy: 'IMMEDIATE', seconds: 5 });
+    }
 
-    handle.phase = 'POLL_RELAY';
     return awaitingResponse(handle, 'Counterparty accepted. Input submitted. Waiting for relay session to complete.', { strategy: 'IMMEDIATE', seconds: 5 });
   }
 
@@ -892,8 +917,15 @@ async function phasePollRelay(
   const status = await httpGetStatus(config, handle.sessionId, handle.tokens.initiatorRead);
 
   if (status.state === 'COMPLETED') {
-    const output = await httpGetOutput(config, handle.sessionId, handle.tokens.initiatorRead);
-    return completedResponse(handle, output);
+    try {
+      const output = await httpGetOutput(config, handle.sessionId, handle.tokens.initiatorRead);
+      return completedResponse(handle, output);
+    } catch (fetchErr) {
+      console.error(
+        `phasePollRelay: session ${handle.sessionId} COMPLETED but output fetch failed: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
+      );
+      return awaitingResponse(handle, 'Session completed but output fetch failed (transient). Will retry.', { strategy: 'IMMEDIATE', seconds: 5 });
+    }
   }
 
   if (status.state === 'ABORTED') {
@@ -1070,8 +1102,7 @@ async function phaseDiscover(
   // If sender sent invites but all failed contract matching, fail fast.
   // Transition handle to FAILED to prevent stale handle leak.
   if (foundSenderInviteWithContractMismatch) {
-    handle.phase = 'FAILED';
-    return buildError('CONTRACT_MISMATCH',
+    return failedResponse(handle, 'CONTRACT_MISMATCH',
       'Invite contract does not match expected contract.');
   }
 
@@ -1152,8 +1183,15 @@ async function phaseJoin(
   const status = await httpGetStatus(config, handle.sessionId, handle.tokens.read);
 
   if (status.state === 'COMPLETED') {
-    const output = await httpGetOutput(config, handle.sessionId, handle.tokens.read);
-    return completedResponse(handle, output);
+    try {
+      const output = await httpGetOutput(config, handle.sessionId, handle.tokens.read);
+      return completedResponse(handle, output);
+    } catch (fetchErr) {
+      console.error(
+        `phaseJoin: session ${handle.sessionId} COMPLETED but output fetch failed: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
+      );
+      return awaitingResponse(handle, 'Session completed but output fetch failed (transient). Will retry.', { strategy: 'IMMEDIATE', seconds: 5 });
+    }
   }
 
   if (status.state === 'ABORTED') {

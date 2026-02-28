@@ -85,11 +85,12 @@ DEPLOY_MCP
 
 # Step 5: Configure OpenClaw headlessly
 echo "--- Configuring OpenClaw for ${AGENT_ID} ---"
-ssh "${SSH_HOST}" "bash -s" <<CONFIGURE_OPENCLAW
+ssh "${SSH_HOST}" "bash -s -- '${ANTHROPIC_API_KEY}'" <<'CONFIGURE_OPENCLAW'
 set -euo pipefail
+ANTHROPIC_API_KEY="$1"
 mkdir -p ~/.openclaw
 
-cat > ~/.openclaw/openclaw.json <<'OCEOF'
+cat > ~/.openclaw/openclaw.json <<OCEOF
 {
   "env": {
     "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}"
@@ -112,11 +113,14 @@ CONFIGURE_OPENCLAW
 
 # Step 6: Configure mcporter with agentvault MCP server
 echo "--- Configuring mcporter ---"
-ssh "${SSH_HOST}" "bash -s" <<CONFIGURE_MCPORTER
+ssh "${SSH_HOST}" "bash -s -- '${AGENT_ID}' '${INBOX_TOKEN}' '${RELAY_URL}'" <<'CONFIGURE_MCPORTER'
 set -euo pipefail
+AGENT_ID="$1"
+INBOX_TOKEN="$2"
+RELAY_URL="$3"
 mkdir -p ~/.mcporter
 
-cat > ~/.mcporter/mcporter.json <<'MPEOF'
+cat > ~/.mcporter/mcporter.json <<MPEOF
 {
   "mcpServers": {
     "agentvault": {
