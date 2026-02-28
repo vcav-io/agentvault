@@ -1909,5 +1909,6 @@ fn entropy_core_smoke_test() {
         "additionalProperties": false
     });
     let bits = entropy_core::calculate_schema_entropy_upper_bound(&schema).unwrap();
-    assert!(bits > 0, "should calculate non-zero entropy for enum schema");
+    // 3-element enum → ceil(log2(3)) = 2 bits. Pin exact value to detect regressions.
+    assert_eq!(bits, 2, "3-element enum should produce exactly 2 entropy bits");
 }
