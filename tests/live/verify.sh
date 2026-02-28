@@ -85,9 +85,12 @@ try {
   const s = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
   process.stdout.write(s[process.argv[2]] ?? '');
 } catch (e) {
+  if (e.code !== 'ENOENT') {
+    process.stderr.write('read_session_file: unexpected error: ' + e.message + '\n');
+  }
   process.stdout.write('');
 }
-" -- "${file}" "${field}" 2>/dev/null || true
+" -- "${file}" "${field}"
 }
 
 log_info "Reading session info from agent working dirs..."
@@ -172,7 +175,9 @@ extract_receipt() {
     return 0
   fi
 
-  node -e "
+  local extract_stderr_log="${RUN_DIR}/_extract_receipt_stderr.log"
+  local extract_result
+  extract_result="$(node -e "
 const fs = require('fs');
 try {
   const out = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
@@ -185,8 +190,15 @@ try {
   }
 } catch (e) {
   process.stderr.write('extract_receipt failed: ' + e.message + '\n');
+  process.exit(1);
 }
-" -- "${output_file}" "${receipt_file}" "${sig_file}" && log_success "Receipt extracted to ${receipt_file}" || true
+" -- "${output_file}" "${receipt_file}" "${sig_file}" 2>"${extract_stderr_log}")" || {
+    log_warn "extract_receipt script failed: $(cat "${extract_stderr_log}")"
+    return 0
+  }
+  if [[ "${extract_result}" == "extracted" ]]; then
+    log_success "Receipt extracted to ${receipt_file}"
+  fi
 }
 
 extract_receipt "${RUN_DIR}/alice_output.json"
@@ -248,6 +260,9 @@ const v=o.output??o.text??o.content??'';
 const len=typeof v==='object'&&v!==null?JSON.stringify(v).length:String(v).length;
 process.stdout.write(String(len));}catch(e){process.stdout.write('0');}
 " -- "${RUN_DIR}/alice_output.json" 2>/dev/null || echo 0)"
+  if [[ "${local_output_text}" -eq 0 ]] && [[ -s "${RUN_DIR}/alice_output.json" ]]; then
+    log_warn "output length extraction returned 0 but alice_output.json is non-empty — possible parse error"
+  fi
   if [[ "${local_output_text}" -gt 0 ]]; then
     run_check "output_nonempty" "true"
   else
@@ -277,7 +292,12 @@ const scenarioDirs = entries.filter(e => e.isDirectory() && !e.name.startsWith('
 // Read output files as lowercased text for substring matching
 function readOutputLower(filePath) {
   try { return JSON.stringify(JSON.parse(fs.readFileSync(filePath, 'utf8'))).toLowerCase(); }
-  catch { return ''; }
+  catch (e) {
+    if (e.code !== 'ENOENT') {
+      console.error('readOutputLower: unexpected error reading ' + filePath + ': ' + e.message);
+    }
+    return '';
+  }
 }
 
 const aliceOutput = readOutputLower(`${runDir}/alice_output.json`);
@@ -342,7 +362,12 @@ for (const scDir of scenarioDirs) {
 console.log(JSON.stringify(results));
 TIER1JS
 
-tier1_output="$(node "${TIER1_SCRIPT}" "${RUN_DIR}" 2>/dev/null)" || tier1_output='{"checked":0,"leaked":[]}'
+tier1_stderr_log="${RUN_DIR}/_tier1_stderr.log"
+tier1_output="$(node "${TIER1_SCRIPT}" "${RUN_DIR}" 2>"${tier1_stderr_log}")" || {
+  log_error "Tier 1 script crashed: $(cat "${tier1_stderr_log}")"
+  run_check "tier1_sensitive_substrings" "false" "tier1 script crashed — cannot verify privacy"
+  tier1_output='{"checked":0,"leaked":[],"error":true}'
+}
 
 tier1_checked="$(echo "${tier1_output}" | node -e "let s='';process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>{const r=JSON.parse(s);process.stdout.write(String(r.checked));})" 2>/dev/null || echo 0)"
 tier1_leaked="$(echo "${tier1_output}" | node -e "let s='';process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>{const r=JSON.parse(s);process.stdout.write(String(r.leaked.length));})" 2>/dev/null || echo 0)"
@@ -573,10 +598,19 @@ if (results.checks.length === 0) {
 console.log(JSON.stringify(results));
 TIER3JS
 
-tier3_output="$(node "${TIER3_SCRIPT}" "${RUN_DIR}" 2>/dev/null)" || tier3_output='{"checks":[],"skipped":true}'
+tier3_stderr_log="${RUN_DIR}/_tier3_stderr.log"
+tier3_output="$(node "${TIER3_SCRIPT}" "${RUN_DIR}" 2>"${tier3_stderr_log}")" || {
+  log_error "Tier 3 script crashed: $(cat "${tier3_stderr_log}")"
+  run_check "tier3_script_error" "false" "tier3 script crashed — red team checks could not be evaluated"
+  tier3_output='{"checks":[],"skipped":false,"error":true}'
+}
 
 # Parse tier 3 results
 tier3_skipped="$(echo "${tier3_output}" | node -e "let s='';process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>{const r=JSON.parse(s);process.stdout.write(String(r.skipped??true));})" 2>/dev/null || echo "true")"
+if [[ $? -ne 0 ]] || [[ -z "${tier3_skipped}" ]]; then
+  log_warn "Could not parse tier3 skipped field — treating as error"
+  tier3_skipped="false"
+fi
 
 if [[ "${tier3_skipped}" == "true" ]]; then
   log_info "Tier 3: no red_team_checks in criteria — skipped"
@@ -592,7 +626,11 @@ let s='';process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>{
     const escaped = (c.detail+fc).replace(/\\\\/g,'\\\\\\\\').replace(/\"/g,'\\\\\"').replace(/\\n/g,'\\\\n');
     process.stdout.write(c.name+'|'+c.passed+'|'+escaped+'\\n');
   }
-});" 2>/dev/null || true)"
+});" 2>/dev/null)" || {
+    log_error "Tier 3 results parsing failed — checks may have been lost"
+    run_check "tier3_results_parse_error" "false" "tier3 results could not be parsed"
+    tier3_checks_json=""
+  }
 
   while IFS='|' read -r check_name check_passed check_detail; do
     [[ -z "${check_name}" ]] && continue
