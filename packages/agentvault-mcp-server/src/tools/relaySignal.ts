@@ -21,7 +21,7 @@ import {
   pollUntilDone,
   joinAndWait,
 } from 'agentvault-client';
-import { submitInput as rawSubmitInput } from 'agentvault-client/http';
+import { submitInput as rawSubmitInput, getStatus as httpGetStatus, getOutput as httpGetOutput } from 'agentvault-client/http';
 import type { SessionOutputResponse } from 'agentvault-client';
 import {
   buildRelayContract,
@@ -50,14 +50,13 @@ export interface NormalizedKnownAgent {
 
 // ── Configuration ───────────────────────────────────────────────────────
 
-/** Max time a single tool call blocks in poll loops. */
-const CALL_BUDGET_MS = 30_000;
-/** Overall timeout for the relay operation. */
-const OVERALL_TIMEOUT_MS = 120_000;
-/** Polling interval for relay status checks. */
-const POLL_INTERVAL_MS = 2_000;
-/** Polling interval for inbox discovery. */
-const INBOX_POLL_INTERVAL_MS = 2_000;
+/**
+ * Handle validity window across many short tool invocations.
+ * NOT a single-invocation timeout. OpenClaw's agent runtime defaults to 600s —
+ * a single run cannot span 30 minutes. This value is only used to reject stale
+ * resume tokens that have outlived the expected multi-heartbeat session.
+ */
+const HANDLE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
 /** Human-readable descriptions for relay abort reasons. */
 const ABORT_DESCRIPTIONS: Record<string, string> = {
@@ -66,6 +65,8 @@ const ABORT_DESCRIPTIONS: Record<string, string> = {
   SCHEMA_VALIDATION: 'The LLM output did not match the contract schema.',
   CONTRACT_MISMATCH: 'Contract hash mismatch (configuration error).',
 };
+
+export type ResumeStrategy = 'IMMEDIATE' | 'DEFERRED';
 
 // ── Types ───────────────────────────────────────────────────────────────
 
@@ -132,6 +133,7 @@ export interface RelaySignalOutput {
   next_tool: string | null;
   next_args_patch: Record<string, unknown> | null;
   next_update_seconds: number | null;
+  resume_strategy?: ResumeStrategy;
   user_message: string;
   output?: SessionOutputResponse;
   error_code?: string;
@@ -340,10 +342,6 @@ function mapRelayError(error: unknown): { code: ErrorCode; detail: string } {
   return { code: 'UNKNOWN_ERROR', detail: 'Unexpected error in relay_signal' };
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function writeLastSessionFile(
   sessionId: string,
   role: 'INITIATOR' | 'RESPONDER',
@@ -406,16 +404,201 @@ function getResumeTokenSecret(): string | null {
   return process.env['VCAV_RESUME_TOKEN_SECRET'] ?? null;
 }
 
+// ── Session State Files ─────────────────────────────────────────────────
+
+function resolveWorkdir(): string {
+  const dir = process.env['VCAV_WORKDIR'] ?? process.cwd();
+  if (!process.env['VCAV_WORKDIR']) {
+    console.warn(
+      `[VCAV WARNING] VCAV_WORKDIR not set — writing session state to ${dir}. ` +
+      'The heartbeat agent may not find these files. Set VCAV_WORKDIR to your workspace directory.',
+    );
+  }
+  return dir;
+}
+
+export interface SessionStateEntry {
+  handle_id: string;
+  resume_strategy: ResumeStrategy;
+  due_at: string;
+  updated_at: string;
+}
+
+interface SessionStateFile {
+  handle_id: string;
+  resume_token: string;
+  phase: string;
+  role: 'INITIATOR' | 'RESPONDER';
+  counterparty: string;
+  purpose?: string;
+  session_id?: string;
+  resume_strategy: ResumeStrategy;
+  next_update_seconds: number;
+  due_at: string;
+  expires_at: string;
+  updated_at: string;
+  attempt_count: number;
+}
+
+function atomicWriteJson(filePath: string, data: unknown): void {
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true });
+  const tmpPath = `${filePath}.tmp`;
+  fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+  fs.renameSync(tmpPath, filePath);
+}
+
+function rebuildSessionIndex(sessionsDir: string, indexPath: string): void {
+  const entries: SessionStateEntry[] = [];
+  try {
+    const files = fs.readdirSync(sessionsDir).filter(f => f.endsWith('.json'));
+    for (const file of files) {
+      try {
+        const raw = fs.readFileSync(path.join(sessionsDir, file), 'utf8');
+        const state: SessionStateFile = JSON.parse(raw);
+        // Clean up expired sessions during rebuild
+        if (state.expires_at && new Date(state.expires_at).getTime() < Date.now()) {
+          try {
+            fs.unlinkSync(path.join(sessionsDir, file));
+          } catch (unlinkErr) {
+            if ((unlinkErr as NodeJS.ErrnoException).code !== 'ENOENT') {
+              console.warn(`rebuildSessionIndex: failed to remove expired file ${file}: ${unlinkErr instanceof Error ? unlinkErr.message : String(unlinkErr)}`);
+            }
+          }
+          continue;
+        }
+        entries.push({
+          handle_id: state.handle_id,
+          resume_strategy: state.resume_strategy,
+          due_at: state.due_at,
+          updated_at: state.updated_at,
+        });
+      } catch (readErr) {
+        if ((readErr as NodeJS.ErrnoException).code !== 'ENOENT') {
+          console.warn(`rebuildSessionIndex: skipping unreadable session file ${file}: ${readErr instanceof Error ? readErr.message : String(readErr)}`);
+        }
+      }
+    }
+  } catch (dirErr) {
+    if ((dirErr as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.error(`rebuildSessionIndex: failed to read sessions directory ${sessionsDir}: ${dirErr instanceof Error ? dirErr.message : String(dirErr)}`);
+    }
+  }
+
+  // Sort: IMMEDIATE before DEFERRED, within IMMEDIATE oldest updated_at first,
+  // within DEFERRED earliest due_at first, tie-break by handle_id
+  entries.sort((a, b) => {
+    const stratOrder = (s: ResumeStrategy) => s === 'IMMEDIATE' ? 0 : 1;
+    const stratCmp = stratOrder(a.resume_strategy) - stratOrder(b.resume_strategy);
+    if (stratCmp !== 0) return stratCmp;
+    if (a.resume_strategy === 'IMMEDIATE') {
+      const timeCmp = new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime();
+      if (timeCmp !== 0) return timeCmp;
+    } else {
+      const timeCmp = new Date(a.due_at).getTime() - new Date(b.due_at).getTime();
+      if (timeCmp !== 0) return timeCmp;
+    }
+    return a.handle_id.localeCompare(b.handle_id);
+  });
+
+  atomicWriteJson(indexPath, entries);
+}
+
+function writeSessionStateFile(
+  handle: RelayHandle,
+  resumeToken: string,
+  strategy: ResumeStrategy,
+  nextUpdateSeconds: number,
+): void {
+  try {
+    const workdir = resolveWorkdir();
+    const sessionsDir = path.join(workdir, '.agentvault', 'sessions');
+    const indexPath = path.join(workdir, '.agentvault', 'active_sessions.json');
+
+    const now = new Date();
+    const dueAt = new Date(now.getTime() + nextUpdateSeconds * 1000);
+
+    // Read existing file to preserve expires_at and track attempt_count
+    let existingExpiresAt: string | undefined;
+    let existingAttemptCount = 0;
+    let existingPhase: string | undefined;
+    const filePath = path.join(sessionsDir, `${handle.id}.json`);
+    try {
+      const raw = fs.readFileSync(filePath, 'utf8');
+      const existing: SessionStateFile = JSON.parse(raw);
+      existingExpiresAt = existing.expires_at;
+      existingAttemptCount = existing.attempt_count ?? 0;
+      existingPhase = existing.phase;
+    } catch {
+      // First write — no existing file
+    }
+
+    // Reset attempt_count on phase change, otherwise increment
+    const attemptCount = (existingPhase && existingPhase !== handle.phase) ? 0 : existingAttemptCount + 1;
+
+    const state: SessionStateFile = {
+      handle_id: handle.id,
+      resume_token: resumeToken,
+      phase: handle.phase,
+      role: handle.role,
+      counterparty: handle.counterparty,
+      purpose: handle.purpose,
+      session_id: handle.sessionId,
+      resume_strategy: strategy,
+      next_update_seconds: nextUpdateSeconds,
+      due_at: dueAt.toISOString(),
+      expires_at: existingExpiresAt ?? new Date(handle.createdAt + HANDLE_TTL_MS).toISOString(),
+      updated_at: now.toISOString(),
+      attempt_count: attemptCount,
+    };
+
+    atomicWriteJson(filePath, state);
+    rebuildSessionIndex(sessionsDir, indexPath);
+  } catch (err) {
+    // Non-fatal — log but do not fail the relay operation
+    console.error(
+      `writeSessionStateFile: failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+function removeSessionStateFile(handle: RelayHandle): void {
+  try {
+    const workdir = resolveWorkdir();
+    const sessionsDir = path.join(workdir, '.agentvault', 'sessions');
+    const indexPath = path.join(workdir, '.agentvault', 'active_sessions.json');
+    const filePath = path.join(sessionsDir, `${handle.id}.json`);
+    try {
+      fs.unlinkSync(filePath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.warn(`removeSessionStateFile: failed to delete ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    rebuildSessionIndex(sessionsDir, indexPath);
+  } catch (err) {
+    console.error(
+      `removeSessionStateFile: failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 // ── Response Builders ───────────────────────────────────────────────────
 
 function awaitingResponse(
   handle: RelayHandle,
   userMessage: string,
+  opts?: { strategy?: ResumeStrategy; seconds?: number },
 ): ToolResponse<RelaySignalOutput> {
+  const strategy = opts?.strategy ?? 'IMMEDIATE';
+  const seconds = opts?.seconds ?? 5;
   const token = encodeRelayToken(handle, getResumeTokenSecret());
   const resumeTokenDisplay = token.length > 16
     ? `${token.slice(0, 12)}…${token.slice(-4)}`
     : token;
+
+  writeSessionStateFile(handle, token, strategy, seconds);
+
   return buildSuccess('PENDING', {
     mode: handle.role === 'INITIATOR' ? 'INITIATE' : 'RESPOND',
     state: 'AWAITING',
@@ -428,7 +611,8 @@ function awaitingResponse(
     action_required: 'CALL_AGAIN',
     next_tool: 'agentvault.relay_signal',
     next_args_patch: { resume_token: token },
-    next_update_seconds: 5,
+    next_update_seconds: seconds,
+    resume_strategy: strategy,
     user_message: userMessage,
     display: {
       forbidden: ['PRINT_RESUME_TOKEN', 'CLAIM_COUNTERPARTY_KNOWLEDGE'],
@@ -442,6 +626,7 @@ function completedResponse(
   output: SessionOutputResponse,
 ): ToolResponse<RelaySignalOutput> {
   handle.phase = 'COMPLETED';
+  removeSessionStateFile(handle);
   return buildSuccess('COMPLETE', {
     mode: handle.role === 'INITIATOR' ? 'INITIATE' : 'RESPOND',
     state: 'COMPLETED',
@@ -478,6 +663,7 @@ function failedResponse(
   output?: SessionOutputResponse,
 ): ToolResponse<RelaySignalOutput> {
   handle.phase = 'FAILED';
+  removeSessionStateFile(handle);
   return buildSuccess('ERROR', {
     mode: handle.role === 'INITIATOR' ? 'INITIATE' : 'RESPOND',
     state: 'FAILED',
@@ -555,7 +741,7 @@ async function phaseInvite(
     handle.purpose = purposeHint ?? undefined;
     handle.myInput = args.my_input;
     handle.phase = 'POLL_INVITE';
-    return awaitingResponse(handle, 'Invite created. Waiting for counterparty to accept.');
+    return awaitingResponse(handle, 'Invite created. Waiting for counterparty to accept.', { strategy: 'DEFERRED', seconds: 120 });
   }
 
   const relayUrl = resolveRelayUrl(args.relay_url);
@@ -620,21 +806,21 @@ async function phaseInvite(
       return awaitingResponse(
         handle,
         'Counterparty not yet reachable (they may not have started yet). Will keep trying.',
+        { strategy: 'DEFERRED', seconds: 60 },
       );
     }
     throw err; // non-retryable — let outer catch handle
   }
 
   handle.phase = 'POLL_RELAY';
-  return awaitingResponse(handle, 'Relay session created. Waiting for counterparty to join.');
+  return awaitingResponse(handle, 'Relay session created. Waiting for counterparty to join.', { strategy: 'IMMEDIATE', seconds: 5 });
 }
 
 /**
  * POLL_INVITE phase (relay inbox INITIATE only).
  *
- * Polls GET /invites/:id until the invite is ACCEPTED.
- * When accepted, extracts session tokens, submits initiator input,
- * and transitions to POLL_RELAY.
+ * Single-check: queries invite status once and returns immediately.
+ * Heartbeat-safe — no blocking loops.
  */
 async function phasePollInvite(
   handle: RelayHandle,
@@ -655,30 +841,31 @@ async function phasePollInvite(
     return failedResponse(handle, 'SESSION_ERROR', 'Missing relayUrl in POLL_INVITE phase.');
   }
 
-  const callDeadline = Date.now() + CALL_BUDGET_MS;
+  const detail = await transport.getInviteDetail(handle.inviteId);
 
-  while (Date.now() < callDeadline) {
-    const detail = await transport.getInviteDetail(handle.inviteId);
+  if (detail.status === 'ACCEPTED') {
+    // Validate required session fields before using them
+    if (!detail.session_id || !detail.submit_token || !detail.read_token) {
+      return failedResponse(handle, 'SESSION_ERROR',
+        'Invite accepted but relay returned incomplete session data (missing session_id, submit_token, or read_token).');
+    }
 
-    if (detail.status === 'ACCEPTED') {
-      // Validate required session fields before using them
-      if (!detail.session_id || !detail.submit_token || !detail.read_token) {
-        return failedResponse(handle, 'SESSION_ERROR',
-          'Invite accepted but relay returned incomplete session data (missing session_id, submit_token, or read_token).');
-      }
+    // Extract initiator session tokens
+    handle.sessionId = detail.session_id;
+    handle.tokens = {
+      submit: detail.submit_token,
+      read: '', // initiator doesn't use responder read token
+      initiatorRead: detail.read_token,
+    };
 
-      // Extract initiator session tokens
-      handle.sessionId = detail.session_id;
-      handle.tokens = {
-        submit: detail.submit_token,
-        read: '', // initiator doesn't use responder read token
-        initiatorRead: detail.read_token,
-      };
+    writeLastSessionFile(handle.sessionId, 'INITIATOR', detail.read_token, handle.relayUrl);
 
-      writeLastSessionFile(handle.sessionId, 'INITIATOR', detail.read_token, handle.relayUrl);
+    // Commit phase before submit so retries route to POLL_RELAY (not back here)
+    handle.phase = 'POLL_RELAY';
 
-      // Submit initiator input
-      const config = { relay_url: handle.relayUrl };
+    // Submit initiator input
+    const config = { relay_url: handle.relayUrl };
+    try {
       await rawSubmitInput(
         config,
         handle.sessionId,
@@ -687,33 +874,37 @@ async function phasePollInvite(
         handle.myInput ?? '',
         handle.contractHash,
       );
-
-      handle.phase = 'POLL_RELAY';
-      return awaitingResponse(handle, 'Counterparty accepted. Input submitted. Waiting for relay session to complete.');
+    } catch (submitErr) {
+      console.error(
+        `phasePollInvite: input submit failed after invite accepted: ${submitErr instanceof Error ? submitErr.message : String(submitErr)}`,
+      );
+      return awaitingResponse(handle, 'Invite accepted but input submission failed (transient). Will retry on next check.', { strategy: 'IMMEDIATE', seconds: 5 });
     }
 
-    if (detail.status === 'DECLINED') {
-      return failedResponse(handle, 'INVITE_DECLINED', 'Counterparty declined the invite.');
-    }
-    if (detail.status === 'EXPIRED') {
-      return failedResponse(handle, 'INVITE_EXPIRED', 'Invite expired before counterparty accepted.');
-    }
-    if (detail.status === 'CANCELED') {
-      return failedResponse(handle, 'INVITE_CANCELED', 'Invite was canceled.');
-    }
-
-    // Still PENDING — wait and retry
-    await sleep(POLL_INTERVAL_MS);
+    return awaitingResponse(handle, 'Counterparty accepted. Input submitted. Waiting for relay session to complete.', { strategy: 'IMMEDIATE', seconds: 5 });
   }
 
-  // Call budget expired — invite still pending
-  return awaitingResponse(handle, 'Waiting for counterparty to accept invite.');
+  if (detail.status === 'DECLINED') {
+    return failedResponse(handle, 'INVITE_DECLINED', 'Counterparty declined the invite.');
+  }
+  if (detail.status === 'EXPIRED') {
+    return failedResponse(handle, 'INVITE_EXPIRED', 'Invite expired before counterparty accepted.');
+  }
+  if (detail.status === 'CANCELED') {
+    return failedResponse(handle, 'INVITE_CANCELED', 'Invite was canceled.');
+  }
+
+  // Still PENDING — return immediately, let heartbeat check again later
+  return awaitingResponse(handle, 'Waiting for counterparty to accept invite.', { strategy: 'DEFERRED', seconds: 120 });
 }
 
+/**
+ * POLL_RELAY phase — single status check, no blocking loop.
+ * Heartbeat-safe: checks relay status once and returns immediately.
+ */
 async function phasePollRelay(
   handle: RelayHandle,
 ): Promise<ToolResponse<RelaySignalOutput>> {
-  // Check overall timeout
   if (Date.now() > handle.timeoutDeadline) {
     return failedResponse(handle, 'RELAY_TIMEOUT', 'Relay session timed out. Call agentvault.relay_signal INITIATE to retry.');
   }
@@ -723,32 +914,33 @@ async function phasePollRelay(
   }
 
   const config = { relay_url: handle.relayUrl };
-  const output = await pollUntilDone(
-    config,
-    handle.sessionId,
-    handle.tokens.initiatorRead,
-    POLL_INTERVAL_MS,
-    CALL_BUDGET_MS,
-  );
+  const status = await httpGetStatus(config, handle.sessionId, handle.tokens.initiatorRead);
 
-  if (output.state === 'COMPLETED') {
-    return completedResponse(handle, output);
+  if (status.state === 'COMPLETED') {
+    try {
+      const output = await httpGetOutput(config, handle.sessionId, handle.tokens.initiatorRead);
+      return completedResponse(handle, output);
+    } catch (fetchErr) {
+      console.error(
+        `phasePollRelay: session ${handle.sessionId} COMPLETED but output fetch failed: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
+      );
+      return awaitingResponse(handle, 'Session completed but output fetch failed (transient). Will retry.', { strategy: 'IMMEDIATE', seconds: 5 });
+    }
   }
 
-  if (output.state === 'ABORTED' && output.abort_reason !== 'TIMEOUT') {
-    // Real server-side abort
-    const reason = output.abort_reason ?? 'UNKNOWN';
+  if (status.state === 'ABORTED') {
+    const reason = status.abort_reason ?? 'UNKNOWN';
     const desc = ABORT_DESCRIPTIONS[reason] ?? 'The relay session was aborted.';
     return failedResponse(
       handle,
       `RELAY_${reason}`,
       `Session aborted: ${desc} Call agentvault.relay_signal INITIATE to retry.`,
-      output,
+      { state: 'ABORTED', abort_reason: status.abort_reason },
     );
   }
 
-  // Call budget expired — relay still running
-  return awaitingResponse(handle, 'Waiting for counterparty to join relay session.');
+  // Still processing — return immediately, caller decides when to check again
+  return awaitingResponse(handle, 'Relay processing. Waiting for session to complete.', { strategy: 'IMMEDIATE', seconds: 5 });
 }
 
 async function phaseRetryPropose(
@@ -777,6 +969,7 @@ async function phaseRetryPropose(
       return awaitingResponse(
         handle,
         'Counterparty still not reachable. Will keep trying.',
+        { strategy: 'DEFERRED', seconds: 60 },
       );
     }
     // Non-retryable error (e.g. DENY response) — fail
@@ -787,11 +980,17 @@ async function phaseRetryPropose(
   // PROPOSE succeeded — advance to relay polling
   handle.phase = 'POLL_RELAY';
   handle.retryState = undefined;
-  return awaitingResponse(handle, 'Invite delivered. Waiting for counterparty to join relay session.');
+  return awaitingResponse(handle, 'Invite delivered. Waiting for counterparty to join relay session.', { strategy: 'IMMEDIATE', seconds: 5 });
 }
 
 // ── RESPOND Phases ──────────────────────────────────────────────────────
 
+/**
+ * DISCOVER phase (relay inbox RESPOND only).
+ *
+ * Single-check: queries inbox once and returns immediately.
+ * Heartbeat-safe — no blocking loops.
+ */
 async function phaseDiscover(
   handle: RelayHandle,
   transport: AfalTransport,
@@ -801,121 +1000,114 @@ async function phaseDiscover(
     return failedResponse(handle, 'RELAY_TIMEOUT', 'Timed out waiting for relay invite. Ask the initiator to retry.');
   }
 
-  const callDeadline = Date.now() + CALL_BUDGET_MS;
+  const response = await transport.checkInbox();
+  const invites: AfalInviteMessage[] = response.invites ?? [];
 
-  while (Date.now() < callDeadline) {
-    const response = await transport.checkInbox();
-    const invites: AfalInviteMessage[] = response.invites ?? [];
+  // Track whether we found invites from the sender that failed contract matching.
+  // If all sender invites fail contract checks, return CONTRACT_MISMATCH immediately
+  // instead of polling forever (the sender won't send a different contract).
+  let foundSenderInviteWithContractMismatch = false;
 
-    // Track whether we found invites from the sender that failed contract matching.
-    // If all sender invites fail contract checks, return CONTRACT_MISMATCH immediately
-    // instead of polling forever (the sender won't send a different contract).
-    let foundSenderInviteWithContractMismatch = false;
+  // Scan newest-first to prefer the most recent matching invite
+  for (let i = invites.length - 1; i >= 0; i--) {
+    const invite = invites[i];
+    const fromAgentId: string = invite.from_agent_id;
+    const payloadType: string | undefined = invite.payload_type;
 
-    // Scan newest-first to prefer the most recent matching invite
-    for (let i = invites.length - 1; i >= 0; i--) {
-      const invite = invites[i];
-      const fromAgentId: string = invite.from_agent_id;
-      const payloadType: string | undefined = invite.payload_type;
+    // Filter by sender
+    if (fromAgentId !== handle.counterparty) continue;
+    // Filter by payload type — accept both legacy and relay inbox invites
+    const isRelayInbox = payloadType === RELAY_INBOX_PAYLOAD_TYPE;
+    if (payloadType !== 'VCAV_E_INVITE_V1' && !isRelayInbox) continue;
+    // Relay inbox invites require RelayInboxTransport to accept
+    if (isRelayInbox && !(transport instanceof RelayInboxTransport)) continue;
+    // If handle already has a bound inviteId, only match that
+    if (handle.inviteId && invite.invite_id !== handle.inviteId) continue;
 
-      // Filter by sender
-      if (fromAgentId !== handle.counterparty) continue;
-      // Filter by payload type — accept both legacy and relay inbox invites
-      const isRelayInbox = payloadType === RELAY_INBOX_PAYLOAD_TYPE;
-      if (payloadType !== 'VCAV_E_INVITE_V1' && !isRelayInbox) continue;
-      // Relay inbox invites require RelayInboxTransport to accept
-      if (isRelayInbox && !(transport instanceof RelayInboxTransport)) continue;
-      // If handle already has a bound inviteId, only match that
-      if (handle.inviteId && invite.invite_id !== handle.inviteId) continue;
+    // For legacy invites, require session tokens in payload.
+    // For relay inbox invites, tokens come from acceptInvite later.
+    if (!isRelayInbox) {
+      const payload = invite.payload;
+      if (!payload || typeof payload !== 'object') continue;
+      if (!payload['session_id'] || !payload['responder_submit_token'] || !payload['responder_read_token'] || !payload['relay_url']) continue;
+    }
 
-      // For legacy invites, require session tokens in payload.
-      // For relay inbox invites, tokens come from acceptInvite later.
-      if (!isRelayInbox) {
-        const payload = invite.payload;
-        if (!payload || typeof payload !== 'object') continue;
-        if (!payload['session_id'] || !payload['responder_submit_token'] || !payload['responder_read_token'] || !payload['relay_url']) continue;
-      }
+    // Check expected_contract_hash if provided (direct hash comparison)
+    if (handle.expectedContractHash && invite.contract_hash !== handle.expectedContractHash) {
+      foundSenderInviteWithContractMismatch = true;
+      continue;
+    }
 
-      // Check expected_contract_hash if provided (direct hash comparison)
-      if (handle.expectedContractHash && invite.contract_hash !== handle.expectedContractHash) {
+    // AFAL-enriched path: validate purpose_code from parsed AfalPropose
+    if (invite.afalPropose?.purpose_code && handle.expectedPurpose && !handle.expectedContractHash) {
+      if (invite.afalPropose.purpose_code !== handle.expectedPurpose) {
         foundSenderInviteWithContractMismatch = true;
         continue;
       }
-
-      // AFAL-enriched path: validate purpose_code from parsed AfalPropose
-      if (invite.afalPropose?.purpose_code && handle.expectedPurpose && !handle.expectedContractHash) {
-        if (invite.afalPropose.purpose_code !== handle.expectedPurpose) {
-          foundSenderInviteWithContractMismatch = true;
-          continue;
-        }
-      } else if (handle.expectedPurpose && !handle.expectedContractHash) {
-        // Legacy path: validate expected_purpose via template_id
-        const expectedTemplate = PURPOSE_TO_TEMPLATE[handle.expectedPurpose];
-        const inviteTemplate = invite.template_id;
-        if (expectedTemplate && inviteTemplate && inviteTemplate !== expectedTemplate) {
-          foundSenderInviteWithContractMismatch = true;
-          continue;
-        }
+    } else if (handle.expectedPurpose && !handle.expectedContractHash) {
+      // Legacy path: validate expected_purpose via template_id
+      const expectedTemplate = PURPOSE_TO_TEMPLATE[handle.expectedPurpose];
+      const inviteTemplate = invite.template_id;
+      if (expectedTemplate && inviteTemplate && inviteTemplate !== expectedTemplate) {
+        foundSenderInviteWithContractMismatch = true;
+        continue;
       }
-
-      // Compute relay contract hash for binding into the handle (used by phaseJoin
-      // for expected_contract_hash verification at the relay).
-      let relayContractHash: string | undefined;
-      if (handle.expectedPurpose) {
-        const myId = process.env['VCAV_AGENT_ID'] ?? '';
-        try {
-          const relayContract = buildRelayContract(handle.expectedPurpose, [handle.counterparty, myId]);
-          if (relayContract) relayContractHash = computeRelayContractHash(relayContract);
-        } catch (err) {
-          // Non-fatal — relay will verify on submit, but log for diagnostics
-          console.error(
-            `phaseDiscover: failed to compute relay contract hash for purpose=${handle.expectedPurpose}: ` +
-            `${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-      }
-
-      // Bind invite to handle (stops scanning for different invites)
-      handle.inviteId = invite.invite_id;
-      handle.contractHash = relayContractHash ?? invite.contract_hash;
-      handle.proposalId = invite.afalPropose?.proposal_id;
-
-      if (isRelayInbox) {
-        // Relay inbox: tokens come from acceptInvite in phaseJoin.
-        // Set relayUrl from transport if available.
-        if (transport instanceof RelayInboxTransport) {
-          handle.relayUrl = handle.relayUrl ?? transport.relayUrl;
-        }
-      } else {
-        // Legacy: extract session tokens from invite payload.
-        // (payload was validated by the filter above — this guard is defensive)
-        const payload = invite.payload;
-        if (!payload || typeof payload !== 'object') continue;
-        handle.sessionId = payload['session_id'] as string;
-        handle.relayUrl = handle.relayUrl ?? payload['relay_url'] as string;
-        handle.tokens = {
-          submit: payload['responder_submit_token'] as string,
-          read: payload['responder_read_token'] as string,
-        };
-      }
-
-      handle.phase = 'JOIN';
-      return awaitingResponse(handle, 'Relay invite found. Joining session.');
     }
 
-    // If sender sent invites but all failed contract matching, fail fast.
-    // Transition handle to FAILED to prevent stale handle leak.
-    if (foundSenderInviteWithContractMismatch) {
-      handle.phase = 'FAILED';
-      return buildError('CONTRACT_MISMATCH',
-        'Invite contract does not match expected contract.');
+    // Compute relay contract hash for binding into the handle (used by phaseJoin
+    // for expected_contract_hash verification at the relay).
+    let relayContractHash: string | undefined;
+    if (handle.expectedPurpose) {
+      const myId = process.env['VCAV_AGENT_ID'] ?? '';
+      try {
+        const relayContract = buildRelayContract(handle.expectedPurpose, [handle.counterparty, myId]);
+        if (relayContract) relayContractHash = computeRelayContractHash(relayContract);
+      } catch (err) {
+        // Non-fatal — relay will verify on submit, but log for diagnostics
+        console.error(
+          `phaseDiscover: failed to compute relay contract hash for purpose=${handle.expectedPurpose}: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
 
-    await sleep(INBOX_POLL_INTERVAL_MS);
+    // Bind invite to handle (stops scanning for different invites)
+    handle.inviteId = invite.invite_id;
+    handle.contractHash = relayContractHash ?? invite.contract_hash;
+    handle.proposalId = invite.afalPropose?.proposal_id;
+
+    if (isRelayInbox) {
+      // Relay inbox: tokens come from acceptInvite in phaseJoin.
+      // Set relayUrl from transport if available.
+      if (transport instanceof RelayInboxTransport) {
+        handle.relayUrl = handle.relayUrl ?? transport.relayUrl;
+      }
+    } else {
+      // Legacy: extract session tokens from invite payload.
+      // (payload was validated by the filter above — this guard is defensive)
+      const payload = invite.payload;
+      if (!payload || typeof payload !== 'object') continue;
+      handle.sessionId = payload['session_id'] as string;
+      handle.relayUrl = handle.relayUrl ?? payload['relay_url'] as string;
+      handle.tokens = {
+        submit: payload['responder_submit_token'] as string,
+        read: payload['responder_read_token'] as string,
+      };
+    }
+
+    handle.phase = 'JOIN';
+    return awaitingResponse(handle, 'Relay invite found. Joining session.', { strategy: 'IMMEDIATE', seconds: 0 });
   }
 
-  // Call budget expired — no invite found yet
-  return awaitingResponse(handle, 'Waiting for relay invite from counterparty.');
+  // If sender sent invites but all failed contract matching, fail fast.
+  // Transition handle to FAILED to prevent stale handle leak.
+  if (foundSenderInviteWithContractMismatch) {
+    return failedResponse(handle, 'CONTRACT_MISMATCH',
+      'Invite contract does not match expected contract.');
+  }
+
+  // No invite found yet — return immediately, let heartbeat check again later
+  return awaitingResponse(handle, 'No invite yet. Waiting for relay invite from counterparty.', { strategy: 'DEFERRED', seconds: 120 });
 }
 
 async function phaseJoin(
@@ -987,32 +1179,34 @@ async function phaseJoin(
     return failedResponse(handle, 'SESSION_ERROR', 'Missing session data for JOIN poll phase.');
   }
 
-  // Poll relay for result
-  const output = await pollUntilDone(
-    config,
-    handle.sessionId,
-    handle.tokens.read,
-    POLL_INTERVAL_MS,
-    CALL_BUDGET_MS,
-  );
+  // Single status check — heartbeat-safe, no blocking loop
+  const status = await httpGetStatus(config, handle.sessionId, handle.tokens.read);
 
-  if (output.state === 'COMPLETED') {
-    return completedResponse(handle, output);
+  if (status.state === 'COMPLETED') {
+    try {
+      const output = await httpGetOutput(config, handle.sessionId, handle.tokens.read);
+      return completedResponse(handle, output);
+    } catch (fetchErr) {
+      console.error(
+        `phaseJoin: session ${handle.sessionId} COMPLETED but output fetch failed: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
+      );
+      return awaitingResponse(handle, 'Session completed but output fetch failed (transient). Will retry.', { strategy: 'IMMEDIATE', seconds: 5 });
+    }
   }
 
-  if (output.state === 'ABORTED' && output.abort_reason !== 'TIMEOUT') {
-    const reason = output.abort_reason ?? 'UNKNOWN';
+  if (status.state === 'ABORTED') {
+    const reason = status.abort_reason ?? 'UNKNOWN';
     const desc = ABORT_DESCRIPTIONS[reason] ?? 'The relay session was aborted.';
     return failedResponse(
       handle,
       `RELAY_${reason}`,
       `Session aborted: ${desc} Waiting for the initiator to retry — call agentvault.relay_signal RESPOND again.`,
-      output,
+      { state: 'ABORTED', abort_reason: status.abort_reason },
     );
   }
 
-  // Call budget expired
-  return awaitingResponse(handle, 'Waiting for relay session to complete.');
+  // Still processing — return immediately, caller decides when to check again
+  return awaitingResponse(handle, 'Waiting for relay session to complete.', { strategy: 'IMMEDIATE', seconds: 5 });
 }
 
 // ── Legacy Modes (unchanged) ────────────────────────────────────────────
@@ -1164,7 +1358,7 @@ export async function handleRelaySignal(
           phase: 'INVITE',
           counterparty,
           idempotencyKey,
-          timeoutMs: OVERALL_TIMEOUT_MS,
+          timeoutMs: HANDLE_TTL_MS,
         });
 
         return await phaseInvite(handle, args, transport, knownAgents);
@@ -1216,7 +1410,7 @@ export async function handleRelaySignal(
           phase: 'DISCOVER',
           counterparty: from,
           idempotencyKey,
-          timeoutMs: OVERALL_TIMEOUT_MS,
+          timeoutMs: HANDLE_TTL_MS,
           myInput: args.my_input,
           expectedPurpose: args.expected_purpose,
           expectedContractHash: args.expected_contract_hash,

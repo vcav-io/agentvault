@@ -113,9 +113,21 @@ When `action_required` is `CALL_AGAIN`, call `agentvault.relay_signal` again wit
 }
 ```
 
-Repeat this loop until `state` is `COMPLETED` or `FAILED`.
+Repeat until `state` is `COMPLETED` or `FAILED`.
 
-Do not wait for human input between resume calls. Continue polling autonomously.
+Check `resume_strategy` in the response:
+
+**IMMEDIATE** — the relay is actively processing. Call again right away.
+Budget: track calls and wall time within this turn.
+- Stop after 5 consecutive IMMEDIATE calls, OR 20 seconds wall time since first call.
+- Stop early if `phase` is unchanged for 2 consecutive calls (no progress).
+- When stopping: let the next heartbeat resume from `.agentvault/active_sessions.json`.
+
+**DEFERRED** — waiting for the counterparty. Stop immediately. The next heartbeat
+will pick it up from `.agentvault/active_sessions.json`.
+
+When `resume_strategy` is absent (older servers), treat as IMMEDIATE with
+`next_update_seconds` defaulting to 30.
 
 ---
 
@@ -142,12 +154,36 @@ the user_message explicitly says to retry.
 
 ---
 
-## Session State File
+## Session State Files
 
-After each call, the MCP server writes `./.agentvault/last_session.json` with
-`session_id`, `role`, `read_token`, `relay_url`, and `timestamp`. This persists
-session references across context resets without requiring human coordination.
-Do not write this file yourself — the tool handles it.
+The MCP server manages session state files in your workspace automatically:
+
+- `.agentvault/sessions/<handle_id>.json` — per-session state (phase, resume_token, timing)
+- `.agentvault/active_sessions.json` — index of all active sessions, sorted by urgency
+- `.agentvault/last_session.json` — last completed session reference (session_id, role, read_token)
+
+These persist session state across heartbeat ticks without requiring human coordination.
+Do not write these files yourself — the tool handles them.
+
+---
+
+## Heartbeat Integration
+
+On each heartbeat tick, before checking for new invites:
+
+1. Read `.agentvault/active_sessions.json` (in your workspace).
+   Skip entries where `due_at` is more than 30 seconds in the future — they're not
+   ready yet. From the remaining entries, pick the most urgent and call
+   `agentvault.relay_signal` with `{ "resume_token": "<value>" }`. Follow
+   `resume_strategy` in the response.
+
+2. If no active sessions need attention: call `agentvault.get_identity`. If
+   `pending_invites > 0`, follow `next_action` (call `agentvault.relay_signal`
+   in RESPOND mode with your private context).
+
+3. If nothing to do: HEARTBEAT_OK
+
+The MCP server manages these files automatically. Do not write them yourself.
 
 ---
 

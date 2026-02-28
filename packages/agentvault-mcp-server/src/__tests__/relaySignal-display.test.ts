@@ -12,8 +12,10 @@ import { _resetHandlesForTesting } from '../tools/relayHandles.js';
 import type { AfalTransport, AfalInviteMessage } from '../afal-transport.js';
 
 // Mock agentvault-client to avoid real HTTP calls
-const { mockPollUntilDone } = vi.hoisted(() => ({
+const { mockPollUntilDone, mockGetStatus, mockGetOutput } = vi.hoisted(() => ({
   mockPollUntilDone: vi.fn().mockResolvedValue({ state: 'PROCESSING' }),
+  mockGetStatus: vi.fn().mockResolvedValue({ state: 'PROCESSING' }),
+  mockGetOutput: vi.fn().mockResolvedValue({ state: 'COMPLETED', output: {} }),
 }));
 vi.mock('agentvault-client', () => ({
   createAndSubmit: vi.fn().mockResolvedValue({
@@ -29,6 +31,8 @@ vi.mock('agentvault-client', () => ({
 
 vi.mock('agentvault-client/http', () => ({
   submitInput: vi.fn().mockResolvedValue(undefined),
+  getStatus: mockGetStatus,
+  getOutput: mockGetOutput,
 }));
 
 vi.mock('agentvault-client/contracts', () => ({
@@ -73,6 +77,8 @@ async function initiateAndResume(
 beforeEach(() => {
   _resetHandlesForTesting();
   mockPollUntilDone.mockResolvedValue({ state: 'PROCESSING' });
+  mockGetStatus.mockResolvedValue({ state: 'PROCESSING' });
+  mockGetOutput.mockResolvedValue({ state: 'COMPLETED', output: {} });
   process.env['VCAV_RELAY_URL'] = 'http://relay.test';
   process.env['VCAV_AGENT_ID'] = 'alice-demo';
   delete process.env['VCAV_RESUME_TOKEN_SECRET'];
@@ -83,7 +89,8 @@ describe('completedResponse display directives', () => {
     const transport = createMockAfalTransport();
     const { resumeToken } = await initiateAndResume(transport);
 
-    mockPollUntilDone.mockResolvedValueOnce({
+    mockGetStatus.mockResolvedValueOnce({ state: 'COMPLETED' });
+    mockGetOutput.mockResolvedValueOnce({
       state: 'COMPLETED',
       output: { mediation_signal: 'PARTIAL_ALIGNMENT' },
     });
@@ -110,7 +117,8 @@ describe('completedResponse display directives', () => {
     const transport = createMockAfalTransport();
     const { resumeToken } = await initiateAndResume(transport);
 
-    mockPollUntilDone.mockResolvedValueOnce({
+    mockGetStatus.mockResolvedValueOnce({ state: 'COMPLETED' });
+    mockGetOutput.mockResolvedValueOnce({
       state: 'COMPLETED',
       output: { mediation_signal: 'PARTIAL_ALIGNMENT' },
     });
@@ -124,7 +132,8 @@ describe('completedResponse display directives', () => {
     const transport = createMockAfalTransport();
     const { resumeToken } = await initiateAndResume(transport);
 
-    mockPollUntilDone.mockResolvedValueOnce({
+    mockGetStatus.mockResolvedValueOnce({ state: 'COMPLETED' });
+    mockGetOutput.mockResolvedValueOnce({
       state: 'COMPLETED',
       output: { mediation_signal: 'ALIGNMENT_POSSIBLE' },
     });
@@ -146,7 +155,8 @@ describe('completedResponse display directives', () => {
     const transport = createMockAfalTransport();
     const { resumeToken } = await initiateAndResume(transport);
 
-    mockPollUntilDone.mockResolvedValueOnce({
+    mockGetStatus.mockResolvedValueOnce({ state: 'COMPLETED' });
+    mockGetOutput.mockResolvedValueOnce({
       state: 'COMPLETED',
       output: { mediation_signal: 'ALIGNMENT_POSSIBLE' },
     });
@@ -164,7 +174,8 @@ describe('completedResponse display directives', () => {
     const transport = createMockAfalTransport();
     const { resumeToken } = await initiateAndResume(transport);
 
-    mockPollUntilDone.mockResolvedValueOnce({
+    mockGetStatus.mockResolvedValueOnce({ state: 'COMPLETED' });
+    mockGetOutput.mockResolvedValueOnce({
       state: 'COMPLETED',
       output: { mediation_signal: 'ALIGNMENT_POSSIBLE' },
     });
@@ -181,7 +192,8 @@ describe('completedResponse display directives', () => {
     const transport = createMockAfalTransport();
     const { resumeToken } = await initiateAndResume(transport);
 
-    mockPollUntilDone.mockResolvedValueOnce({
+    mockGetStatus.mockResolvedValueOnce({ state: 'COMPLETED' });
+    mockGetOutput.mockResolvedValueOnce({
       state: 'COMPLETED',
       output: { mediation_signal: 'ALIGNMENT_POSSIBLE' },
     });
@@ -197,7 +209,8 @@ describe('completedResponse display directives', () => {
     const transport = createMockAfalTransport();
     const { resumeToken } = await initiateAndResume(transport);
 
-    mockPollUntilDone.mockResolvedValueOnce({
+    mockGetStatus.mockResolvedValueOnce({ state: 'COMPLETED' });
+    mockGetOutput.mockResolvedValueOnce({
       state: 'COMPLETED',
       output: { mediation_signal: 'FULL_ALIGNMENT' },
     });
@@ -274,7 +287,7 @@ describe('failedResponse display directives', () => {
     const transport = createMockAfalTransport();
     const { resumeToken } = await initiateAndResume(transport);
 
-    mockPollUntilDone.mockResolvedValueOnce({
+    mockGetStatus.mockResolvedValueOnce({
       state: 'ABORTED',
       abort_reason: 'PROVIDER_ERROR',
     });
@@ -295,7 +308,7 @@ describe('failedResponse display directives', () => {
     const transport = createMockAfalTransport();
     const { resumeToken } = await initiateAndResume(transport);
 
-    mockPollUntilDone.mockResolvedValueOnce({
+    mockGetStatus.mockResolvedValueOnce({
       state: 'ABORTED',
       abort_reason: 'PROVIDER_ERROR',
     });
@@ -310,7 +323,7 @@ describe('failedResponse display directives', () => {
     const transport = createMockAfalTransport();
     const { resumeToken } = await initiateAndResume(transport);
 
-    mockPollUntilDone.mockResolvedValueOnce({
+    mockGetStatus.mockResolvedValueOnce({
       state: 'ABORTED',
       abort_reason: 'PROVIDER_ERROR',
     });
