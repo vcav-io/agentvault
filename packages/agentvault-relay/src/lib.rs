@@ -205,7 +205,9 @@ async fn submit_input_handler(
 
     // Compute input size for metadata (before moving into session)
     let input_bytes = if state.is_dev {
-        serde_json::to_string(&request.context).map(|s| s.len()).ok()
+        serde_json::to_string(&request.context)
+            .map(|s| s.len())
+            .ok()
     } else {
         None
     };
@@ -327,10 +329,8 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
     tokio::spawn(async move {
         match relay::relay_core(&contract, &input_a, &input_b, &provider, &state).await {
             Ok((result, timing)) => {
-                let output_bytes =
-                    serde_json::to_string(&result.output).map(|s| s.len()).ok();
-                let receipt_bytes =
-                    serde_json::to_string(&result.receipt).map(|s| s.len()).ok();
+                let output_bytes = serde_json::to_string(&result.output).map(|s| s.len()).ok();
+                let receipt_bytes = serde_json::to_string(&result.receipt).map(|s| s.len()).ok();
                 store
                     .with_session(&session_id, |session| {
                         session.output = Some(result.output);
@@ -339,8 +339,8 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
                         session.state = SessionState::Completed;
 
                         if is_dev {
-                            let mut meta = session.metadata.take().unwrap_or_else(|| {
-                                SessionMetadata {
+                            let mut meta =
+                                session.metadata.take().unwrap_or_else(|| SessionMetadata {
                                     session_id: session.id.clone(),
                                     timing: SessionTiming {
                                         session_created_at: Some(session.created_at),
@@ -357,8 +357,7 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
                                         receipt_bytes: None,
                                     },
                                     inference: None,
-                                }
-                            });
+                                });
                             meta.timing.inference_start_at = Some(timing.inference_start);
                             meta.timing.inference_end_at = Some(timing.inference_end);
                             meta.timing.output_ready_at = Some(chrono::Utc::now());
