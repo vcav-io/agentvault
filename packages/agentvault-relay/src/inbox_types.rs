@@ -6,8 +6,8 @@ use crate::types::Contract;
 // Re-export all protocol types from vault-family-types for use within this crate.
 pub use vault_family_types::{
     AcceptInviteRequest, AcceptInviteResponse, CreateInviteRequest, CreateInviteResponse,
-    DeclineInviteRequest, DeclineReasonCode, InboxEvent, InboxEventType, InboxQuery,
-    InboxResponse, InviteDetailResponse, InviteStatus, InviteSummary,
+    DeclineInviteRequest, DeclineReasonCode, InboxEvent, InboxEventType, InboxQuery, InboxResponse,
+    InviteDetailResponse, InviteStatus, InviteSummary,
 };
 
 // ============================================================================

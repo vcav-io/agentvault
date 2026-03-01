@@ -10,6 +10,7 @@ import {
   buildRelayContract,
   listRelayPurposes,
   computeRelayContractHash,
+  computeOutputSchemaHash,
 } from '../relay-contracts.js';
 
 describe('listRelayPurposes', () => {
@@ -111,6 +112,33 @@ describe('computeRelayContractHash', () => {
     const contract = buildRelayContract('MEDIATION', ['a', 'b'])!;
     const hash = computeRelayContractHash(contract);
     expect(hash).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe('computeOutputSchemaHash', () => {
+  it('is deterministic', () => {
+    const contract = buildRelayContract('MEDIATION', ['alice-demo', 'bob-demo'])!;
+    const schema = contract.output_schema;
+    const h1 = computeOutputSchemaHash(schema);
+    const h2 = computeOutputSchemaHash(schema);
+    expect(h1).toBe(h2);
+    expect(h1.length).toBe(64);
+  });
+
+  it('different schemas produce different hashes', () => {
+    const mediation = buildRelayContract('MEDIATION', ['alice-demo', 'bob-demo'])!;
+    const compatibility = buildRelayContract('COMPATIBILITY', ['alice-demo', 'bob-demo'])!;
+    const h1 = computeOutputSchemaHash(mediation.output_schema);
+    const h2 = computeOutputSchemaHash(compatibility.output_schema);
+    expect(h1).not.toBe(h2);
+  });
+
+  it('cross-language parity with Rust relay', () => {
+    const contract = buildRelayContract('MEDIATION', ['alice-demo', 'bob-demo'])!;
+    const hash = computeOutputSchemaHash(contract.output_schema);
+    // Verified against Rust compute_output_schema_hash (JCS + SHA-256).
+    // If this fails, TS/Rust JCS canonicalization has diverged.
+    expect(hash).toBe('0d25ea011d60a30156796b7e510caa804068bd4c01faa2f637def7dd07d5b3f6');
   });
 });
 
