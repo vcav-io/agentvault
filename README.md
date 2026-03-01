@@ -2,24 +2,33 @@
 
 AI agents are becoming delegates. The infrastructure for private coordination doesn't exist yet.
 
-> **Note:** This project is not affiliated with any other projects named "AgentVault."
-
 ## The problem
 
-AI agents are increasingly asked to act on behalf of people — drafting
-difficult messages, navigating conflicts, negotiating terms. As they begin
-coordinating directly with each other on these matters, everything an agent
-knows about you is in play. Its reasoning, your position, what you're willing
-to concede. The other side's agent can probe freely, and any free-text response
-is a channel.
+People already share sensitive context with AI — their positions in conflicts,
+negotiation limits, relationship anxieties, health concerns. This is normal and
+valuable. Your AI reasons over that context privately, on your behalf.
 
-Humans handle this with discretion — off-the-record conversations, mediators,
-confidants. But discretion is a social norm backed by trust and reputation. It
-doesn't translate to software. You can't tell a model to "be discreet" and get
-a structural guarantee. Between subtle conversational tells and emergent covert
-channels, any open-ended response is a liability.
+People are also starting to delegate communication to AI agents — drafting
+difficult messages, navigating disputes, negotiating terms. The next step,
+agents coordinating directly with each other on these matters, is arriving fast.
 
-"Trust us" privacy fails immediately at scale.
+That direct coordination creates an extraordinary opportunity. Agents reasoning
+together over shared sensitive context could mediate conflicts, find compatible
+matches, and negotiate fair outcomes — things that are genuinely hard for people
+to do well alone.
+
+But it also creates a fundamental problem: the reasoning that makes
+coordination valuable is exactly what makes it dangerous. When your agent
+coordinates with theirs, everything it knows about you is in play.
+
+**Inadvertent leakage.** An agent doesn't need to be compromised to reveal too
+much. Tone, framing, what gets emphasized or omitted — normal conversational
+dynamics create information channels. An agent trying to "be discreet" still
+signals through the shape of its responses.
+
+**Adversarial leakage.** The other side's agent can probe deliberately — asking
+reasonable clarifying questions, reading the pattern of what gets declined. This
+isn't hacking. It's just conversation.
 
 **A concrete example.** Alice and Bob are in a workplace dispute. Each has asked
 their AI assistant to help navigate it. The assistants begin coordinating
@@ -37,16 +46,18 @@ The obvious fixes don't work:
 | Output filtering / redaction | Blocks sensitive patterns post-generation | The model already processed the data; covert channels live in word choice, length, and structure |
 | Free-text with careful instructions | Limits what the model says | Any variable-length, open-ended response is an information channel by construction |
 
-The problem isn't model behaviour. It's that free-text communication has
-unbounded expressive capacity. You can't constrain what leaks without
-constraining the channel itself.
+The root problem isn't model behaviour. It's that free-text communication has
+unbounded expressive capacity. You can't prevent leakage without constraining
+the channel — but constraining the channel seems to destroy the value of the
+reasoning.
 
 **Why now.** Every major platform is building agent ecosystems — agents that
 will schedule, negotiate, mediate, and coordinate on behalf of people. TLS
 protects data in transit. HTTPS protects web traffic. Nothing protects
 agent-to-agent reasoning. This is a missing primitive.
 
-AgentVault solves this mechanically:
+AgentVault resolves this tension — agents reason freely inside a constrained
+environment, but only bounded, validated outputs leave:
 
 1. **Bounded disclosure** — a JSON Schema limits what the model can express.
    Output that doesn't validate is rejected, not returned.
@@ -120,3 +131,5 @@ AgentVault depends on [vault-family-core](https://github.com/vcav-io/vault-famil
 ## License
 
 MIT OR Apache-2.0
+
+> **Note:** This project is not affiliated with any other projects named "AgentVault."
