@@ -4,18 +4,20 @@ AI agents are becoming delegates. The infrastructure for private coordination do
 
 ## The problem
 
-People already share sensitive context with AI — their positions in conflicts,
-negotiation limits, relationship anxieties, health concerns. This is normal and
-valuable. Your AI reasons over that context privately, on your behalf.
+People already share deeply personal context with AI — health concerns,
+relationship problems, financial anxieties, private worries they wouldn't tell
+anyone else. This is normal and increasingly valuable. Your AI reasons over that
+context privately, on your behalf.
 
 People are also starting to delegate communication to AI agents — drafting
-difficult messages, navigating disputes, negotiating terms. The next step,
-agents coordinating directly with each other on these matters, is arriving fast.
+difficult messages, scheduling on their behalf, navigating sensitive situations.
+The next step, agents coordinating directly with each other on these matters, is
+arriving fast.
 
 That direct coordination creates an extraordinary opportunity. Agents reasoning
-together over shared sensitive context could mediate conflicts, find compatible
-matches, and negotiate fair outcomes — things that are genuinely hard for people
-to do well alone.
+together over shared sensitive context could find compatible matches, resolve
+scheduling conflicts, mediate disputes — things that are genuinely hard for
+people to do well alone.
 
 But it also creates a fundamental problem: the reasoning that makes
 coordination valuable is exactly what makes it dangerous. When your agent
