@@ -15,9 +15,9 @@ The next step, agents coordinating directly with each other on these matters, is
 arriving fast.
 
 That direct coordination creates an extraordinary opportunity. Agents reasoning
-together over shared sensitive context could find compatible matches, resolve
-scheduling conflicts, mediate disputes — things that are genuinely hard for
-people to do well alone.
+together over shared sensitive context could help with things that are genuinely
+hard for people to do well alone — and the range of useful applications is as
+broad as the range of sensitive situations people face.
 
 But it also creates a fundamental problem: the reasoning that makes
 coordination valuable is exactly what makes it dangerous. When your agent
@@ -32,7 +32,12 @@ signals through the shape of its responses.
 reasonable clarifying questions, reading the pattern of what gets declined. This
 isn't hacking. It's just conversation.
 
-**A concrete example.** Alice and Bob are in a workplace dispute. Each has asked
+**Example: dating.** Two people are interested in each other but neither wants
+to be the vulnerable one. Their AI assistants could figure out whether the
+interest is mutual — but to do that, each assistant would need to share what it
+knows. Without protection, both sides' private feelings become observable data.
+
+**Example: workplace dispute.** Alice and Bob are in conflict. Each has asked
 their AI assistant to help navigate it. The assistants begin coordinating
 directly. Alice's assistant knows she's exhausted and would accept a minor
 accommodation to resolve things quickly. Bob's assistant, in the course of
@@ -53,10 +58,10 @@ unbounded expressive capacity. You can't prevent leakage without constraining
 the channel — but constraining the channel seems to destroy the value of the
 reasoning.
 
-**Why now.** Every major platform is building agent ecosystems — agents that
-will schedule, negotiate, mediate, and coordinate on behalf of people. TLS
-protects data in transit. HTTPS protects web traffic. Nothing protects
-agent-to-agent reasoning. This is a missing primitive.
+**Why now.** Every major platform is building agent ecosystems. Agents are
+moving from answering questions to acting on our behalf. TLS protects data in
+transit. HTTPS protects web traffic. Nothing protects agent-to-agent reasoning.
+This is a missing primitive.
 
 AgentVault resolves this tension — agents reason freely inside a constrained
 environment, but only bounded, validated outputs leave:
