@@ -10,17 +10,20 @@ anyone else. This is normal and increasingly valuable. Your AI reasons over that
 context privately, on your behalf.
 
 People are also starting to delegate communication to AI agents — drafting
-difficult messages, scheduling on their behalf, navigating sensitive situations.
-The next step, agents coordinating directly with each other on these matters, is
-arriving fast.
+messages, scheduling on their behalf, navigating sensitive situations. The next
+step, agents coordinating directly with each other, is arriving fast.
 
-That direct coordination creates an extraordinary opportunity. Agents reasoning
-together over shared sensitive context could help with things that are genuinely
-hard for people to do well alone.
+That coordination is already dangerous. The agents carrying out even routine
+tasks hold their users' full sensitive context. Any direct interaction between
+them is a potential leakage surface — accidental or adversarial.
 
-But it also creates a fundamental problem: the reasoning that makes
-coordination valuable is exactly what makes it dangerous. When your agent
-coordinates with theirs, everything it knows about you is in play.
+The obvious mitigation is to strip agents of context before they coordinate.
+But context-free agents can only do shallow, generic work. The real opportunity
+is the opposite: agents reasoning together *with* their full context could help
+with things that are genuinely hard for people to do well alone.
+
+That makes the problem harder, not easier. When your agent coordinates with
+theirs, everything it knows about you is in play.
 
 **Inadvertent leakage.** An agent doesn't need to be compromised to reveal too
 much. Tone, framing, what gets emphasized or omitted — normal conversational
