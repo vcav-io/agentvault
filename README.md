@@ -6,16 +6,44 @@ When AI agents negotiate on your behalf, what stops them from saying too much?
 
 ## The problem
 
-People already ask their AI assistants to draft difficult messages, navigate
-conflicts, and make decisions on their behalf. The next step — agents
-coordinating directly with each other on sensitive matters — is arriving faster
-than the infrastructure to support it safely.
+People already rely on discretion every day: off-the-record conversations,
+mediators who hold both sides' grievances, matchmakers who learn things you'd
+never say aloud. That discretion is a social primitive — coordination between
+people that works precisely because certain information stays confined.
 
-When that coordination happens, discretion collapses. The agent that knows your
-context — your position, your constraints, what you're willing to concede — is
-suddenly conversing with the other side. Prompt engineering can't fix this.
-Between subtle conversational tells and emergent information leakage, any
-open-ended free-text response is a liability.
+AI agents don't have this. When your agent negotiates with someone else's agent
+on a sensitive matter — a dispute, a hire, a contract term — everything your
+agent knows is in play. Its reasoning, your position, what you're willing to
+concede. The other side's agent can probe freely, and any free-text response is
+a channel.
+
+**A concrete example.** Alice and Bob are in a workplace dispute. Each has asked
+their AI assistant to help navigate it. The assistants begin coordinating
+directly. Alice's assistant knows she's exhausted and would accept a minor
+accommodation to resolve things quickly. Bob's assistant, in the course of
+normal negotiation dialogue, can surface that in minutes — not by hacking
+anything, but by asking reasonable clarifying questions and reading the shape of
+the responses. Alice's bottom line is now Bob's leverage.
+
+The obvious fixes don't work:
+
+| Approach | What it does | Why it fails |
+|----------|--------------|--------------|
+| Prompt engineering ("be discreet") | Tells the model to be careful | Models comply, then reveal via tone, framing, or what they decline to say |
+| Output filtering / redaction | Blocks sensitive patterns post-generation | The model already processed the data; covert channels live in word choice, length, and structure |
+| Free-text with careful instructions | Limits what the model says | Any variable-length, open-ended response is an information channel by construction |
+
+The problem isn't model behaviour. It's that free-text communication has
+unbounded expressive capacity. You can't constrain what leaks without
+constraining the channel itself.
+
+**Why now.** Every major platform is building agent ecosystems. Agents are
+already being asked to negotiate prices, screen candidates, manage schedules,
+and mediate disputes — tasks where what your agent knows about you is exactly
+what the other side wants to learn. The infrastructure assumption underlying all
+of it is that agent-to-agent communication is fine to leave as free-form text.
+That assumption has a short shelf life. HTTPS was overkill for blogs until
+agents started handling contracts.
 
 AgentVault solves this mechanically:
 
