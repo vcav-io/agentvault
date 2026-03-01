@@ -32,7 +32,8 @@ use crate::relay::compute_contract_hash;
 use crate::session::{SessionState, SessionStore, TokenRole};
 use crate::types::{
     CapabilitiesResponse, CreateSessionRequest, CreateSessionResponse, HealthResponse, RelayInput,
-    RelayRequest, RelayResponse, SessionOutputResponse, SessionStatusResponse, SubmitInputRequest,
+    RelayRequest, RelayResponse, SessionMetadata, SessionOutputResponse, SessionSizes,
+    SessionStatusResponse, SessionTiming, SubmitInputRequest,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -56,6 +57,8 @@ pub struct AppState {
     pub agent_registry: AgentRegistry,
     /// In-memory inbox store for async invites.
     pub inbox_store: InboxStore,
+    /// Whether VCAV_ENV=dev — enables diagnostic endpoints.
+    pub is_dev: bool,
 }
 
 // ============================================================================
@@ -200,7 +203,15 @@ async fn submit_input_handler(
         }
     }
 
+    // Compute input size for metadata (before moving into session)
+    let input_bytes = if state.is_dev {
+        serde_json::to_string(&request.context).map(|s| s.len()).ok()
+    } else {
+        None
+    };
+
     // Submit input and check if both inputs are now present
+    let is_dev = state.is_dev;
     let both_ready = state
         .session_store
         .with_session(&session_id, |session| {
@@ -230,6 +241,36 @@ async fn submit_input_handler(
             } else {
                 session.responder_input = Some(input);
                 session.responder_submitted = true;
+            }
+
+            // Capture input timing and sizes in metadata
+            if is_dev {
+                let meta = session.metadata.get_or_insert_with(|| SessionMetadata {
+                    session_id: session.id.clone(),
+                    timing: SessionTiming {
+                        session_created_at: Some(session.created_at),
+                        initiator_input_at: None,
+                        responder_input_at: None,
+                        inference_start_at: None,
+                        inference_end_at: None,
+                        output_ready_at: None,
+                    },
+                    sizes: SessionSizes {
+                        initiator_input_bytes: None,
+                        responder_input_bytes: None,
+                        output_bytes: None,
+                        receipt_bytes: None,
+                    },
+                    inference: None,
+                });
+                let now = chrono::Utc::now();
+                if is_initiator {
+                    meta.timing.initiator_input_at = Some(now);
+                    meta.sizes.initiator_input_bytes = input_bytes;
+                } else {
+                    meta.timing.responder_input_at = Some(now);
+                    meta.sizes.responder_input_bytes = input_bytes;
+                }
             }
 
             // Update state
@@ -281,16 +322,50 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
         return;
     };
 
+    let is_dev = state.is_dev;
     let store = state.session_store.clone();
     tokio::spawn(async move {
         match relay::relay_core(&contract, &input_a, &input_b, &provider, &state).await {
-            Ok(result) => {
+            Ok((result, timing)) => {
+                let output_bytes =
+                    serde_json::to_string(&result.output).map(|s| s.len()).ok();
+                let receipt_bytes =
+                    serde_json::to_string(&result.receipt).map(|s| s.len()).ok();
                 store
                     .with_session(&session_id, |session| {
                         session.output = Some(result.output);
                         session.receipt = Some(result.receipt);
                         session.receipt_signature = Some(result.receipt_signature);
                         session.state = SessionState::Completed;
+
+                        if is_dev {
+                            let mut meta = session.metadata.take().unwrap_or_else(|| {
+                                SessionMetadata {
+                                    session_id: session.id.clone(),
+                                    timing: SessionTiming {
+                                        session_created_at: Some(session.created_at),
+                                        initiator_input_at: None,
+                                        responder_input_at: None,
+                                        inference_start_at: None,
+                                        inference_end_at: None,
+                                        output_ready_at: None,
+                                    },
+                                    sizes: SessionSizes {
+                                        initiator_input_bytes: None,
+                                        responder_input_bytes: None,
+                                        output_bytes: None,
+                                        receipt_bytes: None,
+                                    },
+                                    inference: None,
+                                }
+                            });
+                            meta.timing.inference_start_at = Some(timing.inference_start);
+                            meta.timing.inference_end_at = Some(timing.inference_end);
+                            meta.timing.output_ready_at = Some(chrono::Utc::now());
+                            meta.sizes.output_bytes = output_bytes;
+                            meta.sizes.receipt_bytes = receipt_bytes;
+                            session.metadata = Some(meta);
+                        }
                     })
                     .await;
             }

@@ -248,6 +248,7 @@ async fn main() {
         enforcement_policy_hash,
         agent_registry,
         inbox_store,
+        is_dev,
     });
 
     let app = build_router(state);
