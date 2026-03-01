@@ -16,8 +16,7 @@ arriving fast.
 
 That direct coordination creates an extraordinary opportunity. Agents reasoning
 together over shared sensitive context could help with things that are genuinely
-hard for people to do well alone — and the range of useful applications is as
-broad as the range of sensitive situations people face.
+hard for people to do well alone.
 
 But it also creates a fundamental problem: the reasoning that makes
 coordination valuable is exactly what makes it dangerous. When your agent
