@@ -1,0 +1,112 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "2"
+      ]
+    },
+    "compatibility_signal": {
+      "type": "string",
+      "enum": [
+        "STRONG_MATCH",
+        "PARTIAL_MATCH",
+        "WEAK_MATCH",
+        "NO_MATCH"
+      ]
+    },
+    "thesis_fit": {
+      "type": "string",
+      "enum": [
+        "ALIGNED",
+        "PARTIAL",
+        "MISALIGNED",
+        "UNKNOWN"
+      ]
+    },
+    "size_fit": {
+      "type": "string",
+      "enum": [
+        "WITHIN_BAND",
+        "TOO_LOW",
+        "TOO_HIGH",
+        "UNKNOWN"
+      ]
+    },
+    "stage_fit": {
+      "type": "string",
+      "enum": [
+        "ALIGNED",
+        "PARTIAL",
+        "MISALIGNED",
+        "UNKNOWN"
+      ]
+    },
+    "confidence": {
+      "type": "string",
+      "enum": [
+        "HIGH",
+        "MEDIUM",
+        "LOW"
+      ]
+    },
+    "primary_reasons": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "SECTOR_MATCH",
+          "SIZE_COMPATIBLE",
+          "STAGE_COMPATIBLE",
+          "GEOGRAPHIC_PROXIMITY",
+          "EXPERIENCE_RELEVANCE",
+          "TIMELINE_COMPATIBLE"
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 3,
+      "uniqueItems": true,
+      "x-vcav-entropy-bits-upper-bound": 8
+    },
+    "blocking_reasons": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "SIZE_INCOMPATIBLE",
+          "SECTOR_MISMATCH",
+          "STAGE_MISMATCH",
+          "GEOGRAPHY_MISMATCH",
+          "TIMELINE_CONFLICT",
+          "STRUCTURE_INCOMPATIBLE"
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "x-vcav-entropy-bits-upper-bound": 5
+    },
+    "next_step": {
+      "type": "string",
+      "enum": [
+        "PROCEED",
+        "PROCEED_WITH_CAVEATS",
+        "ASK_FOR_PUBLIC_INFO",
+        "DO_NOT_PROCEED"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "compatibility_signal",
+    "thesis_fit",
+    "size_fit",
+    "stage_fit",
+    "confidence",
+    "primary_reasons",
+    "blocking_reasons",
+    "next_step"
+  ],
+  "additionalProperties": false
+}

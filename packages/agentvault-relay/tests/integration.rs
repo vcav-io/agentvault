@@ -137,8 +137,8 @@ fn setup_prompt_program(test_name: &str) -> (String, String) {
 
 #[test]
 fn test_receipt_construction_and_signature_verification() {
-    use entropy_core::calculate_schema_entropy_upper_bound;
     use chrono::Utc;
+    use entropy_core::calculate_schema_entropy_upper_bound;
     use receipt_core::{
         BudgetUsageRecord, ExecutionLane, ModelIdentity, Receipt, ReceiptStatus, SignalClass,
     };
@@ -1910,5 +1910,8 @@ fn entropy_core_smoke_test() {
     });
     let bits = entropy_core::calculate_schema_entropy_upper_bound(&schema).unwrap();
     // 3-element enum → ceil(log2(3)) = 2 bits. Pin exact value to detect regressions.
-    assert_eq!(bits, 2, "3-element enum should produce exactly 2 entropy bits");
+    assert_eq!(
+        bits, 2,
+        "3-element enum should produce exactly 2 entropy bits"
+    );
 }
