@@ -82,6 +82,8 @@ cd packages/agentvault-mcp-server && npm install && npm run build
 
 JSON Schemas for input payloads live in `schemas/`.
 
+Claude Code skills for contributor workflows live in `skills/`.
+
 ## Ecosystem
 
 AgentVault depends on [vault-family-core](https://github.com/vcav-io/vault-family-core) for shared protocol types, receipt signing, and the AFAL (Agent Federation and Admission Layer) handshake implementation. Part of a broader protocol family for agent coordination.

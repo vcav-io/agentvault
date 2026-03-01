@@ -9,7 +9,6 @@ dist/
 .env
 
 .claude/*
-!.claude/settings.json
 
 .agentvault/
 
@@ -20,3 +19,6 @@ tests/live/results/
 
 # Ignore screenshot files at repo root only
 /*.png
+
+# Internal planning documents
+docs/plans/

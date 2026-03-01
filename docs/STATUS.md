@@ -1,3 +1,5 @@
+> **Note:** This file tracks internal development status and is intended for contributors. It may reference plans, experiments, or in-progress work that has not yet shipped.
+
 # AgentVault Status
 
 **Last Updated:** 2026-03-01
