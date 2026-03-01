@@ -1,0 +1,46 @@
+# Stage 1: Build
+FROM rust:1.88-bookworm AS builder
+WORKDIR /build
+
+# Cache dependencies by copying manifests first
+COPY Cargo.toml Cargo.lock ./
+COPY packages/agentvault-relay/Cargo.toml packages/agentvault-relay/Cargo.toml
+RUN mkdir -p packages/agentvault-relay/src && echo "fn main() {}" > packages/agentvault-relay/src/main.rs
+# INTENTIONAL: `|| true` — the dummy build will fail because main.rs is a stub,
+# but it caches crates.io and git dependencies for the real build below.
+# Git deps (VFC) require GITHUB_TOKEN; if unavailable (e.g. fork PRs), this stage
+# silently skips and the real build re-fetches without a cache. This is acceptable.
+# Do NOT "fix" the || true — it is load-bearing.
+RUN --mount=type=secret,id=github_token \
+    GITHUB_TOKEN=$(cat /run/secrets/github_token 2>/dev/null || echo "") \
+    GIT_CONFIG_COUNT=1 \
+    GIT_CONFIG_KEY_0=url.https://${GITHUB_TOKEN}@github.com/.insteadOf \
+    GIT_CONFIG_VALUE_0=https://github.com/ \
+    CARGO_NET_GIT_FETCH_WITH_CLI=true \
+    cargo build --release --package agentvault-relay 2>/dev/null || true
+
+# Copy real source and build
+COPY packages/agentvault-relay packages/agentvault-relay
+COPY packages/agentvault-relay/prompt_programs packages/agentvault-relay/prompt_programs
+RUN --mount=type=secret,id=github_token \
+    GITHUB_TOKEN=$(cat /run/secrets/github_token 2>/dev/null || echo "") \
+    GIT_CONFIG_COUNT=1 \
+    GIT_CONFIG_KEY_0=url.https://${GITHUB_TOKEN}@github.com/.insteadOf \
+    GIT_CONFIG_VALUE_0=https://github.com/ \
+    CARGO_NET_GIT_FETCH_WITH_CLI=true \
+    cargo build --release --package agentvault-relay
+
+# Stage 2: Runtime
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /build/target/release/agentvault-relay /usr/local/bin/agentvault-relay
+COPY packages/agentvault-relay/prompt_programs /opt/agentvault/prompt_programs
+
+ENV VCAV_PROMPT_PROGRAM_DIR=/opt/agentvault/prompt_programs
+ENV VCAV_PORT=3100
+EXPOSE 3100
+
+HEALTHCHECK --interval=10s --timeout=3s --retries=3 \
+    CMD curl -sf http://localhost:3100/health || exit 1
+
+ENTRYPOINT ["agentvault-relay"]
