@@ -29,10 +29,11 @@ use crate::enforcement_policy::RelayEnforcementPolicy;
 use crate::error::RelayError;
 use crate::inbox::InboxStore;
 use crate::relay::compute_contract_hash;
-use crate::session::{SessionState, SessionStore, TokenRole};
+use crate::session::{AbortReason, SessionState, SessionStore, TokenRole};
 use crate::types::{
     CapabilitiesResponse, CreateSessionRequest, CreateSessionResponse, HealthResponse, RelayInput,
-    RelayRequest, RelayResponse, SessionOutputResponse, SessionStatusResponse, SubmitInputRequest,
+    RelayRequest, RelayResponse, SessionMetadata, SessionOutputResponse, SessionStatusResponse,
+    SubmitInputRequest,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -56,6 +57,8 @@ pub struct AppState {
     pub agent_registry: AgentRegistry,
     /// In-memory inbox store for async invites.
     pub inbox_store: InboxStore,
+    /// Whether VCAV_ENV=dev — enables diagnostic endpoints.
+    pub is_dev: bool,
 }
 
 // ============================================================================
@@ -200,7 +203,18 @@ async fn submit_input_handler(
         }
     }
 
+    // Compute input size for metadata (before moving into session)
+    let input_bytes = if state.is_dev {
+        serde_json::to_string(&request.context)
+            .map(|s| s.len())
+            .map_err(|e| tracing::warn!("failed to serialize input context for metadata: {e}"))
+            .ok()
+    } else {
+        None
+    };
+
     // Submit input and check if both inputs are now present
+    let is_dev = state.is_dev;
     let both_ready = state
         .session_store
         .with_session(&session_id, |session| {
@@ -232,6 +246,21 @@ async fn submit_input_handler(
                 session.responder_submitted = true;
             }
 
+            // Capture input timing and sizes in metadata
+            if is_dev {
+                let meta = session.metadata.get_or_insert_with(|| {
+                    SessionMetadata::new(session.id.clone(), session.created_at)
+                });
+                let now = chrono::Utc::now();
+                if is_initiator {
+                    meta.timing.initiator_input_at = Some(now);
+                    meta.sizes.initiator_input_bytes = input_bytes;
+                } else {
+                    meta.timing.responder_input_at = Some(now);
+                    meta.sizes.responder_input_bytes = input_bytes;
+                }
+            }
+
             // Update state
             if session.initiator_submitted && session.responder_submitted {
                 session.state = SessionState::Processing;
@@ -254,7 +283,10 @@ async fn submit_input_handler(
         .session_store
         .get_state(&session_id)
         .await
-        .unwrap_or((SessionState::Created, None));
+        .ok_or_else(|| {
+            tracing::error!(session_id = %session_id, "session vanished after input submission");
+            RelayError::Internal("session lost after input submission".to_string())
+        })?;
 
     Ok(Json(SessionStatusResponse {
         state: current_state,
@@ -270,27 +302,60 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
         .with_session(&session_id, |session| {
             (
                 session.contract.clone(),
-                session.initiator_input.clone().unwrap(),
-                session.responder_input.clone().unwrap(),
+                session.initiator_input.clone(),
+                session.responder_input.clone(),
                 session.provider.clone(),
             )
         })
         .await;
 
-    let Some((contract, input_a, input_b, provider)) = session_data else {
+    let Some((contract, Some(input_a), Some(input_b), provider)) = session_data else {
+        tracing::error!(session_id = %session_id, "session vanished or missing inputs before inference could start");
+        state
+            .session_store
+            .with_session(&session_id, |session| {
+                session.state = SessionState::Aborted;
+                session.abort_reason = Some(AbortReason::ProviderError);
+            })
+            .await;
         return;
     };
 
+    let is_dev = state.is_dev;
     let store = state.session_store.clone();
     tokio::spawn(async move {
         match relay::relay_core(&contract, &input_a, &input_b, &provider, &state).await {
-            Ok(result) => {
+            Ok((result, timing)) => {
+                let output_bytes = serde_json::to_string(&result.output)
+                    .map(|s| s.len())
+                    .map_err(|e| tracing::warn!("failed to serialize output for metadata: {e}"))
+                    .ok();
+                let receipt_bytes = serde_json::to_string(&result.receipt)
+                    .map(|s| s.len())
+                    .map_err(|e| tracing::warn!("failed to serialize receipt for metadata: {e}"))
+                    .ok();
                 store
                     .with_session(&session_id, |session| {
                         session.output = Some(result.output);
                         session.receipt = Some(result.receipt);
                         session.receipt_signature = Some(result.receipt_signature);
                         session.state = SessionState::Completed;
+
+                        if is_dev {
+                            let mut meta = session.metadata.take().unwrap_or_else(|| {
+                                tracing::warn!(
+                                    session_id = %session.id,
+                                    "metadata absent at inference completion; input timestamps will be missing"
+                                );
+                                SessionMetadata::new(session.id.clone(), session.created_at)
+                            });
+                            meta.timing.inference_start_at = Some(timing.inference_start_at);
+                            meta.timing.inference_end_at = Some(timing.inference_end_at);
+                            meta.timing.output_ready_at = Some(chrono::Utc::now());
+                            meta.sizes.output_bytes = output_bytes;
+                            meta.sizes.receipt_bytes = receipt_bytes;
+                            session.metadata = Some(meta);
+                        }
                     })
                     .await;
             }
@@ -374,6 +439,48 @@ async fn session_output_handler(
     Ok(Json(response))
 }
 
+/// GET /sessions/:id/metadata — dev-only diagnostic endpoint.
+async fn session_metadata_handler(
+    State(state): State<Arc<AppState>>,
+    Path(session_id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, RelayError> {
+    if !state.is_dev {
+        return Err(RelayError::Unauthorized);
+    }
+
+    let token = extract_bearer_token(&headers)?;
+
+    let role = state
+        .session_store
+        .validate_token(&session_id, token)
+        .await
+        .ok_or(RelayError::Unauthorized)?;
+
+    match role {
+        TokenRole::InitiatorRead | TokenRole::ResponderRead => {}
+        _ => return Err(RelayError::Unauthorized),
+    }
+
+    let metadata = state
+        .session_store
+        .with_session(&session_id, |session| session.metadata.clone())
+        .await
+        .ok_or(RelayError::Unauthorized)?;
+
+    match metadata {
+        Some(meta) => {
+            let value = serde_json::to_value(meta)
+                .map_err(|e| RelayError::Internal(format!("metadata serialization: {e}")))?;
+            Ok(Json(value))
+        }
+        None => Ok(Json(serde_json::json!({
+            "timing": {},
+            "sizes": {}
+        }))),
+    }
+}
+
 // ============================================================================
 // Router
 // ============================================================================
@@ -387,6 +494,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/sessions/:id/input", post(submit_input_handler))
         .route("/sessions/:id/status", get(session_status_handler))
         .route("/sessions/:id/output", get(session_output_handler))
+        .route("/sessions/:id/metadata", get(session_metadata_handler))
         // Inbox endpoints
         .route("/invites", post(inbox_handlers::create_invite_handler))
         .route("/inbox", get(inbox_handlers::list_inbox_handler))

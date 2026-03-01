@@ -85,6 +85,7 @@ fn test_app_state(mock_base_url: &str, prompt_dir: &str) -> AppState {
         enforcement_policy_hash: "0".repeat(64),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
+        is_dev: false,
     }
 }
 
@@ -942,6 +943,7 @@ async fn test_submit_token_is_one_time_use() {
         enforcement_policy_hash: "0".repeat(64),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
+        is_dev: false,
     }));
 
     let response = app
@@ -1120,6 +1122,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         enforcement_policy_hash: "0".repeat(64),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
+        is_dev: false,
     }));
 
     let response = app
@@ -1166,6 +1169,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         enforcement_policy_hash: "0".repeat(64),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
+        is_dev: false,
     }));
 
     let response = app
@@ -1226,6 +1230,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         enforcement_policy_hash: "0".repeat(64),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
+        is_dev: false,
     }));
 
     let response = app
@@ -1305,6 +1310,7 @@ async fn test_submit_with_correct_contract_hash_succeeds() {
         enforcement_policy_hash: "0".repeat(64),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
+        is_dev: false,
     }));
 
     let input_request = serde_json::json!({
@@ -1366,6 +1372,7 @@ async fn test_submit_with_wrong_contract_hash_rejected() {
         enforcement_policy_hash: "0".repeat(64),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
+        is_dev: false,
     }));
 
     let input_request = serde_json::json!({
@@ -1428,6 +1435,7 @@ async fn test_submit_without_contract_hash_still_works() {
         enforcement_policy_hash: "0".repeat(64),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
+        is_dev: false,
     }));
 
     // No expected_contract_hash field — backward compat
@@ -1489,6 +1497,7 @@ fn inbox_test_app_state() -> AppState {
         enforcement_policy_hash: "0".repeat(64),
         agent_registry: registry,
         inbox_store: InboxStore::new(Duration::from_secs(600)),
+        is_dev: false,
     }
 }
 
@@ -1913,5 +1922,220 @@ fn entropy_core_smoke_test() {
     assert_eq!(
         bits, 2,
         "3-element enum should produce exactly 2 entropy bits"
+    );
+}
+
+// ============================================================================
+// Metadata endpoint tests (#56)
+// ============================================================================
+
+#[tokio::test]
+async fn test_metadata_endpoint_returns_401_in_prod() {
+    let state = test_app_state("http://unused", "/tmp");
+    // is_dev defaults to false in test_app_state
+    let (session_id, tokens) = state
+        .session_store
+        .create(
+            serde_json::from_value(serde_json::json!({
+                "purpose_code": "MEDIATION",
+                "output_schema_id": "test",
+                "output_schema": {"type": "object"},
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": "a".repeat(64)
+            }))
+            .unwrap(),
+            "hash".to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+
+    let app = build_router(Arc::new(state));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/sessions/{session_id}/metadata"))
+                .header("authorization", format!("Bearer {}", tokens.initiator_read))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // In prod mode (is_dev=false), metadata endpoint returns 401
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_metadata_endpoint_returns_data_in_dev() {
+    let (prompt_dir, _) = setup_prompt_program("meta_dev");
+    let mut state = test_app_state("http://unused", &prompt_dir);
+    state.is_dev = true;
+
+    let (session_id, tokens) = state
+        .session_store
+        .create(
+            serde_json::from_value(serde_json::json!({
+                "purpose_code": "MEDIATION",
+                "output_schema_id": "test",
+                "output_schema": {"type": "object"},
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": "a".repeat(64)
+            }))
+            .unwrap(),
+            "hash".to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+
+    // Manually set metadata on the session
+    state
+        .session_store
+        .with_session(&session_id, |session| {
+            let mut meta = agentvault_relay::types::SessionMetadata::new(
+                session.id.clone(),
+                session.created_at,
+            );
+            meta.sizes.initiator_input_bytes = Some(42);
+            session.metadata = Some(meta);
+        })
+        .await;
+
+    let app = build_router(Arc::new(state));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/sessions/{session_id}/metadata"))
+                .header("authorization", format!("Bearer {}", tokens.initiator_read))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 16384)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["session_id"], session_id);
+    assert_eq!(json["sizes"]["initiator_input_bytes"], 42);
+    // Verify top-level timing and sizes keys exist
+    assert!(
+        json.get("timing").is_some(),
+        "metadata should have 'timing' key"
+    );
+    assert!(
+        json.get("sizes").is_some(),
+        "metadata should have 'sizes' key"
+    );
+}
+
+#[tokio::test]
+async fn test_metadata_endpoint_rejects_submit_token() {
+    let (prompt_dir, _) = setup_prompt_program("meta_submit_token");
+    let mut state = test_app_state("http://unused", &prompt_dir);
+    state.is_dev = true;
+
+    let (session_id, tokens) = state
+        .session_store
+        .create(
+            serde_json::from_value(serde_json::json!({
+                "purpose_code": "MEDIATION",
+                "output_schema_id": "test",
+                "output_schema": {"type": "object"},
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": "a".repeat(64)
+            }))
+            .unwrap(),
+            "hash".to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+
+    // Inject metadata so the endpoint has something to return
+    state
+        .session_store
+        .with_session(&session_id, |session| {
+            session.metadata = Some(agentvault_relay::types::SessionMetadata::new(
+                session.id.clone(),
+                session.created_at,
+            ));
+        })
+        .await;
+
+    let app = build_router(Arc::new(state));
+
+    // Request with submit token should be rejected
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/sessions/{session_id}/metadata"))
+                .header(
+                    "authorization",
+                    format!("Bearer {}", tokens.initiator_submit),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_metadata_returns_empty_when_not_populated() {
+    let (prompt_dir, _) = setup_prompt_program("meta_empty");
+    let mut state = test_app_state("http://unused", &prompt_dir);
+    state.is_dev = true;
+
+    let (session_id, tokens) = state
+        .session_store
+        .create(
+            serde_json::from_value(serde_json::json!({
+                "purpose_code": "MEDIATION",
+                "output_schema_id": "test",
+                "output_schema": {"type": "object"},
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": "a".repeat(64)
+            }))
+            .unwrap(),
+            "hash".to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+
+    // Do NOT set metadata — session.metadata is None
+
+    let app = build_router(Arc::new(state));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/sessions/{session_id}/metadata"))
+                .header("authorization", format!("Bearer {}", tokens.initiator_read))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Should return 200 with empty timing/sizes instead of 401
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 16384)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(
+        json.get("timing").is_some(),
+        "empty metadata should have 'timing' key"
+    );
+    assert!(
+        json.get("sizes").is_some(),
+        "empty metadata should have 'sizes' key"
     );
 }

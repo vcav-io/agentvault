@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::session::{AbortReason, SessionState};
@@ -127,4 +128,69 @@ pub struct CapabilitiesResponse {
     pub entropy_enforcement: &'static str,
     pub receipt_schema_version: &'static str,
     pub enforcement_capabilities: Vec<String>,
+}
+
+// ============================================================================
+// Session metadata (dev-only diagnostic endpoint)
+// ============================================================================
+
+/// Timing data for session phases. Only populated when VCAV_ENV=dev.
+/// inference_start_at = immediately before provider.call()
+/// inference_end_at = full response received (non-streaming)
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionTiming {
+    pub session_created_at: DateTime<Utc>,
+    pub initiator_input_at: Option<DateTime<Utc>>,
+    pub responder_input_at: Option<DateTime<Utc>>,
+    pub inference_start_at: Option<DateTime<Utc>>,
+    pub inference_end_at: Option<DateTime<Utc>>,
+    pub output_ready_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SessionSizes {
+    pub initiator_input_bytes: Option<usize>,
+    pub responder_input_bytes: Option<usize>,
+    pub output_bytes: Option<usize>,
+    pub receipt_bytes: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionMetadata {
+    pub session_id: String,
+    pub timing: SessionTiming,
+    pub sizes: SessionSizes,
+}
+
+impl SessionMetadata {
+    pub fn new(session_id: String, created_at: DateTime<Utc>) -> Self {
+        Self {
+            session_id,
+            timing: SessionTiming {
+                session_created_at: created_at,
+                initiator_input_at: None,
+                responder_input_at: None,
+                inference_start_at: None,
+                inference_end_at: None,
+                output_ready_at: None,
+            },
+            sizes: SessionSizes::default(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_session_metadata_serializes() {
+        let meta = SessionMetadata::new("test-123".to_string(), Utc::now());
+        let json = serde_json::to_string(&meta).unwrap();
+        assert!(json.contains("test-123"));
+        // Verify top-level keys exist
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed.get("timing").is_some());
+        assert!(parsed.get("sizes").is_some());
+    }
 }

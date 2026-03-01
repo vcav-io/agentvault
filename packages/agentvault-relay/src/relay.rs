@@ -188,6 +188,12 @@ fn unicode_category_contains(c: char, category: &str) -> bool {
     }
 }
 
+/// Diagnostic timing from relay_core. Not part of the production result type.
+pub struct InferenceTiming {
+    pub inference_start_at: chrono::DateTime<chrono::Utc>,
+    pub inference_end_at: chrono::DateTime<chrono::Utc>,
+}
+
 /// Result of core relay execution.
 pub struct RelayResult {
     pub output: serde_json::Value,
@@ -205,7 +211,7 @@ pub async fn relay_core(
     input_b: &RelayInput,
     provider_name: &str,
     state: &AppState,
-) -> Result<RelayResult, RelayError> {
+) -> Result<(RelayResult, InferenceTiming), RelayError> {
     let session_start = Utc::now();
 
     // 1. Validate contract has exactly 2 participants
@@ -233,6 +239,7 @@ pub async fn relay_core(
     };
 
     // 5. Call provider
+    let inference_start = Utc::now();
     let provider_response = match provider_name {
         "anthropic" => {
             let provider = AnthropicProvider::new(
@@ -259,6 +266,7 @@ pub async fn relay_core(
             )));
         }
     };
+    let inference_end = Utc::now();
 
     // 7. Parse output
     let output: serde_json::Value = serde_json::from_str(&provider_response.text)
@@ -368,11 +376,19 @@ pub async fn relay_core(
     let receipt_signature = signature.clone();
     let receipt = unsigned.sign(signature);
 
-    Ok(RelayResult {
-        output,
-        receipt,
-        receipt_signature,
-    })
+    let timing = InferenceTiming {
+        inference_start_at: inference_start,
+        inference_end_at: inference_end,
+    };
+
+    Ok((
+        RelayResult {
+            output,
+            receipt,
+            receipt_signature,
+        },
+        timing,
+    ))
 }
 
 /// Map a RelayError to an AbortReason for session state.
@@ -389,7 +405,7 @@ pub fn error_to_abort_reason(error: &RelayError) -> AbortReason {
 /// Single-shot relay endpoint handler (POST /relay).
 /// Delegates to `relay_core`.
 pub async fn relay(request: RelayRequest, state: &AppState) -> Result<RelayResponse, RelayError> {
-    let result = relay_core(
+    let (result, _timing) = relay_core(
         &request.contract,
         &request.input_a,
         &request.input_b,
