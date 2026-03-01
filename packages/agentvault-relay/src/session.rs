@@ -7,7 +7,7 @@ use rand::RngCore;
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 
-use crate::types::{Contract, RelayInput};
+use crate::types::{Contract, RelayInput, SessionMetadata};
 
 /// Fixed enum for session state — no variable strings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -72,6 +72,7 @@ pub struct Session {
     pub initiator_submitted: bool,
     pub responder_submitted: bool,
     pub created_at: DateTime<Utc>,
+    pub metadata: Option<SessionMetadata>,
 }
 
 impl Session {
@@ -149,6 +150,7 @@ impl SessionStore {
             initiator_submitted: false,
             responder_submitted: false,
             created_at: Utc::now(),
+            metadata: None,
         };
 
         let mut store = self.inner.lock().await;
