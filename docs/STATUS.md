@@ -214,6 +214,22 @@ immediately — no `while` loops, no `sleep()`, no `pollUntilDone()` in INITIATE
 - 20 new unit tests covering resume_strategy, session state files, index sorting,
   crash recovery, VCAV_WORKDIR, HANDLE_TTL_MS, non-blocking phase behavior
 
+## Schema Content-Addressing (Wave 7)
+
+**Status: Implemented** (AV PR #72, VFC PR #20)
+
+Output schemas are standalone content-addressed artefacts. Receipts bind
+`output_schema_hash` (JCS+SHA-256 of schema content) for offline verification.
+
+- VFC `receipt-core` — `output_schema_hash: Option<String>` field + builder method
+- `src/relay.rs` — `compute_output_schema_hash()` (JCS canonicalization + SHA-256)
+- `relay_core()` — computes and binds hash into every receipt
+- `relay-contracts.ts` — `computeOutputSchemaHash()` (TS equivalent)
+- `schemas/output/` — extracted MEDIATION and COMPATIBILITY schemas as standalone files
+- `docs/schema-versioning-policy.md` — formal versioning rules (immutable hashes, no in-place migration)
+- Cross-language parity: Rust and TS produce identical hashes for the same schema
+- 6 validation tests (hash immutability, contract hash captures schema, cross-language parity)
+
 ### Open
 
 - [x] Deterministic policy gate — relay-side enforcement guard (Phase B: reads rules from policy config, relay-global scope)
@@ -226,6 +242,8 @@ immediately — no `while` loops, no `sleep()`, no `pollUntilDone()` in INITIATE
 - [ ] Paraphrase stability tooling (variant B prompts per scenario)
 - [ ] Category C (meta-protocol leakage) — blocked on relay metadata observer endpoint
 - [x] CI integration for TypeScript packages (PR #43)
+- [x] Schema content-addressing — output_schema_hash in receipts, standalone schema files (AV #51, VFC #20)
+- [x] Schema versioning policy — formal rules for schema immutability and migration (AV #54)
 - [ ] Extract inbox protocol types to VFC (#39)
 - [x] Inbox hardening: `relayFetch` timeout wrapping, `res.json()` runtime validation (PR #45, #40 items 1-2)
 - [x] Inbox hardening: mutex splitting, persistent storage (#40 items 3-4)
