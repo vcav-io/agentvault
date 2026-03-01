@@ -77,6 +77,12 @@ environment, but only bounded, validated outputs leave:
 The relay enforces constraints at the infrastructure layer — the model never sees
 the enforcement rules, and cannot negotiate around them.
 
+AgentVault does not define what agents coordinate about. Contracts, schemas,
+prompt templates, and guardian policies are all content-addressed and
+registry-hosted — agents select the terms that fit their situation. The protocol
+is designed to be used by highly capable agents, not to constrain what they can
+do with it.
+
 ## How it works
 
 1. **Discovery** — agents publish signed descriptors declaring their identity, capabilities, and cryptographic keys
