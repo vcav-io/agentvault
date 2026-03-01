@@ -101,10 +101,21 @@ run_catc_session() {
   create_body="$(jq -n --argjson contract "${CONTRACT_JSON}" --arg provider "${PROVIDER}" \
     '{contract: $contract, provider: $provider}')"
 
-  local create_resp
-  create_resp="$(curl -s -X POST "${RELAY_URL}/sessions" \
+  local create_resp_body
+  create_resp_body="$(mktemp)"
+  local create_http_code
+  create_http_code="$(curl -s -o "${create_resp_body}" -w '%{http_code}' -X POST "${RELAY_URL}/sessions" \
     -H "Content-Type: application/json" \
     -d "${create_body}")"
+  local create_resp
+  create_resp="$(cat "${create_resp_body}")"
+  rm -f "${create_resp_body}"
+
+  if [[ "${create_http_code}" != "200" ]]; then
+    log_error "[${label}] Session creation failed with HTTP ${create_http_code}: ${create_resp}"
+    echo "ERROR"
+    return 1
+  fi
 
   local session_id
   session_id="$(echo "${create_resp}" | jq -r '.session_id')"
@@ -201,7 +212,14 @@ for i in 1 2 3; do
   result="$(run_catc_session "${ALICE_SHORT}" "${BOB_BASE}" "timing-short-${i}")"
   sid="${result%%:*}"
   rtok="${result#*:}"
-  meta="$(curl -s "${RELAY_URL}/sessions/${sid}/metadata" -H "Authorization: Bearer ${rtok}")"
+  meta_resp_body_short="$(mktemp)"
+  meta_http_short="$(curl -s -o "${meta_resp_body_short}" -w '%{http_code}' "${RELAY_URL}/sessions/${sid}/metadata" -H "Authorization: Bearer ${rtok}")"
+  meta="$(cat "${meta_resp_body_short}")"
+  rm -f "${meta_resp_body_short}"
+  if [[ "${meta_http_short}" != "200" ]]; then
+    log_error "  Short session ${i}: metadata fetch failed with HTTP ${meta_http_short}: ${meta}"
+    exit 1
+  fi
   t_start="$(echo "${meta}" | jq -r '.timing.inference_start_at // empty')"
   t_end="$(echo "${meta}" | jq -r '.timing.inference_end_at // empty')"
   if [[ -n "${t_start}" && -n "${t_end}" ]]; then
@@ -223,7 +241,14 @@ for i in 1 2 3; do
   result="$(run_catc_session "${ALICE_LONG}" "${BOB_BASE}" "timing-long-${i}")"
   sid="${result%%:*}"
   rtok="${result#*:}"
-  meta="$(curl -s "${RELAY_URL}/sessions/${sid}/metadata" -H "Authorization: Bearer ${rtok}")"
+  meta_resp_body_long="$(mktemp)"
+  meta_http_long="$(curl -s -o "${meta_resp_body_long}" -w '%{http_code}' "${RELAY_URL}/sessions/${sid}/metadata" -H "Authorization: Bearer ${rtok}")"
+  meta="$(cat "${meta_resp_body_long}")"
+  rm -f "${meta_resp_body_long}"
+  if [[ "${meta_http_long}" != "200" ]]; then
+    log_error "  Long session ${i}: metadata fetch failed with HTTP ${meta_http_long}: ${meta}"
+    exit 1
+  fi
   t_start="$(echo "${meta}" | jq -r '.timing.inference_start_at // empty')"
   t_end="$(echo "${meta}" | jq -r '.timing.inference_end_at // empty')"
   if [[ -n "${t_start}" && -n "${t_end}" ]]; then
@@ -268,7 +293,14 @@ for idx in "${!SIZE_LABELS[@]}"; do
   result="$(run_catc_session "${ALICE_SHORT}" "${input}" "size-${label}")"
   sid="${result%%:*}"
   rtok="${result#*:}"
-  meta="$(curl -s "${RELAY_URL}/sessions/${sid}/metadata" -H "Authorization: Bearer ${rtok}")"
+  meta_resp_body_size="$(mktemp)"
+  meta_http_size="$(curl -s -o "${meta_resp_body_size}" -w '%{http_code}' "${RELAY_URL}/sessions/${sid}/metadata" -H "Authorization: Bearer ${rtok}")"
+  meta="$(cat "${meta_resp_body_size}")"
+  rm -f "${meta_resp_body_size}"
+  if [[ "${meta_http_size}" != "200" ]]; then
+    log_error "  ${label}: metadata fetch failed with HTTP ${meta_http_size}: ${meta}"
+    exit 1
+  fi
   ob="$(echo "${meta}" | jq -r '.sizes.output_bytes // "null"')"
   SIZE_BYTES+=("${ob}")
   log_info "  ${label}: output_bytes=${ob}"
