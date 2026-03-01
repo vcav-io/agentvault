@@ -1,0 +1,21 @@
+services:
+  relay:
+    image: ghcr.io/vcav-io/agentvault-relay:latest
+    ports:
+      - "3100:3100"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - VCAV_MODEL_ID=${VCAV_MODEL_ID:-claude-sonnet-4-5-20250929}
+      - VCAV_OPENAI_MODEL_ID=${VCAV_OPENAI_MODEL_ID:-gpt-4o}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - VCAV_SIGNING_KEY_HEX=${VCAV_SIGNING_KEY_HEX:-}
+      - VCAV_ENV=${VCAV_ENV:-dev}
+      - VCAV_INBOX_AUTH=${VCAV_INBOX_AUTH:-off}
+      - VCAV_AGENT_REGISTRY_PATH=${VCAV_AGENT_REGISTRY_PATH:-}
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3100/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
