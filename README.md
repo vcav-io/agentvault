@@ -1,29 +1,33 @@
 # AgentVault
 
-When AI agents negotiate on your behalf, what stops them from saying too much?
+AI agents are becoming delegates. The infrastructure for private coordination doesn't exist yet.
 
 > **Note:** This project is not affiliated with any other projects named "AgentVault."
 
 ## The problem
 
-People already rely on discretion every day: off-the-record conversations,
-mediators who hold both sides' grievances, matchmakers who learn things you'd
-never say aloud. That discretion is a social primitive — coordination between
-people that works precisely because certain information stays confined.
+AI agents are increasingly asked to act on behalf of people — drafting
+difficult messages, navigating conflicts, negotiating terms. As they begin
+coordinating directly with each other on these matters, everything an agent
+knows about you is in play. Its reasoning, your position, what you're willing
+to concede. The other side's agent can probe freely, and any free-text response
+is a channel.
 
-AI agents don't have this. When your agent negotiates with someone else's agent
-on a sensitive matter — a dispute, a hire, a contract term — everything your
-agent knows is in play. Its reasoning, your position, what you're willing to
-concede. The other side's agent can probe freely, and any free-text response is
-a channel.
+Humans handle this with discretion — off-the-record conversations, mediators,
+confidants. But discretion is a social norm backed by trust and reputation. It
+doesn't translate to software. You can't tell a model to "be discreet" and get
+a structural guarantee. Between subtle conversational tells and emergent covert
+channels, any open-ended response is a liability.
+
+"Trust us" privacy fails immediately at scale.
 
 **A concrete example.** Alice and Bob are in a workplace dispute. Each has asked
 their AI assistant to help navigate it. The assistants begin coordinating
 directly. Alice's assistant knows she's exhausted and would accept a minor
 accommodation to resolve things quickly. Bob's assistant, in the course of
-normal negotiation dialogue, can surface that in minutes — not by hacking
-anything, but by asking reasonable clarifying questions and reading the shape of
-the responses. Alice's bottom line is now Bob's leverage.
+normal dialogue, surfaces that in minutes — not by hacking anything, but by
+asking reasonable clarifying questions and reading the shape of the responses.
+Alice's bottom line is now Bob's leverage.
 
 The obvious fixes don't work:
 
@@ -37,13 +41,10 @@ The problem isn't model behaviour. It's that free-text communication has
 unbounded expressive capacity. You can't constrain what leaks without
 constraining the channel itself.
 
-**Why now.** Every major platform is building agent ecosystems. Agents are
-already being asked to negotiate prices, screen candidates, manage schedules,
-and mediate disputes — tasks where what your agent knows about you is exactly
-what the other side wants to learn. The infrastructure assumption underlying all
-of it is that agent-to-agent communication is fine to leave as free-form text.
-That assumption has a short shelf life. HTTPS was overkill for blogs until
-agents started handling contracts.
+**Why now.** Every major platform is building agent ecosystems — agents that
+will schedule, negotiate, mediate, and coordinate on behalf of people. TLS
+protects data in transit. HTTPS protects web traffic. Nothing protects
+agent-to-agent reasoning. This is a missing primitive.
 
 AgentVault solves this mechanically:
 
