@@ -220,6 +220,11 @@ for i in 1 2 3; do
     log_error "  Short session ${i}: metadata fetch failed with HTTP ${meta_http_short}: ${meta}"
     exit 1
   fi
+  final_state_short="$(curl -s "${RELAY_URL}/sessions/${sid}/output" -H "Authorization: Bearer ${rtok}" | jq -r '.state // empty')"
+  if [[ "${final_state_short}" != "COMPLETED" ]]; then
+    log_warn "  Short session ${i}: final state is '${final_state_short}' (not COMPLETED) — skipping from timing data"
+    continue
+  fi
   t_start="$(echo "${meta}" | jq -r '.timing.inference_start_at // empty')"
   t_end="$(echo "${meta}" | jq -r '.timing.inference_end_at // empty')"
   if [[ -n "${t_start}" && -n "${t_end}" ]]; then
@@ -249,6 +254,11 @@ for i in 1 2 3; do
     log_error "  Long session ${i}: metadata fetch failed with HTTP ${meta_http_long}: ${meta}"
     exit 1
   fi
+  final_state_long="$(curl -s "${RELAY_URL}/sessions/${sid}/output" -H "Authorization: Bearer ${rtok}" | jq -r '.state // empty')"
+  if [[ "${final_state_long}" != "COMPLETED" ]]; then
+    log_warn "  Long session ${i}: final state is '${final_state_long}' (not COMPLETED) — skipping from timing data"
+    continue
+  fi
   t_start="$(echo "${meta}" | jq -r '.timing.inference_start_at // empty')"
   t_end="$(echo "${meta}" | jq -r '.timing.inference_end_at // empty')"
   if [[ -n "${t_start}" && -n "${t_end}" ]]; then
@@ -264,6 +274,11 @@ process.stdout.write(String((e - s) / 1000));
     exit 1
   fi
 done
+
+if [[ ${#SHORT_TIMINGS[@]} -eq 0 || ${#LONG_TIMINGS[@]} -eq 0 ]]; then
+  log_error "No COMPLETED sessions collected for timing analysis (short=${#SHORT_TIMINGS[@]}, long=${#LONG_TIMINGS[@]}). All sessions may have been aborted."
+  exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Phase 2: Size constancy
