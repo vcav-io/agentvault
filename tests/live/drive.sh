@@ -34,6 +34,8 @@ NO_RELAY=false
 PROVIDER=""
 SEED=""
 EXPERIMENT_ID=""
+VARIANT=""
+SHUFFLE=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -44,9 +46,11 @@ while [[ $# -gt 0 ]]; do
     --provider)    PROVIDER="${2:-}";       shift 2 ;;
     --seed)        SEED="${2:-}";           shift 2 ;;
     --experiment)  EXPERIMENT_ID="${2:-}";  shift 2 ;;
+    --variant)     VARIANT="${2:-}";       shift 2 ;;
+    --shuffle)     SHUFFLE=true;           shift   ;;
     *)
       log_error "Unknown argument: $1"
-      echo "Usage: $0 --scenario <name> [--sessions N] [--relay-url URL] [--no-relay] [--provider anthropic|openai] [--seed N] [--experiment ID]" >&2
+      echo "Usage: $0 --scenario <name> [--sessions N] [--relay-url URL] [--no-relay] [--provider anthropic|openai] [--seed N] [--experiment ID] [--variant NAME|all] [--shuffle]" >&2
       exit 1
       ;;
   esac
@@ -217,13 +221,22 @@ PREV_OUTPUT_FILE=""
 
 run_session() {
   local session_num="$1"
+  local variant_name="${2:-}"
+  local bob_input_file="${3:-}"
   local run_id
   run_id="$(date -u '+%Y%m%dT%H%M%SZ')"
 
   # --- Determine run directory ---
   # Always use results/<run_id>/ for verify.sh compatibility.
   # Experiments track run_ids via runs.jsonl.
-  local run_dir="${RESULTS_BASE}/${run_id}"
+  # When running variants, use a shared parent run dir with variant subdirs.
+  local run_dir
+  if [[ -n "${VARIANT_RUN_DIR:-}" ]]; then
+    # Variant mode: output into variant subdirectory
+    run_dir="${VARIANT_RUN_DIR}/variant_${variant_name}"
+  else
+    run_dir="${RESULTS_BASE}/${run_id}"
+  fi
   mkdir -p "${run_dir}"
 
   # Copy scenario files into run dir (verify.sh expects scenario subdir)
@@ -259,6 +272,9 @@ run_session() {
     template="${template//\{\{PREV_ENUMS\}\}/${prev_enums}}"
     bob_context="${template}"
     log_info "Bob input: adapted from template (prev signal: ${prev_signal})"
+  elif [[ -n "${bob_input_file}" && -f "${bob_input_file}" ]]; then
+    bob_context="$(cat "${bob_input_file}")"
+    log_info "Bob input: variant ${variant_name} (${bob_input_file##*/})"
   else
     bob_context="$(cat "${SCENARIO_DIR}/bob_relay_input_s1.json")"
     log_info "Bob input: session 1 baseline"
@@ -546,6 +562,7 @@ echo "  Provider:  ${PROVIDER}"
 echo "  Relay:     ${RELAY_URL}"
 [[ -n "${SEED}" ]] && echo "  Seed:      ${SEED}"
 [[ -n "${EXPERIMENT_ID}" ]] && echo "  Experiment: ${EXPERIMENT_ID}"
+[[ -n "${VARIANT}" ]] && echo "  Variant:   ${VARIANT}"
 echo "==========================================================="
 echo ""
 
@@ -553,29 +570,116 @@ SESSION_RESULTS=()
 TOTAL_PASS=0
 TOTAL_FAIL=0
 
-for (( i=1; i<=NUM_SESSIONS; i++ )); do
-  session_exit=0
-  run_session "${i}" || session_exit=$?
+# ---------------------------------------------------------------------------
+# Variant mode: --variant all runs baseline + all surface variants
+# ---------------------------------------------------------------------------
 
-  if [[ ${session_exit} -eq 0 ]]; then
-    SESSION_RESULTS+=("session ${i}: PASS")
-    TOTAL_PASS=$(( TOTAL_PASS + 1 ))
-  else
-    SESSION_RESULTS+=("session ${i}: FAIL")
-    TOTAL_FAIL=$(( TOTAL_FAIL + 1 ))
+if [[ "${VARIANT}" == "all" ]]; then
+  # Collect variant files
+  VARIANT_FILES=()
+  # Always include baseline first
+  VARIANT_FILES+=("s1:${SCENARIO_DIR}/bob_relay_input_s1.json")
+  # Add all surface variants
+  for vf in "${SCENARIO_DIR}"/bob_relay_input_s1_*.json; do
+    [[ -f "${vf}" ]] || continue
+    # Extract variant name: bob_relay_input_s1_<VARIANT>.json -> <VARIANT>
+    local_basename="$(basename "${vf}" .json)"
+    local_variant="${local_basename#bob_relay_input_s1_}"
+    VARIANT_FILES+=("${local_variant}:${vf}")
+  done
+
+  # Shuffle if requested
+  if [[ "${SHUFFLE}" == "true" ]]; then
+    # Shuffle all entries (baseline may move from first position)
+    SHUFFLED=()
+    while IFS= read -r line; do
+      SHUFFLED+=("${line}")
+    done < <(printf '%s\n' "${VARIANT_FILES[@]}" | shuf)
+    VARIANT_FILES=("${SHUFFLED[@]}")
   fi
 
-  # Run accumulate.sh after each session (tracks cross-session evolution)
-  if [[ -n "${EXPERIMENT_ID}" && -f "${SCRIPT_DIR}/accumulate.sh" ]]; then
-    log_info "Running accumulation evaluator..."
-    "${SCRIPT_DIR}/accumulate.sh" "${EXPERIMENT_ID}" || log_warn "accumulate.sh returned non-zero"
+  # Create shared run directory for all variants
+  VARIANT_RUN_DIR="${RESULTS_BASE}/$(date -u '+%Y%m%dT%H%M%SZ')"
+  export VARIANT_RUN_DIR
+  mkdir -p "${VARIANT_RUN_DIR}"
+
+  log_info "Running ${#VARIANT_FILES[@]} variants..."
+  variant_num=0
+  for entry in "${VARIANT_FILES[@]}"; do
+    variant_num=$(( variant_num + 1 ))
+    vname="${entry%%:*}"
+    vfile="${entry#*:}"
+    log_info "Variant ${variant_num}/${#VARIANT_FILES[@]}: ${vname}"
+
+    session_exit=0
+    run_session "${variant_num}" "${vname}" "${vfile}" || session_exit=$?
+
+    if [[ ${session_exit} -eq 0 ]]; then
+      SESSION_RESULTS+=("variant ${vname}: PASS")
+      TOTAL_PASS=$(( TOTAL_PASS + 1 ))
+    else
+      SESSION_RESULTS+=("variant ${vname}: FAIL")
+      TOTAL_FAIL=$(( TOTAL_FAIL + 1 ))
+    fi
+
+    # Brief pause between variants
+    if [[ "${variant_num}" -lt "${#VARIANT_FILES[@]}" ]]; then
+      sleep 1
+    fi
+  done
+  unset VARIANT_RUN_DIR
+
+elif [[ -n "${VARIANT}" ]]; then
+  # Single named variant
+  VARIANT_FILE="${SCENARIO_DIR}/bob_relay_input_s1_${VARIANT}.json"
+  if [[ ! -f "${VARIANT_FILE}" ]]; then
+    log_error "Variant file not found: ${VARIANT_FILE}"
+    exit 1
   fi
 
-  # Brief pause between sessions
-  if [[ "${i}" -lt "${NUM_SESSIONS}" ]]; then
-    sleep 1
-  fi
-done
+  for (( i=1; i<=NUM_SESSIONS; i++ )); do
+    session_exit=0
+    run_session "${i}" "${VARIANT}" "${VARIANT_FILE}" || session_exit=$?
+
+    if [[ ${session_exit} -eq 0 ]]; then
+      SESSION_RESULTS+=("session ${i}: PASS")
+      TOTAL_PASS=$(( TOTAL_PASS + 1 ))
+    else
+      SESSION_RESULTS+=("session ${i}: FAIL")
+      TOTAL_FAIL=$(( TOTAL_FAIL + 1 ))
+    fi
+
+    if [[ "${i}" -lt "${NUM_SESSIONS}" ]]; then
+      sleep 1
+    fi
+  done
+
+else
+  # Standard mode (no variant)
+  for (( i=1; i<=NUM_SESSIONS; i++ )); do
+    session_exit=0
+    run_session "${i}" || session_exit=$?
+
+    if [[ ${session_exit} -eq 0 ]]; then
+      SESSION_RESULTS+=("session ${i}: PASS")
+      TOTAL_PASS=$(( TOTAL_PASS + 1 ))
+    else
+      SESSION_RESULTS+=("session ${i}: FAIL")
+      TOTAL_FAIL=$(( TOTAL_FAIL + 1 ))
+    fi
+
+    # Run accumulate.sh after each session (tracks cross-session evolution)
+    if [[ -n "${EXPERIMENT_ID}" && -f "${SCRIPT_DIR}/accumulate.sh" ]]; then
+      log_info "Running accumulation evaluator..."
+      "${SCRIPT_DIR}/accumulate.sh" "${EXPERIMENT_ID}" || log_warn "accumulate.sh returned non-zero"
+    fi
+
+    # Brief pause between sessions
+    if [[ "${i}" -lt "${NUM_SESSIONS}" ]]; then
+      sleep 1
+    fi
+  done
+fi
 
 # Stamp experiment completion time
 if [[ -n "${EXPERIMENT_ID}" ]]; then
