@@ -1924,3 +1924,113 @@ fn entropy_core_smoke_test() {
         "3-element enum should produce exactly 2 entropy bits"
     );
 }
+
+// ============================================================================
+// Metadata endpoint tests (#56)
+// ============================================================================
+
+#[tokio::test]
+async fn test_metadata_endpoint_returns_401_in_prod() {
+    let state = test_app_state("http://unused", "/tmp");
+    // is_dev defaults to false in test_app_state
+    let (session_id, tokens) = state
+        .session_store
+        .create(
+            serde_json::from_value(serde_json::json!({
+                "purpose_code": "MEDIATION",
+                "output_schema_id": "test",
+                "output_schema": {"type": "object"},
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": "a".repeat(64)
+            }))
+            .unwrap(),
+            "hash".to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+
+    let app = build_router(Arc::new(state));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/sessions/{session_id}/metadata"))
+                .header("authorization", format!("Bearer {}", tokens.initiator_read))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // In prod mode (is_dev=false), metadata endpoint returns 401
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_metadata_endpoint_returns_data_in_dev() {
+    let (prompt_dir, _) = setup_prompt_program("meta_dev");
+    let mut state = test_app_state("http://unused", &prompt_dir);
+    state.is_dev = true;
+
+    let (session_id, tokens) = state
+        .session_store
+        .create(
+            serde_json::from_value(serde_json::json!({
+                "purpose_code": "MEDIATION",
+                "output_schema_id": "test",
+                "output_schema": {"type": "object"},
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": "a".repeat(64)
+            }))
+            .unwrap(),
+            "hash".to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+
+    // Manually set metadata on the session
+    state
+        .session_store
+        .with_session(&session_id, |session| {
+            session.metadata = Some(agentvault_relay::types::SessionMetadata {
+                session_id: session.id.clone(),
+                timing: agentvault_relay::types::SessionTiming {
+                    session_created_at: Some(session.created_at),
+                    initiator_input_at: None,
+                    responder_input_at: None,
+                    inference_start_at: None,
+                    inference_end_at: None,
+                    output_ready_at: None,
+                },
+                sizes: agentvault_relay::types::SessionSizes {
+                    initiator_input_bytes: Some(42),
+                    responder_input_bytes: None,
+                    output_bytes: None,
+                    receipt_bytes: None,
+                },
+                inference: None,
+            });
+        })
+        .await;
+
+    let app = build_router(Arc::new(state));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/sessions/{session_id}/metadata"))
+                .header("authorization", format!("Bearer {}", tokens.initiator_read))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 16384)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["session_id"], session_id);
+    assert_eq!(json["sizes"]["initiator_input_bytes"], 42);
+}

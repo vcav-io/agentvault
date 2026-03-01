@@ -449,6 +449,41 @@ async fn session_output_handler(
     Ok(Json(response))
 }
 
+/// GET /sessions/:id/metadata — dev-only diagnostic endpoint.
+async fn session_metadata_handler(
+    State(state): State<Arc<AppState>>,
+    Path(session_id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, RelayError> {
+    if !state.is_dev {
+        return Err(RelayError::Unauthorized);
+    }
+
+    let token = extract_bearer_token(&headers)?;
+
+    let role = state
+        .session_store
+        .validate_token(&session_id, token)
+        .await
+        .ok_or(RelayError::Unauthorized)?;
+
+    match role {
+        TokenRole::InitiatorRead | TokenRole::ResponderRead => {}
+        _ => return Err(RelayError::Unauthorized),
+    }
+
+    let metadata = state
+        .session_store
+        .with_session(&session_id, |session| session.metadata.clone())
+        .await
+        .ok_or(RelayError::Unauthorized)?;
+
+    match metadata {
+        Some(meta) => Ok(Json(serde_json::to_value(meta).unwrap_or_default())),
+        None => Err(RelayError::Unauthorized),
+    }
+}
+
 // ============================================================================
 // Router
 // ============================================================================
@@ -462,6 +497,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/sessions/:id/input", post(submit_input_handler))
         .route("/sessions/:id/status", get(session_status_handler))
         .route("/sessions/:id/output", get(session_output_handler))
+        .route("/sessions/:id/metadata", get(session_metadata_handler))
         // Inbox endpoints
         .route("/invites", post(inbox_handlers::create_invite_handler))
         .route("/inbox", get(inbox_handlers::list_inbox_handler))
