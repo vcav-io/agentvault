@@ -29,7 +29,7 @@ use crate::enforcement_policy::RelayEnforcementPolicy;
 use crate::error::RelayError;
 use crate::inbox::InboxStore;
 use crate::relay::compute_contract_hash;
-use crate::session::{SessionState, SessionStore, TokenRole};
+use crate::session::{AbortReason, SessionState, SessionStore, TokenRole};
 use crate::types::{
     CapabilitiesResponse, CreateSessionRequest, CreateSessionResponse, HealthResponse, RelayInput,
     RelayRequest, RelayResponse, SessionMetadata, SessionOutputResponse, SessionStatusResponse,
@@ -283,7 +283,10 @@ async fn submit_input_handler(
         .session_store
         .get_state(&session_id)
         .await
-        .unwrap_or((SessionState::Created, None));
+        .ok_or_else(|| {
+            tracing::error!(session_id = %session_id, "session vanished after input submission");
+            RelayError::Internal("session lost after input submission".to_string())
+        })?;
 
     Ok(Json(SessionStatusResponse {
         state: current_state,
@@ -299,15 +302,22 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
         .with_session(&session_id, |session| {
             (
                 session.contract.clone(),
-                session.initiator_input.clone().unwrap(),
-                session.responder_input.clone().unwrap(),
+                session.initiator_input.clone(),
+                session.responder_input.clone(),
                 session.provider.clone(),
             )
         })
         .await;
 
-    let Some((contract, input_a, input_b, provider)) = session_data else {
-        tracing::error!(session_id = %session_id, "session vanished before inference could start");
+    let Some((contract, Some(input_a), Some(input_b), provider)) = session_data else {
+        tracing::error!(session_id = %session_id, "session vanished or missing inputs before inference could start");
+        state
+            .session_store
+            .with_session(&session_id, |session| {
+                session.state = SessionState::Aborted;
+                session.abort_reason = Some(AbortReason::ProviderError);
+            })
+            .await;
         return;
     };
 
@@ -333,6 +343,10 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
 
                         if is_dev {
                             let mut meta = session.metadata.take().unwrap_or_else(|| {
+                                tracing::warn!(
+                                    session_id = %session.id,
+                                    "metadata absent at inference completion; input timestamps will be missing"
+                                );
                                 SessionMetadata::new(session.id.clone(), session.created_at)
                             });
                             meta.timing.inference_start_at = Some(timing.inference_start_at);

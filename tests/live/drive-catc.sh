@@ -162,6 +162,12 @@ run_catc_session() {
     elapsed=$(( elapsed + 2 ))
   done
 
+  if (( elapsed >= timeout )); then
+    log_error "[${label}] Session timed out after ${timeout}s"
+    echo "ERROR"
+    return 1
+  fi
+
   # Return session_id:read_token
   echo "${session_id}:${init_read}"
 }
@@ -364,7 +370,12 @@ const uniqueShapes = [...new Set(errorShapes)];
 const errorVerdict = uniqueShapes.length === 1 ? 'PASS' : 'FAIL';
 
 // Overall
-const overall = [timingVerdict, sizeVerdict, errorVerdict].every(v => v === 'PASS') ? 'PASS' : 'ADVISORY';
+const verdicts = [timingVerdict, sizeVerdict, errorVerdict];
+const overall = verdicts.every(v => v === 'PASS')
+  ? 'PASS'
+  : verdicts.some(v => v === 'FAIL')
+    ? 'FAIL'
+    : 'ADVISORY';
 
 const report = {
   run_id: path.basename(runDir),
