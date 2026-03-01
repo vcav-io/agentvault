@@ -8,6 +8,11 @@
   "bin": {
     "agentvault-mcp-server": "dist/index.js"
   },
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vcav-io/agentvault"
+  },
   "files": ["dist", "README.md", "LICENSE"],
   "scripts": {
     "build": "tsc",
