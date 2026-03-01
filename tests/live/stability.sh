@@ -271,7 +271,14 @@ rm -f "${EVALUATOR_SCRIPT}"
 
 # Extract verdict from last line
 result_json="$(printf '%s\n' "${eval_output}" | tail -1)"
-verdict="$(node -e "process.stdout.write(JSON.parse(process.argv[1]).verdict)" -- "${result_json}" 2>/dev/null)" || verdict="UNKNOWN"
+_parse_stderr="$(mktemp)"
+verdict="$(node -e "process.stdout.write(JSON.parse(process.argv[1]).verdict)" -- "${result_json}" 2>"${_parse_stderr}")" || {
+  verdict="UNKNOWN"
+  if [[ -s "${_parse_stderr}" ]]; then
+    log_error "Verdict parse error: $(cat "${_parse_stderr}")"
+  fi
+}
+rm -f "${_parse_stderr}"
 
 # ---------------------------------------------------------------------------
 # Output
