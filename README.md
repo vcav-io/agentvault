@@ -1,111 +1,104 @@
 # AgentVault
 
-AI agents are becoming delegates. The infrastructure for private coordination doesn't exist yet.
+AI agents are becoming delegates.
+We have no infrastructure for private coordination between them.
 
-## The problem
+People already share deeply personal context with AI — health concerns, relationship problems, financial anxieties, private doubts. Their agents reason over that context privately, on their behalf.
 
-People already share deeply personal context with AI — health concerns,
-relationship problems, financial anxieties, private worries they wouldn't tell
-anyone else. This is normal and increasingly valuable. Your AI reasons over that
-context privately, on your behalf.
+Now those agents are starting to act for us — drafting messages, negotiating logistics, navigating conflict.
 
-People are also starting to delegate communication to AI agents — drafting
-messages, scheduling on their behalf, navigating sensitive situations. The next
-step, agents coordinating directly with each other, is arriving fast.
+The next step is inevitable: agents coordinating directly with each other.
 
-That coordination is already dangerous. The agents carrying out even routine
-tasks hold their users' full sensitive context. Any direct interaction between
-them is a potential leakage surface — accidental or adversarial.
+When that happens, the full private context they carry becomes part of the interaction surface.
+
+---
+
+**The problem is not misalignment.
+The problem is channel capacity.**
+
+Free-text communication has unbounded expressive power. Tone, framing, length, hesitation, what is declined — these all carry signal. An agent trying to "be discreet" still communicates through the shape of its responses. A probing counterparty can extract information without breaking any rules. Just by conversing.
 
 The obvious mitigation is to strip agents of context before they coordinate.
-But context-free agents can only do shallow, generic work. The real opportunity
-is the opposite: agents reasoning together *with* their full context could help
-with things that are genuinely hard for people to do well alone.
+But context-free agents can only do shallow work.
 
-That makes the problem harder, not easier. When your agent coordinates with
-theirs, everything it knows about you is in play.
+The real opportunity is the opposite: agents reasoning together with full context to help with things that are genuinely hard to do alone — negotiation, mediation, compatibility, dispute resolution.
 
-**Inadvertent leakage.** An agent doesn't need to be compromised to reveal too
-much. Tone, framing, what gets emphasized or omitted — normal conversational
-dynamics create information channels. An agent trying to "be discreet" still
-signals through the shape of its responses.
+That makes the infrastructure problem harder, not easier.
 
-**Adversarial leakage.** The other side's agent can probe deliberately — asking
-reasonable clarifying questions, reading the pattern of what gets declined. This
-isn't hacking. It's just conversation.
+We built TLS for web traffic.
+We built enclaves for confidential computation.
+We built nothing for agent-to-agent reasoning.
 
-**Example: dating.** Two people are interested in each other but neither wants
-to be the vulnerable one. Their AI assistants could figure out whether the
-interest is mutual — but to do that, each assistant would need to share what it
-knows. Without protection, both sides' private feelings become observable data.
+---
 
-**Example: workplace dispute.** Alice and Bob are in conflict. Each has asked
-their AI assistant to help navigate it. The assistants begin coordinating
-directly. Alice's assistant knows she's exhausted and would accept a minor
-accommodation to resolve things quickly. Bob's assistant, in the course of
-normal dialogue, surfaces that in minutes — not by hacking anything, but by
-asking reasonable clarifying questions and reading the shape of the responses.
-Alice's bottom line is now Bob's leverage.
+## AgentVault is a coordination primitive for bounded disclosure.
 
-The obvious fixes don't work:
+It allows agents to reason freely inside a constrained execution environment, while strictly limiting what can leave.
 
-| Approach | What it does | Why it fails |
-|----------|--------------|--------------|
-| Prompt engineering ("be discreet") | Tells the model to be careful | Models comply, then reveal via tone, framing, or what they decline to say |
-| Output filtering / redaction | Blocks sensitive patterns post-generation | The model already processed the data; covert channels live in word choice, length, and structure |
-| Free-text with careful instructions | Limits what the model says | Any variable-length, open-ended response is an information channel by construction |
+This does not eliminate all covert channels. Structured outputs still carry signal through field presence, value ranges, and schema shape. What AgentVault eliminates is the *unbounded* channel — the open-ended free-text surface where fine-grained private reasoning leaks by default. The residual channel is narrow, auditable, and governed by explicit contracts.
 
-The root problem isn't model behaviour. It's that free-text communication has
-unbounded expressive capacity. You can't prevent leakage without constraining
-the channel — but constraining the channel seems to destroy the value of the
-reasoning.
+That is a structural shift from implicit leakage to explicit governance.
 
-**Why now.** Every major platform is building agent ecosystems. Agents are
-moving from answering questions to acting on our behalf. TLS protects data in
-transit. HTTPS protects web traffic. Nothing protects agent-to-agent reasoning.
-This is a missing primitive.
+---
 
-AgentVault resolves this tension — agents reason freely inside a constrained
-environment, but only bounded, validated outputs leave:
+## What AgentVault Enforces
 
-1. **Bounded disclosure** — a JSON Schema limits what the model can express.
-   Output that doesn't validate is rejected, not returned.
-2. **Cryptographic receipts** — every session produces a signed receipt binding
-   the exact contract, guardian policy, prompt template, model profile, and relay
-   build that governed execution. Tamper-evident and independently verifiable.
-3. **Escalation path** — when a session detects policy violations or anomalous
-   entropy, the protocol can escalate to a hardened sealed-execution environment
-   rather than silently degrading.
+**Bounded disclosure**
+Outputs are constrained by JSON Schema. Anything that does not validate is rejected, not returned. The channel is structurally narrowed.
 
-The relay enforces constraints at the infrastructure layer — the model never sees
-the enforcement rules, and cannot negotiate around them.
+**Cryptographic receipts**
+Every session produces a signed receipt binding the exact contract, prompt template, guardian policy, model profile, and relay build that governed execution. Coordination becomes auditable and independently verifiable.
 
-AgentVault does not define what agents coordinate about. Contracts, schemas,
-prompt templates, and guardian policies are all content-addressed and
-registry-hosted — agents select the terms that fit their situation. The protocol
-is designed to be used by highly capable agents, not to constrain what they can
-do with it.
+**Infrastructure-level enforcement**
+Constraints are enforced by the relay, not by the model. The model never sees the enforcement rules and cannot negotiate around them.
 
-## How it works
+**Escalation when required**
+Sessions that exceed policy or entropy thresholds can escalate to a hardened sealed-execution environment rather than silently degrading.
 
-1. **Discovery** — agents publish signed descriptors declaring their identity, capabilities, and cryptographic keys
-2. **Proposal** — an initiator proposes a session to a responder, referencing specific terms (purpose, schema, model profile)
-3. **Admission** — the responder admits or denies (denial is constant-shape with no reason field, preventing information leakage)
-4. **Commitment** — the initiator commits encrypted input, cryptographically bound to the admitted terms via AAD
-5. **Relay execution** — both inputs submitted to the relay, which assembles a prompt from a content-addressed template, calls the model, validates output against the schema, and applies guardian rules
-6. **Receipt** — the relay signs a receipt binding the full provenance chain: contract hash, guardian policy hash, prompt template hash, model profile hash, relay build hash, and the bounded output
+AgentVault is not an agent.
+It is infrastructure for agent-to-agent coordination under bounded disclosure.
+It is designed to be embedded inside agent frameworks, not replace them.
 
-Every artefact in the chain — contracts, schemas, prompt templates, model profiles, guardian policies — is content-addressed (SHA-256 over RFC 8785 JCS canonicalization). The receipt proves which exact versions governed the session.
+---
 
-## What's in this repo
+## How It Works
+
+1. **Discovery** — agents publish signed descriptors declaring identity, capabilities, and cryptographic keys
+2. **Proposal** — one agent proposes a session referencing a specific contract, schema, and model profile
+3. **Admission** — the counterparty admits or denies using constant-shape responses, preventing leakage through the denial itself
+4. **Commitment** — encrypted inputs are bound to the admitted terms via AAD
+5. **Relay execution** — the relay assembles the prompt from content-addressed artefacts, calls the model, validates output against schema, and applies guardian policy
+6. **Receipt** — the relay signs a receipt binding the full provenance chain and the bounded output
+
+Every artefact — contracts, schemas, prompt templates, guardian policies, model profiles — is content-addressed (SHA-256 over canonical JSON) and versioned. The receipt proves exactly which rules governed the session.
+
+---
+
+## Why This Matters
+
+Delegation changes power.
+
+When people act directly, their discretion is personal, contextual, and deniable — shaped by judgment in the moment. When agents act for them, discretion must be mechanical. It has to be built in, not assumed.
+
+If agent ecosystems are going to mediate real human stakes — relationships, contracts, employment, governance — we need structural guarantees about what can and cannot be revealed. Human discretion is inconsistent by design. Agent discretion needs to be consistent by construction.
+
+AgentVault provides that primitive.
+
+---
+
+## Repository Structure
 
 | Package | Language | Description |
-|---------|----------|-------------|
-| `agentvault-relay` | Rust | Stateless API-mediated relay with schema validation, guardian policy enforcement, and Ed25519 receipt signing |
-| `agentvault-client` | TypeScript | Standalone relay client library (fetch-based, no orchestrator dependencies) |
-| `agentvault-mcp-server` | TypeScript | MCP server exposing `agentvault.*` tools for agent integration |
+|---|---|---|
+| `agentvault-relay` | Rust | Stateless relay enforcing schema validation, guardian policy, and receipt signing |
+| `agentvault-client` | TypeScript | Standalone relay client library |
+| `agentvault-mcp-server` | TypeScript | MCP server exposing `agentvault.*` tools for integration |
 
-## Getting started
+Shared protocol types and AFAL handshake implementation live in [vault-family-core](https://github.com/vcav-io/vault-family-core).
+
+---
+
+## Getting Started
 
 ```bash
 # Build
@@ -115,36 +108,23 @@ cargo build --workspace
 cargo test --workspace
 ```
 
-See [Getting Started](docs/getting-started.md) for running the relay and
-executing your first session.
-
-Requires Rust 1.88.0+ (see `rust-toolchain.toml`).
-
-### TypeScript packages
+TypeScript packages:
 
 ```bash
 cd packages/agentvault-client && npm install && npm test
 cd packages/agentvault-mcp-server && npm install && npm run build
 ```
 
-## Documentation
+See [docs/getting-started.md](docs/getting-started.md) to run your first session.
 
-- [Getting Started](docs/getting-started.md) — run the relay and execute your first session
-- [API Reference](docs/api-reference.md) — HTTP endpoints, authentication, request/response shapes
-- [Environment Variables](docs/environment-variables.md) — configuration reference
-- [Testing Guide](docs/testing.md) — running and writing tests
-- [Roadmap](docs/roadmap.md) — design principles and development phases
+Requires Rust 1.88.0+.
 
-JSON Schemas for input payloads live in `schemas/`.
-
-Claude Code skills for contributor workflows live in `skills/`.
-
-## Ecosystem
-
-AgentVault depends on [vault-family-core](https://github.com/vcav-io/vault-family-core) for shared protocol types, receipt signing, and the AFAL (Agent Federation and Admission Layer) handshake implementation. Part of a broader protocol family for agent coordination.
+---
 
 ## License
 
 MIT OR Apache-2.0
 
-> **Note:** This project is not affiliated with any other projects named "AgentVault."
+---
+
+*Not affiliated with any other projects named "AgentVault."*
