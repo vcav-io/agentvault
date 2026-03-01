@@ -122,19 +122,31 @@ run_catc_session() {
   # Submit Alice
   local alice_body
   alice_body="$(jq -n --argjson ctx "${alice_input}" '{role: "alice", context: $ctx}')"
-  curl -s -X POST "${RELAY_URL}/sessions/${session_id}/input" \
+  local alice_http_code
+  alice_http_code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "${RELAY_URL}/sessions/${session_id}/input" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer ${init_submit}" \
-    -d "${alice_body}" > /dev/null
+    -d "${alice_body}")"
+  if [[ "${alice_http_code}" != "200" ]]; then
+    log_error "[${label}] Alice input submission failed with HTTP ${alice_http_code}"
+    echo "ERROR"
+    return 1
+  fi
 
   # Submit Bob
   local bob_body
   bob_body="$(jq -n --argjson ctx "${bob_input}" --arg hash "${observed_hash}" \
     '{role: "bob", context: $ctx, expected_contract_hash: $hash}')"
-  curl -s -X POST "${RELAY_URL}/sessions/${session_id}/input" \
+  local bob_http_code
+  bob_http_code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "${RELAY_URL}/sessions/${session_id}/input" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer ${resp_submit}" \
-    -d "${bob_body}" > /dev/null
+    -d "${bob_body}")"
+  if [[ "${bob_http_code}" != "200" ]]; then
+    log_error "[${label}] Bob input submission failed with HTTP ${bob_http_code}"
+    echo "ERROR"
+    return 1
+  fi
 
   # Poll for completion
   local elapsed=0
@@ -195,8 +207,8 @@ process.stdout.write(String((e - s) / 1000));
     SHORT_TIMINGS+=("${duration}")
     log_info "  Short session ${i}: ${duration}s"
   else
-    log_warn "  Short session ${i}: metadata not available"
-    SHORT_TIMINGS+=("0")
+    log_error "  Short session ${i}: metadata not available (is VCAV_ENV=dev set?)"
+    exit 1
   fi
 done
 
@@ -217,8 +229,8 @@ process.stdout.write(String((e - s) / 1000));
     LONG_TIMINGS+=("${duration}")
     log_info "  Long session ${i}: ${duration}s"
   else
-    log_warn "  Long session ${i}: metadata not available"
-    LONG_TIMINGS+=("0")
+    log_error "  Long session ${i}: metadata not available (is VCAV_ENV=dev set?)"
+    exit 1
   fi
 done
 
@@ -232,12 +244,20 @@ echo "  Phase 2: Size Constancy Test"
 echo "==========================================================="
 echo ""
 
-BOB_V2="$(cat "${SCENARIO_DIR}/bob_relay_input_s1_surface_v2.json")"
 SIZE_BYTES=()
+SIZE_LABELS=("baseline")
+SIZE_INPUTS=("${BOB_BASE}")
 
-for label_and_input in "baseline:${BOB_BASE}" "surface_v2:${BOB_V2}"; do
-  label="${label_and_input%%:*}"
-  input="${label_and_input#*:}"
+for surface_file in "${SCENARIO_DIR}"/bob_relay_input_s1_surface_*.json; do
+  [[ -f "${surface_file}" ]] || continue
+  variant_name="$(basename "${surface_file}" .json | sed 's/^bob_relay_input_s1_//')"
+  SIZE_LABELS+=("${variant_name}")
+  SIZE_INPUTS+=("$(cat "${surface_file}")")
+done
+
+for idx in "${!SIZE_LABELS[@]}"; do
+  label="${SIZE_LABELS[$idx]}"
+  input="${SIZE_INPUTS[$idx]}"
   log_info "Size test: running ${label}..."
   result="$(run_catc_session "${ALICE_SHORT}" "${input}" "size-${label}")"
   sid="${result%%:*}"
@@ -300,11 +320,12 @@ cat >"${REPORT_SCRIPT}" <<'REPORTMJS'
 import fs from 'fs';
 import path from 'path';
 
-const [runDir, shortTimingsStr, longTimingsStr, sizeBytesStr, errorShapesStr] = process.argv.slice(2);
+const [runDir, shortTimingsStr, longTimingsStr, sizeBytesStr, sizeLabelsStr, errorShapesStr] = process.argv.slice(2);
 
 const shortTimings = shortTimingsStr.split(',').map(Number);
 const longTimings = longTimingsStr.split(',').map(Number);
 const sizeBytes = sizeBytesStr.split(',').map(s => s === 'null' ? null : Number(s));
+const sizeLabels = sizeLabelsStr.split(',');
 const errorShapes = errorShapesStr.split('|');
 
 // Phase 1: Timing
@@ -325,11 +346,18 @@ if (ratio < 1.3) timingVerdict = 'PASS';
 else if (ratio <= 2.0) timingVerdict = 'ADVISORY';
 else timingVerdict = 'FAIL';
 
-// Phase 2: Size
-const sizeDelta = (sizeBytes[0] !== null && sizeBytes[1] !== null)
-  ? Math.abs(sizeBytes[0] - sizeBytes[1])
-  : null;
-const sizeVerdict = sizeDelta !== null && sizeDelta < 64 ? 'PASS' : (sizeDelta === null ? 'UNKNOWN' : 'FAIL');
+// Phase 2: Size — compute max delta across all variant pairs
+let maxSizeDelta = null;
+const validSizes = sizeBytes.filter(s => s !== null);
+if (validSizes.length >= 2) {
+  maxSizeDelta = 0;
+  for (let i = 0; i < validSizes.length; i++) {
+    for (let j = i + 1; j < validSizes.length; j++) {
+      maxSizeDelta = Math.max(maxSizeDelta, Math.abs(validSizes[i] - validSizes[j]));
+    }
+  }
+}
+const sizeVerdict = maxSizeDelta !== null && maxSizeDelta < 64 ? 'PASS' : (maxSizeDelta === null ? 'UNKNOWN' : 'FAIL');
 
 // Phase 3: Error shape
 const uniqueShapes = [...new Set(errorShapes)];
@@ -353,8 +381,9 @@ const report = {
   },
   size: {
     verdict: sizeVerdict,
+    labels: sizeLabels,
     output_bytes: sizeBytes,
-    delta_bytes: sizeDelta,
+    max_delta_bytes: maxSizeDelta,
   },
   error_shape: {
     verdict: errorVerdict,
@@ -379,11 +408,13 @@ md += `| Long input | ${longTimings.map(t => t.toFixed(1)).join(', ')} | ${longM
 md += `\n> **Caveat:** ${report.timing.caveat}\n\n`;
 
 md += `## Phase 2: Size Constancy\n\n`;
-md += `**Verdict: ${sizeVerdict}** (delta: ${sizeDelta !== null ? sizeDelta + ' bytes' : 'N/A'})\n\n`;
+md += `**Verdict: ${sizeVerdict}** (max delta: ${maxSizeDelta !== null ? maxSizeDelta + ' bytes' : 'N/A'})\n\n`;
 md += `| Variant | Output Bytes |\n`;
 md += `|---------|-------------|\n`;
-md += `| baseline | ${sizeBytes[0] ?? 'N/A'} |\n`;
-md += `| surface_v2 | ${sizeBytes[1] ?? 'N/A'} |\n\n`;
+for (let i = 0; i < sizeLabels.length; i++) {
+  md += `| ${sizeLabels[i]} | ${sizeBytes[i] ?? 'N/A'} |\n`;
+}
+md += `\n`;
 
 md += `## Phase 3: Error Shape\n\n`;
 md += `**Verdict: ${errorVerdict}** (${uniqueShapes.length} unique shape(s))\n\n`;
@@ -401,9 +432,10 @@ REPORTMJS
 SHORT_STR="$(IFS=,; echo "${SHORT_TIMINGS[*]}")"
 LONG_STR="$(IFS=,; echo "${LONG_TIMINGS[*]}")"
 SIZE_STR="$(IFS=,; echo "${SIZE_BYTES[*]}")"
+SIZE_LABELS_STR="$(IFS=,; echo "${SIZE_LABELS[*]}")"
 ERROR_STR="$(IFS='|'; echo "${ERROR_SHAPES[*]}")"
 
-report_output="$(node "${REPORT_SCRIPT}" "${RUN_DIR}" "${SHORT_STR}" "${LONG_STR}" "${SIZE_STR}" "${ERROR_STR}" 2>&1)" || {
+report_output="$(node "${REPORT_SCRIPT}" "${RUN_DIR}" "${SHORT_STR}" "${LONG_STR}" "${SIZE_STR}" "${SIZE_LABELS_STR}" "${ERROR_STR}" 2>&1)" || {
   log_error "Report generation failed: ${report_output}"
   rm -f "${REPORT_SCRIPT}"
   exit 1

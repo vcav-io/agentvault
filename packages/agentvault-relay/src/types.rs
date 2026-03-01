@@ -139,7 +139,7 @@ pub struct CapabilitiesResponse {
 /// inference_end_at = full response received (non-streaming)
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionTiming {
-    pub session_created_at: Option<DateTime<Utc>>,
+    pub session_created_at: DateTime<Utc>,
     pub initiator_input_at: Option<DateTime<Utc>>,
     pub responder_input_at: Option<DateTime<Utc>>,
     pub inference_start_at: Option<DateTime<Utc>>,
@@ -147,7 +147,7 @@ pub struct SessionTiming {
     pub output_ready_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SessionSizes {
     pub initiator_input_bytes: Option<usize>,
     pub responder_input_bytes: Option<usize>,
@@ -156,19 +156,27 @@ pub struct SessionSizes {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct InferenceMetadata {
-    pub provider: String,
-    pub model_id: String,
-    pub status_code: u16,
-    pub retry_count: u32,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct SessionMetadata {
     pub session_id: String,
     pub timing: SessionTiming,
     pub sizes: SessionSizes,
-    pub inference: Option<InferenceMetadata>,
+}
+
+impl SessionMetadata {
+    pub fn new(session_id: String, created_at: DateTime<Utc>) -> Self {
+        Self {
+            session_id,
+            timing: SessionTiming {
+                session_created_at: created_at,
+                initiator_input_at: None,
+                responder_input_at: None,
+                inference_start_at: None,
+                inference_end_at: None,
+                output_ready_at: None,
+            },
+            sizes: SessionSizes::default(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -177,25 +185,12 @@ mod tests {
 
     #[test]
     fn test_session_metadata_serializes() {
-        let meta = SessionMetadata {
-            session_id: "test-123".to_string(),
-            timing: SessionTiming {
-                session_created_at: Some(Utc::now()),
-                initiator_input_at: None,
-                responder_input_at: None,
-                inference_start_at: None,
-                inference_end_at: None,
-                output_ready_at: None,
-            },
-            sizes: SessionSizes {
-                initiator_input_bytes: None,
-                responder_input_bytes: None,
-                output_bytes: None,
-                receipt_bytes: None,
-            },
-            inference: None,
-        };
+        let meta = SessionMetadata::new("test-123".to_string(), Utc::now());
         let json = serde_json::to_string(&meta).unwrap();
         assert!(json.contains("test-123"));
+        // Verify top-level keys exist
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed.get("timing").is_some());
+        assert!(parsed.get("sizes").is_some());
     }
 }

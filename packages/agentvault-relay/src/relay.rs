@@ -190,8 +190,8 @@ fn unicode_category_contains(c: char, category: &str) -> bool {
 
 /// Diagnostic timing from relay_core. Not part of the production result type.
 pub struct InferenceTiming {
-    pub inference_start: chrono::DateTime<chrono::Utc>,
-    pub inference_end: chrono::DateTime<chrono::Utc>,
+    pub inference_start_at: chrono::DateTime<chrono::Utc>,
+    pub inference_end_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// Result of core relay execution.
@@ -377,8 +377,8 @@ pub async fn relay_core(
     let receipt = unsigned.sign(signature);
 
     let timing = InferenceTiming {
-        inference_start,
-        inference_end,
+        inference_start_at: inference_start,
+        inference_end_at: inference_end,
     };
 
     Ok((

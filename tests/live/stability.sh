@@ -52,6 +52,7 @@ require_cmd node
 
 log_info "Running drive.sh --variant all --scenario ${SCENARIO} --provider ${PROVIDER}"
 
+DRIVE_START_EPOCH="$(date +%s)"
 drive_output=""
 drive_output="$("${SCRIPT_DIR}/drive.sh" \
   --scenario "${SCENARIO}" \
@@ -71,8 +72,9 @@ echo "${drive_output}"
 # ---------------------------------------------------------------------------
 
 # The variant run creates results/<run_id>/variant_<name>/ directories.
-# Find the most recent run_id that has variant subdirs.
+# Find the most recently modified run_id that has variant subdirs.
 LATEST_RUN_DIR=""
+LATEST_MTIME=0
 for d in "${RESULTS_BASE}"/*/; do
   [[ -d "${d}" ]] || continue
   # Check if it has variant subdirectories
@@ -81,13 +83,25 @@ for d in "${RESULTS_BASE}"/*/; do
     [[ -d "${vd}" ]] && has_variants=true && break
   done
   if [[ "${has_variants}" == "true" ]]; then
-    LATEST_RUN_DIR="${d%/}"
+    # Get modification time (stat -f%m on macOS, stat -c%Y on Linux)
+    dir_mtime="$(stat -f%m "${d}" 2>/dev/null || stat -c%Y "${d}" 2>/dev/null || echo 0)"
+    if (( dir_mtime > LATEST_MTIME )); then
+      LATEST_MTIME="${dir_mtime}"
+      LATEST_RUN_DIR="${d%/}"
+    fi
   fi
 done
 
 if [[ -z "${LATEST_RUN_DIR}" ]]; then
   log_error "No variant run directory found in ${RESULTS_BASE}/"
   exit 1
+fi
+
+# Warn if the directory predates the drive.sh invocation (stale results)
+if (( LATEST_MTIME < DRIVE_START_EPOCH - 5 )); then
+  log_warn "Variant run directory may be stale (modified before drive.sh started)"
+  log_warn "  Directory: ${LATEST_RUN_DIR}"
+  log_warn "  Dir mtime: ${LATEST_MTIME}, drive start: ${DRIVE_START_EPOCH}"
 fi
 
 log_info "Analysing variant outputs in: ${LATEST_RUN_DIR}"

@@ -32,8 +32,8 @@ use crate::relay::compute_contract_hash;
 use crate::session::{SessionState, SessionStore, TokenRole};
 use crate::types::{
     CapabilitiesResponse, CreateSessionRequest, CreateSessionResponse, HealthResponse, RelayInput,
-    RelayRequest, RelayResponse, SessionMetadata, SessionOutputResponse, SessionSizes,
-    SessionStatusResponse, SessionTiming, SubmitInputRequest,
+    RelayRequest, RelayResponse, SessionMetadata, SessionOutputResponse, SessionStatusResponse,
+    SubmitInputRequest,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -207,6 +207,7 @@ async fn submit_input_handler(
     let input_bytes = if state.is_dev {
         serde_json::to_string(&request.context)
             .map(|s| s.len())
+            .map_err(|e| tracing::warn!("failed to serialize input context for metadata: {e}"))
             .ok()
     } else {
         None
@@ -247,23 +248,8 @@ async fn submit_input_handler(
 
             // Capture input timing and sizes in metadata
             if is_dev {
-                let meta = session.metadata.get_or_insert_with(|| SessionMetadata {
-                    session_id: session.id.clone(),
-                    timing: SessionTiming {
-                        session_created_at: Some(session.created_at),
-                        initiator_input_at: None,
-                        responder_input_at: None,
-                        inference_start_at: None,
-                        inference_end_at: None,
-                        output_ready_at: None,
-                    },
-                    sizes: SessionSizes {
-                        initiator_input_bytes: None,
-                        responder_input_bytes: None,
-                        output_bytes: None,
-                        receipt_bytes: None,
-                    },
-                    inference: None,
+                let meta = session.metadata.get_or_insert_with(|| {
+                    SessionMetadata::new(session.id.clone(), session.created_at)
                 });
                 let now = chrono::Utc::now();
                 if is_initiator {
@@ -321,6 +307,7 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
         .await;
 
     let Some((contract, input_a, input_b, provider)) = session_data else {
+        tracing::error!(session_id = %session_id, "session vanished before inference could start");
         return;
     };
 
@@ -329,8 +316,14 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
     tokio::spawn(async move {
         match relay::relay_core(&contract, &input_a, &input_b, &provider, &state).await {
             Ok((result, timing)) => {
-                let output_bytes = serde_json::to_string(&result.output).map(|s| s.len()).ok();
-                let receipt_bytes = serde_json::to_string(&result.receipt).map(|s| s.len()).ok();
+                let output_bytes = serde_json::to_string(&result.output)
+                    .map(|s| s.len())
+                    .map_err(|e| tracing::warn!("failed to serialize output for metadata: {e}"))
+                    .ok();
+                let receipt_bytes = serde_json::to_string(&result.receipt)
+                    .map(|s| s.len())
+                    .map_err(|e| tracing::warn!("failed to serialize receipt for metadata: {e}"))
+                    .ok();
                 store
                     .with_session(&session_id, |session| {
                         session.output = Some(result.output);
@@ -339,27 +332,11 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
                         session.state = SessionState::Completed;
 
                         if is_dev {
-                            let mut meta =
-                                session.metadata.take().unwrap_or_else(|| SessionMetadata {
-                                    session_id: session.id.clone(),
-                                    timing: SessionTiming {
-                                        session_created_at: Some(session.created_at),
-                                        initiator_input_at: None,
-                                        responder_input_at: None,
-                                        inference_start_at: None,
-                                        inference_end_at: None,
-                                        output_ready_at: None,
-                                    },
-                                    sizes: SessionSizes {
-                                        initiator_input_bytes: None,
-                                        responder_input_bytes: None,
-                                        output_bytes: None,
-                                        receipt_bytes: None,
-                                    },
-                                    inference: None,
-                                });
-                            meta.timing.inference_start_at = Some(timing.inference_start);
-                            meta.timing.inference_end_at = Some(timing.inference_end);
+                            let mut meta = session.metadata.take().unwrap_or_else(|| {
+                                SessionMetadata::new(session.id.clone(), session.created_at)
+                            });
+                            meta.timing.inference_start_at = Some(timing.inference_start_at);
+                            meta.timing.inference_end_at = Some(timing.inference_end_at);
                             meta.timing.output_ready_at = Some(chrono::Utc::now());
                             meta.sizes.output_bytes = output_bytes;
                             meta.sizes.receipt_bytes = receipt_bytes;
@@ -478,8 +455,15 @@ async fn session_metadata_handler(
         .ok_or(RelayError::Unauthorized)?;
 
     match metadata {
-        Some(meta) => Ok(Json(serde_json::to_value(meta).unwrap_or_default())),
-        None => Err(RelayError::Unauthorized),
+        Some(meta) => {
+            let value = serde_json::to_value(meta)
+                .map_err(|e| RelayError::Internal(format!("metadata serialization: {e}")))?;
+            Ok(Json(value))
+        }
+        None => Ok(Json(serde_json::json!({
+            "timing": {},
+            "sizes": {}
+        }))),
     }
 }
 

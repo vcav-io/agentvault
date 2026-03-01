@@ -1992,24 +1992,12 @@ async fn test_metadata_endpoint_returns_data_in_dev() {
     state
         .session_store
         .with_session(&session_id, |session| {
-            session.metadata = Some(agentvault_relay::types::SessionMetadata {
-                session_id: session.id.clone(),
-                timing: agentvault_relay::types::SessionTiming {
-                    session_created_at: Some(session.created_at),
-                    initiator_input_at: None,
-                    responder_input_at: None,
-                    inference_start_at: None,
-                    inference_end_at: None,
-                    output_ready_at: None,
-                },
-                sizes: agentvault_relay::types::SessionSizes {
-                    initiator_input_bytes: Some(42),
-                    responder_input_bytes: None,
-                    output_bytes: None,
-                    receipt_bytes: None,
-                },
-                inference: None,
-            });
+            let mut meta = agentvault_relay::types::SessionMetadata::new(
+                session.id.clone(),
+                session.created_at,
+            );
+            meta.sizes.initiator_input_bytes = Some(42);
+            session.metadata = Some(meta);
         })
         .await;
 
@@ -2033,4 +2021,121 @@ async fn test_metadata_endpoint_returns_data_in_dev() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["session_id"], session_id);
     assert_eq!(json["sizes"]["initiator_input_bytes"], 42);
+    // Verify top-level timing and sizes keys exist
+    assert!(
+        json.get("timing").is_some(),
+        "metadata should have 'timing' key"
+    );
+    assert!(
+        json.get("sizes").is_some(),
+        "metadata should have 'sizes' key"
+    );
+}
+
+#[tokio::test]
+async fn test_metadata_endpoint_rejects_submit_token() {
+    let (prompt_dir, _) = setup_prompt_program("meta_submit_token");
+    let mut state = test_app_state("http://unused", &prompt_dir);
+    state.is_dev = true;
+
+    let (session_id, tokens) = state
+        .session_store
+        .create(
+            serde_json::from_value(serde_json::json!({
+                "purpose_code": "MEDIATION",
+                "output_schema_id": "test",
+                "output_schema": {"type": "object"},
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": "a".repeat(64)
+            }))
+            .unwrap(),
+            "hash".to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+
+    // Inject metadata so the endpoint has something to return
+    state
+        .session_store
+        .with_session(&session_id, |session| {
+            session.metadata = Some(agentvault_relay::types::SessionMetadata::new(
+                session.id.clone(),
+                session.created_at,
+            ));
+        })
+        .await;
+
+    let app = build_router(Arc::new(state));
+
+    // Request with submit token should be rejected
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/sessions/{session_id}/metadata"))
+                .header(
+                    "authorization",
+                    format!("Bearer {}", tokens.initiator_submit),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_metadata_returns_empty_when_not_populated() {
+    let (prompt_dir, _) = setup_prompt_program("meta_empty");
+    let mut state = test_app_state("http://unused", &prompt_dir);
+    state.is_dev = true;
+
+    let (session_id, tokens) = state
+        .session_store
+        .create(
+            serde_json::from_value(serde_json::json!({
+                "purpose_code": "MEDIATION",
+                "output_schema_id": "test",
+                "output_schema": {"type": "object"},
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": "a".repeat(64)
+            }))
+            .unwrap(),
+            "hash".to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+
+    // Do NOT set metadata — session.metadata is None
+
+    let app = build_router(Arc::new(state));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/sessions/{session_id}/metadata"))
+                .header("authorization", format!("Bearer {}", tokens.initiator_read))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Should return 200 with empty timing/sizes instead of 401
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 16384)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(
+        json.get("timing").is_some(),
+        "empty metadata should have 'timing' key"
+    );
+    assert!(
+        json.get("sizes").is_some(),
+        "empty metadata should have 'sizes' key"
+    );
 }
