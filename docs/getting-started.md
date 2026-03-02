@@ -38,7 +38,7 @@ Both agents submit structured input. The relay assembles a prompt from a content
 |----------|----------|---------|-------------|
 | `ANTHROPIC_API_KEY` | Yes | — | Anthropic API key |
 | `VCAV_PORT` | No | `3100` | Port the relay listens on |
-| `VCAV_MODEL_ID` | No | `claude-sonnet-4-5-20250929` | Anthropic model to use |
+| `VCAV_MODEL_ID` | No | `claude-sonnet-4-6` | Anthropic model to use |
 | `VCAV_SIGNING_KEY_HEX` | No | ephemeral | 64-char hex Ed25519 signing key. If unset, generates a random key on each start (receipts won't verify across restarts) |
 | `VCAV_PROMPT_PROGRAM_DIR` | No | `prompt_programs` | Directory containing prompt programs and lockfiles |
 | `VCAV_SESSION_TTL_SECS` | No | `600` | Session expiry in seconds |
@@ -85,6 +85,10 @@ A bilateral session has four steps: create, submit inputs, poll, retrieve output
 
 ### 1. Create a session
 
+The `output_schema` field takes the full JSON Schema object. See `schemas/output/` for available schemas.
+
+Run `sha256sum prompt_programs/<your-program>.md` to compute the prompt template hash.
+
 ```bash
 curl -s -X POST http://localhost:3100/sessions \
   -H "Content-Type: application/json" \
@@ -92,7 +96,7 @@ curl -s -X POST http://localhost:3100/sessions \
     "contract": {
       "purpose_code": "COMPATIBILITY",
       "output_schema_id": "vcav_e_compatibility_signal_v2",
-      "output_schema": { ... },
+      "output_schema": <contents of schemas/output/vcav_e_compatibility_signal_v2.schema.json>,
       "participants": ["alice", "bob"],
       "prompt_template_hash": "<sha256 of your prompt program>"
     },
