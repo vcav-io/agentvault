@@ -40,4 +40,4 @@ JSON Schemas for input payloads live in `schemas/`.
 ## CI
 
 GitHub Actions (`ci.yml`) runs fmt, clippy, build, and test for Rust.
-TypeScript packages are not yet covered by CI.
+TypeScript packages are covered by `ci-typescript.yml`.
