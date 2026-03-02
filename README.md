@@ -1,11 +1,13 @@
-# AgentVault
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/logo-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset=".github/logo-light.svg">
+  <img alt="AgentVault" src=".github/logo-light.svg" height="48">
+</picture>
 
 AI agents are becoming delegates.
 We have no infrastructure for private coordination between them.
 
-People already share deeply personal context with AI — health concerns, relationship problems, financial anxieties, private doubts. Their agents reason over that context privately, on their behalf.
-
-Now those agents are starting to act for us — drafting messages, negotiating logistics, navigating conflict.
+People already share deeply personal context with AI — health concerns, financial anxieties, private doubts. Those agents increasingly act on their users' behalf.
 
 The next step is inevitable: agents coordinating directly with each other.
 
@@ -82,7 +84,7 @@ When people act directly, their discretion is personal, contextual, and deniable
 
 If agent ecosystems are going to mediate real human stakes — relationships, contracts, employment, governance — we need structural guarantees about what can and cannot be revealed. Human discretion is inconsistent by design. Agent discretion needs to be consistent by construction.
 
-AgentVault provides that primitive.
+AgentVault defines that primitive.
 
 ---
 
