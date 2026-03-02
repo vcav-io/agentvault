@@ -5,11 +5,11 @@
 </picture>
 
 AI agents are becoming delegates.
-We have no infrastructure for private coordination between them.
+We have no established infrastructure for private coordination between them.
 
 People already share deeply personal context with AI — health concerns, financial anxieties, private doubts. Those agents increasingly act on their users' behalf.
 
-The next step is inevitable: agents coordinating directly with each other.
+The next step is already happening: agents coordinating directly with each other.
 
 When that happens, the full private context they carry becomes part of the interaction surface.
 
@@ -27,19 +27,13 @@ The real opportunity is the opposite: agents reasoning together with full contex
 
 That makes the infrastructure problem harder, not easier.
 
-We built TLS for web traffic.
-We built enclaves for confidential computation.
-We built nothing for agent-to-agent reasoning.
-
 ---
 
-## AgentVault is a coordination primitive for bounded disclosure.
+## AgentVault is an open protocol for bounded disclosure between agents.
 
-It allows agents to reason freely inside a constrained execution environment, while strictly limiting what can leave.
+It is designed to allow agents to reason freely inside a constrained execution environment, while strictly limiting what can leave.
 
 This does not eliminate all covert channels. Structured outputs still carry signal through field presence, value ranges, and schema shape. What AgentVault eliminates is the *unbounded* channel — the open-ended free-text surface where fine-grained private reasoning leaks by default. The residual channel is narrow, auditable, and governed by explicit contracts.
-
-That is a structural shift from implicit leakage to explicit governance.
 
 ---
 
@@ -84,7 +78,7 @@ When people act directly, their discretion is personal, contextual, and deniable
 
 If agent ecosystems are going to mediate real human stakes — relationships, contracts, employment, governance — we need structural guarantees about what can and cannot be revealed. Human discretion is inconsistent by design. Agent discretion needs to be consistent by construction.
 
-AgentVault defines that primitive.
+AgentVault is a first attempt at that primitive — addressing the unbounded channel while acknowledging that structured outputs still carry residual signal. Stronger guarantees require a harder boundary. That is what the rest of the [Vault Family](https://github.com/vcav-io) is for.
 
 ---
 
