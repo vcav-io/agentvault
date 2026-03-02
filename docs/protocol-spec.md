@@ -86,6 +86,10 @@ the loaded content, and rejects the request if the hashes differ (fail-closed).
 | `system_instruction` | string | System prompt sent to the model. |
 | `input_format` | string enum | `"structured"` or `"narrative"`. Determines how inputs are assembled into the user message. |
 
+Prompt programs MUST be valid JSON (no comments or non-JSON elements). The hash is
+computed over the RFC 8785 canonical form, not the raw file bytes. Two files with
+identical JSON content but different whitespace produce the same hash.
+
 The prompt program is not returned in the receipt — only its hash. Third parties who
 want to verify which prompt governed an execution must obtain the program file
 independently.
@@ -140,7 +144,7 @@ strings (SHA-256).
 | `guardian_policy_hash` | string (64 hex) | SHA-256 of canonical guardian policy. |
 | `prompt_template_hash` | string (64 hex) or null | SHA-256 of canonical prompt program. |
 | `model_profile_hash` | string (64 hex) or null | SHA-256 of canonical model profile. Null if `contract.model_profile_id` is null. |
-| `runtime_hash` | string (64 hex) | SHA-256 of the relay's git commit SHA string. |
+| `runtime_hash` | string (64 hex) | SHA-256 of the relay's git commit SHA string. Attests to source version, not to a reproducible build artefact. |
 | `model_weights_hash` | string (64 hex) | Sentinel: `SHA-256(b"api-mediated-no-local-weights")`. See [Appendix B](#appendix-b--known-hash-vectors). |
 | `llama_cpp_version` | string | `"n/a"` for API-mediated execution. |
 | `inference_config_hash` | string (64 hex) | Sentinel: `SHA-256(b"api-mediated-no-local-inference")`. See [Appendix B](#appendix-b--known-hash-vectors). |
@@ -149,7 +153,7 @@ strings (SHA-256).
 | `output_entropy_bits` | integer | Computed upper-bound entropy of the output (bits). |
 | `entropy_budget_bits_opt` | integer or null | From `contract.entropy_budget_bits`. |
 | `budget_usage` | object | See below. |
-| `model_identity` | object or null | `{provider, model_id, model_version}` — the model actually used. |
+| `model_identity` | object or null | `{provider, model_id, model_version}` — the model actually used. Operator assertion; not independently verifiable via hash. |
 | `session_start` | string (ISO 8601) | Timestamp when inference started. |
 | `session_end` | string (ISO 8601) | Timestamp when inference ended. |
 | `fixed_window_duration_seconds` | integer | Budget window duration (0 for single-session). |
@@ -352,6 +356,11 @@ All content-addressed hashes in the protocol use the same algorithm: RFC 8785 (J
 Canonicalization Scheme, JCS) applied to the JSON object, followed by SHA-256 of the
 UTF-8 bytes. The result is a lowercase hex string of exactly 64 characters.
 
+Content-addressed artefacts (contracts, prompt programs, model profiles, guardian
+policies) MUST NOT contain unknown fields. Only fields defined in this specification
+are permitted. Unknown fields would cause two parties to hash different supersets of the
+same logical object and produce different hashes.
+
 ### 6.1 Hash Algorithm
 
 ```
@@ -431,8 +440,10 @@ The relay signs the receipt by:
 ### 7.3 Wire Format
 
 The receipt is returned as a JSON object in the `receipt` field. The signature is a
-separate field (`receipt_signature`, 128-char hex). The receipt object itself does not
-embed the signature.
+separate field (`receipt_signature`, 128-char hex). The receipt object MUST NOT contain
+a `signature` field internally — the signature is always external. This prevents
+ambiguity during verification (the canonical form of the unsigned receipt is the
+verification input).
 
 ### 7.4 Verification Algorithm
 
@@ -498,7 +509,8 @@ All authentication failures MUST return HTTP 401 with a fixed body:
 
 This applies uniformly to: invalid token, expired session, unknown session ID, unknown
 invite ID, and wrong token role. The relay MUST NOT distinguish these cases in the
-response. This prevents session enumeration.
+response. This prevents session enumeration. Relays SHOULD normalize authentication
+error response timing to prevent timing side channels between known and unknown sessions.
 
 ### 8.2 Policy Gate Errors
 
@@ -592,6 +604,9 @@ This layering means the schema provides primary enforcement (strict enum fields 
 most forbidden content), while the guardian provides defense-in-depth.
 
 ### 9.5 Policy Activation
+
+Guardian enforcement MUST be deterministic: given an identical policy and identical
+output, any conforming relay MUST produce the same accept/reject decision.
 
 The relay loads exactly one enforcement policy at startup. The policy hash is computed
 and bound into every receipt via `guardian_policy_hash`. A verifier who obtains the
