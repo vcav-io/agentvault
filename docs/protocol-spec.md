@@ -212,7 +212,8 @@ A multi-step protocol where each participant submits independently:
 Submit tokens are consumed on use. Resubmission returns 401 (constant-shape). All
 tokens for a session share the same session TTL. Sessions expire after
 `VCAV_SESSION_TTL_SECS` (default: 600 seconds); expired sessions return 401 for all
-subsequent requests.
+subsequent requests. Read tokens remain valid until the session TTL elapses or the
+session store reaper removes a terminal session, whichever comes first.
 
 ---
 
@@ -232,10 +233,12 @@ subsequent requests.
 
 ```
 CREATED ──[first input]──► PARTIAL ──[second input]──► PROCESSING
-    │                                                      │
-    │                                                      ├──[success]──► COMPLETED
-    │                                                      │
-    └──[timeout]──► ABORTED ◄──[any error]─────────────────┘
+    │                          │                           │
+    │                          │                           ├──[success]──► COMPLETED
+    │                          │                           │
+    └──[timeout]───────────────┴──[timeout]──► ABORTED ◄───┘
+                                                  ▲
+                                                  └──[any error]
 ```
 
 Valid transitions:
@@ -553,7 +556,7 @@ Supported category values:
 
 | Value | Unicode category | Coverage |
 |-------|-----------------|----------|
-| `Nd` | Decimal digit numbers | Conservative superset: includes Nd (decimal digits), Nl (letter numbers), and No (other numbers) as a defense-in-depth measure. |
+| `Nd` | Decimal digit numbers | Conservative superset: includes Nd (decimal digits), Nl (letter numbers), and No (other numbers) as a defense-in-depth measure. A rule value of `"Nd"` activates scanning for all three categories. |
 | `Sc` | Currency symbols | As defined by Unicode 15.1. |
 
 A conforming relay MUST reject configurations that declare unsupported categories
