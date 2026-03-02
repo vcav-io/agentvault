@@ -18,7 +18,7 @@ When that happens, the full private context they carry becomes part of the inter
 **The problem is not misalignment.
 The problem is channel capacity.**
 
-Free-text communication has unbounded expressive power. Tone, framing, length, hesitation, what is declined — these all carry signal. An agent trying to "be discreet" still communicates through the shape of its responses. A probing counterparty can extract information without breaking any rules. Just by conversing.
+When agents coordinate in free text, the channel has no bounds. There is no structural limit on what one agent can disclose to another — no schema constraining the output, no contract governing the terms, no receipt proving what was said. Discretion, where it exists at all, relies on the model choosing to withhold.
 
 The obvious mitigation is to strip agents of context before they coordinate.
 But context-free agents can only do shallow work.
