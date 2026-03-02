@@ -18,7 +18,7 @@ async fn main() {
 
     let api_key = std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY must be set");
     let model_id =
-        std::env::var("VCAV_MODEL_ID").unwrap_or_else(|_| "claude-sonnet-4-5-20250929".to_string());
+        std::env::var("VCAV_MODEL_ID").unwrap_or_else(|_| "claude-sonnet-4-6".to_string());
     let prompt_dir =
         std::env::var("VCAV_PROMPT_PROGRAM_DIR").unwrap_or_else(|_| "prompt_programs".to_string());
     let port: u16 = std::env::var("VCAV_PORT")

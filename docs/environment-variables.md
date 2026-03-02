@@ -15,7 +15,7 @@ Complete reference for all environment variables used by the AgentVault relay an
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `VCAV_PORT` | `3100` | Port the relay listens on |
-| `VCAV_MODEL_ID` | `claude-sonnet-4-5-20250929` | Anthropic model ID |
+| `VCAV_MODEL_ID` | `claude-sonnet-4-6` | Anthropic model ID |
 | `VCAV_SIGNING_KEY_HEX` | ephemeral | 64-char hex Ed25519 signing key for receipt signing. If unset, a random key is generated on each start — receipts won't verify across restarts |
 | `VCAV_PROMPT_PROGRAM_DIR` | `prompt_programs` | Directory containing prompt programs, model profile lockfile, and enforcement policy lockfile |
 | `VCAV_SESSION_TTL_SECS` | `600` | Session expiry in seconds. Background reaper cleans up expired sessions |
