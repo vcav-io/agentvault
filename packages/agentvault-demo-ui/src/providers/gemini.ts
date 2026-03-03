@@ -86,10 +86,13 @@ export class GeminiProvider implements LLMProvider {
       }];
     }
 
-    const url = `${this.baseUrl}/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
+    const url = `${this.baseUrl}/v1beta/models/${this.model}:generateContent`;
     const response = await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'x-goog-api-key': this.apiKey,
+      },
       body: JSON.stringify(body),
     });
 
@@ -101,8 +104,12 @@ export class GeminiProvider implements LLMProvider {
     const json = await response.json() as GeminiResponse;
 
     const candidate = json.candidates?.[0];
+    const finishReason = candidate?.finishReason;
+    if (finishReason === 'SAFETY' || finishReason === 'RECITATION') {
+      throw new Error(`Gemini blocked response: ${finishReason}`);
+    }
     if (!candidate?.content?.parts) {
-      throw new Error('Gemini response missing candidate parts');
+      throw new Error(`Gemini response missing candidate parts (finishReason: ${finishReason ?? 'unknown'})`);
     }
 
     const textBlocks: TextContent[] = [];

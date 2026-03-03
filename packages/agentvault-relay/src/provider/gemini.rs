@@ -82,7 +82,9 @@ impl GeminiProvider {
             let gen_config = body
                 .get_mut("generationConfig")
                 .and_then(|v| v.as_object_mut())
-                .unwrap();
+                .ok_or_else(|| {
+                    RelayError::Internal("generationConfig missing from request body".to_string())
+                })?;
             gen_config.insert(
                 "responseMimeType".to_string(),
                 Value::String("application/json".to_string()),
@@ -91,13 +93,14 @@ impl GeminiProvider {
         }
 
         let url = format!(
-            "{}/v1beta/models/{}:generateContent?key={}",
-            self.base_url, self.model_id, self.api_key
+            "{}/v1beta/models/{}:generateContent",
+            self.base_url, self.model_id
         );
         let response = self
             .client
             .post(&url)
             .header("content-type", "application/json")
+            .header("x-goog-api-key", &self.api_key)
             .json(&body)
             .send()
             .await
@@ -130,24 +133,36 @@ impl GeminiProvider {
         let response_json: Value = serde_json::from_str(&response_text)
             .map_err(|e| RelayError::Provider(format!("failed to parse API response: {e}")))?;
 
+        let stop_reason = response_json
+            .get("candidates")
+            .and_then(|v| v.get(0))
+            .and_then(|v| v.get("finishReason"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("STOP");
+
+        match stop_reason {
+            "SAFETY" | "RECITATION" => {
+                return Err(RelayError::Provider(format!(
+                    "Gemini blocked response: {stop_reason}"
+                )));
+            }
+            "MAX_TOKENS" => {
+                tracing::warn!("Gemini response truncated (MAX_TOKENS)");
+            }
+            _ => {}
+        }
+
         let text = extract_text(&response_json)?;
         let model_id = response_json
             .get("modelVersion")
             .and_then(|v| v.as_str())
             .unwrap_or(&self.model_id)
             .to_string();
-        let stop_reason = response_json
-            .get("candidates")
-            .and_then(|v| v.get(0))
-            .and_then(|v| v.get("finishReason"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("STOP")
-            .to_string();
 
         Ok(ProviderResponse {
             text,
             model_id,
-            stop_reason,
+            stop_reason: stop_reason.to_string(),
         })
     }
 }
