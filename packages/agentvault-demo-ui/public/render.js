@@ -62,6 +62,45 @@ function createPromptBubble(promptText, agentName) {
   return wrap;
 }
 
+/**
+ * Create a result card for the chat panel showing the vault output signal.
+ * Visually distinct from normal chat bubbles.
+ */
+function createResultCard(output, receipt) {
+  var wrap = document.createElement('div');
+  wrap.className = 'chat-message chat-message--agent';
+
+  var card = document.createElement('div');
+  card.className = 'chat-result-card';
+
+  var label = document.createElement('div');
+  label.className = 'chat-result-card__label';
+  label.textContent = 'Vault Result';
+  card.appendChild(label);
+
+  // Render output fields as readable lines
+  if (output) {
+    var keys = Object.keys(output);
+    for (var i = 0; i < keys.length; i++) {
+      var line = document.createElement('div');
+      line.textContent = keys[i].replace(/_/g, ' ') + ': ' + output[keys[i]];
+      card.appendChild(line);
+    }
+  }
+
+  if (receipt && receipt.session_id) {
+    var line = document.createElement('div');
+    line.style.marginTop = '8px';
+    line.style.fontSize = '11px';
+    line.style.color = 'var(--color-text-dim)';
+    line.textContent = 'receipt: ' + truncate(receipt.session_id, 24);
+    card.appendChild(line);
+  }
+
+  wrap.appendChild(card);
+  return wrap;
+}
+
 // ── Protocol log entries (debug view) ───────────────────────────
 
 /**
@@ -110,46 +149,49 @@ function createLogEntry(event) {
 }
 
 // ── Vault Card Manager (centre panel) ───────────────────────────
+// Shows only meaningful milestones, not every tool call/result.
 
 var VaultCardManager = (function () {
   var stepCount = 0;
-  var openCard = null;
   var container = null;
+
+  // Track state per agent to detect milestone transitions
+  var agentState = {};
+  // Pending tool_call context (tool name, agent, args) awaiting its result
+  var pendingCall = null;
+  // Callback for result cards in chat panels
+  var onOutputSignal = null;
 
   function init(el) {
     container = el;
     stepCount = 0;
-    openCard = null;
+    agentState = {};
+    pendingCall = null;
   }
 
   function reset() {
     stepCount = 0;
-    openCard = null;
+    agentState = {};
+    pendingCall = null;
   }
 
-  /** Map tool names to human-readable titles */
-  function toolDisplayName(toolName) {
-    if (!toolName) return 'Unknown';
-    // Strip agentvault. prefix
-    var short = toolName.replace(/^agentvault\./, '');
-    return short.replace(/_/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+  function setOutputSignalCallback(cb) {
+    onOutputSignal = cb;
   }
 
   /** Build a vault card element */
-  function buildCard(stepLabel, title, isError) {
+  function buildCard(title, extraClass) {
+    stepCount++;
     var card = document.createElement('div');
-    card.className = 'vault-card' + (isError ? ' vault-card--error vault-card--expanded' : '');
+    card.className = 'vault-card' + (extraClass ? ' ' + extraClass : '');
 
-    // Header
     var header = document.createElement('div');
     header.className = 'vault-card__header';
 
-    if (stepLabel) {
-      var tag = document.createElement('span');
-      tag.className = 'vault-card__step-tag';
-      tag.textContent = stepLabel;
-      header.appendChild(tag);
-    }
+    var tag = document.createElement('span');
+    tag.className = 'vault-card__step-tag';
+    tag.textContent = stepCount;
+    header.appendChild(tag);
 
     var titleEl = document.createElement('span');
     titleEl.className = 'vault-card__title';
@@ -161,14 +203,12 @@ var VaultCardManager = (function () {
     chevron.textContent = '\u25B8';
     header.appendChild(chevron);
 
-    // Click to toggle expand
     header.addEventListener('click', function () {
       card.classList.toggle('vault-card--expanded');
     });
 
     card.appendChild(header);
 
-    // Body (hidden by default unless error)
     var body = document.createElement('div');
     body.className = 'vault-card__body';
     card.appendChild(body);
@@ -176,124 +216,186 @@ var VaultCardManager = (function () {
     return card;
   }
 
-  /** Open a new step card */
-  function openStep(label, title, isError) {
-    stepCount++;
-    var stepLabel = label || ('Step ' + stepCount);
-    openCard = buildCard(stepLabel, title, isError);
+  function addCard(title, extraClass) {
+    var card = buildCard(title, extraClass || '');
     if (container) {
-      container.appendChild(openCard);
+      container.appendChild(card);
       scrollToBottom(container.parentElement);
     }
-    return openCard;
+    return card;
   }
 
-  /** Append a key-value line to the open card's body */
-  function appendLine(key, value) {
-    if (!openCard) return;
-    var body = openCard.querySelector('.vault-card__body');
+  function addLine(card, key, value) {
+    var body = card.querySelector('.vault-card__body');
     if (!body) return;
-
     var line = document.createElement('div');
     line.className = 'vault-line';
-
     var keyEl = document.createElement('span');
     keyEl.className = 'vault-line__key';
     keyEl.textContent = key;
-
     var valEl = document.createElement('span');
     valEl.className = 'vault-line__value';
     valEl.textContent = truncate(String(value), 120);
-
     line.appendChild(keyEl);
     line.appendChild(valEl);
     body.appendChild(line);
   }
 
-  /** Append a status line to the open card */
-  function appendStatus(ok, text) {
-    if (!openCard) return;
+  function addStatus(card, ok, text) {
     var status = document.createElement('div');
     status.className = 'vault-card__status ' + (ok ? 'vault-card__status--ok' : 'vault-card__status--error');
     status.textContent = (ok ? '\u2713 ' : '\u2717 ') + text;
-    openCard.appendChild(status);
-
-    // Mark success cards
-    if (ok && !openCard.classList.contains('vault-card--error')) {
-      openCard.classList.add('vault-card--success');
-    }
+    card.appendChild(status);
+    if (ok) card.classList.add('vault-card--success');
   }
 
-  /** Close the current card */
-  function closeCard() {
-    openCard = null;
+  function agentLabel(agent) {
+    return agent === 'alice' ? 'Alice' : agent === 'bob' ? 'Bob' : 'Agent';
   }
 
-  /** Route a protocol event to vault cards */
+  /** Route a protocol event — only create cards for milestones */
   function routeEvent(event) {
     switch (event.type) {
       case 'tool_call': {
-        var toolName = event.payload.tool || '';
-        var title = toolDisplayName(toolName);
-        if (event.agent) {
-          title = (event.agent === 'alice' ? 'Alice' : 'Bob') + ' \u2192 ' + title;
-        }
-        openStep(null, title, false);
-        // Append args as key-value lines
-        var args = event.payload.args || {};
-        var keys = Object.keys(args);
-        for (var i = 0; i < keys.length; i++) {
-          var k = keys[i];
-          var v = typeof args[k] === 'string' ? args[k] : JSON.stringify(args[k]);
-          appendLine(k, v);
-        }
+        // Stash the call context; we decide what to show when the result arrives
+        pendingCall = {
+          tool: event.payload.tool || '',
+          agent: event.agent || '',
+          args: event.payload.args || {},
+        };
         break;
       }
 
       case 'tool_result': {
-        var result = event.payload.result;
-        var isErr = result && (result.error || result.ok === false);
-        var statusText = isErr
-          ? (typeof result.error === 'string' ? result.error : 'Error')
-          : (result && result.status ? result.status : 'OK');
-        appendStatus(!isErr, statusText);
+        if (!pendingCall) break;
+        var call = pendingCall;
+        pendingCall = null;
+        var result = event.payload.result || {};
+        var agent = event.agent || call.agent;
+        var label = agentLabel(agent);
+        var status = result.status || '';
+        var data = result.data || {};
+        var phase = data.phase || '';
+        var state = data.state || '';
+        var userMsg = data.user_message || '';
+        var prev = agentState[agent] || {};
 
-        // Check for signal payload
-        if (result && (result.signal || result.output_signal)) {
-          var signalData = result.signal || result.output_signal;
-          triggerSignalOverlay(JSON.stringify(signalData, null, 2));
+        // get_identity — show once per agent
+        if (call.tool.indexOf('get_identity') >= 0) {
+          var idData = result.data || result;
+          var card = addCard(label + ' identified');
+          if (idData.agent_id) addLine(card, 'agent_id', idData.agent_id);
+          if (idData.known_agents) {
+            var peers = idData.known_agents;
+            if (Array.isArray(peers)) {
+              addLine(card, 'peers', peers.map(function (p) { return p.agent_id || p; }).join(', '));
+            }
+          }
+          addStatus(card, true, 'Ready');
+          break;
         }
 
-        closeCard();
+        // relay_signal — filter to milestones
+        if (call.tool.indexOf('relay_signal') >= 0) {
+          // ERROR — always show
+          if (status === 'ERROR' || result.error) {
+            var errCard = addCard(label + ' — error', 'vault-card--error vault-card--expanded');
+            var errObj = result.error || {};
+            var errMsg = (typeof errObj === 'string' ? errObj : errObj.detail || errObj.code || '') || result.detail || userMsg || 'Unknown error';
+            addLine(errCard, 'detail', errMsg);
+            agentState[agent] = prev;
+            break;
+          }
+
+          // INITIATE mode first call — session starting
+          if (call.args.mode === 'INITIATE' && !prev.initiated) {
+            var card = addCard(label + ' starting session');
+            addStatus(card, true, 'Initiating');
+            agentState[agent] = Object.assign({}, prev, { initiated: true });
+            break;
+          }
+
+          // RESPOND mode first call — responding to invite
+          if (call.args.mode === 'RESPOND' && !prev.responding) {
+            var card = addCard(label + ' responding to invite');
+            addStatus(card, true, 'Listening');
+            agentState[agent] = Object.assign({}, prev, { responding: true });
+            break;
+          }
+
+          // Session created (POLL_RELAY phase, first time)
+          if (phase === 'POLL_RELAY' && !prev.sessionCreated) {
+            var card = addCard('Session created');
+            if (data.session_id) addLine(card, 'session', truncate(data.session_id, 16));
+            addStatus(card, true, 'Waiting for counterparty');
+            agentState[agent] = Object.assign({}, prev, { sessionCreated: true });
+            break;
+          }
+
+          // Joined session (JOIN phase, first time)
+          if (phase === 'JOIN' && !prev.joined) {
+            var card = addCard(label + ' joined session');
+            addStatus(card, true, userMsg || 'Joined');
+            agentState[agent] = Object.assign({}, prev, { joined: true });
+            break;
+          }
+
+          // COMPLETE — the big milestone
+          if (status === 'COMPLETE') {
+            var outputWrap = data.output || result.output || {};
+            var output = outputWrap.output || null;
+            var receipt = outputWrap.receipt || null;
+
+            // Hero result card
+            var card = addCard(label + ' — session complete', 'vault-card--hero vault-card--expanded');
+            if (output) {
+              var outputKeys = Object.keys(output);
+              for (var i = 0; i < outputKeys.length; i++) {
+                addLine(card, outputKeys[i], output[outputKeys[i]]);
+              }
+            }
+            if (receipt && receipt.session_id) {
+              addLine(card, 'receipt', truncate(receipt.session_id, 24));
+            }
+            addStatus(card, true, 'Complete');
+
+            // Notify chat panels
+            if (onOutputSignal && output) {
+              onOutputSignal(agent, output, receipt);
+            }
+
+            agentState[agent] = Object.assign({}, prev, { completed: true });
+            break;
+          }
+
+          // Everything else (repeated PENDING/CALL_AGAIN polling) — suppress
+          break;
+        }
+
+        // Unknown tool — show it
+        var card = addCard(label + ' — ' + call.tool);
+        addStatus(card, !result.error, status || 'OK');
         break;
       }
 
       case 'agent_status': {
         if (event.payload.status === 'completed') {
-          var who = event.agent === 'alice' ? 'Alice' : event.agent === 'bob' ? 'Bob' : 'Agent';
-          openStep('Done', who + ' — session complete', false);
-          appendStatus(true, 'Protocol finished');
-          closeCard();
+          var who = agentLabel(event.agent);
+          var card = addCard(who + ' finished');
+          addStatus(card, true, 'Agent done');
         }
-        // running/idle: handled by dot update in app.js
-        break;
-      }
-
-      case 'system': {
-        var msg = event.payload.message || '';
-        // Skip noise
-        if (msg.startsWith('Recording')) break;
-        openStep(null, msg, false);
-        closeCard();
         break;
       }
 
       case 'error': {
         var errMsg = event.payload.error || 'Unknown error';
-        openStep('Error', errMsg, true);
-        closeCard();
+        var card = addCard('Error', 'vault-card--error vault-card--expanded');
+        addLine(card, 'detail', errMsg);
         break;
       }
+
+      // system events — suppress most noise
+      case 'system': break;
     }
   }
 
@@ -301,10 +403,7 @@ var VaultCardManager = (function () {
     init: init,
     reset: reset,
     routeEvent: routeEvent,
-    openStep: openStep,
-    appendLine: appendLine,
-    appendStatus: appendStatus,
-    closeCard: closeCard,
+    setOutputSignalCallback: setOutputSignalCallback,
   };
 })();
 

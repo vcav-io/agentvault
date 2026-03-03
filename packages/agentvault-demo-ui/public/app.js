@@ -65,6 +65,20 @@
   // ── Init vault card manager ────────────────────────────────
   VaultCardManager.init(els.vaultEvents);
 
+  // When the vault produces an output signal, show result cards in chat panels.
+  // The callback fires once per agent's COMPLETE — render only on the first.
+  var resultCardRendered = false;
+  VaultCardManager.setOutputSignalCallback(function (agent, output, receipt) {
+    if (resultCardRendered) return;
+    resultCardRendered = true;
+    var card1 = createResultCard(output, receipt);
+    var card2 = createResultCard(output, receipt);
+    els.aliceLog.appendChild(card1);
+    scrollToBottom(els.aliceLog);
+    els.bobLog.appendChild(card2);
+    scrollToBottom(els.bobLog);
+  });
+
   // ── Log panel toggle ───────────────────────────────────────
   if (els.logBar) {
     els.logBar.addEventListener('click', function () {
@@ -242,8 +256,19 @@
     els.vaultEvents.textContent = '';
     totalEvents = 0;
     completedAgents = {};
+    resultCardRendered = false;
     els.eventCount.textContent = '0 events';
     VaultCardManager.init(els.vaultEvents);
+    VaultCardManager.setOutputSignalCallback(function (agent, output, receipt) {
+      if (resultCardRendered) return;
+      resultCardRendered = true;
+      var card1 = createResultCard(output, receipt);
+      var card2 = createResultCard(output, receipt);
+      els.aliceLog.appendChild(card1);
+      scrollToBottom(els.aliceLog);
+      els.bobLog.appendChild(card2);
+      scrollToBottom(els.bobLog);
+    });
 
     // Dismiss any open signal overlay
     els.signalOverlay.classList.remove('signal-overlay--visible');

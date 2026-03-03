@@ -263,13 +263,9 @@ body {
 .sim-grid {
   flex: 1;
   display: grid;
-  grid-template-columns: 1fr 1.3fr 1fr;
-  gap: 2px;
+  grid-template-columns: 1.3fr 0.8fr 1.3fr;
+  gap: 10px;
   margin: 12px 12px 0;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  overflow: hidden;
-  background: var(--color-border-subtle);
   min-height: 0;
 }
 
@@ -279,6 +275,8 @@ body {
   overflow: hidden;
   position: relative;
   background: var(--color-bg-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--r-lg);
 }
 
 /* ── Panel dimming ──────────────────────────────────────────── */
@@ -296,7 +294,7 @@ body {
   border-bottom: 1px solid var(--color-border-subtle);
   background: var(--color-bg-elevated);
   flex-shrink: 0;
-  box-shadow: 0 1px 0 var(--color-border-subtle);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
 }
 
 .sim-panel__agent-name {
@@ -359,12 +357,9 @@ body {
 }
 
 .sim-panel__vault-label {
-  font-size: var(--text-xs);
-  color: var(--color-accent-bright);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  font-weight: 500;
-  font-family: var(--mono);
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  font-weight: 600;
 }
 
 /* ── Chat messages area ─────────────────────────────────────── */
@@ -419,7 +414,7 @@ body {
 /* Agent = assistant message (left-aligned, neutral fill) */
 .chat-bubble--agent {
   border-bottom-left-radius: 4px;
-  color: var(--color-text-secondary);
+  color: var(--color-text);
 }
 
 /* Alice panel colours */
@@ -449,6 +444,29 @@ body {
 @keyframes chatIn {
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Result card (in chat panels) ──────────────────────────── */
+.chat-result-card {
+  max-width: 95%;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(80, 176, 112, 0.3);
+  background: rgba(80, 176, 112, 0.06);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--color-text);
+  word-break: break-word;
+  white-space: pre-wrap;
+  animation: chatIn 200ms ease-out;
+}
+
+.chat-result-card__label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-success);
+  letter-spacing: 0.03em;
+  margin-bottom: 6px;
 }
 
 /* ── Chat input bar ────────────────────────────────────────── */
@@ -554,6 +572,17 @@ body {
   border-left: 2px solid rgba(80, 176, 112, 0.4);
 }
 
+.vault-card--hero {
+  border-color: rgba(80, 176, 112, 0.4);
+  background: rgba(80, 176, 112, 0.05);
+}
+
+.vault-card--hero .vault-card__step-tag {
+  color: var(--color-success);
+  border-color: rgba(80, 176, 112, 0.3);
+  background: rgba(80, 176, 112, 0.08);
+}
+
 .vault-card__header {
   display: flex;
   align-items: center;
@@ -579,11 +608,11 @@ body {
 
 .vault-card__step-tag {
   font-size: 10px;
-  color: var(--color-accent);
-  background: rgba(107, 163, 247, 0.08);
+  color: var(--color-text-dim);
+  background: rgba(107, 163, 247, 0.04);
   padding: 1px 6px;
   border-radius: 3px;
-  border: 1px solid rgba(107, 163, 247, 0.15);
+  border: 1px solid var(--color-border);
   white-space: nowrap;
 }
 
@@ -601,9 +630,7 @@ body {
 
 .vault-card--error .vault-card__title {
   color: var(--color-error-bright);
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+  font-weight: 600;
 }
 
 .vault-card__body {

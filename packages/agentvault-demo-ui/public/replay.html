@@ -53,7 +53,7 @@
         <!-- Centre panel: The Vault -->
         <div class="sim-panel sim-panel--vault" id="panel-centre">
           <div class="sim-panel__header">
-            <span class="sim-panel__vault-label">AgentVault &mdash; execution lane</span>
+            <span class="sim-panel__vault-label">Session</span>
           </div>
           <div class="sim-panel__vault-scroll" id="vault-scroll">
             <div class="sim-panel__vault-events" id="vault-events"></div>
@@ -116,6 +116,19 @@
 
     // Init vault card manager
     VaultCardManager.init(els.vaultEvents);
+
+    // Show result cards in chat panels on output signal (once per session)
+    var resultCardRendered = false;
+    VaultCardManager.setOutputSignalCallback(function (agent, output, receipt) {
+      if (resultCardRendered) return;
+      resultCardRendered = true;
+      var card1 = createResultCard(output, receipt);
+      var card2 = createResultCard(output, receipt);
+      els.aliceLog.appendChild(card1);
+      scrollToBottom(els.aliceLog);
+      els.bobLog.appendChild(card2);
+      scrollToBottom(els.bobLog);
+    });
 
     // Log panel toggle
     if (els.logBar) {
@@ -189,6 +202,17 @@
       totalEvents = 0;
       els.eventCount.textContent = '0 events';
       VaultCardManager.init(els.vaultEvents);
+      resultCardRendered = false;
+      VaultCardManager.setOutputSignalCallback(function (agent, output, receipt) {
+        if (resultCardRendered) return;
+        resultCardRendered = true;
+        var card1 = createResultCard(output, receipt);
+        var card2 = createResultCard(output, receipt);
+        els.aliceLog.appendChild(card1);
+        scrollToBottom(els.aliceLog);
+        els.bobLog.appendChild(card2);
+        scrollToBottom(els.bobLog);
+      });
 
       // Dismiss any open signal overlay
       els.signalOverlay.classList.remove('signal-overlay--visible');
