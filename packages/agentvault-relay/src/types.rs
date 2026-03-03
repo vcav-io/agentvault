@@ -63,7 +63,7 @@ pub struct CreateSessionRequest {
 }
 
 fn default_provider() -> String {
-    "anthropic".to_string()
+    String::new() // empty = auto-select first configured provider
 }
 
 /// POST /sessions response body.

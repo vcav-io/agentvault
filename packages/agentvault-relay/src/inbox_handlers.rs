@@ -13,6 +13,7 @@ use tokio_stream::StreamExt;
 use crate::agent_registry::AgentRegistry;
 use crate::error::RelayError;
 use crate::inbox_types::*;
+use crate::resolve_provider;
 use crate::AppState;
 
 // ============================================================================
@@ -43,9 +44,12 @@ fn extract_inbox_agent<'a>(
 pub async fn create_invite_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(request): Json<CreateInviteRequest>,
+    Json(mut request): Json<CreateInviteRequest>,
 ) -> Result<Json<CreateInviteResponse>, RelayError> {
     let agent_id = extract_inbox_agent(&headers, &state.agent_registry)?;
+
+    // Resolve provider (empty string → auto-select first configured)
+    request.provider = resolve_provider(&request.provider, &state)?;
 
     // Resolve from_agent_pubkey: request override > registry default
     let pubkey = request.from_agent_pubkey.clone().or_else(|| {

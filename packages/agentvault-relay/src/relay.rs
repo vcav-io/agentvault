@@ -7,13 +7,14 @@ use vault_family_types::{generate_pair_id, BudgetTier};
 use crate::error::RelayError;
 use crate::prompt_program::{load_model_profile, load_prompt_program};
 use crate::provider::anthropic::AnthropicProvider;
+use crate::provider::gemini::GeminiProvider;
 use crate::provider::openai::OpenAIProvider;
 use crate::provider::ProviderRequest;
 use crate::session::AbortReason;
 use crate::types::{Contract, RelayInput, RelayRequest, RelayResponse};
 use crate::AppState;
 
-const MAX_TOKENS: u32 = 256;
+const MAX_TOKENS: u32 = 1024;
 
 /// Git commit SHA embedded at build time by build.rs.
 /// Falls back to "unknown" in environments where .git/ is not present.
@@ -242,8 +243,11 @@ pub async fn relay_core(
     let inference_start = Utc::now();
     let provider_response = match provider_name {
         "anthropic" => {
+            let api_key = state.anthropic_api_key.clone().ok_or_else(|| {
+                RelayError::ContractValidation("Anthropic API key not configured".to_string())
+            })?;
             let provider = AnthropicProvider::new(
-                state.anthropic_api_key.clone(),
+                api_key,
                 state.anthropic_model_id.clone(),
                 state.anthropic_base_url.clone(),
             )?;
@@ -257,6 +261,17 @@ pub async fn relay_core(
                 api_key,
                 state.openai_model_id.clone(),
                 state.openai_base_url.clone(),
+            )?;
+            provider.call(provider_request).await?
+        }
+        "gemini" => {
+            let api_key = state.gemini_api_key.clone().ok_or_else(|| {
+                RelayError::ContractValidation("Gemini API key not configured".to_string())
+            })?;
+            let provider = GeminiProvider::new(
+                api_key,
+                state.gemini_model_id.clone(),
+                state.gemini_base_url.clone(),
             )?;
             provider.call(provider_request).await?
         }
@@ -405,11 +420,12 @@ pub fn error_to_abort_reason(error: &RelayError) -> AbortReason {
 /// Single-shot relay endpoint handler (POST /relay).
 /// Delegates to `relay_core`.
 pub async fn relay(request: RelayRequest, state: &AppState) -> Result<RelayResponse, RelayError> {
+    let provider = crate::resolve_provider(&request.provider, state)?;
     let (result, _timing) = relay_core(
         &request.contract,
         &request.input_a,
         &request.input_b,
-        &request.provider,
+        &provider,
         state,
     )
     .await?;

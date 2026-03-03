@@ -40,6 +40,7 @@ import {
 } from './agent-loop.js';
 import { AnthropicProvider } from './providers/anthropic.js';
 import { OpenAIProvider } from './providers/openai.js';
+import { GeminiProvider } from './providers/gemini.js';
 import type { LLMProvider } from './providers/types.js';
 
 // ── Constants ────────────────────────────────────────────────────────────
@@ -74,8 +75,17 @@ function createProvider(): LLMProvider {
   if (provider === 'anthropic') {
     const apiKey = process.env['ANTHROPIC_API_KEY'];
     if (!apiKey) throw new Error('ANTHROPIC_API_KEY is required when PROVIDER=anthropic');
-    console.log('Using Anthropic provider');
-    return new AnthropicProvider(apiKey);
+    const model = process.env['MODEL'];
+    console.log(`Using Anthropic provider${model ? ` (model: ${model})` : ''}`);
+    return new AnthropicProvider(apiKey, model);
+  }
+
+  if (provider === 'gemini') {
+    const apiKey = process.env['GEMINI_API_KEY'];
+    if (!apiKey) throw new Error('GEMINI_API_KEY is required when PROVIDER=gemini');
+    const model = process.env['MODEL'];
+    console.log(`Using Gemini provider${model ? ` (model: ${model})` : ''}`);
+    return new GeminiProvider(apiKey, model);
   }
 
   // Auto-detection fallback
@@ -89,8 +99,13 @@ function createProvider(): LLMProvider {
     return new OpenAIProvider(process.env['OPENAI_API_KEY']);
   }
 
+  if (process.env['GEMINI_API_KEY']) {
+    console.warn('WARNING: PROVIDER not set. Auto-detected Gemini from API key. Set PROVIDER=gemini to suppress this warning.');
+    return new GeminiProvider(process.env['GEMINI_API_KEY']);
+  }
+
   throw new Error(
-    'No LLM provider configured. Set PROVIDER=anthropic (with ANTHROPIC_API_KEY) or PROVIDER=openai (with OPENAI_API_KEY) in .env',
+    'No LLM provider configured. Set PROVIDER=anthropic|openai|gemini with the matching API key in .env',
   );
 }
 
@@ -106,6 +121,14 @@ function createHeartbeatProvider(): LLMProvider {
     return new OpenAIProvider(apiKey, model);
   }
 
+  if (provider === 'gemini') {
+    const apiKey = process.env['GEMINI_API_KEY'];
+    if (!apiKey) throw new Error('GEMINI_API_KEY is required when PROVIDER=gemini');
+    const model = process.env['HEARTBEAT_MODEL'] ?? 'gemini-2.5-flash-lite';
+    console.log(`Heartbeat model: ${model}`);
+    return new GeminiProvider(apiKey, model);
+  }
+
   if (provider === 'anthropic' || process.env['ANTHROPIC_API_KEY']) {
     const apiKey = process.env['ANTHROPIC_API_KEY'];
     if (!apiKey) throw new Error('ANTHROPIC_API_KEY is required for heartbeat provider');
@@ -118,6 +141,12 @@ function createHeartbeatProvider(): LLMProvider {
     const model = process.env['HEARTBEAT_MODEL'] ?? 'gpt-4o-mini';
     console.log(`Heartbeat model: ${model}`);
     return new OpenAIProvider(process.env['OPENAI_API_KEY'], model);
+  }
+
+  if (process.env['GEMINI_API_KEY']) {
+    const model = process.env['HEARTBEAT_MODEL'] ?? 'gemini-2.5-flash-lite';
+    console.log(`Heartbeat model: ${model}`);
+    return new GeminiProvider(process.env['GEMINI_API_KEY'], model);
   }
 
   throw new Error('No API key found for heartbeat provider');
@@ -168,7 +197,7 @@ function loadPrompt(name: string): string {
   if (name === 'alice') {
     return 'I need your help with a private mediation. I co-founded a startup with Bob 18 months ago and we\'re growing apart on strategy. I believe we need to pivot toward enterprise sales — revenue is flat despite developer community traction. I\'m worried Bob is too emotionally attached to the community to see the business reality. I want to find a compromise, not blow up the partnership. Please start a private mediation with Bob.';
   }
-  return 'I\'m really struggling with where my startup is heading. Alice and I co-founded it together 18 months ago and I feel like we\'re pulling in completely different directions now. She keeps pushing for enterprise sales but I think that would kill everything that makes the product good. The developer community we\'ve built is real — people genuinely love what we\'re making — but Alice treats that like it doesn\'t matter if it\'s not converting to revenue. I don\'t know what to do.';
+  return 'I\'m really struggling with where my startup is heading. Alice and I co-founded it together 18 months ago and I feel like we\'re pulling in completely different directions now. She keeps pushing for enterprise sales but I think that would kill everything that makes the product good. The developer community we\'ve built is real — people genuinely love what we\'re making — but Alice treats that like it doesn\'t matter if it\'s not converting to revenue. I don\'t know what to do.\n\nAlice mentioned she might set up a private mediation for us. When her invite arrives in your inbox, accept it using mode: RESPOND (not INITIATE — she is the one starting the session). Include your private perspective as my_input.';
 }
 
 const SYSTEM_PROMPT = `You are a helpful AI assistant participating in a private mediation session.

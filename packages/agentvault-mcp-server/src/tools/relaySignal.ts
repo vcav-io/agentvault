@@ -977,7 +977,6 @@ async function phaseInvite(
     const resp = await transport.createRelayInvite({
       to_agent_id: counterparty,
       contract,
-      provider: 'anthropic',
       purpose_code: purposeHint ?? 'CUSTOM',
     });
 

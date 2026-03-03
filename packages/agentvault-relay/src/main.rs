@@ -16,7 +16,7 @@ async fn main() {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
-    let api_key = std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY must be set");
+    let anthropic_api_key = std::env::var("ANTHROPIC_API_KEY").ok();
     let model_id =
         std::env::var("VCAV_MODEL_ID").unwrap_or_else(|_| "claude-sonnet-4-6".to_string());
     let prompt_dir =
@@ -55,6 +55,11 @@ async fn main() {
     let openai_model_id =
         std::env::var("VCAV_OPENAI_MODEL_ID").unwrap_or_else(|_| "gpt-4o".to_string());
     let openai_base_url = std::env::var("OPENAI_BASE_URL").ok();
+
+    let gemini_api_key = std::env::var("GEMINI_API_KEY").ok();
+    let gemini_model_id =
+        std::env::var("VCAV_GEMINI_MODEL_ID").unwrap_or_else(|_| "gemini-2.5-flash".to_string());
+    let gemini_base_url = std::env::var("GEMINI_BASE_URL").ok();
 
     // Validate model profile lockfile before binding to port.
     // Exits with a non-zero code on hash mismatch.
@@ -230,18 +235,34 @@ async fn main() {
     // Start background inbox reaper
     inbox_store.clone().start_reaper();
 
+    if anthropic_api_key.is_none() && openai_api_key.is_none() && gemini_api_key.is_none() {
+        tracing::error!(
+            "No inference providers configured. Set at least one of ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY."
+        );
+        std::process::exit(1);
+    }
+
+    if anthropic_api_key.is_some() {
+        tracing::info!(model_id = %model_id, "Anthropic provider enabled");
+    }
     if openai_api_key.is_some() {
         tracing::info!(model_id = %openai_model_id, "OpenAI provider enabled");
+    }
+    if gemini_api_key.is_some() {
+        tracing::info!(model_id = %gemini_model_id, "Gemini provider enabled");
     }
 
     let state = Arc::new(AppState {
         signing_key,
-        anthropic_api_key: api_key,
+        anthropic_api_key,
         anthropic_model_id: model_id,
         anthropic_base_url,
         openai_api_key,
         openai_model_id,
         openai_base_url,
+        gemini_api_key,
+        gemini_model_id,
+        gemini_base_url,
         prompt_program_dir: prompt_dir,
         session_store,
         enforcement_policy: loaded_policy,

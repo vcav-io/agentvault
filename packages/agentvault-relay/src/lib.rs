@@ -41,12 +41,15 @@ const GIT_SHA: &str = env!("VCAV_GIT_SHA");
 
 pub struct AppState {
     pub signing_key: SigningKey,
-    pub anthropic_api_key: String,
+    pub anthropic_api_key: Option<String>,
     pub anthropic_model_id: String,
     pub anthropic_base_url: Option<String>,
     pub openai_api_key: Option<String>,
     pub openai_model_id: String,
     pub openai_base_url: Option<String>,
+    pub gemini_api_key: Option<String>,
+    pub gemini_model_id: String,
+    pub gemini_base_url: Option<String>,
     pub prompt_program_dir: String,
     pub session_store: SessionStore,
     /// Loaded enforcement policy — rules read at runtime by the output guard.
@@ -75,7 +78,37 @@ fn extract_bearer_token(headers: &HeaderMap) -> Result<&str, RelayError> {
 }
 
 // ============================================================================
-// Health and capabilities (unchanged)
+// Provider resolution
+// ============================================================================
+
+/// Resolve a requested provider string to an available provider.
+/// Empty string means auto-select the first configured provider.
+pub fn resolve_provider(requested: &str, state: &AppState) -> Result<String, RelayError> {
+    match requested {
+        "" => {
+            if state.anthropic_api_key.is_some() {
+                Ok("anthropic".to_string())
+            } else if state.openai_api_key.is_some() {
+                Ok("openai".to_string())
+            } else if state.gemini_api_key.is_some() {
+                Ok("gemini".to_string())
+            } else {
+                Err(RelayError::ContractValidation(
+                    "no inference providers configured".to_string(),
+                ))
+            }
+        }
+        "anthropic" if state.anthropic_api_key.is_some() => Ok("anthropic".to_string()),
+        "openai" if state.openai_api_key.is_some() => Ok("openai".to_string()),
+        "gemini" if state.gemini_api_key.is_some() => Ok("gemini".to_string()),
+        other => Err(RelayError::ContractValidation(format!(
+            "provider '{other}' is not configured on this relay"
+        ))),
+    }
+}
+
+// ============================================================================
+// Health and capabilities
 // ============================================================================
 
 async fn health_handler() -> Json<HealthResponse> {
@@ -88,9 +121,15 @@ async fn health_handler() -> Json<HealthResponse> {
 }
 
 async fn capabilities_handler(State(state): State<Arc<AppState>>) -> Json<CapabilitiesResponse> {
-    let mut providers = vec!["anthropic"];
+    let mut providers = Vec::new();
+    if state.anthropic_api_key.is_some() {
+        providers.push("anthropic");
+    }
     if state.openai_api_key.is_some() {
         providers.push("openai");
+    }
+    if state.gemini_api_key.is_some() {
+        providers.push("gemini");
     }
     Json(CapabilitiesResponse {
         execution_lane: "API_MEDIATED",
@@ -126,16 +165,8 @@ async fn create_session_handler(
     State(state): State<Arc<AppState>>,
     Json(request): Json<CreateSessionRequest>,
 ) -> Result<Json<CreateSessionResponse>, RelayError> {
-    // Validate provider
-    match request.provider.as_str() {
-        "anthropic" => {}
-        "openai" if state.openai_api_key.is_some() => {}
-        other => {
-            return Err(RelayError::ContractValidation(format!(
-                "unsupported provider: {other}"
-            )));
-        }
-    }
+    // Resolve and validate provider
+    let provider = resolve_provider(&request.provider, &state)?;
 
     // Validate contract has exactly 2 participants
     if request.contract.participants.len() != 2 {
@@ -150,7 +181,7 @@ async fn create_session_handler(
     // Create session with tokens
     let (session_id, tokens) = state
         .session_store
-        .create(request.contract, contract_hash.clone(), request.provider)
+        .create(request.contract, contract_hash.clone(), provider)
         .await;
 
     Ok(Json(CreateSessionResponse {
