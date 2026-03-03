@@ -1221,7 +1221,17 @@ async function phasePollRelay(handle: RelayHandle): Promise<ToolResponse<RelaySi
     }
     isFirstCheck = false;
 
-    const status = await httpGetStatus(config, handle.sessionId, handle.tokens.initiatorRead);
+    let status;
+    try {
+      status = await httpGetStatus(config, handle.sessionId, handle.tokens.initiatorRead);
+    } catch (err) {
+      console.warn(
+        `phasePollRelay: transient status check failed for session ${handle.sessionId}: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+      if (Date.now() >= pollDeadline) break;
+      continue; // transient — retry within budget
+    }
 
     if (status.state === 'COMPLETED') {
       try {
@@ -1577,7 +1587,17 @@ async function phaseJoin(
     }
     isFirstJoinCheck = false;
 
-    const status = await httpGetStatus(config, handle.sessionId, handle.tokens.read);
+    let status;
+    try {
+      status = await httpGetStatus(config, handle.sessionId, handle.tokens.read);
+    } catch (err) {
+      console.warn(
+        `phaseJoin: transient status check failed for session ${handle.sessionId}: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+      if (Date.now() >= pollDeadline) break;
+      continue; // transient — retry within budget
+    }
 
     if (status.state === 'COMPLETED') {
       try {

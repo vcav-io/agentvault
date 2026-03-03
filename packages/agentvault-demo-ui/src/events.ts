@@ -49,6 +49,13 @@ export class EventBus {
     this.jsonlStream.on('error', (err) => {
       console.error('JSONL recording error:', err.message);
       this.jsonlStream = null;
+      // Surface to connected clients so UI can warn user
+      this.emit({
+        ts: new Date().toISOString(),
+        type: 'system',
+        agent: 'system',
+        payload: { message: `Recording failed: ${err.message}. Run will not be replayable.` },
+      });
     });
     return filename;
   }
@@ -86,7 +93,11 @@ export class EventBus {
     for (const client of this.clients) {
       try {
         client.write(`data: ${json}\n\n`);
-      } catch {
+      } catch (err) {
+        console.warn(
+          `EventBus: SSE client write failed, removing (${this.clients.size - 1} remaining):`,
+          err instanceof Error ? err.message : String(err),
+        );
         this.clients.delete(client);
       }
     }

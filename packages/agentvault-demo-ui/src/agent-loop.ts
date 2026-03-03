@@ -291,8 +291,11 @@ export async function runHeartbeatLoop(
 // ── sendUserMessage ──────────────────────────────────────────────────────
 
 /**
- * Send an initial user message and trigger an immediate LLM burst.
- * Called when the user clicks Start.
+ * Send a user message and trigger an immediate LLM burst.
+ * Called when the user clicks Start or sends a mid-run chat message.
+ *
+ * The message push and burst are both inside the queue to prevent
+ * concurrent mutation of state.messages during a running burst.
  */
 export async function sendUserMessage(
   params: BurstParams & { queue: ReturnType<typeof createQueue> },
@@ -301,10 +304,12 @@ export async function sendUserMessage(
   const { name, events, state, queue } = params;
 
   state.started = true;
-  state.messages.push({ role: 'user', content: message });
   events.emitSystem(`${name}: User message received`);
 
-  await queue.enqueue(() => runLLMBurst(params));
+  await queue.enqueue(() => {
+    state.messages.push({ role: 'user', content: message });
+    return runLLMBurst(params);
+  });
 }
 
 export { createQueue };
