@@ -66,8 +66,12 @@ export function createToolRegistry(config: ToolRegistryConfig): ToolRegistry {
 
   /**
    * Set VCAV_AGENT_ID before each handler call.
-   * Tool handlers read this synchronously at function entry (before any await),
-   * so this is safe in single-threaded Node.js even with concurrent registries.
+   *
+   * SAFETY NOTE: This is safe only because handleRelaySignal captures agentId
+   * from transport.agentId at function entry (before any await). The env var is
+   * a fallback for code paths that don't have access to the transport. Long-lived
+   * awaits (e.g. bounded poll in phaseDiscover) must NOT re-read this env var —
+   * they use handle.agentId instead.
    */
   function setAgentEnv(): void {
     if (agentId) {
@@ -93,7 +97,7 @@ export function createToolRegistry(config: ToolRegistryConfig): ToolRegistry {
         case 'agentvault.relay_signal':
           return registry.handleRelaySignal(args as RelaySignalArgs);
         default:
-          throw new Error(`Unknown tool: ${toolName}`);
+          throw new Error(`Unknown tool: ${toolName}. Available: agentvault.get_identity, agentvault.relay_signal`);
       }
     },
 

@@ -95,20 +95,32 @@ function createProvider(): LLMProvider {
 }
 
 function createHeartbeatProvider(): LLMProvider {
-  const providerName = process.env['PROVIDER']?.toLowerCase();
+  const provider = process.env['PROVIDER']?.toLowerCase();
 
-  if (providerName === 'openai' || (!providerName && process.env['OPENAI_API_KEY'])) {
-    const apiKey = process.env['OPENAI_API_KEY']!;
+  // Match createProvider()'s detection order: explicit > Anthropic > OpenAI
+  if (provider === 'openai') {
+    const apiKey = process.env['OPENAI_API_KEY'];
+    if (!apiKey) throw new Error('OPENAI_API_KEY is required when PROVIDER=openai');
     const model = process.env['HEARTBEAT_MODEL'] ?? 'gpt-4o-mini';
     console.log(`Heartbeat model: ${model}`);
     return new OpenAIProvider(apiKey, model);
   }
 
-  // Anthropic (explicit or auto-detected)
-  const apiKey = process.env['ANTHROPIC_API_KEY']!;
-  const model = process.env['HEARTBEAT_MODEL'] ?? 'claude-haiku-4-5-20251001';
-  console.log(`Heartbeat model: ${model}`);
-  return new AnthropicProvider(apiKey, model);
+  if (provider === 'anthropic' || process.env['ANTHROPIC_API_KEY']) {
+    const apiKey = process.env['ANTHROPIC_API_KEY'];
+    if (!apiKey) throw new Error('ANTHROPIC_API_KEY is required for heartbeat provider');
+    const model = process.env['HEARTBEAT_MODEL'] ?? 'claude-haiku-4-5-20251001';
+    console.log(`Heartbeat model: ${model}`);
+    return new AnthropicProvider(apiKey, model);
+  }
+
+  if (process.env['OPENAI_API_KEY']) {
+    const model = process.env['HEARTBEAT_MODEL'] ?? 'gpt-4o-mini';
+    console.log(`Heartbeat model: ${model}`);
+    return new OpenAIProvider(process.env['OPENAI_API_KEY'], model);
+  }
+
+  throw new Error('No API key found for heartbeat provider');
 }
 
 // ── Ed25519 identity helpers ─────────────────────────────────────────────
@@ -152,7 +164,7 @@ function buildDescriptor(agentId: string, seedHex: string, pubKeyHex: string, ht
 function loadPrompt(name: string): string {
   const promptPath = path.resolve(DEMO_DIR, `../../demo/${name}-prompt.md`);
   if (fs.existsSync(promptPath)) return fs.readFileSync(promptPath, 'utf-8');
-  // Fallback built-in prompts
+  console.warn(`Prompt file not found at ${promptPath}, using built-in fallback for ${name}`);
   if (name === 'alice') {
     return 'I need your help with a private mediation. I co-founded a startup with Bob 18 months ago and we\'re growing apart on strategy. I believe we need to pivot toward enterprise sales — revenue is flat despite developer community traction. I\'m worried Bob is too emotionally attached to the community to see the business reality. I want to find a compromise, not blow up the partnership. Please start a private mediation with Bob.';
   }
@@ -281,9 +293,11 @@ async function setupAndStartHeartbeats(): Promise<void> {
 
   // Fire and forget — these loops never resolve
   runHeartbeatLoop(aliceParams, abortController.signal).catch((err) => {
+    console.error('Alice heartbeat loop error:', err);
     events.emitSystem(`Alice heartbeat error: ${err instanceof Error ? err.message : 'Unknown'}`);
   });
   runHeartbeatLoop(bobParams, abortController.signal).catch((err) => {
+    console.error('Bob heartbeat loop error:', err);
     events.emitSystem(`Bob heartbeat error: ${err instanceof Error ? err.message : 'Unknown'}`);
   });
 
@@ -352,8 +366,14 @@ app.post('/api/start', async (req, res) => {
 
     // Send initial messages simultaneously — triggers immediate LLM bursts
     // These don't await each other; they both enqueue bursts independently
-    sendUserMessage(aliceParams, alicePrompt);
-    sendUserMessage(bobParams, bobPrompt);
+    sendUserMessage(aliceParams, alicePrompt).catch((err) => {
+      console.error('Alice initial message failed:', err);
+      events.emitSystem(`Alice start error: ${err instanceof Error ? err.message : 'Unknown'}`);
+    });
+    sendUserMessage(bobParams, bobPrompt).catch((err) => {
+      console.error('Bob initial message failed:', err);
+      events.emitSystem(`Bob start error: ${err instanceof Error ? err.message : 'Unknown'}`);
+    });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ error: msg });
@@ -367,7 +387,13 @@ app.post('/api/reset', async (_req, res) => {
     abortController.abort();
 
     // Stop Bob's transport
-    try { await bobTransport.stop(); } catch { /* best effort */ }
+    try {
+      await bobTransport.stop();
+    } catch (stopErr) {
+      const msg = stopErr instanceof Error ? stopErr.message : String(stopErr);
+      console.error('Failed to stop Bob transport during reset:', msg);
+      events.emitSystem(`Warning: Bob transport stop failed: ${msg}`);
+    }
 
     // Clear agent state
     aliceState.messages = [];
@@ -424,6 +450,14 @@ app.get('/api/replay', (req, res) => {
 
   replayToSSE(filePath, res, speed).catch((error) => {
     console.error('Replay error:', error);
+    try {
+      const errEvent = JSON.stringify({
+        type: 'error', agent: 'system', ts: new Date().toISOString(),
+        payload: { error: `Replay failed: ${error instanceof Error ? error.message : String(error)}` },
+      });
+      res.write(`data: ${errEvent}\n\n`);
+      res.end();
+    } catch { /* client already disconnected */ }
   });
 });
 

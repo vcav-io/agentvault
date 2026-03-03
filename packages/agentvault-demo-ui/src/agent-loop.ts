@@ -28,7 +28,7 @@ const HEARTBEAT_PROMPT = '[Heartbeat] Run your agent heartbeat checklist.';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
-export type BurstResult = 'idle' | 'session_completed' | 'max_turns';
+export type BurstResult = 'idle' | 'session_completed' | 'max_turns' | 'error';
 
 export type AgentStatus = 'idle' | 'running' | 'completed' | 'error';
 
@@ -46,7 +46,14 @@ function createQueue() {
   let queue: Promise<void> = Promise.resolve();
 
   function enqueue(fn: () => Promise<unknown>): Promise<void> {
-    queue = queue.then(fn, fn).then(() => {});
+    queue = queue
+      .then(fn, (prevErr) => {
+        console.error('Previous queue item failed:', prevErr);
+        return fn();
+      })
+      .then(() => {}, (err) => {
+        console.error('Queue item failed:', err);
+      });
     return queue;
   }
 
@@ -186,7 +193,10 @@ async function runLLMBurst(
             return 'session_completed';
           }
         } catch {
-          // Not JSON or no state field — continue
+          // Tool results are not always JSON (e.g. plain text responses).
+          if (tr.content.trimStart().startsWith('{') || tr.content.trimStart().startsWith('[')) {
+            console.warn(`Failed to parse JSON-like tool result: ${tr.content.substring(0, 200)}`);
+          }
         }
       }
     }
@@ -205,7 +215,7 @@ async function runLLMBurst(
       payload: { error: errorMsg },
     });
     events.emitStatus(name, 'error', errorMsg);
-    return 'idle';
+    return 'error';
   }
 }
 

@@ -100,7 +100,7 @@ describe('handleGetIdentity', () => {
       expect(result.data?.next_action?.reason).toBe('pending_invite');
     });
 
-    it('omits pending_invites when inboxService throws', async () => {
+    it('omits pending_invites and adds warning hint when inboxService throws', async () => {
       const inboxService: InboxService = {
         checkInbox: async () => {
           throw new Error('network error');
@@ -110,7 +110,7 @@ describe('handleGetIdentity', () => {
       expect(result.ok).toBe(true);
       expect(result.data).not.toHaveProperty('pending_invites');
       expect(result.data).not.toHaveProperty('next_action');
-      expect(result.data).not.toHaveProperty('inbox_hint');
+      expect(result.data?.inbox_hint).toContain('inbox check failed');
     });
   });
 });

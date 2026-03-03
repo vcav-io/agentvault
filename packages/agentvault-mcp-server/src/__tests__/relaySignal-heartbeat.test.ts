@@ -492,8 +492,8 @@ describe('non-blocking phases', () => {
     expect(data.phase).toBe('DISCOVER');
     expect(data.resume_strategy).toBe('DEFERRED');
     expect(data.next_update_seconds).toBe(30);
-    // Bounded poll should have checked inbox multiple times
-    expect(transport.checkInbox).toHaveBeenCalled();
+    // Bounded poll should have peeked inbox (non-destructive read)
+    expect(transport.peekInbox).toHaveBeenCalled();
   });
 
   it('phaseDiscover finds invite on second poll attempt', async () => {
@@ -513,9 +513,9 @@ describe('non-blocking phases', () => {
       contract_hash: 'relay-hash-mock',
       template_id: 'mediation-demo.v1.standard',
     };
-    // First check returns empty, second returns the invite
+    // First peek returns empty, second returns the invite
     const transport = createMockAfalTransport([]);
-    (transport.checkInbox as ReturnType<typeof vi.fn>)
+    (transport.peekInbox as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce({ invites: [] })
       .mockResolvedValueOnce({ invites: [invite] });
 
@@ -528,7 +528,7 @@ describe('non-blocking phases', () => {
     expect(data.state).toBe('AWAITING');
     expect(data.phase).toBe('JOIN');
     expect(data.resume_strategy).toBe('IMMEDIATE');
-    expect(transport.checkInbox).toHaveBeenCalledTimes(2);
+    expect(transport.peekInbox).toHaveBeenCalledTimes(2);
   });
 
   it('phaseDiscover returns IMMEDIATE when invite found (phase transitions to JOIN)', async () => {

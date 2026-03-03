@@ -77,7 +77,12 @@ export class OpenAIProvider implements LLMProvider {
           let input: Record<string, unknown> = {};
           try {
             input = JSON.parse(tc.function.arguments) as Record<string, unknown>;
-          } catch {
+          } catch (parseErr) {
+            console.warn(
+              `Failed to parse OpenAI tool arguments for ${tc.function.name}:`,
+              tc.function.arguments.substring(0, 200),
+              parseErr instanceof Error ? parseErr.message : parseErr,
+            );
             input = { _raw: tc.function.arguments };
           }
           const tu: ToolUseContent = {

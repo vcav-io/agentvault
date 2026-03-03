@@ -45,6 +45,10 @@ export class EventBus {
     const filename = `run-${timestamp}.jsonl`;
     this.runFile = path.join(runsDir, filename);
     this.jsonlStream = fs.createWriteStream(this.runFile, { flags: 'a' });
+    this.jsonlStream.on('error', (err) => {
+      console.error('JSONL recording error:', err.message);
+      this.jsonlStream = null;
+    });
     return filename;
   }
 
@@ -79,7 +83,11 @@ export class EventBus {
 
     // SSE broadcast
     for (const client of this.clients) {
-      client.write(`data: ${json}\n\n`);
+      try {
+        client.write(`data: ${json}\n\n`);
+      } catch {
+        this.clients.delete(client);
+      }
     }
 
     // JSONL recording

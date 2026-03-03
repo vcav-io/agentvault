@@ -33,13 +33,17 @@ export async function replayToSSE(
     crlfDelay: Infinity,
   });
 
+  let skippedLines = 0;
   for await (const line of rl) {
     if (!line.trim()) continue;
     try {
       events.push(JSON.parse(line) as DemoEvent);
     } catch {
-      // Skip malformed lines
+      skippedLines++;
     }
+  }
+  if (skippedLines > 0) {
+    console.warn(`Replay: ${skippedLines} malformed line(s) skipped in ${filePath}`);
   }
 
   if (events.length === 0) {

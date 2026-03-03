@@ -48,9 +48,11 @@ export async function handleGetIdentity(
       } else {
         result.inbox_hint = 'No pending invites.';
       }
-    } catch {
+    } catch (err) {
       // Best-effort: omit pending_invites entirely on failure.
       // Do NOT emit 0 — that would falsely indicate empty inbox.
+      console.error('getIdentity: inbox check failed:', err instanceof Error ? err.message : String(err));
+      result.inbox_hint = 'Warning: inbox check failed — call relay_signal in RESPOND mode to check manually.';
     }
   }
 

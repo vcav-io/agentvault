@@ -98,7 +98,9 @@ cleanup() {
     kill "${RELAY_PID}" 2>/dev/null || true
   fi
   # Kill stale AFAL server
-  lsof -ti:3201 2>/dev/null | xargs kill 2>/dev/null || true
+  if command -v lsof &>/dev/null; then
+    lsof -ti:3201 2>/dev/null | xargs kill 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT INT TERM
 
@@ -165,6 +167,10 @@ DEMO_PID=$!
 sleep 2
 if ! curl -sf "http://localhost:3200" &>/dev/null; then
   sleep 3
+  if ! curl -sf "http://localhost:3200" &>/dev/null; then
+    log_error "Demo UI server failed to start. Check the output above for errors."
+    exit 1
+  fi
 fi
 
 log_success "Demo UI running at http://localhost:3200"

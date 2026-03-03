@@ -43,8 +43,10 @@ while [[ $# -gt 0 ]]; do
         rm -f /tmp/vcav-demo-relay.pid
       fi
       # Kill any relay on port 3100 and AFAL server on port 3201
-      lsof -ti:3100 2>/dev/null | xargs kill 2>/dev/null || true
-      lsof -ti:3201 2>/dev/null | xargs kill 2>/dev/null || true
+      if command -v lsof &>/dev/null; then
+        lsof -ti:3100 2>/dev/null | xargs kill 2>/dev/null || true
+        lsof -ti:3201 2>/dev/null | xargs kill 2>/dev/null || true
+      fi
       # Remove workspace dirs
       rm -rf /tmp/vcav-demo-*
       log_success "Demo cleaned up"
@@ -60,7 +62,7 @@ done
 # Preflight
 # ---------------------------------------------------------------------------
 
-for cmd in node openssl curl; do
+for cmd in node openssl curl python3; do
   if ! command -v "$cmd" &>/dev/null; then
     log_error "Required command not found: ${cmd}"
     exit 1

@@ -1307,7 +1307,7 @@ async function phaseDiscover(
     }
     isFirstCheck = false;
 
-    const response = await transport.checkInbox();
+    const response = await transport.peekInbox();
     const invites: AfalInviteMessage[] = response.invites ?? [];
 
     // Track whether we found invites from the sender that failed contract matching.
@@ -1375,7 +1375,7 @@ async function phaseDiscover(
       // for expected_contract_hash verification at the relay).
       let relayContractHash: string | undefined;
       if (handle.expectedPurpose) {
-        const myId = process.env['VCAV_AGENT_ID'] ?? '';
+        const myId = handle.agentId;
         try {
           const relayContract = buildRelayContract(handle.expectedPurpose, [
             handle.counterparty,
