@@ -40,6 +40,7 @@ import {
 } from './agent-loop.js';
 import { AnthropicProvider } from './providers/anthropic.js';
 import { OpenAIProvider } from './providers/openai.js';
+import { GeminiProvider } from './providers/gemini.js';
 import type { LLMProvider } from './providers/types.js';
 
 // ── Constants ────────────────────────────────────────────────────────────
@@ -74,8 +75,17 @@ function createProvider(): LLMProvider {
   if (provider === 'anthropic') {
     const apiKey = process.env['ANTHROPIC_API_KEY'];
     if (!apiKey) throw new Error('ANTHROPIC_API_KEY is required when PROVIDER=anthropic');
-    console.log('Using Anthropic provider');
-    return new AnthropicProvider(apiKey);
+    const model = process.env['MODEL'];
+    console.log(`Using Anthropic provider${model ? ` (model: ${model})` : ''}`);
+    return new AnthropicProvider(apiKey, model);
+  }
+
+  if (provider === 'gemini') {
+    const apiKey = process.env['GEMINI_API_KEY'];
+    if (!apiKey) throw new Error('GEMINI_API_KEY is required when PROVIDER=gemini');
+    const model = process.env['MODEL'];
+    console.log(`Using Gemini provider${model ? ` (model: ${model})` : ''}`);
+    return new GeminiProvider(apiKey, model);
   }
 
   // Auto-detection fallback
@@ -89,8 +99,13 @@ function createProvider(): LLMProvider {
     return new OpenAIProvider(process.env['OPENAI_API_KEY']);
   }
 
+  if (process.env['GEMINI_API_KEY']) {
+    console.warn('WARNING: PROVIDER not set. Auto-detected Gemini from API key. Set PROVIDER=gemini to suppress this warning.');
+    return new GeminiProvider(process.env['GEMINI_API_KEY']);
+  }
+
   throw new Error(
-    'No LLM provider configured. Set PROVIDER=anthropic (with ANTHROPIC_API_KEY) or PROVIDER=openai (with OPENAI_API_KEY) in .env',
+    'No LLM provider configured. Set PROVIDER=anthropic|openai|gemini with the matching API key in .env',
   );
 }
 
@@ -106,6 +121,14 @@ function createHeartbeatProvider(): LLMProvider {
     return new OpenAIProvider(apiKey, model);
   }
 
+  if (provider === 'gemini') {
+    const apiKey = process.env['GEMINI_API_KEY'];
+    if (!apiKey) throw new Error('GEMINI_API_KEY is required when PROVIDER=gemini');
+    const model = process.env['HEARTBEAT_MODEL'] ?? 'gemini-2.5-flash-lite';
+    console.log(`Heartbeat model: ${model}`);
+    return new GeminiProvider(apiKey, model);
+  }
+
   if (provider === 'anthropic' || process.env['ANTHROPIC_API_KEY']) {
     const apiKey = process.env['ANTHROPIC_API_KEY'];
     if (!apiKey) throw new Error('ANTHROPIC_API_KEY is required for heartbeat provider');
@@ -118,6 +141,12 @@ function createHeartbeatProvider(): LLMProvider {
     const model = process.env['HEARTBEAT_MODEL'] ?? 'gpt-4o-mini';
     console.log(`Heartbeat model: ${model}`);
     return new OpenAIProvider(process.env['OPENAI_API_KEY'], model);
+  }
+
+  if (process.env['GEMINI_API_KEY']) {
+    const model = process.env['HEARTBEAT_MODEL'] ?? 'gemini-2.5-flash-lite';
+    console.log(`Heartbeat model: ${model}`);
+    return new GeminiProvider(process.env['GEMINI_API_KEY'], model);
   }
 
   throw new Error('No API key found for heartbeat provider');

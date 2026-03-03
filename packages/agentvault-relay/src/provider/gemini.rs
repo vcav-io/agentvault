@@ -72,6 +72,7 @@ impl GeminiProvider {
             "generationConfig": {
                 "maxOutputTokens": request.max_tokens,
                 "temperature": 0.0,
+                "thinkingConfig": { "thinkingBudget": 0 }
             }
         });
 
@@ -155,13 +156,19 @@ fn extract_text(response: &Value) -> Result<String, RelayError> {
     let candidate = response
         .get("candidates")
         .and_then(|v| v.get(0))
-        .ok_or_else(|| RelayError::Provider("response missing candidates".to_string()))?;
+        .ok_or_else(|| {
+            tracing::debug!(response = %response, "Gemini response missing candidates");
+            RelayError::Provider("response missing candidates".to_string())
+        })?;
 
     let parts = candidate
         .get("content")
         .and_then(|v| v.get("parts"))
         .and_then(|v| v.as_array())
-        .ok_or_else(|| RelayError::Provider("candidate missing content parts".to_string()))?;
+        .ok_or_else(|| {
+            tracing::debug!(candidate = %candidate, "Gemini candidate missing content parts");
+            RelayError::Provider("candidate missing content parts".to_string())
+        })?;
 
     for part in parts {
         if let Some(text) = part.get("text").and_then(|v| v.as_str()) {

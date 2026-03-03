@@ -14,7 +14,7 @@ use crate::session::AbortReason;
 use crate::types::{Contract, RelayInput, RelayRequest, RelayResponse};
 use crate::AppState;
 
-const MAX_TOKENS: u32 = 256;
+const MAX_TOKENS: u32 = 1024;
 
 /// Git commit SHA embedded at build time by build.rs.
 /// Falls back to "unknown" in environments where .git/ is not present.
