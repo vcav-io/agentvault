@@ -15,6 +15,7 @@ export type EventType =
   | 'tool_call'
   | 'tool_result'
   | 'llm_text'
+  | 'user_message'
   | 'agent_status'
   | 'system'
   | 'error';
@@ -127,6 +128,18 @@ export class EventBus {
     this.emit({
       ts: new Date().toISOString(),
       type: 'llm_text',
+      agent,
+      payload: { text },
+    });
+  }
+
+  /**
+   * Convenience: emit a user_message event (mid-run chat from the human).
+   */
+  emitUserMessage(agent: string, text: string): void {
+    this.emit({
+      ts: new Date().toISOString(),
+      type: 'user_message',
       agent,
       payload: { text },
     });

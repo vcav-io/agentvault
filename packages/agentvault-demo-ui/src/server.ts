@@ -409,6 +409,45 @@ app.post('/api/start', async (req, res) => {
   }
 });
 
+// Send a mid-run message to a specific agent
+app.post('/api/message', async (req, res) => {
+  const agent = req.body?.agent as string | undefined;
+  const message = req.body?.message as string | undefined;
+
+  if (agent !== 'alice' && agent !== 'bob') {
+    res.status(400).json({ error: 'agent must be "alice" or "bob"' });
+    return;
+  }
+  if (!message || typeof message !== 'string' || !message.trim()) {
+    res.status(400).json({ error: 'message is required' });
+    return;
+  }
+
+  const state = agent === 'alice' ? aliceState : bobState;
+  if (!state.started) {
+    res.status(409).json({ error: `${agent} has not started yet` });
+    return;
+  }
+
+  const params = {
+    name: agent,
+    provider,
+    registry: agent === 'alice' ? aliceRegistry : bobRegistry,
+    systemPrompt: SYSTEM_PROMPT,
+    events,
+    state,
+    queue: agent === 'alice' ? aliceQueue : bobQueue,
+  };
+
+  events.emitUserMessage(agent, message.trim());
+  res.json({ ok: true });
+
+  sendUserMessage(params, message.trim()).catch((err) => {
+    console.error(`${agent} mid-run message failed:`, err);
+    events.emitSystem(`${agent} message error: ${err instanceof Error ? err.message : 'Unknown'}`);
+  });
+});
+
 // Reset — clear state for a new run
 app.post('/api/reset', async (_req, res) => {
   try {

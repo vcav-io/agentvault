@@ -1488,14 +1488,28 @@ async function phaseJoin(
       }
     }
 
-    await rawSubmitInput(
-      config,
-      handle.sessionId!,
-      handle.tokens!.submit,
-      'responder',
-      handle.myInput ?? '',
-      handle.contractHash,
-    );
+    try {
+      await rawSubmitInput(
+        config,
+        handle.sessionId!,
+        handle.tokens!.submit,
+        'responder',
+        handle.myInput ?? '',
+        handle.contractHash,
+      );
+    } catch (submitErr) {
+      const msg = submitErr instanceof Error ? submitErr.message : String(submitErr);
+      // 401/UNAUTHORIZED means the session is stale (already submitted or aborted).
+      // Fail gracefully so the FSM can retry with a fresh invite.
+      if (msg.includes('401') || msg.includes('nauthorized')) {
+        return failedResponse(
+          handle,
+          'SESSION_ERROR',
+          `Submit rejected (session may be stale): ${msg}. Will look for a new invite.`,
+        );
+      }
+      throw submitErr;
+    }
     handle.submitted = true;
 
     writeLastSessionFile(handle.sessionId!, 'RESPONDER', handle.tokens!.read, handle.relayUrl);
