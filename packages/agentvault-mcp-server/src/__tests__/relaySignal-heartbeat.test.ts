@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { handleRelaySignal, _setDiscoverPollConfigForTesting } from '../tools/relaySignal.js';
+import { handleRelaySignal, _setDiscoverPollConfigForTesting, _setRelayPollConfigForTesting } from '../tools/relaySignal.js';
 import type { RelaySignalOutput, SessionStateEntry } from '../tools/relaySignal.js';
 import { _resetHandlesForTesting } from '../tools/relayHandles.js';
 import type { AfalTransport, AfalInviteMessage } from '../afal-transport.js';
@@ -71,6 +71,7 @@ beforeEach(() => {
   _resetHandlesForTesting();
   // Disable bounded polling by default — single check, no sleep
   _setDiscoverPollConfigForTesting(0, 0);
+  _setRelayPollConfigForTesting(0, 0);
   mockGetStatus.mockResolvedValue({ state: 'PROCESSING' });
   mockGetOutput.mockResolvedValue({ state: 'COMPLETED', output: {} });
   // Use a temp directory for session state files
@@ -82,8 +83,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  // Restore discover poll defaults
+  // Restore poll defaults
   _setDiscoverPollConfigForTesting(30_000, 3_000);
+  _setRelayPollConfigForTesting(25_000, 2_000);
   // Clean up temp dir
   try {
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -136,7 +138,7 @@ describe('resume_strategy in responses', () => {
     expect(data.next_update_seconds).toBe(5);
   });
 
-  it('phasePollRelay returns IMMEDIATE with seconds=5 when still processing', async () => {
+  it('phasePollRelay returns DEFERRED with seconds=30 when still processing (poll budget exhausted)', async () => {
     const transport = createMockAfalTransport();
     const { resumeToken } = await initiateSession(transport);
 
@@ -145,8 +147,8 @@ describe('resume_strategy in responses', () => {
     const data = result.data as RelaySignalOutput;
 
     expect(data.state).toBe('AWAITING');
-    expect(data.resume_strategy).toBe('IMMEDIATE');
-    expect(data.next_update_seconds).toBe(5);
+    expect(data.resume_strategy).toBe('DEFERRED');
+    expect(data.next_update_seconds).toBe(30);
   });
 
   it('RESPOND with no invite returns DEFERRED with seconds=30', async () => {
