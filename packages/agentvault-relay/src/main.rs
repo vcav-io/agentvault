@@ -56,6 +56,11 @@ async fn main() {
         std::env::var("VCAV_OPENAI_MODEL_ID").unwrap_or_else(|_| "gpt-4o".to_string());
     let openai_base_url = std::env::var("OPENAI_BASE_URL").ok();
 
+    let gemini_api_key = std::env::var("GEMINI_API_KEY").ok();
+    let gemini_model_id =
+        std::env::var("VCAV_GEMINI_MODEL_ID").unwrap_or_else(|_| "gemini-2.5-flash".to_string());
+    let gemini_base_url = std::env::var("GEMINI_BASE_URL").ok();
+
     // Validate model profile lockfile before binding to port.
     // Exits with a non-zero code on hash mismatch.
     if let Err(e) = agentvault_relay::prompt_program::validate_model_profile_lockfile(&prompt_dir) {
@@ -230,9 +235,9 @@ async fn main() {
     // Start background inbox reaper
     inbox_store.clone().start_reaper();
 
-    if anthropic_api_key.is_none() && openai_api_key.is_none() {
+    if anthropic_api_key.is_none() && openai_api_key.is_none() && gemini_api_key.is_none() {
         tracing::error!(
-            "No inference providers configured. Set at least one of ANTHROPIC_API_KEY or OPENAI_API_KEY."
+            "No inference providers configured. Set at least one of ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY."
         );
         std::process::exit(1);
     }
@@ -243,6 +248,9 @@ async fn main() {
     if openai_api_key.is_some() {
         tracing::info!(model_id = %openai_model_id, "OpenAI provider enabled");
     }
+    if gemini_api_key.is_some() {
+        tracing::info!(model_id = %gemini_model_id, "Gemini provider enabled");
+    }
 
     let state = Arc::new(AppState {
         signing_key,
@@ -252,6 +260,9 @@ async fn main() {
         openai_api_key,
         openai_model_id,
         openai_base_url,
+        gemini_api_key,
+        gemini_model_id,
+        gemini_base_url,
         prompt_program_dir: prompt_dir,
         session_store,
         enforcement_policy: loaded_policy,

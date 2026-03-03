@@ -7,6 +7,7 @@ use vault_family_types::{generate_pair_id, BudgetTier};
 use crate::error::RelayError;
 use crate::prompt_program::{load_model_profile, load_prompt_program};
 use crate::provider::anthropic::AnthropicProvider;
+use crate::provider::gemini::GeminiProvider;
 use crate::provider::openai::OpenAIProvider;
 use crate::provider::ProviderRequest;
 use crate::session::AbortReason;
@@ -260,6 +261,17 @@ pub async fn relay_core(
                 api_key,
                 state.openai_model_id.clone(),
                 state.openai_base_url.clone(),
+            )?;
+            provider.call(provider_request).await?
+        }
+        "gemini" => {
+            let api_key = state.gemini_api_key.clone().ok_or_else(|| {
+                RelayError::ContractValidation("Gemini API key not configured".to_string())
+            })?;
+            let provider = GeminiProvider::new(
+                api_key,
+                state.gemini_model_id.clone(),
+                state.gemini_base_url.clone(),
             )?;
             provider.call(provider_request).await?
         }

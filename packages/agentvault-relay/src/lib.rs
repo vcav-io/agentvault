@@ -47,6 +47,9 @@ pub struct AppState {
     pub openai_api_key: Option<String>,
     pub openai_model_id: String,
     pub openai_base_url: Option<String>,
+    pub gemini_api_key: Option<String>,
+    pub gemini_model_id: String,
+    pub gemini_base_url: Option<String>,
     pub prompt_program_dir: String,
     pub session_store: SessionStore,
     /// Loaded enforcement policy — rules read at runtime by the output guard.
@@ -87,6 +90,8 @@ pub fn resolve_provider(requested: &str, state: &AppState) -> Result<String, Rel
                 Ok("anthropic".to_string())
             } else if state.openai_api_key.is_some() {
                 Ok("openai".to_string())
+            } else if state.gemini_api_key.is_some() {
+                Ok("gemini".to_string())
             } else {
                 Err(RelayError::ContractValidation(
                     "no inference providers configured".to_string(),
@@ -95,6 +100,7 @@ pub fn resolve_provider(requested: &str, state: &AppState) -> Result<String, Rel
         }
         "anthropic" if state.anthropic_api_key.is_some() => Ok("anthropic".to_string()),
         "openai" if state.openai_api_key.is_some() => Ok("openai".to_string()),
+        "gemini" if state.gemini_api_key.is_some() => Ok("gemini".to_string()),
         other => Err(RelayError::ContractValidation(format!(
             "provider '{other}' is not configured on this relay"
         ))),
@@ -121,6 +127,9 @@ async fn capabilities_handler(State(state): State<Arc<AppState>>) -> Json<Capabi
     }
     if state.openai_api_key.is_some() {
         providers.push("openai");
+    }
+    if state.gemini_api_key.is_some() {
+        providers.push("gemini");
     }
     Json(CapabilitiesResponse {
         execution_lane: "API_MEDIATED",
