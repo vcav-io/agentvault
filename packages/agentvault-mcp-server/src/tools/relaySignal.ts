@@ -77,14 +77,31 @@ const HANDLE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const DISCOVER_POLL_BUDGET_MS = 30_000; // 30 seconds
 const DISCOVER_POLL_INTERVAL_MS = 3_000; // 3 seconds between checks
 
+/**
+ * Bounded poll budget for phasePollRelay and phaseJoin. Polls relay status
+ * repeatedly up to this budget before returning DEFERRED. Eliminates the need
+ * for the LLM to repeatedly decide "call again with resume_token", saving
+ * ~10-12 LLM round-trips per session.
+ */
+const RELAY_POLL_BUDGET_MS = 25_000; // 25 seconds (headroom within heartbeat cycle)
+const RELAY_POLL_INTERVAL_MS = 2_000; // 2 seconds between checks
+
 // Mutable copies used at runtime — overridable for tests.
 let _discoverPollBudgetMs = DISCOVER_POLL_BUDGET_MS;
 let _discoverPollIntervalMs = DISCOVER_POLL_INTERVAL_MS;
+let _relayPollBudgetMs = RELAY_POLL_BUDGET_MS;
+let _relayPollIntervalMs = RELAY_POLL_INTERVAL_MS;
 
 /** @internal Test-only: override discover poll timing. */
 export function _setDiscoverPollConfigForTesting(budgetMs: number, intervalMs: number): void {
   _discoverPollBudgetMs = budgetMs;
   _discoverPollIntervalMs = intervalMs;
+}
+
+/** @internal Test-only: override relay poll timing. */
+export function _setRelayPollConfigForTesting(budgetMs: number, intervalMs: number): void {
+  _relayPollBudgetMs = budgetMs;
+  _relayPollIntervalMs = intervalMs;
 }
 
 /** Human-readable descriptions for relay abort reasons. */
@@ -1174,8 +1191,10 @@ async function phasePollInvite(
 }
 
 /**
- * POLL_RELAY phase — single status check, no blocking loop.
- * Heartbeat-safe: checks relay status once and returns immediately.
+ * POLL_RELAY phase — bounded polling loop.
+ * Polls relay status repeatedly for up to RELAY_POLL_BUDGET_MS, returning
+ * immediately on completion or abort. This eliminates repeated LLM round-trips
+ * for mechanical "call again with resume_token" decisions.
  */
 async function phasePollRelay(handle: RelayHandle): Promise<ToolResponse<RelaySignalOutput>> {
   if (Date.now() > handle.timeoutDeadline) {
@@ -1191,39 +1210,60 @@ async function phasePollRelay(handle: RelayHandle): Promise<ToolResponse<RelaySi
   }
 
   const config = { relay_url: handle.relayUrl };
-  const status = await httpGetStatus(config, handle.sessionId, handle.tokens.initiatorRead);
+  const pollDeadline = Math.min(Date.now() + _relayPollBudgetMs, handle.timeoutDeadline);
+  let isFirstCheck = true;
 
-  if (status.state === 'COMPLETED') {
+  while (true) {
+    // Sleep between polls (not before the first check)
+    if (!isFirstCheck) {
+      if (Date.now() + _relayPollIntervalMs > pollDeadline) break;
+      await new Promise(resolve => setTimeout(resolve, _relayPollIntervalMs));
+    }
+    isFirstCheck = false;
+
+    let status;
     try {
-      const output = await httpGetOutput(config, handle.sessionId, handle.tokens.initiatorRead);
-      return completedResponse(handle, output);
-    } catch (fetchErr) {
-      console.error(
-        `phasePollRelay: session ${handle.sessionId} COMPLETED but output fetch failed: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
+      status = await httpGetStatus(config, handle.sessionId, handle.tokens.initiatorRead);
+    } catch (err) {
+      console.warn(
+        `phasePollRelay: transient status check failed for session ${handle.sessionId}: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
       );
-      return awaitingResponse(
+      if (Date.now() >= pollDeadline) break;
+      continue; // transient — retry within budget
+    }
+
+    if (status.state === 'COMPLETED') {
+      try {
+        const output = await httpGetOutput(config, handle.sessionId, handle.tokens.initiatorRead);
+        return completedResponse(handle, output);
+      } catch (fetchErr) {
+        console.error(
+          `phasePollRelay: session ${handle.sessionId} COMPLETED but output fetch failed: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
+        );
+        // Transient fetch failure — continue polling within budget
+      }
+    }
+
+    if (status.state === 'ABORTED') {
+      const reason = status.abort_reason ?? 'UNKNOWN';
+      const desc = ABORT_DESCRIPTIONS[reason] ?? 'The relay session was aborted.';
+      return failedResponse(
         handle,
-        'Session completed but output fetch failed (transient). Will retry.',
-        { strategy: 'IMMEDIATE', seconds: 5 },
+        `RELAY_${reason}`,
+        `Session aborted: ${desc} Call agentvault.relay_signal INITIATE to retry.`,
+        { state: 'ABORTED', abort_reason: status.abort_reason },
       );
     }
+
+    // Budget exhausted?
+    if (Date.now() >= pollDeadline) break;
   }
 
-  if (status.state === 'ABORTED') {
-    const reason = status.abort_reason ?? 'UNKNOWN';
-    const desc = ABORT_DESCRIPTIONS[reason] ?? 'The relay session was aborted.';
-    return failedResponse(
-      handle,
-      `RELAY_${reason}`,
-      `Session aborted: ${desc} Call agentvault.relay_signal INITIATE to retry.`,
-      { state: 'ABORTED', abort_reason: status.abort_reason },
-    );
-  }
-
-  // Still processing — return immediately, caller decides when to check again
+  // Budget exhausted — return DEFERRED for heartbeat retry
   return awaitingResponse(handle, 'Relay processing. Waiting for session to complete.', {
-    strategy: 'IMMEDIATE',
-    seconds: 5,
+    strategy: 'DEFERRED',
+    seconds: 30,
   });
 }
 
@@ -1488,14 +1528,28 @@ async function phaseJoin(
       }
     }
 
-    await rawSubmitInput(
-      config,
-      handle.sessionId!,
-      handle.tokens!.submit,
-      'responder',
-      handle.myInput ?? '',
-      handle.contractHash,
-    );
+    try {
+      await rawSubmitInput(
+        config,
+        handle.sessionId!,
+        handle.tokens!.submit,
+        'responder',
+        handle.myInput ?? '',
+        handle.contractHash,
+      );
+    } catch (submitErr) {
+      const msg = submitErr instanceof Error ? submitErr.message : String(submitErr);
+      // 401/UNAUTHORIZED means the session is stale (already submitted or aborted).
+      // Fail gracefully so the FSM can retry with a fresh invite.
+      if (msg.includes('401') || msg.includes('nauthorized')) {
+        return failedResponse(
+          handle,
+          'SESSION_ERROR',
+          `Submit rejected (session may be stale): ${msg}. Will look for a new invite.`,
+        );
+      }
+      throw submitErr;
+    }
     handle.submitted = true;
 
     writeLastSessionFile(handle.sessionId!, 'RESPONDER', handle.tokens!.read, handle.relayUrl);
@@ -1521,40 +1575,61 @@ async function phaseJoin(
     return failedResponse(handle, 'SESSION_ERROR', 'Missing session data for JOIN poll phase.');
   }
 
-  // Single status check — heartbeat-safe, no blocking loop
-  const status = await httpGetStatus(config, handle.sessionId, handle.tokens.read);
+  // Bounded polling loop — poll relay status until completion, abort, or budget exhausted.
+  const pollDeadline = Math.min(Date.now() + _relayPollBudgetMs, handle.timeoutDeadline);
+  let isFirstJoinCheck = true;
 
-  if (status.state === 'COMPLETED') {
+  while (true) {
+    // Sleep between polls (not before the first check)
+    if (!isFirstJoinCheck) {
+      if (Date.now() + _relayPollIntervalMs > pollDeadline) break;
+      await new Promise(resolve => setTimeout(resolve, _relayPollIntervalMs));
+    }
+    isFirstJoinCheck = false;
+
+    let status;
     try {
-      const output = await httpGetOutput(config, handle.sessionId, handle.tokens.read);
-      return completedResponse(handle, output);
-    } catch (fetchErr) {
-      console.error(
-        `phaseJoin: session ${handle.sessionId} COMPLETED but output fetch failed: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
+      status = await httpGetStatus(config, handle.sessionId, handle.tokens.read);
+    } catch (err) {
+      console.warn(
+        `phaseJoin: transient status check failed for session ${handle.sessionId}: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
       );
-      return awaitingResponse(
+      if (Date.now() >= pollDeadline) break;
+      continue; // transient — retry within budget
+    }
+
+    if (status.state === 'COMPLETED') {
+      try {
+        const output = await httpGetOutput(config, handle.sessionId, handle.tokens.read);
+        return completedResponse(handle, output);
+      } catch (fetchErr) {
+        console.error(
+          `phaseJoin: session ${handle.sessionId} COMPLETED but output fetch failed: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
+        );
+        // Transient fetch failure — continue polling within budget
+      }
+    }
+
+    if (status.state === 'ABORTED') {
+      const reason = status.abort_reason ?? 'UNKNOWN';
+      const desc = ABORT_DESCRIPTIONS[reason] ?? 'The relay session was aborted.';
+      return failedResponse(
         handle,
-        'Session completed but output fetch failed (transient). Will retry.',
-        { strategy: 'IMMEDIATE', seconds: 5 },
+        `RELAY_${reason}`,
+        `Session aborted: ${desc} Waiting for the initiator to retry — call agentvault.relay_signal RESPOND again.`,
+        { state: 'ABORTED', abort_reason: status.abort_reason },
       );
     }
+
+    // Budget exhausted?
+    if (Date.now() >= pollDeadline) break;
   }
 
-  if (status.state === 'ABORTED') {
-    const reason = status.abort_reason ?? 'UNKNOWN';
-    const desc = ABORT_DESCRIPTIONS[reason] ?? 'The relay session was aborted.';
-    return failedResponse(
-      handle,
-      `RELAY_${reason}`,
-      `Session aborted: ${desc} Waiting for the initiator to retry — call agentvault.relay_signal RESPOND again.`,
-      { state: 'ABORTED', abort_reason: status.abort_reason },
-    );
-  }
-
-  // Still processing — return immediately, caller decides when to check again
+  // Budget exhausted — return DEFERRED for heartbeat retry
   return awaitingResponse(handle, 'Waiting for relay session to complete.', {
-    strategy: 'IMMEDIATE',
-    seconds: 5,
+    strategy: 'DEFERRED',
+    seconds: 30,
   });
 }
 

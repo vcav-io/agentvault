@@ -62,94 +62,81 @@ dotenvConfig({ path: path.resolve(DEMO_DIR, '../../.env') });
 
 // ── Provider setup ───────────────────────────────────────────────────────
 
-function createProvider(): LLMProvider {
-  const provider = process.env['PROVIDER']?.toLowerCase();
+/** Detect which provider to use: explicit PROVIDER env, or auto-detect from API keys. */
+function detectProvider(): 'anthropic' | 'openai' | 'gemini' {
+  const explicit = process.env['PROVIDER']?.toLowerCase();
+  if (explicit === 'openai' || explicit === 'anthropic' || explicit === 'gemini') return explicit;
 
-  if (provider === 'openai') {
-    const apiKey = process.env['OPENAI_API_KEY'];
-    if (!apiKey) throw new Error('OPENAI_API_KEY is required when PROVIDER=openai');
-    console.log('Using OpenAI provider');
-    return new OpenAIProvider(apiKey);
-  }
-
-  if (provider === 'anthropic') {
-    const apiKey = process.env['ANTHROPIC_API_KEY'];
-    if (!apiKey) throw new Error('ANTHROPIC_API_KEY is required when PROVIDER=anthropic');
-    const model = process.env['MODEL'];
-    console.log(`Using Anthropic provider${model ? ` (model: ${model})` : ''}`);
-    return new AnthropicProvider(apiKey, model);
-  }
-
-  if (provider === 'gemini') {
-    const apiKey = process.env['GEMINI_API_KEY'];
-    if (!apiKey) throw new Error('GEMINI_API_KEY is required when PROVIDER=gemini');
-    const model = process.env['MODEL'];
-    console.log(`Using Gemini provider${model ? ` (model: ${model})` : ''}`);
-    return new GeminiProvider(apiKey, model);
-  }
-
-  // Auto-detection fallback
-  if (process.env['ANTHROPIC_API_KEY']) {
-    console.warn('WARNING: PROVIDER not set. Auto-detected Anthropic from API key. Set PROVIDER=anthropic to suppress this warning.');
-    return new AnthropicProvider(process.env['ANTHROPIC_API_KEY']);
-  }
-
-  if (process.env['OPENAI_API_KEY']) {
-    console.warn('WARNING: PROVIDER not set. Auto-detected OpenAI from API key. Set PROVIDER=openai to suppress this warning.');
-    return new OpenAIProvider(process.env['OPENAI_API_KEY']);
-  }
-
+  // Auto-detection: cheapest first (Gemini > OpenAI > Anthropic)
   if (process.env['GEMINI_API_KEY']) {
     console.warn('WARNING: PROVIDER not set. Auto-detected Gemini from API key. Set PROVIDER=gemini to suppress this warning.');
-    return new GeminiProvider(process.env['GEMINI_API_KEY']);
+    return 'gemini';
+  }
+  if (process.env['OPENAI_API_KEY']) {
+    console.warn('WARNING: PROVIDER not set. Auto-detected OpenAI from API key. Set PROVIDER=openai to suppress this warning.');
+    return 'openai';
+  }
+  if (process.env['ANTHROPIC_API_KEY']) {
+    console.warn('WARNING: PROVIDER not set. Auto-detected Anthropic from API key. Set PROVIDER=anthropic to suppress this warning.');
+    return 'anthropic';
   }
 
   throw new Error(
-    'No LLM provider configured. Set PROVIDER=anthropic|openai|gemini with the matching API key in .env',
+    'No LLM provider configured. Set PROVIDER=gemini|openai|anthropic and the matching API key in .env',
   );
 }
 
-function createHeartbeatProvider(): LLMProvider {
-  const provider = process.env['PROVIDER']?.toLowerCase();
-
-  // Match createProvider()'s detection order: explicit > Anthropic > OpenAI
-  if (provider === 'openai') {
-    const apiKey = process.env['OPENAI_API_KEY'];
-    if (!apiKey) throw new Error('OPENAI_API_KEY is required when PROVIDER=openai');
-    const model = process.env['HEARTBEAT_MODEL'] ?? 'gpt-4o-mini';
-    console.log(`Heartbeat model: ${model}`);
-    return new OpenAIProvider(apiKey, model);
-  }
+function createProvider(): LLMProvider {
+  const provider = detectProvider();
+  const model = process.env['MODEL'];
 
   if (provider === 'gemini') {
     const apiKey = process.env['GEMINI_API_KEY'];
     if (!apiKey) throw new Error('GEMINI_API_KEY is required when PROVIDER=gemini');
-    const model = process.env['HEARTBEAT_MODEL'] ?? 'gemini-2.5-flash-lite';
-    console.log(`Heartbeat model: ${model}`);
+    console.log(`Using Gemini provider, model: ${model ?? 'gemini-2.5-flash (default)'}`);
     return new GeminiProvider(apiKey, model);
   }
 
-  if (provider === 'anthropic' || process.env['ANTHROPIC_API_KEY']) {
-    const apiKey = process.env['ANTHROPIC_API_KEY'];
-    if (!apiKey) throw new Error('ANTHROPIC_API_KEY is required for heartbeat provider');
-    const model = process.env['HEARTBEAT_MODEL'] ?? 'claude-haiku-4-5-20251001';
-    console.log(`Heartbeat model: ${model}`);
-    return new AnthropicProvider(apiKey, model);
+  if (provider === 'openai') {
+    const apiKey = process.env['OPENAI_API_KEY'];
+    if (!apiKey) throw new Error('OPENAI_API_KEY is required when PROVIDER=openai');
+    console.log(`Using OpenAI provider, model: ${model ?? 'gpt-4.1-mini (default)'}`);
+    return new OpenAIProvider(apiKey, model);
   }
 
-  if (process.env['OPENAI_API_KEY']) {
-    const model = process.env['HEARTBEAT_MODEL'] ?? 'gpt-4o-mini';
-    console.log(`Heartbeat model: ${model}`);
-    return new OpenAIProvider(process.env['OPENAI_API_KEY'], model);
+  const apiKey = process.env['ANTHROPIC_API_KEY'];
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY is required when PROVIDER=anthropic');
+  console.log(`Using Anthropic provider, model: ${model ?? 'claude-haiku-4-5-20251001 (default)'}`);
+  return new AnthropicProvider(apiKey, model);
+}
+
+/** Default heartbeat models per provider — cheapest with tool use support. */
+const HEARTBEAT_DEFAULTS: Record<string, string> = {
+  gemini: 'gemini-2.5-flash-lite',
+  openai: 'gpt-4o-mini',
+  anthropic: 'claude-haiku-4-5-20251001',
+};
+
+function createHeartbeatProvider(): LLMProvider {
+  const provider = detectProvider();
+  const model = process.env['HEARTBEAT_MODEL'] ?? HEARTBEAT_DEFAULTS[provider];
+  console.log(`Heartbeat model: ${model}`);
+
+  if (provider === 'gemini') {
+    const apiKey = process.env['GEMINI_API_KEY'];
+    if (!apiKey) throw new Error('GEMINI_API_KEY is required when PROVIDER=gemini');
+    return new GeminiProvider(apiKey, model);
   }
 
-  if (process.env['GEMINI_API_KEY']) {
-    const model = process.env['HEARTBEAT_MODEL'] ?? 'gemini-2.5-flash-lite';
-    console.log(`Heartbeat model: ${model}`);
-    return new GeminiProvider(process.env['GEMINI_API_KEY'], model);
+  if (provider === 'openai') {
+    const apiKey = process.env['OPENAI_API_KEY'];
+    if (!apiKey) throw new Error('OPENAI_API_KEY is required when PROVIDER=openai');
+    return new OpenAIProvider(apiKey, model);
   }
 
-  throw new Error('No API key found for heartbeat provider');
+  const apiKey2 = process.env['ANTHROPIC_API_KEY'];
+  if (!apiKey2) throw new Error('ANTHROPIC_API_KEY is required when PROVIDER=anthropic');
+  return new AnthropicProvider(apiKey2, model);
 }
 
 // ── Ed25519 identity helpers ─────────────────────────────────────────────
@@ -407,6 +394,45 @@ app.post('/api/start', async (req, res) => {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ error: msg });
   }
+});
+
+// Send a mid-run message to a specific agent
+app.post('/api/message', async (req, res) => {
+  const agent = req.body?.agent as string | undefined;
+  const message = req.body?.message as string | undefined;
+
+  if (agent !== 'alice' && agent !== 'bob') {
+    res.status(400).json({ error: 'agent must be "alice" or "bob"' });
+    return;
+  }
+  if (!message || typeof message !== 'string' || !message.trim()) {
+    res.status(400).json({ error: 'message is required' });
+    return;
+  }
+
+  const state = agent === 'alice' ? aliceState : bobState;
+  if (!state.started) {
+    res.status(409).json({ error: `${agent} has not started yet` });
+    return;
+  }
+
+  const params = {
+    name: agent,
+    provider,
+    registry: agent === 'alice' ? aliceRegistry : bobRegistry,
+    systemPrompt: SYSTEM_PROMPT,
+    events,
+    state,
+    queue: agent === 'alice' ? aliceQueue : bobQueue,
+  };
+
+  events.emitUserMessage(agent, message.trim());
+  res.json({ ok: true });
+
+  sendUserMessage(params, message.trim()).catch((err) => {
+    console.error(`${agent} mid-run message failed:`, err);
+    events.emitSystem(`${agent} message error: ${err instanceof Error ? err.message : 'Unknown'}`);
+  });
 });
 
 // Reset — clear state for a new run

@@ -311,8 +311,10 @@ export class DirectAfalTransport implements AfalTransport {
   }
 
   async acceptInvite(inviteId: string): Promise<AcceptResult | undefined> {
-    // RESPOND mode: no-op — we already sent ADMIT synchronously in handlePropose
+    // RESPOND mode: remove the consumed invite from the queue so subsequent
+    // peekInbox() calls don't rediscover stale invites pointing to dead sessions.
     if (this.responder) {
+      this.responder.removeFromQueue(inviteId);
       return;
     }
 

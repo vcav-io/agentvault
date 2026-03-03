@@ -27,27 +27,66 @@
     alicePrompt: $('alice-prompt'),
     bobPrompt: $('bob-prompt'),
     startBtn: $('start-btn'),
+    stopBtn: $('stop-btn'),
     resetBtn: $('reset-btn'),
     newRunBtn: $('new-run-btn'),
     statusChip: $('status-chip'),
     statusText: $('status-text'),
+    // Chat panels
     aliceLog: $('alice-log'),
     bobLog: $('bob-log'),
+    // Vault
+    vaultEvents: $('vault-events'),
+    // Log (debug)
     eventLog: $('event-log'),
+    logPanel: $('log-panel'),
+    logBar: $('log-bar'),
+    eventCount: $('event-count'),
+    // Agent status
     aliceDot: $('alice-dot'),
     bobDot: $('bob-dot'),
     aliceTurns: $('alice-turns'),
     bobTurns: $('bob-turns'),
-    alicePanel: $('alice-panel'),
-    bobPanel: $('bob-panel'),
-    channel: $('channel'),
-    eventCount: $('event-count'),
+    // Chat inputs
+    aliceInput: $('alice-input'),
+    aliceSend: $('alice-send'),
+    bobInput: $('bob-input'),
+    bobSend: $('bob-send'),
+    // Signal overlay
+    signalOverlay: $('signal-overlay'),
   };
+
+  // Track messages we rendered client-side to avoid SSE duplicates
+  var localMessageIds = {};
 
   var eventSource = null;
   var totalEvents = 0;
 
-  // ── Template handling ────────────────────────────────────────
+  // ── Init vault card manager ────────────────────────────────
+  VaultCardManager.init(els.vaultEvents);
+
+  // When the vault produces an output signal, show result cards in chat panels.
+  // The callback fires once per agent's COMPLETE — render only on the first.
+  var resultCardRendered = false;
+  VaultCardManager.setOutputSignalCallback(function (agent, output, receipt) {
+    if (resultCardRendered) return;
+    resultCardRendered = true;
+    var card1 = createResultCard(output, receipt);
+    var card2 = createResultCard(output, receipt);
+    els.aliceLog.appendChild(card1);
+    scrollToBottom(els.aliceLog);
+    els.bobLog.appendChild(card2);
+    scrollToBottom(els.bobLog);
+  });
+
+  // ── Log panel toggle ───────────────────────────────────────
+  if (els.logBar) {
+    els.logBar.addEventListener('click', function () {
+      els.logPanel.classList.toggle('collapsed');
+    });
+  }
+
+  // ── Template handling ──────────────────────────────────────
   function applyTemplate(name) {
     var tpl = TEMPLATES[name];
     if (!tpl) return;
@@ -62,69 +101,98 @@
   // Load default template
   applyTemplate('mediation');
 
-  // ── Phase management ─────────────────────────────────────────
+  // ── Phase management ───────────────────────────────────────
+  function setChatInputsEnabled(enabled) {
+    els.aliceInput.disabled = !enabled;
+    els.aliceSend.disabled = !enabled;
+    els.bobInput.disabled = !enabled;
+    els.bobSend.disabled = !enabled;
+  }
+
   function showSetup() {
     els.setupPhase.classList.remove('hidden');
     els.protocolPhase.classList.add('hidden');
+    els.stopBtn.style.display = 'none';
     els.newRunBtn.style.display = 'none';
     els.resetBtn.style.display = 'none';
     els.startBtn.disabled = false;
     els.statusText.textContent = 'Configure';
     els.statusChip.className = 'status-chip';
+    setChatInputsEnabled(false);
   }
 
   function showProtocol() {
     els.setupPhase.classList.add('hidden');
     els.protocolPhase.classList.remove('hidden');
+    els.stopBtn.style.display = '';
     els.newRunBtn.style.display = 'none';
     els.resetBtn.style.display = '';
-    els.channel.classList.add('active');
-    els.alicePanel.classList.add('active');
-    els.bobPanel.classList.add('active');
     els.statusText.textContent = 'Running';
     els.statusChip.className = 'status-chip running';
+    setChatInputsEnabled(true);
   }
 
   function showCompleted() {
-    els.channel.classList.remove('active');
-    els.alicePanel.classList.remove('active');
-    els.bobPanel.classList.remove('active');
+    els.stopBtn.style.display = 'none';
     els.newRunBtn.style.display = '';
     els.resetBtn.style.display = '';
     els.statusText.textContent = 'Completed';
     els.statusChip.className = 'status-chip completed';
+    setChatInputsEnabled(false);
   }
 
-  // ── Agent dot/turns updates ──────────────────────────────────
-  function updateAgentDot(dotEl, turnsEl, panelEl, status, turns) {
-    dotEl.className = 'agent-dot ' + status;
+  // ── Agent dot/turns updates ────────────────────────────────
+  function updateAgentDot(dotEl, turnsEl, status, turns) {
+    dotEl.className = 'sim-panel__agent-dot ' + status;
     if (turns > 0) turnsEl.textContent = 'Turn ' + turns;
-    if (status === 'running') {
-      panelEl.classList.add('active');
-    } else if (status === 'completed' || status === 'idle') {
-      panelEl.classList.remove('active');
+  }
+
+  // ── Completion tracking ────────────────────────────────────
+  var completedAgents = {};
+
+  function checkCompletion(event) {
+    if (event.type === 'agent_status' && event.payload.status === 'completed' && event.agent) {
+      completedAgents[event.agent] = true;
+      if (completedAgents.alice && completedAgents.bob) {
+        showCompleted();
+      }
     }
   }
 
-  // ── Event routing ────────────────────────────────────────────
-  // Conversation (llm_text) → agent panels
-  // Protocol (tool_call, tool_result, agent_status, system, error) → log
-
+  // ── Event routing ──────────────────────────────────────────
   function handleEvent(event) {
-    if (event.type === 'llm_text') {
-      // Route to conversation panel only
+    if (event.type === 'user_message') {
+      // Mid-run user message — render as prompt bubble (skip if already rendered locally)
+      var msgKey = event.agent + ':' + event.payload.text;
+      if (localMessageIds[msgKey]) {
+        delete localMessageIds[msgKey];
+        return;
+      }
       var panel = event.agent === 'alice' ? els.aliceLog : event.agent === 'bob' ? els.bobLog : null;
       if (panel) {
-        var msg = createConvMessage(event);
+        panel.appendChild(createPromptBubble(event.payload.text, event.agent === 'alice' ? 'You' : 'You'));
+        scrollToBottom(panel);
+      }
+      return;
+    }
+
+    if (event.type === 'llm_text') {
+      // Route to conversation panel as chat bubble
+      var panel = event.agent === 'alice' ? els.aliceLog : event.agent === 'bob' ? els.bobLog : null;
+      if (panel) {
+        var msg = createChatBubble(event);
         if (msg) {
           panel.appendChild(msg);
           scrollToBottom(panel);
         }
       }
     } else {
-      // Route to protocol log only
+      // Route to vault cards (primary) AND log panel (debug)
       totalEvents++;
       els.eventCount.textContent = totalEvents + ' event' + (totalEvents === 1 ? '' : 's');
+
+      VaultCardManager.routeEvent(event);
+
       els.eventLog.appendChild(createLogEntry(event));
       scrollToBottom(els.eventLog);
     }
@@ -132,14 +200,16 @@
     // Update agent dots on status changes
     if (event.type === 'agent_status') {
       if (event.agent === 'alice') {
-        updateAgentDot(els.aliceDot, els.aliceTurns, els.alicePanel, event.payload.status, 0);
+        updateAgentDot(els.aliceDot, els.aliceTurns, event.payload.status, 0);
       } else if (event.agent === 'bob') {
-        updateAgentDot(els.bobDot, els.bobTurns, els.bobPanel, event.payload.status, 0);
+        updateAgentDot(els.bobDot, els.bobTurns, event.payload.status, 0);
       }
     }
+
+    checkCompletion(event);
   }
 
-  // ── SSE ──────────────────────────────────────────────────────
+  // ── SSE ────────────────────────────────────────────────────
   function connectSSE() {
     if (eventSource) eventSource.close();
     eventSource = new EventSource('/api/events');
@@ -152,18 +222,18 @@
     };
   }
 
-  // ── Status polling ───────────────────────────────────────────
+  // ── Status polling ─────────────────────────────────────────
   async function pollStatus() {
     try {
       var res = await fetch('/api/status');
       var data = await res.json();
 
-      updateAgentDot(els.aliceDot, els.aliceTurns, els.alicePanel, data.alice.status, data.alice.turnCount);
-      updateAgentDot(els.bobDot, els.bobTurns, els.bobPanel, data.bob.status, data.bob.turnCount);
+      updateAgentDot(els.aliceDot, els.aliceTurns, data.alice.status, data.alice.turnCount);
+      updateAgentDot(els.bobDot, els.bobTurns, data.bob.status, data.bob.turnCount);
     } catch (e) { /* ignore */ }
   }
 
-  // ── Start button ─────────────────────────────────────────────
+  // ── Start button ───────────────────────────────────────────
   els.startBtn.addEventListener('click', async function () {
     var alicePrompt = els.alicePrompt.value.trim();
     var bobPrompt = els.bobPrompt.value.trim();
@@ -183,12 +253,29 @@
     els.aliceLog.textContent = '';
     els.bobLog.textContent = '';
     els.eventLog.textContent = '';
+    els.vaultEvents.textContent = '';
     totalEvents = 0;
+    completedAgents = {};
+    resultCardRendered = false;
     els.eventCount.textContent = '0 events';
+    VaultCardManager.init(els.vaultEvents);
+    VaultCardManager.setOutputSignalCallback(function (agent, output, receipt) {
+      if (resultCardRendered) return;
+      resultCardRendered = true;
+      var card1 = createResultCard(output, receipt);
+      var card2 = createResultCard(output, receipt);
+      els.aliceLog.appendChild(card1);
+      scrollToBottom(els.aliceLog);
+      els.bobLog.appendChild(card2);
+      scrollToBottom(els.bobLog);
+    });
+
+    // Dismiss any open signal overlay
+    els.signalOverlay.classList.remove('signal-overlay--visible');
 
     // Show prompts as first messages in conversation panels
-    els.aliceLog.appendChild(createPromptBlock(alicePrompt));
-    els.bobLog.appendChild(createPromptBlock(bobPrompt));
+    els.aliceLog.appendChild(createPromptBubble(alicePrompt, 'Alice'));
+    els.bobLog.appendChild(createPromptBubble(bobPrompt, 'Bob'));
 
     try {
       var res = await fetch('/api/start', {
@@ -207,7 +294,23 @@
     }
   });
 
-  // ── Reset button ──────────────────────────────────────────────
+  // ── Stop button ────────────────────────────────────────────
+  els.stopBtn.addEventListener('click', async function () {
+    els.stopBtn.disabled = true;
+    try {
+      await fetch('/api/reset', { method: 'POST' });
+    } catch (err) {
+      console.error('Stop error:', err);
+    }
+    els.stopBtn.disabled = false;
+    els.stopBtn.style.display = 'none';
+    els.statusText.textContent = 'Stopped';
+    els.statusChip.className = 'status-chip error';
+    els.newRunBtn.style.display = '';
+    setChatInputsEnabled(false);
+  });
+
+  // ── Reset button ───────────────────────────────────────────
   els.resetBtn.addEventListener('click', async function () {
     els.resetBtn.disabled = true;
     try {
@@ -219,9 +322,8 @@
     showSetup();
   });
 
-  // ── New run button ───────────────────────────────────────────
+  // ── New run button ─────────────────────────────────────────
   els.newRunBtn.addEventListener('click', async function () {
-    // Reset server state before returning to setup
     try {
       await fetch('/api/reset', { method: 'POST' });
     } catch (err) {
@@ -230,7 +332,53 @@
     showSetup();
   });
 
-  // ── Init ─────────────────────────────────────────────────────
+  // ── Chat input send ────────────────────────────────────────
+  function sendChatMessage(agent, inputEl, logEl) {
+    var text = inputEl.value.trim();
+    if (!text) return;
+
+    // Clear input immediately
+    inputEl.value = '';
+
+    // Mark as locally rendered to skip SSE duplicate
+    localMessageIds[agent + ':' + text] = true;
+
+    // Render prompt bubble immediately
+    logEl.appendChild(createPromptBubble(text, 'You'));
+    scrollToBottom(logEl);
+
+    // Send to server
+    inputEl.disabled = true;
+    fetch('/api/message', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agent: agent, message: text }),
+    })
+      .catch(function (err) { console.error('Send message error:', err); })
+      .then(function () { inputEl.disabled = false; inputEl.focus(); });
+  }
+
+  els.aliceSend.addEventListener('click', function () {
+    sendChatMessage('alice', els.aliceInput, els.aliceLog);
+  });
+  els.bobSend.addEventListener('click', function () {
+    sendChatMessage('bob', els.bobInput, els.bobLog);
+  });
+
+  els.aliceInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendChatMessage('alice', els.aliceInput, els.aliceLog);
+    }
+  });
+  els.bobInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendChatMessage('bob', els.bobInput, els.bobLog);
+    }
+  });
+
+  // ── Init ───────────────────────────────────────────────────
   connectSSE();
   setInterval(pollStatus, 3000);
   pollStatus();

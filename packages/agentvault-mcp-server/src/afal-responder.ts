@@ -260,6 +260,16 @@ export class AfalResponder {
     return [...this.queue];
   }
 
+  /** Remove a specific proposal from the queue by proposal_id. */
+  removeFromQueue(proposalId: string): boolean {
+    const idx = this.queue.findIndex((item) => item.propose.proposal_id === proposalId);
+    if (idx >= 0) {
+      this.queue.splice(idx, 1);
+      return true;
+    }
+    return false;
+  }
+
   private deny(
     proposalId: string,
     denyCode: DenyCode,

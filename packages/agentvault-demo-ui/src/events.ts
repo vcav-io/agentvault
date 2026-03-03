@@ -15,6 +15,7 @@ export type EventType =
   | 'tool_call'
   | 'tool_result'
   | 'llm_text'
+  | 'user_message'
   | 'agent_status'
   | 'system'
   | 'error';
@@ -48,6 +49,13 @@ export class EventBus {
     this.jsonlStream.on('error', (err) => {
       console.error('JSONL recording error:', err.message);
       this.jsonlStream = null;
+      // Surface to connected clients so UI can warn user
+      this.emit({
+        ts: new Date().toISOString(),
+        type: 'system',
+        agent: 'system',
+        payload: { message: `Recording failed: ${err.message}. Run will not be replayable.` },
+      });
     });
     return filename;
   }
@@ -85,7 +93,11 @@ export class EventBus {
     for (const client of this.clients) {
       try {
         client.write(`data: ${json}\n\n`);
-      } catch {
+      } catch (err) {
+        console.warn(
+          `EventBus: SSE client write failed, removing (${this.clients.size - 1} remaining):`,
+          err instanceof Error ? err.message : String(err),
+        );
         this.clients.delete(client);
       }
     }
@@ -127,6 +139,18 @@ export class EventBus {
     this.emit({
       ts: new Date().toISOString(),
       type: 'llm_text',
+      agent,
+      payload: { text },
+    });
+  }
+
+  /**
+   * Convenience: emit a user_message event (mid-run chat from the human).
+   */
+  emitUserMessage(agent: string, text: string): void {
+    this.emit({
+      ts: new Date().toISOString(),
+      type: 'user_message',
       agent,
       payload: { text },
     });

@@ -29,7 +29,7 @@ export class OpenAIProvider implements LLMProvider {
 
   readonly name = 'openai';
 
-  constructor(apiKey: string, model = 'gpt-4o') {
+  constructor(apiKey: string, model = 'gpt-4.1-mini') {
     this.client = new OpenAI({ apiKey });
     this.model = model;
   }

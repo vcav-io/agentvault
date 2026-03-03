@@ -6,7 +6,7 @@
   <title>AgentVault — Replay</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Lexend+Deca:wght@300;400;500;600;700;800&family=JetBrains+Mono:ital,wght@0,300..800;1,300..800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:ital,wght@0,300..800;1,300..800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -36,49 +36,56 @@
 
   <main class="viewport">
     <div class="protocol-view" id="protocol-phase">
-      <div class="agents">
-        <section class="agent alice" id="alice-panel">
-          <div class="agent-bar">
-            <div class="agent-id">
-              <span class="agent-dot"></span>
-              <h2>Alice</h2>
-              <span class="agent-badge">INITIATOR</span>
-            </div>
+      <div class="sim-grid" id="sim-grid">
+        <!-- Left panel: Alice's chat -->
+        <div class="sim-panel sim-panel--chat sim-panel--alice" id="panel-left">
+          <div class="sim-panel__header">
+            <span class="sim-panel__agent-name">
+              <span class="sim-panel__agent-dot"></span>
+              Alice
+              <span class="sim-panel__role">(principal)</span>
+            </span>
+            <span class="sim-panel__agent-badge">INITIATOR</span>
           </div>
-          <div class="agent-feed" id="alice-log"></div>
-        </section>
-
-        <div class="channel active" id="channel">
-          <div class="channel-track">
-            <div class="channel-particle"></div>
-            <div class="channel-particle"></div>
-          </div>
-          <span class="channel-label">AFAL</span>
-          <div class="channel-track">
-            <div class="channel-particle"></div>
-            <div class="channel-particle"></div>
-          </div>
+          <div class="sim-panel__messages" id="alice-log"></div>
         </div>
 
-        <section class="agent bob" id="bob-panel">
-          <div class="agent-bar">
-            <div class="agent-id">
-              <span class="agent-dot"></span>
-              <h2>Bob</h2>
-              <span class="agent-badge">RESPONDER</span>
-            </div>
+        <!-- Centre panel: The Vault -->
+        <div class="sim-panel sim-panel--vault" id="panel-centre">
+          <div class="sim-panel__header">
+            <span class="sim-panel__vault-label">Session</span>
           </div>
-          <div class="agent-feed" id="bob-log"></div>
-        </section>
+          <div class="sim-panel__vault-scroll" id="vault-scroll">
+            <div class="sim-panel__vault-events" id="vault-events"></div>
+          </div>
+          <div class="signal-overlay" id="signal-overlay"></div>
+        </div>
+
+        <!-- Right panel: Bob's chat -->
+        <div class="sim-panel sim-panel--chat sim-panel--bob" id="panel-right">
+          <div class="sim-panel__header">
+            <span class="sim-panel__agent-name">
+              <span class="sim-panel__agent-dot"></span>
+              Bob
+              <span class="sim-panel__role">(principal)</span>
+            </span>
+            <span class="sim-panel__agent-badge">RESPONDER</span>
+          </div>
+          <div class="sim-panel__messages" id="bob-log"></div>
+        </div>
       </div>
 
-      <section class="log-panel">
-        <div class="log-bar">
+      <!-- Collapsible protocol log (debug view) -->
+      <section class="log-panel collapsed" id="log-panel">
+        <div class="log-bar" id="log-bar">
           <div class="log-title">
             <span class="log-icon">&#9642;</span>
             <h3>Protocol Events</h3>
           </div>
-          <span class="log-count" id="event-count">0 events</span>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span class="log-count" id="event-count">0 events</span>
+            <span class="log-chevron">&#9656;</span>
+          </div>
         </div>
         <div class="log-feed" id="event-log"></div>
       </section>
@@ -93,21 +100,57 @@
     var els = {
       aliceLog: $('alice-log'),
       bobLog: $('bob-log'),
+      vaultEvents: $('vault-events'),
       eventLog: $('event-log'),
+      logPanel: $('log-panel'),
+      logBar: $('log-bar'),
       runSelect: $('run-select'),
       speedInput: $('speed-input'),
       replayBtn: $('replay-btn'),
       eventCount: $('event-count'),
+      signalOverlay: $('signal-overlay'),
     };
 
     var eventSource = null;
     var totalEvents = 0;
 
+    // Init vault card manager
+    VaultCardManager.init(els.vaultEvents);
+
+    // Show result cards in chat panels on output signal (once per session)
+    var resultCardRendered = false;
+    VaultCardManager.setOutputSignalCallback(function (agent, output, receipt) {
+      if (resultCardRendered) return;
+      resultCardRendered = true;
+      var card1 = createResultCard(output, receipt);
+      var card2 = createResultCard(output, receipt);
+      els.aliceLog.appendChild(card1);
+      scrollToBottom(els.aliceLog);
+      els.bobLog.appendChild(card2);
+      scrollToBottom(els.bobLog);
+    });
+
+    // Log panel toggle
+    if (els.logBar) {
+      els.logBar.addEventListener('click', function () {
+        els.logPanel.classList.toggle('collapsed');
+      });
+    }
+
     function handleEvent(event) {
+      if (event.type === 'user_message') {
+        var panel = event.agent === 'alice' ? els.aliceLog : event.agent === 'bob' ? els.bobLog : null;
+        if (panel) {
+          panel.appendChild(createPromptBubble(event.payload.text, 'You'));
+          scrollToBottom(panel);
+        }
+        return;
+      }
+
       if (event.type === 'llm_text') {
         var panel = event.agent === 'alice' ? els.aliceLog : event.agent === 'bob' ? els.bobLog : null;
         if (panel) {
-          var msg = createConvMessage(event);
+          var msg = createChatBubble(event);
           if (msg) {
             panel.appendChild(msg);
             scrollToBottom(panel);
@@ -116,6 +159,9 @@
       } else {
         totalEvents++;
         els.eventCount.textContent = totalEvents + ' event' + (totalEvents === 1 ? '' : 's');
+
+        VaultCardManager.routeEvent(event);
+
         els.eventLog.appendChild(createLogEntry(event));
         scrollToBottom(els.eventLog);
       }
@@ -152,8 +198,24 @@
       els.aliceLog.textContent = '';
       els.bobLog.textContent = '';
       els.eventLog.textContent = '';
+      els.vaultEvents.textContent = '';
       totalEvents = 0;
       els.eventCount.textContent = '0 events';
+      VaultCardManager.init(els.vaultEvents);
+      resultCardRendered = false;
+      VaultCardManager.setOutputSignalCallback(function (agent, output, receipt) {
+        if (resultCardRendered) return;
+        resultCardRendered = true;
+        var card1 = createResultCard(output, receipt);
+        var card2 = createResultCard(output, receipt);
+        els.aliceLog.appendChild(card1);
+        scrollToBottom(els.aliceLog);
+        els.bobLog.appendChild(card2);
+        scrollToBottom(els.bobLog);
+      });
+
+      // Dismiss any open signal overlay
+      els.signalOverlay.classList.remove('signal-overlay--visible');
 
       var file = els.runSelect.value;
       var speed = parseFloat(els.speedInput.value) || 3;

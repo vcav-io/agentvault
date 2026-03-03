@@ -114,6 +114,11 @@ async function runLLMBurst(
 
   let ephemeralCommitted = false;
 
+  // When a tool result signals session completion, we set this flag instead
+  // of returning immediately. This lets the loop continue for one more turn
+  // so the LLM can react to the result (e.g., summarise the mediation signal).
+  let sessionDone = false;
+
   // Build messages for this burst — ephemeral message appended but not persisted yet
   let messages: Message[] = ephemeralUserMessage
     ? [...state.messages, { role: 'user' as const, content: ephemeralUserMessage }]
@@ -121,6 +126,14 @@ async function runLLMBurst(
 
   try {
     for (let turn = 0; turn < MAX_TURNS; turn++) {
+      // If session completed on the previous turn, exit now.
+      // The LLM already got one turn to react to the result.
+      if (sessionDone) {
+        state.status = 'completed';
+        events.emitStatus(name, 'completed', 'Session completed');
+        return 'session_completed';
+      }
+
       state.turnCount++;
 
       const response = await provider.chat({
@@ -150,6 +163,13 @@ async function runLLMBurst(
           state.messages.push({ role: 'assistant', content: response.contentBlocks });
         }
         // If HEARTBEAT_OK and not committed: nothing persisted — ephemeral vanishes
+
+        // If the session is done and the LLM just produced its reaction text, exit
+        if (sessionDone) {
+          state.status = 'completed';
+          events.emitStatus(name, 'completed', 'Session completed');
+          return 'session_completed';
+        }
 
         state.status = 'idle';
         events.emitStatus(name, 'idle', isHeartbeatOk ? 'HEARTBEAT_OK' : 'Burst complete');
@@ -183,14 +203,13 @@ async function runLLMBurst(
       // Update messages reference for next turn
       messages = state.messages;
 
-      // Check if any tool result indicates session completion
+      // Check if any tool result indicates session completion.
+      // Don't return immediately — set flag so the LLM gets one more turn to react.
       for (const tr of toolResults) {
         try {
           const parsed = JSON.parse(tr.content);
           if (parsed?.state === 'COMPLETED' || parsed?.state === 'FAILED') {
-            state.status = 'idle';
-            events.emitStatus(name, 'idle', `Session ${parsed.state.toLowerCase()}`);
-            return 'session_completed';
+            sessionDone = true;
           }
         } catch {
           // Tool results are not always JSON (e.g. plain text responses).
@@ -202,6 +221,11 @@ async function runLLMBurst(
     }
 
     // Exhausted turns
+    if (sessionDone) {
+      state.status = 'completed';
+      events.emitStatus(name, 'completed', 'Session completed');
+      return 'session_completed';
+    }
     state.status = 'idle';
     events.emitStatus(name, 'idle', `Burst reached max turns (${MAX_TURNS})`);
     return 'max_turns';
@@ -267,8 +291,11 @@ export async function runHeartbeatLoop(
 // ── sendUserMessage ──────────────────────────────────────────────────────
 
 /**
- * Send an initial user message and trigger an immediate LLM burst.
- * Called when the user clicks Start.
+ * Send a user message and trigger an immediate LLM burst.
+ * Called when the user clicks Start or sends a mid-run chat message.
+ *
+ * The message push and burst are both inside the queue to prevent
+ * concurrent mutation of state.messages during a running burst.
  */
 export async function sendUserMessage(
   params: BurstParams & { queue: ReturnType<typeof createQueue> },
@@ -277,10 +304,12 @@ export async function sendUserMessage(
   const { name, events, state, queue } = params;
 
   state.started = true;
-  state.messages.push({ role: 'user', content: message });
   events.emitSystem(`${name}: User message received`);
 
-  await queue.enqueue(() => runLLMBurst(params));
+  await queue.enqueue(() => {
+    state.messages.push({ role: 'user', content: message });
+    return runLLMBurst(params);
+  });
 }
 
 export { createQueue };
