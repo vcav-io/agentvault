@@ -7,6 +7,7 @@ import type { NormalizedKnownAgent } from './relaySignal.js';
 
 export interface InboxService {
   checkInbox(): Promise<{ invites: { invite_id: string }[] }>;
+  peekInbox?(): Promise<{ invites: { invite_id: string }[] }>;
 }
 
 export interface NextAction {
@@ -32,7 +33,9 @@ export async function handleGetIdentity(
 
   if (inboxService) {
     try {
-      const inbox = await inboxService.checkInbox();
+      const inbox = inboxService.peekInbox
+        ? await inboxService.peekInbox()
+        : await inboxService.checkInbox();
       result.pending_invites = inbox.invites.length;
       if (inbox.invites.length > 0) {
         result.next_action = {
@@ -41,8 +44,9 @@ export async function handleGetIdentity(
           reason: 'pending_invite',
         };
         result.inbox_hint =
-          `You have ${inbox.invites.length} pending invite(s). ` +
-          'Use agentvault.relay_signal in RESPOND mode to review.';
+          `You have ${inbox.invites.length} pending invite(s).`;
+      } else {
+        result.inbox_hint = 'No pending invites.';
       }
     } catch {
       // Best-effort: omit pending_invites entirely on failure.

@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { handleRelaySignal } from '../tools/relaySignal.js';
+import { handleRelaySignal, _setDiscoverPollConfigForTesting } from '../tools/relaySignal.js';
 import type { RelaySignalOutput, SessionStateEntry } from '../tools/relaySignal.js';
 import { _resetHandlesForTesting } from '../tools/relayHandles.js';
 import type { AfalTransport, AfalInviteMessage } from '../afal-transport.js';
@@ -59,6 +59,7 @@ function createMockAfalTransport(invites: AfalInviteMessage[] = []): AfalTranspo
   return {
     sendPropose: vi.fn().mockResolvedValue(undefined),
     checkInbox: vi.fn().mockResolvedValue({ invites }),
+    peekInbox: vi.fn().mockResolvedValue({ invites }),
     acceptInvite: vi.fn().mockResolvedValue(undefined),
     agentId: 'alice-demo',
   };
@@ -68,6 +69,8 @@ let tmpDir: string;
 
 beforeEach(() => {
   _resetHandlesForTesting();
+  // Disable bounded polling by default — single check, no sleep
+  _setDiscoverPollConfigForTesting(0, 0);
   mockGetStatus.mockResolvedValue({ state: 'PROCESSING' });
   mockGetOutput.mockResolvedValue({ state: 'COMPLETED', output: {} });
   // Use a temp directory for session state files
@@ -79,6 +82,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Restore discover poll defaults
+  _setDiscoverPollConfigForTesting(30_000, 3_000);
   // Clean up temp dir
   try {
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -144,7 +149,7 @@ describe('resume_strategy in responses', () => {
     expect(data.next_update_seconds).toBe(5);
   });
 
-  it('RESPOND with no invite returns DEFERRED with seconds=120', async () => {
+  it('RESPOND with no invite returns DEFERRED with seconds=30', async () => {
     const transport = createMockAfalTransport([]); // empty inbox
     const result = await handleRelaySignal(
       { mode: 'RESPOND', from: 'bob-demo', expected_purpose: 'MEDIATION', my_input: 'world' },
@@ -154,7 +159,7 @@ describe('resume_strategy in responses', () => {
 
     expect(data.state).toBe('AWAITING');
     expect(data.resume_strategy).toBe('DEFERRED');
-    expect(data.next_update_seconds).toBe(120);
+    expect(data.next_update_seconds).toBe(30);
   });
 
   it('completed response has no resume_strategy', async () => {
@@ -475,7 +480,7 @@ describe('non-blocking phases', () => {
     expect(data.error_code).toContain('SCHEMA_VALIDATION');
   });
 
-  it('phaseDiscover returns DEFERRED when no invite found', async () => {
+  it('phaseDiscover returns DEFERRED when no invite found after bounded poll', async () => {
     const transport = createMockAfalTransport([]); // empty inbox
     const result = await handleRelaySignal(
       { mode: 'RESPOND', from: 'bob-demo', expected_purpose: 'MEDIATION', my_input: 'world' },
@@ -486,7 +491,44 @@ describe('non-blocking phases', () => {
     expect(data.state).toBe('AWAITING');
     expect(data.phase).toBe('DISCOVER');
     expect(data.resume_strategy).toBe('DEFERRED');
-    expect(data.next_update_seconds).toBe(120);
+    expect(data.next_update_seconds).toBe(30);
+    // Bounded poll should have checked inbox multiple times
+    expect(transport.checkInbox).toHaveBeenCalled();
+  });
+
+  it('phaseDiscover finds invite on second poll attempt', async () => {
+    // Enable polling with no sleep — budget allows multiple checks
+    _setDiscoverPollConfigForTesting(10_000, 0);
+
+    const invite: AfalInviteMessage = {
+      invite_id: 'inv-delayed',
+      from_agent_id: 'bob-demo',
+      payload_type: 'VCAV_E_INVITE_V1',
+      payload: {
+        session_id: 'sess-delayed',
+        responder_submit_token: 'sub-tok',
+        responder_read_token: 'read-tok',
+        relay_url: 'http://relay.test',
+      },
+      contract_hash: 'relay-hash-mock',
+      template_id: 'mediation-demo.v1.standard',
+    };
+    // First check returns empty, second returns the invite
+    const transport = createMockAfalTransport([]);
+    (transport.checkInbox as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ invites: [] })
+      .mockResolvedValueOnce({ invites: [invite] });
+
+    const result = await handleRelaySignal(
+      { mode: 'RESPOND', from: 'bob-demo', expected_purpose: 'MEDIATION', my_input: 'world' },
+      transport,
+    );
+    const data = result.data as RelaySignalOutput;
+
+    expect(data.state).toBe('AWAITING');
+    expect(data.phase).toBe('JOIN');
+    expect(data.resume_strategy).toBe('IMMEDIATE');
+    expect(transport.checkInbox).toHaveBeenCalledTimes(2);
   });
 
   it('phaseDiscover returns IMMEDIATE when invite found (phase transitions to JOIN)', async () => {

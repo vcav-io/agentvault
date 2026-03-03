@@ -48,6 +48,9 @@ export interface AfalTransport {
 
   checkInbox(): Promise<{ invites: AfalInviteMessage[] }>;
 
+  /** Non-destructive inbox check — items remain in queue for checkInbox() to drain. */
+  peekInbox(): Promise<{ invites: AfalInviteMessage[] }>;
+
   acceptInvite(inviteId: string): Promise<AcceptResult | undefined>;
 
   readonly agentId: string;
@@ -219,6 +222,12 @@ export class OrchestratorInboxAdapter implements AfalTransport {
     );
 
     return { invites };
+  }
+
+  async peekInbox(): Promise<{ invites: AfalInviteMessage[] }> {
+    // OrchestratorInboxAdapter delegates to the same checkInbox — the orchestrator
+    // endpoint is stateless (peek semantics, not drain). Items remain available.
+    return this.checkInbox();
   }
 
   async acceptInvite(inviteId: string): Promise<AcceptResult | undefined> {

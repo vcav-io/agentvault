@@ -282,7 +282,21 @@ export class DirectAfalTransport implements AfalTransport {
 
     // RESPOND mode — drain admitted proposals from the responder queue
     const admitted = this.responder.drainQueue();
-    const invites: AfalInviteMessage[] = admitted.map((item) => ({
+    return { invites: this.mapAdmitted(admitted) };
+  }
+
+  async peekInbox(): Promise<{ invites: AfalInviteMessage[] }> {
+    if (!this.responder) {
+      return { invites: [] };
+    }
+
+    // Non-destructive — items remain in queue for checkInbox() to drain later
+    const admitted = this.responder.peekQueue();
+    return { invites: this.mapAdmitted(admitted) };
+  }
+
+  private mapAdmitted(admitted: { propose: AfalPropose; relay: { session_id: string; responder_submit_token: string; responder_read_token: string; relay_url: string }; proposerAgentId: string }[]): AfalInviteMessage[] {
+    return admitted.map((item) => ({
       invite_id: item.propose.proposal_id,
       from_agent_id: item.proposerAgentId,
       payload_type: 'VCAV_E_INVITE_V1',
@@ -294,8 +308,6 @@ export class DirectAfalTransport implements AfalTransport {
       },
       afalPropose: item.propose,
     }));
-
-    return { invites };
   }
 
   async acceptInvite(inviteId: string): Promise<AcceptResult | undefined> {

@@ -13,7 +13,8 @@ export const IDENTITY_TOOLS = [
       'pending_invites > 0, next_action tells you which tool to call.\n\n' +
       'Call this first to confirm your agent_id and check for pending invites. ' +
       'If pending_invites > 0: call agentvault.relay_signal in RESPOND mode ' +
-      'to review and accept invites.',
+      'to review and accept invites. If pending_invites is 0 and you are ' +
+      'expecting an invite, call relay_signal in RESPOND mode to wait.',
     inputSchema: {
       type: 'object' as const,
       properties: {},

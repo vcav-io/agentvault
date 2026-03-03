@@ -94,26 +94,44 @@ Shared protocol types and AFAL handshake implementation live in [vault-family-co
 
 ---
 
-## Getting Started
+## Try It
+
+Two co-founders mediate a strategy disagreement through their AI agents. Each shares private concerns the other never sees. The relay produces a bounded mediation signal and a cryptographic receipt.
 
 ```bash
-# Build
-cargo build --workspace
+# 1. Add your API key (either provider works)
+echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
+# or: echo "OPENAI_API_KEY=sk-..." > .env
 
-# Run tests
-cargo test --workspace
+# 2. Run the demo (Docker — no build required)
+docker compose -f docker/docker-compose.demo.yml up
+
+# 3. Open http://localhost:3200 and click "Start Demo"
 ```
 
-TypeScript packages:
+No Docker? Build from source instead (requires Rust 1.88+ and Node.js):
 
 ```bash
+./run-demo.sh
+```
+
+See [docs/getting-started.md](docs/getting-started.md) for the full walkthrough.
+
+---
+
+## For Contributors
+
+```bash
+# Build and test (Rust)
+cargo build --workspace
+cargo test --workspace
+
+# TypeScript packages
 cd packages/agentvault-client && npm install && npm test
 cd packages/agentvault-mcp-server && npm install && npm run build
 ```
 
-See [docs/getting-started.md](docs/getting-started.md) to run your first session.
-
-Requires Rust 1.88.0+.
+Requires Rust 1.88.0+. See [docs/relay-dev-setup.md](docs/relay-dev-setup.md) to run the relay from source.
 
 ---
 

@@ -98,6 +98,11 @@ export class RelayInboxTransport implements AfalTransport {
     return { invites };
   }
 
+  async peekInbox(): Promise<{ invites: AfalInviteMessage[] }> {
+    // Relay inbox is stateless — polling doesn't consume invites
+    return this.checkInbox();
+  }
+
   /**
    * Accept an invite via the relay's accept endpoint.
    * Returns AcceptResult with session tokens (unlike other transports which return undefined).

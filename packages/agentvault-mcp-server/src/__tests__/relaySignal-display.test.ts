@@ -67,6 +67,7 @@ function createMockAfalTransport(invites: AfalInviteMessage[] = []): AfalTranspo
   return {
     sendPropose: vi.fn().mockResolvedValue(undefined),
     checkInbox: vi.fn().mockResolvedValue({ invites }),
+    peekInbox: vi.fn().mockResolvedValue({ invites }),
     acceptInvite: vi.fn().mockResolvedValue(undefined),
     agentId: 'alice-demo',
   };

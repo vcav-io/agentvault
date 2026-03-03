@@ -5,6 +5,16 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./tools": {
+      "import": "./dist/tool-registry.js",
+      "types": "./dist/tool-registry.d.ts"
+    }
+  },
   "bin": {
     "agentvault-mcp-server": "dist/index.js"
   },

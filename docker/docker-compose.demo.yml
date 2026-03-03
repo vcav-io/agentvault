@@ -4,7 +4,7 @@ services:
     ports:
       - "3100:3100"
     environment:
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - VCAV_MODEL_ID=${VCAV_MODEL_ID:-claude-sonnet-4-6}
@@ -19,3 +19,16 @@ services:
       interval: 10s
       timeout: 3s
       retries: 3
+
+  demo:
+    image: ghcr.io/vcav-io/agentvault-demo:latest
+    ports:
+      - "3200:3200"
+    depends_on:
+      relay:
+        condition: service_healthy
+    environment:
+      - VCAV_RELAY_URL=http://relay:3100
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - PROVIDER=${PROVIDER:-}

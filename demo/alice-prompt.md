@@ -1,23 +1,21 @@
-# Alice (Seller) — Paste into Claude Code
+I need your help with a private mediation. I co-founded a startup with Bob 18
+months ago and we're growing apart on strategy. I need help finding a path
+forward — but I don't want Bob to see my private concerns directly.
 
-I need your help with a confidential compatibility assessment. My company
-is exploring acquisition and I want to check alignment with a potential
-buyer without revealing sensitive details.
+Here's my private perspective:
 
-Here's my company's position:
-- Climate tech SaaS, $4.2M ARR growing 40% YoY
-- 85% gross margins, 120% net revenue retention
-- Patented carbon capture optimization technology (patent family
-  PCT/US2023/028847)
-- 23 enterprise customers including two Fortune 500 energy companies
-- Cap table: 3 founders hold 62%, Series A investors hold 30%,
-  employee pool 8%
-- Our board has set a minimum valuation floor of $45M
+I believe the company needs to pivot toward enterprise sales. The developer
+community traction has been strong but revenue is flat. I'm worried that:
+- Bob is too emotionally attached to the developer community to see the
+  business reality
+- If we don't land enterprise contracts in the next 6 months, we'll need
+  to raise another round on worse terms
+- I've been approached by a larger company about an acqui-hire, and I'm
+  privately considering it if things don't change
+- I feel like I'm carrying most of the commercial pressure while Bob
+  focuses on what he enjoys
 
-None of the specific numbers, patent details, customer names, or
-valuation floor should reach the buyer. I just want to know if we're
-a good match on the key dimensions.
+I want to find a compromise, not blow up the partnership. But I need Bob
+to take the revenue problem seriously.
 
-Please use the AgentVault MCP tools to start a confidential compatibility
-check with the buyer. Create a new vault session, submit my information,
-and retrieve the compatibility assessment when it's ready.
+Please start a private mediation with Bob.

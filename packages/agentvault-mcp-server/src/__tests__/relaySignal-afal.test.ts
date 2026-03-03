@@ -5,8 +5,8 @@
  * that INITIATE builds AfalPropose and RESPOND extracts it.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { handleRelaySignal } from '../tools/relaySignal.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { handleRelaySignal, _setDiscoverPollConfigForTesting } from '../tools/relaySignal.js';
 import { _resetHandlesForTesting } from '../tools/relayHandles.js';
 import type { AfalTransport, AfalInviteMessage } from '../afal-transport.js';
 import type { AfalPropose } from '../afal-types.js';
@@ -51,6 +51,7 @@ function createMockAfalTransport(invites: AfalInviteMessage[] = []): AfalTranspo
   return {
     sendPropose: vi.fn().mockResolvedValue(undefined),
     checkInbox: vi.fn().mockResolvedValue({ invites }),
+    peekInbox: vi.fn().mockResolvedValue({ invites }),
     acceptInvite: vi.fn().mockResolvedValue(undefined),
     agentId: 'alice-demo',
   };
@@ -58,8 +59,14 @@ function createMockAfalTransport(invites: AfalInviteMessage[] = []): AfalTranspo
 
 beforeEach(() => {
   _resetHandlesForTesting();
+  // Disable bounded polling — single check, no sleep
+  _setDiscoverPollConfigForTesting(0, 0);
   process.env['VCAV_RELAY_URL'] = 'http://relay.test';
   process.env['VCAV_AGENT_ID'] = 'alice-demo';
+});
+
+afterEach(() => {
+  _setDiscoverPollConfigForTesting(30_000, 3_000);
 });
 
 describe('INITIATE with AFAL', () => {
