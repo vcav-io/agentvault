@@ -1,18 +1,20 @@
-name: Build and Push Relay Image
+name: Build and Push Demo Image
 
 on:
   push:
     branches: [main]
     paths:
-      - 'packages/agentvault-relay/**'
-      - 'docker/Dockerfile.relay'
-      - 'Cargo.lock'
-      - 'prompt_programs/**'
+      - 'packages/agentvault-client/**'
+      - 'packages/agentvault-mcp-server/**'
+      - 'packages/agentvault-demo-ui/**'
+      - 'docker/Dockerfile.demo'
+      - 'demo/alice-prompt.md'
+      - 'demo/bob-prompt.md'
   workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: vcav-io/agentvault-relay
+  IMAGE_NAME: vcav-io/agentvault-demo
 
 jobs:
   build-and-push:
@@ -44,7 +46,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
-          file: docker/Dockerfile.relay
+          file: docker/Dockerfile.demo
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

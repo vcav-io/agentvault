@@ -4,175 +4,99 @@
 
 ```
   Agent A                    Relay                    Agent B
-    │                          │                          │
-    │   submit input ────────► │ ◄──────── submit input   │
-    │                          │                          │
-    │                    ┌─────┴─────┐                    │
-    │                    │  assemble  │                    │
-    │                    │   prompt   │                    │
-    │                    │  call LLM  │                    │
-    │                    │  validate  │                    │
-    │                    │  against   │                    │
-    │                    │  schema +  │                    │
-    │                    │  guardian  │                    │
-    │                    │  policy    │                    │
-    │                    └─────┬─────┘                    │
-    │                          │                          │
-    │   ◄──── output + receipt ┼ receipt + output ────►   │
-    │                          │                          │
+    |                          |                          |
+    |   submit input --------► | ◄-------- submit input   |
+    |                          |                          |
+    |                    ┌─────┴─────┐                    |
+    |                    │  assemble  │                    |
+    |                    │   prompt   │                    |
+    |                    │  call LLM  │                    |
+    |                    │  validate  │                    |
+    |                    │  against   │                    |
+    |                    │  schema +  │                    |
+    |                    │  guardian  │                    |
+    |                    │  policy    │                    |
+    |                    └─────┬─────┘                    |
+    |                          |                          |
+    |   ◄──── output + receipt ┼ receipt + output ────►   |
+    |                          |                          |
     ▼                          ▼                          ▼
               Verifier confirms receipt signature
 ```
 
 Both agents submit structured input. The relay assembles a prompt from a content-addressed template, calls the model, validates the output against a JSON Schema, applies guardian rules, and returns the bounded output with a signed receipt. Neither agent sees the other's raw input.
 
-## Prerequisites
+## Try it (5 minutes)
 
-- Rust 1.88.0+ (see `rust-toolchain.toml`)
-- An Anthropic API key (or OpenAI API key)
-- The [vault-family-core](https://github.com/vcav-io/vault-family-core) dependency resolves automatically via Cargo git dependency
+Two co-founders mediate a strategy disagreement through their AI agents — each shares private concerns that the other never sees directly. The relay produces a bounded mediation signal and a cryptographic receipt.
 
-## Environment variables
+### Option A: Docker (recommended)
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | Yes | — | Anthropic API key |
-| `VCAV_PORT` | No | `3100` | Port the relay listens on |
-| `VCAV_MODEL_ID` | No | `claude-sonnet-4-6` | Anthropic model to use |
-| `VCAV_SIGNING_KEY_HEX` | No | ephemeral | 64-char hex Ed25519 signing key. If unset, generates a random key on each start (receipts won't verify across restarts) |
-| `VCAV_PROMPT_PROGRAM_DIR` | No | `prompt_programs` | Directory containing prompt programs and lockfiles |
-| `VCAV_SESSION_TTL_SECS` | No | `600` | Session expiry in seconds |
-| `OPENAI_API_KEY` | No | — | Enables the OpenAI provider |
-| `VCAV_OPENAI_MODEL_ID` | No | `gpt-4o` | OpenAI model to use |
-| `ANTHROPIC_BASE_URL` | No | — | Override Anthropic API base URL (for proxies) |
-| `OPENAI_BASE_URL` | No | — | Override OpenAI API base URL (for proxies) |
-
-## Start the relay
+No Rust or Node.js required — just Docker.
 
 ```bash
-# Build
-cargo build --workspace
+# 1. Add your API key (either provider works)
+echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
+# or: echo "OPENAI_API_KEY=sk-..." > .env
 
-# Generate a persistent signing key (recommended)
-export VCAV_SIGNING_KEY_HEX=$(openssl rand -hex 32)
+# 2. Start the relay and demo UI
+docker compose -f docker/docker-compose.demo.yml up
 
-# Set your API key
-export ANTHROPIC_API_KEY=sk-ant-...
-
-# Start
-cargo run -p agentvault-relay
+# 3. Open http://localhost:3200 and click "Start Demo"
 ```
 
-The relay starts on port 3100 by default. Verify with:
+To stop: press `Ctrl-C` or `docker compose -f docker/docker-compose.demo.yml down`.
+
+### Option B: Build from source
+
+Requires Rust 1.88+ and Node.js.
 
 ```bash
-curl http://localhost:3100/health
+# 1. Add your API key (either provider works)
+echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
+# or: echo "OPENAI_API_KEY=sk-..." > .env
+
+# 2. Build and start everything (relay + demo server, opens browser)
+./run-demo.sh
+
+# 3. Click "Start Demo" in the browser
 ```
 
-Response:
-```json
-{
-  "status": "ok",
-  "version": "0.1.0",
-  "git_sha": "...",
-  "execution_lane": "API_MEDIATED"
-}
-```
+The script builds the relay from source, starts it, builds the demo UI server, and opens your browser. To stop: press `Ctrl-C`.
 
-## Run a bilateral session
+### What to expect
 
-A bilateral session has four steps: create, submit inputs, poll, retrieve output.
+1. Alice's agent creates a vault session and submits her private concerns
+2. Bob's agent discovers the pending session and submits his private concerns
+3. The relay runs inference — both inputs go to the LLM together, but the output contains only the mediation signal (no raw concerns)
+4. Both agents retrieve the same structured output — a bounded mediation signal identifying common ground and friction points without exposing either party's private reasoning
+5. A signed receipt is produced proving what was computed and when
 
-### 1. Create a session
+## What just happened
 
-The `output_schema` field takes the full JSON Schema object. See `schemas/output/` for available schemas.
+- A **session** was created under a specific **contract** — purpose code, output schema, and prompt template, all content-addressed
+- Both agents submitted private context; neither saw the other's raw input
+- The relay assembled the prompt, called the model, and **validated the output against the JSON Schema** — anything that didn't conform was rejected, not returned
+- The **guardian policy** enforced additional constraints (e.g., no PII leakage, no raw financials in output)
+- A **signed receipt** was produced binding the exact contract hash, guardian policy hash, prompt template hash, model profile hash, and relay build hash to the output
+- **No transcript was stored** — the relay is stateless; session data exists only for the duration of execution
 
-Run `sha256sum prompt_programs/<your-program>.md` to compute the prompt template hash.
+The output is a bounded mediation signal — not a conversation, not a summary, not free text. The schema structurally limits what can leave the session.
+
+## Alternative: CLI demo with Claude Code
+
+If you want to see individual agents running in their own terminals (rather than the browser UI), there's a CLI demo that uses Claude Code:
 
 ```bash
-curl -s -X POST http://localhost:3100/sessions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "contract": {
-      "purpose_code": "COMPATIBILITY",
-      "output_schema_id": "vcav_e_compatibility_signal_v2",
-      "output_schema": <contents of schemas/output/vcav_e_compatibility_signal_v2.schema.json>,
-      "participants": ["alice", "bob"],
-      "prompt_template_hash": "<sha256 of your prompt program>"
-    },
-    "provider": "anthropic"
-  }'
+# Requires Claude Code (https://claude.ai/code) + Anthropic API key
+./demo/setup.sh
 ```
 
-Response includes four bearer tokens:
-```json
-{
-  "session_id": "...",
-  "contract_hash": "...",
-  "initiator_submit_token": "...",
-  "initiator_read_token": "...",
-  "responder_submit_token": "...",
-  "responder_read_token": "..."
-}
-```
-
-### 2. Submit inputs (both parties)
-
-Each party submits their input using their submit token:
-
-```bash
-# Initiator
-curl -s -X POST http://localhost:3100/sessions/$SESSION_ID/input \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $INITIATOR_SUBMIT_TOKEN" \
-  -d '{
-    "role": "alice",
-    "context": { "profile": "..." },
-    "expected_contract_hash": "..."
-  }'
-
-# Responder
-curl -s -X POST http://localhost:3100/sessions/$SESSION_ID/input \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $RESPONDER_SUBMIT_TOKEN" \
-  -d '{
-    "role": "bob",
-    "context": { "profile": "..." }
-  }'
-```
-
-When both inputs are received, inference starts automatically.
-
-### 3. Poll for completion
-
-```bash
-curl -s http://localhost:3100/sessions/$SESSION_ID/status \
-  -H "Authorization: Bearer $INITIATOR_READ_TOKEN"
-```
-
-States: `Created` → `Partial` → `Processing` → `Completed` (or `Aborted`).
-
-### 4. Retrieve output and receipt
-
-```bash
-curl -s http://localhost:3100/sessions/$SESSION_ID/output \
-  -H "Authorization: Bearer $INITIATOR_READ_TOKEN"
-```
-
-Response:
-```json
-{
-  "state": "Completed",
-  "abort_reason": null,
-  "output": { "...bounded signal..." },
-  "receipt": { "...full receipt..." },
-  "receipt_signature": "...hex Ed25519 signature..."
-}
-```
-
-The receipt contains: `contract_hash`, `guardian_policy_hash`, `prompt_template_hash`, `model_profile_hash`, `runtime_hash`, the output, and entropy accounting. See the [API Reference](api-reference.md) for full details.
+This creates isolated workspaces for two agents, prints prompts to paste, and lets you watch each agent's reasoning in real time. See [demo/README.md](../demo/README.md) for details.
 
 ## Next steps
 
 - [API Reference](api-reference.md) — full endpoint documentation
+- [Run the Relay from Source](relay-dev-setup.md) — build and run the relay locally for development
+- [Protocol Specification](protocol-spec.md) — formal protocol definition
 - [Roadmap](roadmap.md) — design principles and what's coming next

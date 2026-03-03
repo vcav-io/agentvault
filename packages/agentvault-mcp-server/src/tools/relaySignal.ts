@@ -69,6 +69,24 @@ function isRelayInvitePayload(
  */
 const HANDLE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
+/**
+ * Bounded poll budget for phaseDiscover. Polls inbox repeatedly up to this
+ * budget before returning DEFERRED. Keeps the tool call responsive while
+ * covering the typical case where the counterparty invite arrives within seconds.
+ */
+const DISCOVER_POLL_BUDGET_MS = 30_000; // 30 seconds
+const DISCOVER_POLL_INTERVAL_MS = 3_000; // 3 seconds between checks
+
+// Mutable copies used at runtime — overridable for tests.
+let _discoverPollBudgetMs = DISCOVER_POLL_BUDGET_MS;
+let _discoverPollIntervalMs = DISCOVER_POLL_INTERVAL_MS;
+
+/** @internal Test-only: override discover poll timing. */
+export function _setDiscoverPollConfigForTesting(budgetMs: number, intervalMs: number): void {
+  _discoverPollBudgetMs = budgetMs;
+  _discoverPollIntervalMs = intervalMs;
+}
+
 /** Human-readable descriptions for relay abort reasons. */
 const ABORT_DESCRIPTIONS: Record<string, string> = {
   PROVIDER_ERROR: 'The relay LLM provider returned an error (usually transient).',
@@ -524,9 +542,22 @@ function mapRelayError(error: unknown): { code: ErrorCode; detail: string } {
       };
     }
     if (msg.includes('Proposal denied')) {
+      let guidance = '';
+      if (msg.includes('deny_code=UNTRUSTED')) {
+        guidance =
+          ' The counterparty does not recognize this agent as trusted. ' +
+          'Check that the counterparty has your agent_id and public key in their trusted agents configuration, ' +
+          'and that no stale AFAL server from a previous session is running on the same port.';
+      } else if (msg.includes('deny_code=POLICY')) {
+        guidance = ' The counterparty\'s policy does not allow this purpose or configuration.';
+      } else if (msg.includes('deny_code=STALE')) {
+        guidance = ' The proposal timestamp was rejected as too old. Check clock synchronization.';
+      } else if (msg.includes('deny_code=INTEGRITY')) {
+        guidance = ' The proposal failed integrity verification (possible tampering or version mismatch).';
+      }
       return {
         code: 'SESSION_ERROR',
-        detail: `Counterparty explicitly denied the proposal. ${msg}`,
+        detail: `Counterparty explicitly denied the proposal.${guidance} ${msg}`,
       };
     }
     if (msg.includes('relay_url')) {
@@ -1245,151 +1276,172 @@ async function phaseRetryPropose(
 /**
  * DISCOVER phase (relay inbox RESPOND only).
  *
- * Single-check: queries inbox once and returns immediately.
- * Heartbeat-safe — no blocking loops.
+ * Bounded poll: checks inbox repeatedly for up to DISCOVER_POLL_BUDGET_MS
+ * before returning DEFERRED. Covers the typical case where the counterparty
+ * invite arrives within seconds (Claude Code reactive sessions), while
+ * remaining compatible with OpenClaw heartbeat-driven retries.
  */
 async function phaseDiscover(
   handle: RelayHandle,
   transport: AfalTransport,
 ): Promise<ToolResponse<RelaySignalOutput>> {
-  // Check overall timeout
-  if (Date.now() > handle.timeoutDeadline) {
-    return failedResponse(
-      handle,
-      'RELAY_TIMEOUT',
-      'Timed out waiting for relay invite. Ask the initiator to retry.',
-    );
-  }
+  const pollDeadline = Math.min(
+    Date.now() + _discoverPollBudgetMs,
+    handle.timeoutDeadline,
+  );
+  let isFirstCheck = true;
 
-  const response = await transport.checkInbox();
-  const invites: AfalInviteMessage[] = response.invites ?? [];
+  while (true) {
+    // Check overall timeout
+    if (Date.now() > handle.timeoutDeadline) {
+      return failedResponse(
+        handle,
+        'RELAY_TIMEOUT',
+        'Timed out waiting for relay invite. Ask the initiator to retry.',
+      );
+    }
 
-  // Track whether we found invites from the sender that failed contract matching.
-  // If all sender invites fail contract checks, return CONTRACT_MISMATCH immediately
-  // instead of polling forever (the sender won't send a different contract).
-  let foundSenderInviteWithContractMismatch = false;
+    // Sleep between polls (not before the first check)
+    if (!isFirstCheck) {
+      await new Promise(resolve => setTimeout(resolve, _discoverPollIntervalMs));
+    }
+    isFirstCheck = false;
 
-  // Scan newest-first to prefer the most recent matching invite
-  for (let i = invites.length - 1; i >= 0; i--) {
-    const invite = invites[i];
-    const fromAgentId: string = invite.from_agent_id;
-    const payloadType: string | undefined = invite.payload_type;
+    const response = await transport.peekInbox();
+    const invites: AfalInviteMessage[] = response.invites ?? [];
 
-    // Filter by sender
-    if (fromAgentId !== handle.counterparty) continue;
-    // Filter by payload type — accept both legacy and relay inbox invites
-    const isRelayInbox = payloadType === RELAY_INBOX_PAYLOAD_TYPE;
-    if (payloadType !== 'VCAV_E_INVITE_V1' && !isRelayInbox) continue;
-    // Relay inbox invites require RelayInboxTransport to accept
-    if (isRelayInbox && !(transport instanceof RelayInboxTransport)) continue;
-    // If handle already has a bound inviteId, only match that
-    if (handle.inviteId && invite.invite_id !== handle.inviteId) continue;
+    // Track whether we found invites from the sender that failed contract matching.
+    // If all sender invites fail contract checks, return CONTRACT_MISMATCH immediately
+    // instead of polling forever (the sender won't send a different contract).
+    let foundSenderInviteWithContractMismatch = false;
 
-    // For legacy invites, require session tokens in payload.
-    // For relay inbox invites, tokens come from acceptInvite later.
-    if (!isRelayInbox) {
-      const payload = invite.payload;
-      if (!payload || typeof payload !== 'object') continue;
+    // Scan newest-first to prefer the most recent matching invite
+    for (let i = invites.length - 1; i >= 0; i--) {
+      const invite = invites[i];
+      const fromAgentId: string = invite.from_agent_id;
+      const payloadType: string | undefined = invite.payload_type;
+
+      // Filter by sender
+      if (fromAgentId !== handle.counterparty) continue;
+      // Filter by payload type — accept both legacy and relay inbox invites
+      const isRelayInbox = payloadType === RELAY_INBOX_PAYLOAD_TYPE;
+      if (payloadType !== 'VCAV_E_INVITE_V1' && !isRelayInbox) continue;
+      // Relay inbox invites require RelayInboxTransport to accept
+      if (isRelayInbox && !(transport instanceof RelayInboxTransport)) continue;
+      // If handle already has a bound inviteId, only match that
+      if (handle.inviteId && invite.invite_id !== handle.inviteId) continue;
+
+      // For legacy invites, require session tokens in payload.
+      // For relay inbox invites, tokens come from acceptInvite later.
+      if (!isRelayInbox) {
+        const payload = invite.payload;
+        if (!payload || typeof payload !== 'object') continue;
+        if (
+          !payload['session_id'] ||
+          !payload['responder_submit_token'] ||
+          !payload['responder_read_token'] ||
+          !payload['relay_url']
+        )
+          continue;
+      }
+
+      // Check expected_contract_hash if provided (direct hash comparison)
+      if (handle.expectedContractHash && invite.contract_hash !== handle.expectedContractHash) {
+        foundSenderInviteWithContractMismatch = true;
+        continue;
+      }
+
+      // AFAL-enriched path: validate purpose_code from parsed AfalPropose
       if (
-        !payload['session_id'] ||
-        !payload['responder_submit_token'] ||
-        !payload['responder_read_token'] ||
-        !payload['relay_url']
-      )
-        continue;
-    }
-
-    // Check expected_contract_hash if provided (direct hash comparison)
-    if (handle.expectedContractHash && invite.contract_hash !== handle.expectedContractHash) {
-      foundSenderInviteWithContractMismatch = true;
-      continue;
-    }
-
-    // AFAL-enriched path: validate purpose_code from parsed AfalPropose
-    if (
-      invite.afalPropose?.purpose_code &&
-      handle.expectedPurpose &&
-      !handle.expectedContractHash
-    ) {
-      if (invite.afalPropose.purpose_code !== handle.expectedPurpose) {
-        foundSenderInviteWithContractMismatch = true;
-        continue;
+        invite.afalPropose?.purpose_code &&
+        handle.expectedPurpose &&
+        !handle.expectedContractHash
+      ) {
+        if (invite.afalPropose.purpose_code !== handle.expectedPurpose) {
+          foundSenderInviteWithContractMismatch = true;
+          continue;
+        }
+      } else if (handle.expectedPurpose && !handle.expectedContractHash) {
+        // Legacy path: validate expected_purpose via template_id
+        const expectedTemplate = PURPOSE_TO_TEMPLATE[handle.expectedPurpose];
+        const inviteTemplate = invite.template_id;
+        if (expectedTemplate && inviteTemplate && inviteTemplate !== expectedTemplate) {
+          foundSenderInviteWithContractMismatch = true;
+          continue;
+        }
       }
-    } else if (handle.expectedPurpose && !handle.expectedContractHash) {
-      // Legacy path: validate expected_purpose via template_id
-      const expectedTemplate = PURPOSE_TO_TEMPLATE[handle.expectedPurpose];
-      const inviteTemplate = invite.template_id;
-      if (expectedTemplate && inviteTemplate && inviteTemplate !== expectedTemplate) {
-        foundSenderInviteWithContractMismatch = true;
-        continue;
+
+      // Compute relay contract hash for binding into the handle (used by phaseJoin
+      // for expected_contract_hash verification at the relay).
+      let relayContractHash: string | undefined;
+      if (handle.expectedPurpose) {
+        const myId = handle.agentId;
+        try {
+          const relayContract = buildRelayContract(handle.expectedPurpose, [
+            handle.counterparty,
+            myId,
+          ]);
+          if (relayContract) relayContractHash = computeRelayContractHash(relayContract);
+        } catch (err) {
+          // Non-fatal — relay will verify on submit, but log for diagnostics
+          console.error(
+            `phaseDiscover: failed to compute relay contract hash for purpose=${handle.expectedPurpose}: ` +
+              `${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       }
+
+      // Bind invite to handle (stops scanning for different invites)
+      handle.inviteId = invite.invite_id;
+      handle.contractHash = relayContractHash ?? invite.contract_hash;
+      handle.proposalId = invite.afalPropose?.proposal_id;
+
+      if (isRelayInbox) {
+        // Relay inbox: tokens come from acceptInvite in phaseJoin.
+        // Set relayUrl from transport if available.
+        if (transport instanceof RelayInboxTransport) {
+          handle.relayUrl = handle.relayUrl ?? transport.relayUrl;
+        }
+      } else {
+        // Legacy: extract session tokens from invite payload.
+        // (payload was validated by the filter above — this guard is defensive)
+        const payload = invite.payload;
+        if (!payload || typeof payload !== 'object' || !isRelayInvitePayload(payload)) continue;
+        handle.sessionId = payload.session_id;
+        handle.relayUrl = handle.relayUrl ?? payload.relay_url;
+        handle.tokens = {
+          submit: payload.responder_submit_token,
+          read: payload.responder_read_token,
+        };
+      }
+
+      handle.phase = 'JOIN';
+      return awaitingResponse(handle, 'Relay invite found. Joining session.', {
+        strategy: 'IMMEDIATE',
+        seconds: 0,
+      });
     }
 
-    // Compute relay contract hash for binding into the handle (used by phaseJoin
-    // for expected_contract_hash verification at the relay).
-    let relayContractHash: string | undefined;
-    if (handle.expectedPurpose) {
-      const myId = process.env['VCAV_AGENT_ID'] ?? '';
-      try {
-        const relayContract = buildRelayContract(handle.expectedPurpose, [
-          handle.counterparty,
-          myId,
-        ]);
-        if (relayContract) relayContractHash = computeRelayContractHash(relayContract);
-      } catch (err) {
-        // Non-fatal — relay will verify on submit, but log for diagnostics
-        console.error(
-          `phaseDiscover: failed to compute relay contract hash for purpose=${handle.expectedPurpose}: ` +
-            `${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
+    // If sender sent invites but all failed contract matching, fail fast.
+    // Transition handle to FAILED to prevent stale handle leak.
+    if (foundSenderInviteWithContractMismatch) {
+      return failedResponse(
+        handle,
+        'CONTRACT_MISMATCH',
+        'Invite contract does not match expected contract.',
+      );
     }
 
-    // Bind invite to handle (stops scanning for different invites)
-    handle.inviteId = invite.invite_id;
-    handle.contractHash = relayContractHash ?? invite.contract_hash;
-    handle.proposalId = invite.afalPropose?.proposal_id;
-
-    if (isRelayInbox) {
-      // Relay inbox: tokens come from acceptInvite in phaseJoin.
-      // Set relayUrl from transport if available.
-      if (transport instanceof RelayInboxTransport) {
-        handle.relayUrl = handle.relayUrl ?? transport.relayUrl;
-      }
-    } else {
-      // Legacy: extract session tokens from invite payload.
-      // (payload was validated by the filter above — this guard is defensive)
-      const payload = invite.payload;
-      if (!payload || typeof payload !== 'object' || !isRelayInvitePayload(payload)) continue;
-      handle.sessionId = payload.session_id;
-      handle.relayUrl = handle.relayUrl ?? payload.relay_url;
-      handle.tokens = {
-        submit: payload.responder_submit_token,
-        read: payload.responder_read_token,
-      };
+    // No invite found yet — check if we should keep polling
+    if (Date.now() + _discoverPollIntervalMs > pollDeadline) {
+      break;
     }
-
-    handle.phase = 'JOIN';
-    return awaitingResponse(handle, 'Relay invite found. Joining session.', {
-      strategy: 'IMMEDIATE',
-      seconds: 0,
-    });
   }
 
-  // If sender sent invites but all failed contract matching, fail fast.
-  // Transition handle to FAILED to prevent stale handle leak.
-  if (foundSenderInviteWithContractMismatch) {
-    return failedResponse(
-      handle,
-      'CONTRACT_MISMATCH',
-      'Invite contract does not match expected contract.',
-    );
-  }
-
-  // No invite found yet — return immediately, let heartbeat check again later
+  // Poll budget exhausted — return DEFERRED for heartbeat or agent retry
   return awaitingResponse(handle, 'No invite yet. Waiting for relay invite from counterparty.', {
     strategy: 'DEFERRED',
-    seconds: 120,
+    seconds: 30,
   });
 }
 

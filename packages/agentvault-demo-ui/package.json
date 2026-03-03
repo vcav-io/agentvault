@@ -1,0 +1,28 @@
+{
+  "name": "agentvault-demo-ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Browser-based demo UI for AgentVault relay protocol",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@noble/curves": "^1.8.1",
+    "@noble/hashes": "^1.8.0",
+    "agentvault-client": "file:../agentvault-client",
+    "agentvault-mcp-server": "file:../agentvault-mcp-server",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "openai": "^4.78.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0"
+  }
+}

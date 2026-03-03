@@ -255,6 +255,11 @@ export class AfalResponder {
     return items;
   }
 
+  peekQueue(): AdmittedProposal[] {
+    this.gcExpired();
+    return [...this.queue];
+  }
+
   private deny(
     proposalId: string,
     denyCode: DenyCode,

@@ -363,3 +363,5 @@ export type { DirectAfalTransportConfig, AgentDescriptor } from './direct-afal-t
 export { AfalResponder } from './afal-responder.js';
 export type { AdmissionPolicy, TrustedAgent, DenyCode } from './afal-responder.js';
 export { AfalHttpServer } from './afal-http-server.js';
+export { signMessage, DOMAIN_PREFIXES } from './afal-signing.js';
+export { isAgentDescriptor } from './direct-afal-transport.js';

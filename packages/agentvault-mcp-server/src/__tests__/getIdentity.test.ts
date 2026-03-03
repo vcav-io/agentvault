@@ -61,7 +61,7 @@ describe('handleGetIdentity', () => {
       expect(result.data).not.toHaveProperty('inbox_hint');
     });
 
-    it('returns pending_invites: 0 with no pending invites', async () => {
+    it('returns pending_invites: 0 with inbox_hint when no pending invites', async () => {
       const inboxService: InboxService = {
         checkInbox: async () => ({ invites: [] }),
       };
@@ -69,7 +69,7 @@ describe('handleGetIdentity', () => {
       expect(result.ok).toBe(true);
       expect(result.data?.pending_invites).toBe(0);
       expect(result.data).not.toHaveProperty('next_action');
-      expect(result.data).not.toHaveProperty('inbox_hint');
+      expect(result.data?.inbox_hint).toBe('No pending invites.');
     });
 
     it('returns next_action and inbox_hint with 1 pending invite', async () => {
@@ -84,9 +84,7 @@ describe('handleGetIdentity', () => {
         args: { mode: 'RESPOND' },
         reason: 'pending_invite',
       });
-      expect(result.data?.inbox_hint).toBe(
-        'You have 1 pending invite(s). Use agentvault.relay_signal in RESPOND mode to review.',
-      );
+      expect(result.data?.inbox_hint).toBe('You have 1 pending invite(s).');
     });
 
     it('returns correct count with 3 pending invites', async () => {
@@ -102,7 +100,7 @@ describe('handleGetIdentity', () => {
       expect(result.data?.next_action?.reason).toBe('pending_invite');
     });
 
-    it('omits pending_invites when inboxService throws', async () => {
+    it('omits pending_invites and adds warning hint when inboxService throws', async () => {
       const inboxService: InboxService = {
         checkInbox: async () => {
           throw new Error('network error');
@@ -112,7 +110,7 @@ describe('handleGetIdentity', () => {
       expect(result.ok).toBe(true);
       expect(result.data).not.toHaveProperty('pending_invites');
       expect(result.data).not.toHaveProperty('next_action');
-      expect(result.data).not.toHaveProperty('inbox_hint');
+      expect(result.data?.inbox_hint).toContain('inbox check failed');
     });
   });
 });

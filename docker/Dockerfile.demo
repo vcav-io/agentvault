@@ -1,0 +1,45 @@
+# Stage 1: Build all three TypeScript packages
+FROM node:20-slim AS builder
+WORKDIR /build
+
+# Copy package files for dependency caching
+COPY packages/agentvault-client/package.json packages/agentvault-client/package-lock.json* packages/agentvault-client/
+COPY packages/agentvault-mcp-server/package.json packages/agentvault-mcp-server/package-lock.json* packages/agentvault-mcp-server/
+COPY packages/agentvault-demo-ui/package.json packages/agentvault-demo-ui/package-lock.json* packages/agentvault-demo-ui/
+
+# Install dependencies (client first, then mcp-server which depends on it, then demo-ui)
+RUN cd packages/agentvault-client && npm install --ignore-scripts
+RUN cd packages/agentvault-mcp-server && npm install --ignore-scripts
+RUN cd packages/agentvault-demo-ui && npm install --ignore-scripts
+
+# Copy source and build in dependency order
+COPY packages/agentvault-client packages/agentvault-client
+RUN cd packages/agentvault-client && npm run build
+
+COPY packages/agentvault-mcp-server packages/agentvault-mcp-server
+RUN cd packages/agentvault-mcp-server && npm run build
+
+COPY packages/agentvault-demo-ui packages/agentvault-demo-ui
+# Copy demo prompts (loaded at runtime by server.ts)
+COPY demo/alice-prompt.md demo/alice-prompt.md
+COPY demo/bob-prompt.md demo/bob-prompt.md
+RUN cd packages/agentvault-demo-ui && npm run build
+
+# Stage 2: Runtime
+FROM node:20-slim
+WORKDIR /app
+
+# Copy built packages with node_modules
+COPY --from=builder /build/packages/agentvault-client packages/agentvault-client
+COPY --from=builder /build/packages/agentvault-mcp-server packages/agentvault-mcp-server
+COPY --from=builder /build/packages/agentvault-demo-ui packages/agentvault-demo-ui
+COPY --from=builder /build/demo/alice-prompt.md demo/alice-prompt.md
+COPY --from=builder /build/demo/bob-prompt.md demo/bob-prompt.md
+
+ENV DEMO_PORT=3200
+EXPOSE 3200
+
+HEALTHCHECK --interval=10s --timeout=3s --retries=3 \
+    CMD node -e "fetch('http://localhost:3200/api/status').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+
+CMD ["node", "packages/agentvault-demo-ui/dist/server.js"]
