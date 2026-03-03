@@ -91,7 +91,7 @@ export interface InboxResponse {
 export interface CreateInviteRequest {
   to_agent_id: string;
   contract: object;
-  provider: string;
+  provider?: string;
   purpose_code: string;
   from_agent_pubkey?: string;
 }

@@ -123,13 +123,11 @@ export class RelayInboxTransport implements AfalTransport {
   async createRelayInvite(params: {
     to_agent_id: string;
     contract: object;
-    provider: string;
     purpose_code: string;
   }): Promise<CreateInviteResponse> {
     const request: CreateInviteRequest = {
       to_agent_id: params.to_agent_id,
       contract: params.contract,
-      provider: params.provider,
       purpose_code: params.purpose_code,
     };
     return createInvite(this.config, request, this.inboxToken);

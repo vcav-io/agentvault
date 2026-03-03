@@ -10,3 +10,7 @@ it would look like to start something new. I don't want to blow up the
 partnership but I don't know how to make her see what we'd be throwing away.
 
 I don't know what to do.
+
+Alice mentioned she might set up a private mediation for us. When her invite
+arrives in your inbox, accept it using `mode: 'RESPOND'` (not INITIATE — she is
+the one starting the session). Include your private perspective as `my_input`.

@@ -73,7 +73,7 @@ fn test_signing_key() -> SigningKey {
 fn test_app_state(mock_base_url: &str, prompt_dir: &str) -> AppState {
     AppState {
         signing_key: test_signing_key(),
-        anthropic_api_key: "test-key".to_string(),
+        anthropic_api_key: Some("test-key".to_string()),
         anthropic_model_id: "test-model".to_string(),
         anthropic_base_url: Some(mock_base_url.to_string()),
         openai_api_key: None,
@@ -931,7 +931,7 @@ async fn test_submit_token_is_one_time_use() {
     // Now try to submit again via HTTP — should be rejected
     let app = build_router(Arc::new(AppState {
         signing_key: test_signing_key(),
-        anthropic_api_key: "test-key".to_string(),
+        anthropic_api_key: Some("test-key".to_string()),
         anthropic_model_id: "test-model".to_string(),
         anthropic_base_url: Some("http://unused".to_string()),
         openai_api_key: None,
@@ -1110,7 +1110,7 @@ async fn test_bilateral_session_e2e_with_mock() {
     // 2. Submit initiator input
     let app = build_router(Arc::new(AppState {
         signing_key: test_signing_key(),
-        anthropic_api_key: "test-key".to_string(),
+        anthropic_api_key: Some("test-key".to_string()),
         anthropic_model_id: "test-model".to_string(),
         anthropic_base_url: Some(mock_base_url.clone()),
         openai_api_key: None,
@@ -1157,7 +1157,7 @@ async fn test_bilateral_session_e2e_with_mock() {
     // 3. Submit responder input (triggers inference)
     let app = build_router(Arc::new(AppState {
         signing_key: test_signing_key(),
-        anthropic_api_key: "test-key".to_string(),
+        anthropic_api_key: Some("test-key".to_string()),
         anthropic_model_id: "test-model".to_string(),
         anthropic_base_url: Some(mock_base_url.clone()),
         openai_api_key: None,
@@ -1218,7 +1218,7 @@ async fn test_bilateral_session_e2e_with_mock() {
     // 5. Retrieve output with read token
     let app = build_router(Arc::new(AppState {
         signing_key: test_signing_key(),
-        anthropic_api_key: "test-key".to_string(),
+        anthropic_api_key: Some("test-key".to_string()),
         anthropic_model_id: "test-model".to_string(),
         anthropic_base_url: Some(mock_base_url),
         openai_api_key: None,
@@ -1298,7 +1298,7 @@ async fn test_submit_with_correct_contract_hash_succeeds() {
 
     let app = build_router(Arc::new(AppState {
         signing_key: test_signing_key(),
-        anthropic_api_key: "test-key".to_string(),
+        anthropic_api_key: Some("test-key".to_string()),
         anthropic_model_id: "test-model".to_string(),
         anthropic_base_url: Some("http://unused".to_string()),
         openai_api_key: None,
@@ -1360,7 +1360,7 @@ async fn test_submit_with_wrong_contract_hash_rejected() {
 
     let app = build_router(Arc::new(AppState {
         signing_key: test_signing_key(),
-        anthropic_api_key: "test-key".to_string(),
+        anthropic_api_key: Some("test-key".to_string()),
         anthropic_model_id: "test-model".to_string(),
         anthropic_base_url: Some("http://unused".to_string()),
         openai_api_key: None,
@@ -1423,7 +1423,7 @@ async fn test_submit_without_contract_hash_still_works() {
 
     let app = build_router(Arc::new(AppState {
         signing_key: test_signing_key(),
-        anthropic_api_key: "test-key".to_string(),
+        anthropic_api_key: Some("test-key".to_string()),
         anthropic_model_id: "test-model".to_string(),
         anthropic_base_url: Some("http://unused".to_string()),
         openai_api_key: None,
@@ -1485,7 +1485,7 @@ fn inbox_test_app_state() -> AppState {
     .unwrap();
     AppState {
         signing_key: test_signing_key(),
-        anthropic_api_key: "test-key".to_string(),
+        anthropic_api_key: Some("test-key".to_string()),
         anthropic_model_id: "test-model".to_string(),
         anthropic_base_url: Some("http://localhost:9999".to_string()),
         openai_api_key: None,

@@ -242,8 +242,11 @@ pub async fn relay_core(
     let inference_start = Utc::now();
     let provider_response = match provider_name {
         "anthropic" => {
+            let api_key = state.anthropic_api_key.clone().ok_or_else(|| {
+                RelayError::ContractValidation("Anthropic API key not configured".to_string())
+            })?;
             let provider = AnthropicProvider::new(
-                state.anthropic_api_key.clone(),
+                api_key,
                 state.anthropic_model_id.clone(),
                 state.anthropic_base_url.clone(),
             )?;
@@ -405,11 +408,12 @@ pub fn error_to_abort_reason(error: &RelayError) -> AbortReason {
 /// Single-shot relay endpoint handler (POST /relay).
 /// Delegates to `relay_core`.
 pub async fn relay(request: RelayRequest, state: &AppState) -> Result<RelayResponse, RelayError> {
+    let provider = crate::resolve_provider(&request.provider, state)?;
     let (result, _timing) = relay_core(
         &request.contract,
         &request.input_a,
         &request.input_b,
-        &request.provider,
+        &provider,
         state,
     )
     .await?;

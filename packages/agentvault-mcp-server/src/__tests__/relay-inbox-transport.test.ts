@@ -144,7 +144,6 @@ describe('RelayInboxTransport', () => {
       const result = await transport.createRelayInvite({
         to_agent_id: 'alice',
         contract: { purpose_code: 'COMPATIBILITY' },
-        provider: 'anthropic',
         purpose_code: 'COMPATIBILITY',
       });
 

@@ -16,7 +16,7 @@ async fn main() {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
-    let api_key = std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY must be set");
+    let anthropic_api_key = std::env::var("ANTHROPIC_API_KEY").ok();
     let model_id =
         std::env::var("VCAV_MODEL_ID").unwrap_or_else(|_| "claude-sonnet-4-6".to_string());
     let prompt_dir =
@@ -230,13 +230,23 @@ async fn main() {
     // Start background inbox reaper
     inbox_store.clone().start_reaper();
 
+    if anthropic_api_key.is_none() && openai_api_key.is_none() {
+        tracing::error!(
+            "No inference providers configured. Set at least one of ANTHROPIC_API_KEY or OPENAI_API_KEY."
+        );
+        std::process::exit(1);
+    }
+
+    if anthropic_api_key.is_some() {
+        tracing::info!(model_id = %model_id, "Anthropic provider enabled");
+    }
     if openai_api_key.is_some() {
         tracing::info!(model_id = %openai_model_id, "OpenAI provider enabled");
     }
 
     let state = Arc::new(AppState {
         signing_key,
-        anthropic_api_key: api_key,
+        anthropic_api_key,
         anthropic_model_id: model_id,
         anthropic_base_url,
         openai_api_key,
