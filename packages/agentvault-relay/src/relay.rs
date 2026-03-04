@@ -1,6 +1,11 @@
 use chrono::Utc;
 use entropy_core::calculate_schema_entropy_upper_bound;
-use receipt_core::{BudgetUsageRecord, ExecutionLane, Receipt, ReceiptStatus, SignalClass};
+use receipt_core::{
+    AssuranceLevel, BudgetEnforcementMode, BudgetUsageRecord, Claims, Commitments,
+    ExecutionLane, HashAlgorithm, InputCommitment, Operator, PreflightBundle, Receipt,
+    ReceiptStatus, ReceiptV2, SignalClass, UnsignedReceiptV2, CANONICALIZATION_V2,
+    SCHEMA_VERSION_V2,
+};
 use sha2::{Digest, Sha256};
 use vault_family_types::{generate_pair_id, BudgetTier};
 
@@ -198,6 +203,7 @@ pub struct RelayResult {
     pub output: serde_json::Value,
     pub receipt: Receipt,
     pub receipt_signature: String,
+    pub receipt_v2: ReceiptV2,
 }
 
 /// Core relay logic: validate → assemble → call → check → sign → return.
@@ -251,6 +257,42 @@ pub async fn relay_core(
 
     // 5. Assemble provider request
     let assembled = program.assemble(contract, input_a, input_b)?;
+
+    // Compute input commitments (one per participant) — must be done before provider call.
+    let input_commitments: Vec<InputCommitment> = {
+        let inputs = [
+            (&contract.participants[0], input_a),
+            (&contract.participants[1], input_b),
+        ];
+        let mut commitments = Vec::with_capacity(2);
+        for (participant_id, input) in &inputs {
+            let canonical = receipt_core::canonicalize_serializable(&input.context)
+                .map_err(|e| RelayError::Internal(format!("input canonicalization: {e}")))?;
+            let mut hasher = Sha256::new();
+            hasher.update(canonical.as_bytes());
+            commitments.push(InputCommitment {
+                participant_id: (*participant_id).clone(),
+                input_hash: hex::encode(hasher.finalize()),
+                hash_alg: HashAlgorithm::Sha256,
+                canonicalization: "CANONICAL_JSON_V1".to_string(),
+            });
+        }
+        commitments
+    };
+
+    // Compute assembled_prompt_hash — hash of the assembled prompt JSON (system + user_message).
+    // Computed once before the first provider call; never recomputed on retry.
+    let assembled_prompt_hash = {
+        let prompt_json = serde_json::json!({
+            "system": assembled.system,
+            "user_message": assembled.user_message,
+        });
+        let canonical = receipt_core::canonicalize_serializable(&prompt_json)
+            .map_err(|e| RelayError::Internal(format!("prompt canonicalization: {e}")))?;
+        let mut hasher = Sha256::new();
+        hasher.update(canonical.as_bytes());
+        hex::encode(hasher.finalize())
+    };
 
     let provider_request = ProviderRequest {
         system: assembled.system,
@@ -370,7 +412,7 @@ pub async fn relay_core(
     };
 
     let unsigned = Receipt::builder()
-        .session_id(session_id)
+        .session_id(session_id.clone())
         .purpose_code(contract.purpose_code)
         .participant_ids(contract.participants.clone())
         .runtime_hash(&runtime_hash)
@@ -387,17 +429,17 @@ pub async fn relay_core(
         .output(Some(output.clone()))
         .output_entropy_bits(entropy_bits)
         .budget_usage(budget_usage)
-        .contract_hash(Some(contract_hash))
+        .contract_hash(Some(contract_hash.clone()))
         .output_schema_id(Some(contract.output_schema_id.clone()))
-        .output_schema_hash(Some(output_schema_hash))
+        .output_schema_hash(Some(output_schema_hash.clone()))
         .signal_class(Some(SignalClass::SessionCompleted))
         .entropy_budget_bits_opt(contract.entropy_budget_bits)
-        .prompt_template_hash(Some(prompt_template_hash))
+        .prompt_template_hash(Some(prompt_template_hash.clone()))
         .contract_timing_class(contract.timing_class.clone())
-        .model_profile_hash(model_profile_hash)
+        .model_profile_hash(model_profile_hash.clone())
         .model_identity(Some(receipt_core::ModelIdentity {
             provider: provider_name.to_string(),
-            model_id: provider_response.model_id,
+            model_id: provider_response.model_id.clone(),
             model_version: None,
         }))
         .build_unsigned()
@@ -411,6 +453,24 @@ pub async fn relay_core(
     let receipt_signature = signature.clone();
     let receipt = unsigned.sign(signature);
 
+    // --- v2 receipt construction ---
+    let receipt_v2 = build_receipt_v2(
+        &session_id,
+        &contract_hash,
+        &output_schema_hash,
+        &output,
+        input_commitments,
+        assembled_prompt_hash,
+        &prompt_template_hash,
+        model_profile_hash.as_deref(),
+        &provider_response.model_id,
+        provider_name,
+        &runtime_hash,
+        state,
+        inference_start,
+        inference_end,
+    )?;
+
     let timing = InferenceTiming {
         inference_start_at: inference_start,
         inference_end_at: inference_end,
@@ -421,9 +481,125 @@ pub async fn relay_core(
             output,
             receipt,
             receipt_signature,
+            receipt_v2,
         },
         timing,
     ))
+}
+
+/// Build and sign a v2 receipt from relay execution data.
+///
+/// Returns a signed ReceiptV2. Errors are propagated as RelayError::ReceiptSigning.
+#[allow(clippy::too_many_arguments)]
+fn build_receipt_v2(
+    session_id: &str,
+    contract_hash: &str,
+    schema_hash: &str,
+    output: &serde_json::Value,
+    input_commitments: Vec<InputCommitment>,
+    assembled_prompt_hash: String,
+    prompt_template_hash: &str,
+    model_profile_hash: Option<&str>,
+    model_id: &str,
+    provider_name: &str,
+    runtime_hash: &str,
+    state: &AppState,
+    inference_start: chrono::DateTime<chrono::Utc>,
+    inference_end: chrono::DateTime<chrono::Utc>,
+) -> Result<ReceiptV2, RelayError> {
+    // Compute output hash
+    let output_hash = {
+        let canonical = receipt_core::canonicalize_serializable(output)
+            .map_err(|e| RelayError::ReceiptSigning(format!("output canonicalization: {e}")))?;
+        let mut hasher = Sha256::new();
+        hasher.update(canonical.as_bytes());
+        hex::encode(hasher.finalize())
+    };
+
+    // Build preflight bundle
+    let enforcement_parameters = serde_json::json!({
+        "max_completion_tokens": state.max_completion_tokens,
+    });
+    let preflight_bundle = PreflightBundle {
+        policy_hash: state.enforcement_policy_hash.clone(),
+        prompt_template_hash: prompt_template_hash.to_string(),
+        model_profile_hash: model_profile_hash.unwrap_or("none").to_string(),
+        schema_hash: schema_hash.to_string(),
+        enforcement_parameters: enforcement_parameters.clone(),
+    };
+
+    // Compute effective_config_hash from preflight bundle
+    let effective_config_hash = {
+        let canonical = receipt_core::canonicalize_serializable(&preflight_bundle)
+            .map_err(|e| RelayError::ReceiptSigning(format!("preflight canonicalization: {e}")))?;
+        let mut hasher = Sha256::new();
+        hasher.update(canonical.as_bytes());
+        Some(hex::encode(hasher.finalize()))
+    };
+
+    // Compute operator key fingerprint: SHA-256(hex bytes of verifying key)
+    let verifying_key_hex = receipt_core::public_key_to_hex(&state.signing_key.verifying_key());
+    let operator_key_fingerprint = {
+        let key_bytes = hex::decode(&verifying_key_hex).unwrap_or_default();
+        let mut hasher = Sha256::new();
+        hasher.update(&key_bytes);
+        hex::encode(hasher.finalize())
+    };
+
+    let operator_id = std::env::var("VCAV_OPERATOR_ID")
+        .unwrap_or_else(|_| "agentvault-relay-dev".to_string());
+
+    let provider_latency_ms = (inference_end - inference_start)
+        .num_milliseconds()
+        .try_into()
+        .unwrap_or(0u64);
+
+    let receipt_id = uuid::Uuid::new_v4().to_string();
+
+    let unsigned = UnsignedReceiptV2 {
+        receipt_schema_version: SCHEMA_VERSION_V2.to_string(),
+        receipt_canonicalization: CANONICALIZATION_V2.to_string(),
+        receipt_id,
+        session_id: session_id.to_string(),
+        issued_at: Utc::now(),
+        assurance_level: AssuranceLevel::SelfAsserted,
+        operator: Operator {
+            operator_id,
+            operator_key_fingerprint,
+            operator_key_discovery: None,
+        },
+        commitments: Commitments {
+            contract_hash: contract_hash.to_string(),
+            schema_hash: schema_hash.to_string(),
+            output_hash,
+            input_commitments,
+            assembled_prompt_hash,
+            prompt_assembly_version: "1.0.0".to_string(),
+            output: Some(output.clone()),
+            prompt_template_hash: Some(prompt_template_hash.to_string()),
+            effective_config_hash,
+            preflight_bundle: Some(preflight_bundle),
+            output_retrieval_uri: None,
+            output_media_type: None,
+            preflight_bundle_uri: None,
+        },
+        claims: Claims {
+            model_identity_asserted: Some(format!("{provider_name}/{model_id}")),
+            model_identity_attested: None,
+            model_profile_hash_asserted: model_profile_hash.map(str::to_string),
+            runtime_hash_asserted: Some(runtime_hash.to_string()),
+            runtime_hash_attested: None,
+            budget_enforcement_mode: Some(BudgetEnforcementMode::Advisory),
+            provider_latency_ms: Some(provider_latency_ms),
+            token_usage: None,
+            relay_software_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+        },
+        provider_attestation: None,
+        tee_attestation: None,
+    };
+
+    receipt_core::sign_and_assemble_receipt_v2(unsigned, &state.signing_key)
+        .map_err(|e| RelayError::ReceiptSigning(format!("v2 signing failed: {e}")))
 }
 
 /// Map a RelayError to an AbortReason for session state.
@@ -473,6 +649,13 @@ mod tests {
             timing_class: None,
             metadata: serde_json::Value::Null,
             model_profile_id: None,
+            enforcement_policy_hash: None,
+            output_schema_hash: None,
+            model_constraints: None,
+            max_completion_tokens: None,
+            session_ttl_secs: None,
+            invite_ttl_secs: None,
+            entropy_enforcement: None,
         };
 
         let h1 = compute_contract_hash(&contract).unwrap();
@@ -946,6 +1129,13 @@ mod tests {
             timing_class: None,
             metadata: serde_json::Value::Null,
             model_profile_id: None,
+            enforcement_policy_hash: None,
+            output_schema_hash: None,
+            model_constraints: None,
+            max_completion_tokens: None,
+            session_ttl_secs: None,
+            invite_ttl_secs: None,
+            entropy_enforcement: None,
         };
 
         let mut alt_contract = base_contract.clone();

@@ -104,6 +104,7 @@ pub struct SessionOutputResponse {
     pub output: Option<serde_json::Value>,
     pub receipt: Option<receipt_core::Receipt>,
     pub receipt_signature: Option<String>,
+    pub receipt_v2: Option<receipt_core::ReceiptV2>,
 }
 
 // ============================================================================

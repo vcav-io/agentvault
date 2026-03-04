@@ -7,10 +7,10 @@ license.workspace = true
 
 [dependencies]
 # TODO: replace git rev pins with tagged releases once vault-family-core stabilises
-afal-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "f112a18", package = "afal-core" }
-entropy-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "f112a18", package = "entropy-core" }
-receipt-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "f112a18", package = "receipt-core" }
-vault-family-types = { git = "https://github.com/vcav-io/vault-family-core", rev = "f112a18", package = "vault-family-types" }
+afal-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "80c6331", package = "afal-core" }
+entropy-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "80c6331", package = "entropy-core" }
+receipt-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "80c6331", package = "receipt-core" }
+vault-family-types = { git = "https://github.com/vcav-io/vault-family-core", rev = "80c6331", package = "vault-family-types" }
 
 serde.workspace = true
 serde_json.workspace = true
@@ -36,6 +36,6 @@ rusqlite = { version = "0.32", features = ["bundled"], optional = true }
 persistence = ["rusqlite"]
 
 [dev-dependencies]
-verifier-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "f112a18", package = "verifier-core" }
+verifier-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "80c6331", package = "verifier-core" }
 tokio = { version = "1.0", features = ["full", "test-util"] }
 tower.workspace = true
