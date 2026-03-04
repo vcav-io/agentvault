@@ -120,7 +120,11 @@ const HEARTBEAT_DEFAULTS: Record<string, string> = {
 
 function createHeartbeatProvider(): LLMProvider {
   const provider = detectProvider();
-  const model = process.env['HEARTBEAT_MODEL'] ?? HEARTBEAT_DEFAULTS[provider];
+  // Explicit guard: HEARTBEAT_DEFAULTS covers all provider values returned by
+  // detectProvider(), but if that contract ever breaks we want a clear error.
+  const defaultModel = HEARTBEAT_DEFAULTS[provider];
+  if (!defaultModel) throw new Error(`No default heartbeat model defined for provider: ${provider}`);
+  const model = process.env['HEARTBEAT_MODEL'] ?? defaultModel;
   console.log(`Heartbeat model: ${model}`);
 
   if (provider === 'gemini') {
@@ -135,9 +139,10 @@ function createHeartbeatProvider(): LLMProvider {
     return new OpenAIProvider(apiKey, model);
   }
 
-  const apiKey2 = process.env['ANTHROPIC_API_KEY'];
-  if (!apiKey2) throw new Error('ANTHROPIC_API_KEY is required when PROVIDER=anthropic');
-  return new AnthropicProvider(apiKey2, model);
+  // Anthropic (default fallback — detectProvider() already validated the key exists)
+  const apiKey = process.env['ANTHROPIC_API_KEY'];
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY is required when PROVIDER=anthropic');
+  return new AnthropicProvider(apiKey, model);
 }
 
 // ── Ed25519 identity helpers ─────────────────────────────────────────────
@@ -411,6 +416,9 @@ app.post('/api/start', async (req, res) => {
 app.post('/api/message', async (req, res) => {
   const agent = req.body?.agent as string | undefined;
   const message = req.body?.message as string | undefined;
+  // Optional client-assigned dedup ID — echoed back in the SSE user_message event
+  // so the client can suppress the echo for messages it already rendered optimistically.
+  const localId = typeof req.body?.localId === 'number' ? req.body.localId as number : undefined;
 
   if (agent !== 'alice' && agent !== 'bob') {
     res.status(400).json({ error: 'agent must be "alice" or "bob"' });
@@ -437,7 +445,7 @@ app.post('/api/message', async (req, res) => {
     queue: agent === 'alice' ? aliceQueue : bobQueue,
   };
 
-  events.emitUserMessage(agent, message.trim());
+  events.emitUserMessage(agent, message.trim(), localId);
   res.json({ ok: true });
 
   sendUserMessage(params, message.trim()).catch((err) => {

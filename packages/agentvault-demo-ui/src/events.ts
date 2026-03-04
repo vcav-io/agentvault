@@ -146,13 +146,15 @@ export class EventBus {
 
   /**
    * Convenience: emit a user_message event (mid-run chat from the human).
+   * @param localId - optional client-assigned dedup ID, echoed back so the
+   *   client can suppress the SSE echo for messages it already rendered.
    */
-  emitUserMessage(agent: string, text: string): void {
+  emitUserMessage(agent: string, text: string, localId?: number): void {
     this.emit({
       ts: new Date().toISOString(),
       type: 'user_message',
       agent,
-      payload: { text },
+      payload: localId !== undefined ? { text, localId } : { text },
     });
   }
 
