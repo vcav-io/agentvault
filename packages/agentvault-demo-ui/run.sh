@@ -64,8 +64,8 @@ elif [[ -f "${REPO_ROOT}/.env" ]]; then
   set +a
 fi
 
-if [[ -z "${ANTHROPIC_API_KEY:-}" ]] && [[ -z "${OPENAI_API_KEY:-}" ]]; then
-  log_error "No API key found. Set ANTHROPIC_API_KEY or OPENAI_API_KEY in .env"
+if [[ -z "${ANTHROPIC_API_KEY:-}" ]] && [[ -z "${OPENAI_API_KEY:-}" ]] && [[ -z "${GEMINI_API_KEY:-}" ]]; then
+  log_error "No API key found. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY in .env"
   exit 1
 fi
 
@@ -97,9 +97,10 @@ cleanup() {
     log_info "Stopping relay (pid ${RELAY_PID})"
     kill "${RELAY_PID}" 2>/dev/null || true
   fi
-  # Kill stale AFAL server
+  # Kill stale AFAL servers
   if command -v lsof &>/dev/null; then
     lsof -ti:3201 2>/dev/null | xargs kill 2>/dev/null || true
+    lsof -ti:3202 2>/dev/null | xargs kill 2>/dev/null || true
   fi
 }
 trap cleanup EXIT INT TERM
@@ -119,6 +120,8 @@ if [[ "${NO_RELAY}" == "false" ]]; then
     VCAV_ENV=dev \
     VCAV_INBOX_AUTH=off \
     ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
+    OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
+    GEMINI_API_KEY="${GEMINI_API_KEY:-}" \
       "${RELAY_BIN}" &>/tmp/vcav-demo-relay.log &
     RELAY_PID=$!
 
@@ -146,12 +149,14 @@ fi
 
 # Kill stale AFAL servers from previous runs
 if command -v lsof &>/dev/null; then
-  STALE_AFAL="$(lsof -ti:3201 2>/dev/null | head -1)" || true
-  if [[ -n "${STALE_AFAL}" ]]; then
-    log_info "Killing stale AFAL server on port 3201 (pid ${STALE_AFAL})"
-    lsof -ti:3201 2>/dev/null | xargs kill 2>/dev/null || true
-    sleep 1
-  fi
+  for afal_port in 3201 3202; do
+    STALE_AFAL="$(lsof -ti:${afal_port} 2>/dev/null | head -1)" || true
+    if [[ -n "${STALE_AFAL}" ]]; then
+      log_info "Killing stale AFAL server on port ${afal_port} (pid ${STALE_AFAL})"
+      lsof -ti:${afal_port} 2>/dev/null | xargs kill 2>/dev/null || true
+      sleep 1
+    fi
+  done
 fi
 
 # ---------------------------------------------------------------------------
