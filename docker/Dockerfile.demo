@@ -9,10 +9,10 @@ COPY packages/agentvault-demo-ui packages/agentvault-demo-ui
 COPY demo/alice-prompt.md demo/alice-prompt.md
 COPY demo/bob-prompt.md demo/bob-prompt.md
 
-# Install and build in dependency order (prepare scripts run tsc)
-RUN cd packages/agentvault-client && npm install
-RUN cd packages/agentvault-mcp-server && npm install
-RUN cd packages/agentvault-demo-ui && npm install
+# Install and build in dependency order
+RUN cd packages/agentvault-client && npm install --ignore-scripts && npm run build
+RUN cd packages/agentvault-mcp-server && npm install --ignore-scripts && npm run build
+RUN cd packages/agentvault-demo-ui && npm install --ignore-scripts && npm run build
 
 # Stage 2: Runtime
 FROM node:20-slim
