@@ -2166,3 +2166,70 @@ async fn test_metadata_returns_empty_when_not_populated() {
         "empty metadata should have 'sizes' key"
     );
 }
+
+#[tokio::test]
+async fn test_metadata_endpoint_accepts_responder_read_token() {
+    let (prompt_dir, _) = setup_prompt_program("meta_responder_read");
+    let mut state = test_app_state("http://unused", &prompt_dir);
+    state.is_dev = true;
+
+    let (session_id, tokens) = state
+        .session_store
+        .create(
+            serde_json::from_value(serde_json::json!({
+                "purpose_code": "MEDIATION",
+                "output_schema_id": "test",
+                "output_schema": {"type": "object"},
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": "a".repeat(64)
+            }))
+            .unwrap(),
+            "hash".to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+
+    // Inject some metadata into the session
+    state
+        .session_store
+        .with_session(&session_id, |session| {
+            let mut meta = agentvault_relay::types::SessionMetadata::new(
+                session.id.clone(),
+                session.created_at,
+            );
+            meta.sizes.initiator_input_bytes = Some(99);
+            session.metadata = Some(meta);
+        })
+        .await;
+
+    let app = build_router(Arc::new(state));
+
+    // Request metadata using the responder read token (not initiator_read)
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/sessions/{session_id}/metadata"))
+                .header("authorization", format!("Bearer {}", tokens.responder_read))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 16384)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["session_id"], session_id);
+    assert_eq!(json["sizes"]["initiator_input_bytes"], 99);
+    assert!(
+        json.get("timing").is_some(),
+        "metadata should have 'timing' key"
+    );
+    assert!(
+        json.get("sizes").is_some(),
+        "metadata should have 'sizes' key"
+    );
+}
