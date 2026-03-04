@@ -359,6 +359,42 @@ const app = express();
 app.use(express.json());
 app.use(express.static(PUBLIC_DIR));
 
+// Config endpoint — available providers and models for UI selectors
+app.get('/api/config', (_req, res) => {
+  const providers: Array<{ name: string; models: Array<{ id: string; tier: string; default?: boolean }> }> = [];
+  if (process.env['GEMINI_API_KEY']) {
+    providers.push({
+      name: 'gemini',
+      models: [
+        { id: 'gemini-2.5-flash', tier: 'mid', default: true },
+        { id: 'gemini-2.5-flash-lite', tier: 'budget' },
+        { id: 'gemini-3-flash-preview', tier: 'budget' },
+      ],
+    });
+  }
+  if (process.env['OPENAI_API_KEY']) {
+    providers.push({
+      name: 'openai',
+      models: [
+        { id: 'gpt-4.1-mini', tier: 'mid', default: true },
+        { id: 'gpt-4.1-nano', tier: 'budget' },
+        { id: 'gpt-5-mini', tier: 'budget' },
+      ],
+    });
+  }
+  if (process.env['ANTHROPIC_API_KEY']) {
+    providers.push({
+      name: 'anthropic',
+      models: [
+        { id: 'claude-haiku-4-5-20251001', tier: 'budget', default: true },
+        { id: 'claude-sonnet-4-6', tier: 'reference' },
+      ],
+    });
+  }
+  const defaultProvider = detectProvider();
+  res.json({ providers, defaultProvider });
+});
+
 // SSE events endpoint
 app.get('/api/events', (_req, res) => {
   events.addClient(res);

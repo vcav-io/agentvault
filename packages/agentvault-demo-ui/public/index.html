@@ -39,13 +39,27 @@
     <div class="setup" id="setup-phase">
       <div class="setup-header">
         <h2>Configure Agents</h2>
-        <div class="template-selector">
-          <label for="template-select">Template</label>
-          <select id="template-select">
-            <option value="mediation">Co-founder Mediation</option>
-            <option value="architecture">Architecture Dispute</option>
-            <option value="custom">Blank</option>
-          </select>
+        <div class="setup-selectors">
+          <div class="template-selector">
+            <label for="template-select">Template</label>
+            <select id="template-select">
+              <option value="mediation">Co-founder Mediation</option>
+              <option value="architecture">Architecture Dispute</option>
+              <option value="custom">Blank</option>
+            </select>
+          </div>
+          <div class="template-selector">
+            <label for="provider-select">Agent Provider</label>
+            <select id="provider-select">
+              <option value="">Loading...</option>
+            </select>
+          </div>
+          <div class="template-selector">
+            <label for="model-select">Agent Model</label>
+            <select id="model-select">
+              <option value="">—</option>
+            </select>
+          </div>
         </div>
       </div>
       <div class="prompt-editors">

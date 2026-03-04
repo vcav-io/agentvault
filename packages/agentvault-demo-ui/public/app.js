@@ -54,6 +54,9 @@
     bobSend: $('bob-send'),
     // Signal overlay
     signalOverlay: $('signal-overlay'),
+    // Provider/model selectors
+    providerSelect: $('provider-select'),
+    modelSelect: $('model-select'),
   };
 
   // Track messages we rendered client-side to avoid SSE duplicates.
@@ -104,6 +107,54 @@
 
   // Load default template
   applyTemplate('mediation');
+
+  // ── Provider/model config ──────────────────────────────────
+  var providerConfig = [];
+
+  function clearSelect(sel) {
+    while (sel.firstChild) sel.removeChild(sel.firstChild);
+  }
+
+  function populateModelSelect(providerName) {
+    clearSelect(els.modelSelect);
+    var prov = providerConfig.find(function (p) { return p.name === providerName; });
+    if (!prov) return;
+    prov.models.forEach(function (m) {
+      var opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = m.id + (m.tier ? ' (' + m.tier + ')' : '');
+      if (m.default) opt.selected = true;
+      els.modelSelect.appendChild(opt);
+    });
+  }
+
+  els.providerSelect.addEventListener('change', function () {
+    populateModelSelect(this.value);
+  });
+
+  fetch('/api/config')
+    .then(function (r) { return r.json(); })
+    .then(function (cfg) {
+      providerConfig = cfg.providers || [];
+      clearSelect(els.providerSelect);
+      providerConfig.forEach(function (p) {
+        var opt = document.createElement('option');
+        opt.value = p.name;
+        opt.textContent = p.name.charAt(0).toUpperCase() + p.name.slice(1);
+        if (p.name === cfg.defaultProvider) opt.selected = true;
+        els.providerSelect.appendChild(opt);
+      });
+      if (providerConfig.length > 0) {
+        populateModelSelect(cfg.defaultProvider || providerConfig[0].name);
+      }
+    })
+    .catch(function () {
+      clearSelect(els.providerSelect);
+      var opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = 'Unavailable';
+      els.providerSelect.appendChild(opt);
+    });
 
   // ── Phase management ───────────────────────────────────────
   function setChatInputsEnabled(enabled) {
@@ -288,7 +339,12 @@
       var res = await fetch('/api/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ alicePrompt: alicePrompt, bobPrompt: bobPrompt }),
+        body: JSON.stringify({
+          alicePrompt: alicePrompt,
+          bobPrompt: bobPrompt,
+          agentProvider: els.providerSelect.value || undefined,
+          agentModel: els.modelSelect.value || undefined,
+        }),
       });
       var data = await res.json();
       if (data.error) {
