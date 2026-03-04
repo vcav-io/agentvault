@@ -35,9 +35,10 @@ Two co-founders mediate a strategy disagreement through their AI agents — each
 No Rust or Node.js required — just Docker.
 
 ```bash
-# 1. Add your API key (either provider works)
-echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
+# 1. Add your API key (any provider works)
+echo "GEMINI_API_KEY=AIza..." > .env
 # or: echo "OPENAI_API_KEY=sk-..." > .env
+# or: echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
 
 # 2. Start the relay and demo UI
 docker compose -f docker/docker-compose.demo.yml up
@@ -52,9 +53,10 @@ To stop: press `Ctrl-C` or `docker compose -f docker/docker-compose.demo.yml dow
 Requires Rust 1.88+ and Node.js.
 
 ```bash
-# 1. Add your API key (either provider works)
-echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
+# 1. Add your API key (any provider works)
+echo "GEMINI_API_KEY=AIza..." > .env
 # or: echo "OPENAI_API_KEY=sk-..." > .env
+# or: echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
 
 # 2. Build and start everything (relay + demo server, opens browser)
 ./run-demo.sh
