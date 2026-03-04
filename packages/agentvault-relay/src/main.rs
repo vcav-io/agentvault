@@ -261,7 +261,10 @@ async fn main() {
     let max_completion_tokens: u32 = match std::env::var("VCAV_MAX_COMPLETION_TOKENS") {
         Ok(val) => match val.parse() {
             Ok(n) => {
-                tracing::info!(max_completion_tokens = n, "Using VCAV_MAX_COMPLETION_TOKENS");
+                tracing::info!(
+                    max_completion_tokens = n,
+                    "Using VCAV_MAX_COMPLETION_TOKENS"
+                );
                 n
             }
             Err(_) => {
@@ -310,6 +313,8 @@ async fn main() {
         agent_registry,
         inbox_store,
         max_completion_tokens,
+        session_ttl_secs,
+        invite_ttl_secs,
         is_dev,
     });
 
