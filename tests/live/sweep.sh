@@ -188,6 +188,7 @@ for (( i=0; i<NUM_MODELS; i++ )); do
     VCAV_PORT="${RELAY_PORT}" \
     VCAV_PROMPT_PROGRAM_DIR="${REPO_ROOT}/packages/agentvault-relay/prompt_programs" \
     VCAV_ENV=dev \
+    VCAV_INBOX_AUTH=off \
     ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
     OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
     GEMINI_API_KEY="${GEMINI_API_KEY:-}" \
@@ -230,11 +231,11 @@ for (( i=0; i<NUM_MODELS; i++ )); do
     continue
   fi
 
-  # Extract output fields
-  outcome="$(jq -r '.output.outcome // "MISSING"' "${latest_run}/alice_output.json")"
-  a_move="$(jq -r '.output.a_move // "MISSING"' "${latest_run}/alice_output.json")"
-  b_move="$(jq -r '.output.b_move // "MISSING"' "${latest_run}/alice_output.json")"
-  conflict_type="$(jq -r '.output.conflict_type // "MISSING"' "${latest_run}/alice_output.json")"
+  # Extract output fields (mediation schema)
+  med_signal="$(jq -r '.output.mediation_signal // "MISSING"' "${latest_run}/alice_output.json")"
+  common_ground="$(jq -r '.output.common_ground_code // "MISSING"' "${latest_run}/alice_output.json")"
+  next_step="$(jq -r '.output.next_step_signal // "MISSING"' "${latest_run}/alice_output.json")"
+  confidence="$(jq -r '.output.confidence_band // "MISSING"' "${latest_run}/alice_output.json")"
 
   # Run quality check
   quality_result="$(check_quality "${latest_run}/alice_output.json" "${SCENARIO_DIR}/criteria.json")" || true
@@ -243,7 +244,7 @@ for (( i=0; i<NUM_MODELS; i++ )); do
   fail_reason=""
   if [[ "${quality_pass}" != "true" ]]; then
     quality_label="FAIL"
-    # Collect first failing check name
+    # Collect failing check names
     fail_reason="$(echo "${quality_result}" | jq -r '[.checks[] | select(.passed == false) | .name] | join(",")')"
   fi
 
@@ -254,10 +255,10 @@ for (( i=0; i<NUM_MODELS; i++ )); do
     --arg model "${model}" \
     --arg scenario "${SCENARIO}" \
     --arg timestamp "${timestamp}" \
-    --arg outcome "${outcome}" \
-    --arg a_move "${a_move}" \
-    --arg b_move "${b_move}" \
-    --arg conflict_type "${conflict_type}" \
+    --arg med_signal "${med_signal}" \
+    --arg common_ground "${common_ground}" \
+    --arg next_step "${next_step}" \
+    --arg confidence "${confidence}" \
     --argjson quality_pass "${quality_pass}" \
     --argjson is_default "$(echo "${is_default}" | jq -R 'if . == "true" then true else false end')" \
     --argjson quality_result "${quality_result}" \
@@ -267,22 +268,22 @@ for (( i=0; i<NUM_MODELS; i++ )); do
       scenario: $scenario,
       timestamp: $timestamp,
       output: {
-        outcome: $outcome,
-        a_move: $a_move,
-        b_move: $b_move,
-        conflict_type: $conflict_type
+        mediation_signal: $med_signal,
+        common_ground_code: $common_ground,
+        next_step_signal: $next_step,
+        confidence_band: $confidence
       },
       quality_pass: $quality_pass,
       quality_checks: $quality_result,
       is_current_default: $is_default
     }' > "${SWEEP_DIR}/${provider}_${model}.run.json"
 
-  log_info "Result: outcome=${outcome} a_move=${a_move} b_move=${b_move} conflict_type=${conflict_type} → ${quality_label}"
+  log_info "Result: signal=${med_signal} ground=${common_ground} next=${next_step} conf=${confidence} → ${quality_label}"
 
   SUMMARY_PROVIDER+=("${provider}")
   SUMMARY_MODEL+=("${model}")
   SUMMARY_DEFAULT+=("${default_flag}")
-  SUMMARY_OUTCOME+=("${outcome}")
+  SUMMARY_OUTCOME+=("${med_signal}")
   SUMMARY_QUALITY+=("${quality_label}")
   SUMMARY_REASON+=("${fail_reason}")
 
@@ -298,8 +299,8 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  Model Capability Sweep — ${SCENARIO}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-printf "%-12s %-35s %-8s %-12s %-8s %s\n" "Provider" "Model" "Default" "outcome" "quality" ""
-printf "%-12s %-35s %-8s %-12s %-8s %s\n" "--------" "-----" "-------" "-------" "-------" ""
+printf "%-12s %-35s %-8s %-25s %-8s %s\n" "Provider" "Model" "Default" "mediation_signal" "quality" ""
+printf "%-12s %-35s %-8s %-25s %-8s %s\n" "--------" "-----" "-------" "----------------" "-------" ""
 
 for (( j=0; j<${#SUMMARY_PROVIDER[@]}; j++ )); do
   flag=""
@@ -315,7 +316,7 @@ for (( j=0; j<${#SUMMARY_PROVIDER[@]}; j++ )); do
     note="${note:+${note} }(${SUMMARY_REASON[$j]})"
   fi
 
-  printf "%-12s %-35s %-8s %-12s %-8s %s\n" \
+  printf "%-12s %-35s %-8s %-25s %-8s %s\n" \
     "${SUMMARY_PROVIDER[$j]}" \
     "${SUMMARY_MODEL[$j]}" \
     "${flag}" \

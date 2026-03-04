@@ -24,10 +24,9 @@
     "no_raw_prompt_leakage": true
   },
   "quality_checks": {
-    "outcome_acceptable": ["PROGRESS"],
-    "outcome_unacceptable": ["ESCALATE"],
-    "a_move_not": ["NONE"],
-    "b_move_not": ["NONE"],
-    "conflict_type_not": ["UNKNOWN"]
+    "mediation_signal_acceptable": ["ALIGNMENT_POSSIBLE", "PARTIAL_ALIGNMENT", "NEEDS_FACILITATION"],
+    "mediation_signal_unacceptable": ["INSUFFICIENT_SIGNAL"],
+    "common_ground_code_not": ["NO_COMMON_GROUND_DETECTED"],
+    "confidence_band_acceptable": ["MEDIUM", "HIGH"]
   }
 }

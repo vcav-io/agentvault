@@ -42,86 +42,63 @@ check_quality() {
   local quality_json
   quality_json="$(jq '.quality_checks' "${criteria_file}")"
 
-  # Extract output fields from relay response
-  local outcome a_move b_move shared_move conflict_type
-  outcome="$(jq -r '.output.outcome // "MISSING"' "${output_file}")"
-  a_move="$(jq -r '.output.a_move // "MISSING"' "${output_file}")"
-  b_move="$(jq -r '.output.b_move // "MISSING"' "${output_file}")"
-  shared_move="$(jq -r '.output.shared_move // "MISSING"' "${output_file}")"
-  conflict_type="$(jq -r '.output.conflict_type // "MISSING"' "${output_file}")"
+  # Data-driven check: iterate over all keys in quality_checks.
+  # Key naming convention:
+  #   <field>_acceptable  → output.<field> must be IN the list
+  #   <field>_unacceptable → output.<field> must NOT be in the list
+  #   <field>_not          → output.<field> must NOT be in the list
+  #
+  # The <field> is derived by stripping the suffix from the key name.
 
   local pass=true
   local checks="[]"
 
-  # Check outcome_acceptable: outcome must be in the list
-  local acceptable
-  acceptable="$(echo "${quality_json}" | jq -r '.outcome_acceptable // empty')"
-  if [[ -n "${acceptable}" ]]; then
-    local in_list
-    in_list="$(echo "${quality_json}" | jq -r --arg v "${outcome}" '.outcome_acceptable | map(. == $v) | any')"
-    local check_pass="true"
-    if [[ "${in_list}" != "true" ]]; then
-      check_pass="false"
-      pass=false
-    fi
-    checks="$(echo "${checks}" | jq --arg name "outcome_acceptable" --arg val "${outcome}" --argjson passed "${check_pass}" '. + [{"name": $name, "value": $val, "passed": $passed}]')"
-  fi
+  local all_keys
+  all_keys="$(echo "${quality_json}" | jq -r 'keys[]')"
 
-  # Check outcome_unacceptable: outcome must NOT be in the list
-  local unacceptable
-  unacceptable="$(echo "${quality_json}" | jq -r '.outcome_unacceptable // empty')"
-  if [[ -n "${unacceptable}" ]]; then
-    local in_bad
-    in_bad="$(echo "${quality_json}" | jq -r --arg v "${outcome}" '.outcome_unacceptable | map(. == $v) | any')"
-    local check_pass="true"
-    if [[ "${in_bad}" == "true" ]]; then
-      check_pass="false"
-      pass=false
-    fi
-    checks="$(echo "${checks}" | jq --arg name "outcome_not_unacceptable" --arg val "${outcome}" --argjson passed "${check_pass}" '. + [{"name": $name, "value": $val, "passed": $passed}]')"
-  fi
+  for key in ${all_keys}; do
+    local field="" check_type=""
 
-  # Check a_move_not: a_move must NOT be in the list
-  local a_move_not
-  a_move_not="$(echo "${quality_json}" | jq -r '.a_move_not // empty')"
-  if [[ -n "${a_move_not}" ]]; then
-    local in_bad
-    in_bad="$(echo "${quality_json}" | jq -r --arg v "${a_move}" '.a_move_not | map(. == $v) | any')"
-    local check_pass="true"
-    if [[ "${in_bad}" == "true" ]]; then
-      check_pass="false"
-      pass=false
+    if [[ "${key}" == *_acceptable ]]; then
+      field="${key%_acceptable}"
+      check_type="acceptable"
+    elif [[ "${key}" == *_unacceptable ]]; then
+      field="${key%_unacceptable}"
+      check_type="unacceptable"
+    elif [[ "${key}" == *_not ]]; then
+      field="${key%_not}"
+      check_type="not"
+    else
+      continue
     fi
-    checks="$(echo "${checks}" | jq --arg name "a_move_not_blocked" --arg val "${a_move}" --argjson passed "${check_pass}" '. + [{"name": $name, "value": $val, "passed": $passed}]')"
-  fi
 
-  # Check b_move_not: b_move must NOT be in the list
-  local b_move_not
-  b_move_not="$(echo "${quality_json}" | jq -r '.b_move_not // empty')"
-  if [[ -n "${b_move_not}" ]]; then
-    local in_bad
-    in_bad="$(echo "${quality_json}" | jq -r --arg v "${b_move}" '.b_move_not | map(. == $v) | any')"
-    local check_pass="true"
-    if [[ "${in_bad}" == "true" ]]; then
-      check_pass="false"
-      pass=false
-    fi
-    checks="$(echo "${checks}" | jq --arg name "b_move_not_blocked" --arg val "${b_move}" --argjson passed "${check_pass}" '. + [{"name": $name, "value": $val, "passed": $passed}]')"
-  fi
+    # Extract the field value from output
+    local field_val
+    field_val="$(jq -r --arg f "${field}" '.output[$f] // "MISSING"' "${output_file}")"
 
-  # Check conflict_type_not: conflict_type must NOT be in the list
-  local ct_not
-  ct_not="$(echo "${quality_json}" | jq -r '.conflict_type_not // empty')"
-  if [[ -n "${ct_not}" ]]; then
-    local in_bad
-    in_bad="$(echo "${quality_json}" | jq -r --arg v "${conflict_type}" '.conflict_type_not | map(. == $v) | any')"
     local check_pass="true"
-    if [[ "${in_bad}" == "true" ]]; then
-      check_pass="false"
-      pass=false
+
+    if [[ "${check_type}" == "acceptable" ]]; then
+      # Value must be in the list
+      local in_list
+      in_list="$(echo "${quality_json}" | jq -r --arg k "${key}" --arg v "${field_val}" '.[$k] | map(. == $v) | any')"
+      if [[ "${in_list}" != "true" ]]; then
+        check_pass="false"
+        pass=false
+      fi
+    else
+      # unacceptable or not: value must NOT be in the list
+      local in_bad
+      in_bad="$(echo "${quality_json}" | jq -r --arg k "${key}" --arg v "${field_val}" '.[$k] | map(. == $v) | any')"
+      if [[ "${in_bad}" == "true" ]]; then
+        check_pass="false"
+        pass=false
+      fi
     fi
-    checks="$(echo "${checks}" | jq --arg name "conflict_type_not_blocked" --arg val "${conflict_type}" --argjson passed "${check_pass}" '. + [{"name": $name, "value": $val, "passed": $passed}]')"
-  fi
+
+    checks="$(echo "${checks}" | jq --arg name "${key}" --arg val "${field_val}" --argjson passed "${check_pass}" \
+      '. + [{"name": $name, "value": $val, "passed": $passed}]')"
+  done
 
   local result
   if [[ "${pass}" == "true" ]]; then
