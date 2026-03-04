@@ -406,4 +406,15 @@
   connectSSE();
   setInterval(pollStatus, 3000);
   pollStatus();
+
+  // If server has a running session (e.g. browser refresh), switch to protocol view
+  fetch('/api/status').then(function (res) { return res.json(); }).then(function (data) {
+    if (data.started) {
+      showProtocol();
+      var note = document.createElement('div');
+      note.className = 'reconnect-notice';
+      note.textContent = 'Reconnected to running session — new events will appear below.';
+      els.vaultEvents.appendChild(note);
+    }
+  }).catch(function () { /* ignore */ });
 })();

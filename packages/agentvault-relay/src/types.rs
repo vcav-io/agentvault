@@ -110,6 +110,15 @@ pub struct SessionOutputResponse {
 // Health and capabilities
 // ============================================================================
 
+/// Summary of the relay's enforcement policy, exposed via /health.
+#[derive(Debug, Clone, Serialize)]
+pub struct PolicySummary {
+    pub policy_id: String,
+    pub policy_hash: String,
+    pub model_profile_allowlist: Vec<String>,
+    pub enforcement_rules: Vec<String>,
+}
+
 /// Health check response.
 #[derive(Debug, Serialize)]
 pub struct HealthResponse {
@@ -117,6 +126,10 @@ pub struct HealthResponse {
     pub version: &'static str,
     pub git_sha: &'static str,
     pub execution_lane: &'static str,
+    pub provider: String,
+    pub model_id: String,
+    pub verifying_key_hex: String,
+    pub policy_summary: PolicySummary,
 }
 
 /// Capabilities response.

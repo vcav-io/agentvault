@@ -11,8 +11,10 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { config as dotenvConfig } from 'dotenv';
 import { ed25519 } from '@noble/curves/ed25519';
-import { bytesToHex } from '@noble/hashes/utils';
+import { sha256 } from '@noble/hashes/sha256';
+import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
 import { randomBytes } from 'node:crypto';
+import { canonicalize } from 'json-canonicalize';
 
 import {
   createToolRegistry,
@@ -87,28 +89,36 @@ function detectProvider(): 'anthropic' | 'openai' | 'gemini' {
   );
 }
 
-function createProvider(): LLMProvider {
-  const provider = detectProvider();
-  const model = process.env['MODEL'];
-
-  if (provider === 'gemini') {
+/** Create a provider from explicit provider name and optional model. */
+function createProviderFromSpec(providerName: string, model?: string): LLMProvider {
+  if (providerName === 'gemini') {
     const apiKey = process.env['GEMINI_API_KEY'];
-    if (!apiKey) throw new Error('GEMINI_API_KEY is required when PROVIDER=gemini');
+    if (!apiKey) throw new Error('GEMINI_API_KEY is required when provider=gemini');
     console.log(`Using Gemini provider, model: ${model ?? 'gemini-2.5-flash (default)'}`);
     return new GeminiProvider(apiKey, model);
   }
 
-  if (provider === 'openai') {
+  if (providerName === 'openai') {
     const apiKey = process.env['OPENAI_API_KEY'];
-    if (!apiKey) throw new Error('OPENAI_API_KEY is required when PROVIDER=openai');
+    if (!apiKey) throw new Error('OPENAI_API_KEY is required when provider=openai');
     console.log(`Using OpenAI provider, model: ${model ?? 'gpt-4.1-mini (default)'}`);
     return new OpenAIProvider(apiKey, model);
   }
 
-  const apiKey = process.env['ANTHROPIC_API_KEY'];
-  if (!apiKey) throw new Error('ANTHROPIC_API_KEY is required when PROVIDER=anthropic');
-  console.log(`Using Anthropic provider, model: ${model ?? 'claude-haiku-4-5-20251001 (default)'}`);
-  return new AnthropicProvider(apiKey, model);
+  if (providerName === 'anthropic') {
+    const apiKey = process.env['ANTHROPIC_API_KEY'];
+    if (!apiKey) throw new Error('ANTHROPIC_API_KEY is required when provider=anthropic');
+    console.log(`Using Anthropic provider, model: ${model ?? 'claude-haiku-4-5-20251001 (default)'}`);
+    return new AnthropicProvider(apiKey, model);
+  }
+
+  throw new Error(`Unknown provider: ${providerName}. Must be gemini, openai, or anthropic.`);
+}
+
+function createProvider(): LLMProvider {
+  const provider = detectProvider();
+  const model = process.env['MODEL'];
+  return createProviderFromSpec(provider, model);
 }
 
 /** Default heartbeat models per provider — cheapest with tool use support. */
@@ -197,20 +207,23 @@ function loadPrompt(name: string): string {
   return 'I\'m really struggling with where my startup is heading. Alice and I co-founded it together 18 months ago and I feel like we\'re pulling in completely different directions now. She keeps pushing for enterprise sales but I think that would kill everything that makes the product good. The developer community we\'ve built is real — people genuinely love what we\'re making — but Alice treats that like it doesn\'t matter if it\'s not converting to revenue. I don\'t know what to do.\n\nAlice mentioned she might set up a private mediation for us. When her invite arrives in your inbox, accept it using mode: RESPOND (not INITIATE — she is the one starting the session). Include your private perspective as my_input.';
 }
 
-const SYSTEM_PROMPT = `You are a helpful AI assistant participating in a private mediation session.
-You have access to AgentVault tools for secure bounded-disclosure communication.
+const SYSTEM_PROMPT = `You are a helpful AI assistant acting on behalf of your user.
+You have access to AgentVault tools for secure bounded-disclosure communication with other agents.
 
-IMPORTANT:
+ACTING ON BEHALF OF YOUR USER:
+- Your user's message contains their private context and instructions. Act on it immediately.
+- When using relay tools that accept private input, include the full substance of what your user shared — their concerns, priorities, constraints, and perspective. Do not summarize or omit details.
+- Do not ask your user to repeat or clarify information they already provided.
+
+HEARTBEAT:
 - When you receive a [Heartbeat] message, run this checklist:
   1. Check inbox for pending session invites or messages
   2. Check active sessions for any required responses
   3. If work found, take the next appropriate action
   4. If nothing to do, reply with exactly HEARTBEAT_OK and nothing else
-- When taking actions, give the user a brief one-sentence status update explaining what you're doing at a high level (e.g. "Setting up a private mediation channel with Bob." or "I've received a mediation invite — joining the session now."). Keep these extremely concise.
-- Follow tool response instructions exactly.
-- When relay_signal returns action_required = CALL_AGAIN, call it again with ONLY the resume_token.
-- When the session completes, summarize the bounded signal you received.
-- Do NOT reveal or quote the content of my_input in your responses.`;
+
+- When taking actions, give the user a brief one-sentence status update. Keep these extremely concise.
+- Follow tool response instructions exactly.`;
 
 // ── State ────────────────────────────────────────────────────────────────
 
@@ -370,9 +383,42 @@ app.post('/api/start', async (req, res) => {
   }
 
   try {
+    // Per-run provider override: if agentProvider is specified, switch the
+    // module-level provider for this run (persists until next /api/start or reset).
+    const agentProvider = req.body?.agentProvider as string | undefined;
+    const agentModel = req.body?.agentModel as string | undefined;
+    if (agentProvider) {
+      provider = createProviderFromSpec(agentProvider, agentModel);
+      events.emitSystem(`Agent provider overridden: ${agentProvider}/${agentModel ?? 'default'}`);
+    }
+
     // Start JSONL recording
     const runFile = events.startRecording(RUNS_DIR);
     events.emitSystem(`Recording to ${runFile}`);
+
+    // Fetch relay health to emit enforcement policy at session start
+    try {
+      const healthRes = await fetch(`${RELAY_URL}/health`);
+      if (healthRes.ok) {
+        const health = await healthRes.json() as Record<string, unknown>;
+        const policySummary = health.policy_summary as Record<string, unknown> | undefined;
+        events.emit({
+          ts: new Date().toISOString(),
+          type: 'system',
+          agent: 'relay_policy',
+          payload: {
+            policy_id: policySummary?.policy_id ?? 'unknown',
+            policy_hash: policySummary?.policy_hash ?? 'unknown',
+            model_profile_allowlist: policySummary?.model_profile_allowlist ?? [],
+            enforcement_rules: policySummary?.enforcement_rules ?? [],
+            verifying_key_hex: health.verifying_key_hex ?? 'unknown',
+            model_id: health.model_id ?? 'unknown',
+          },
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to fetch relay health for policy event:', err instanceof Error ? err.message : String(err));
+    }
 
     // Load prompts — use request body if provided, else fall back to files
     const alicePrompt = (req.body?.alicePrompt as string) || loadPrompt('alice');
@@ -456,6 +502,51 @@ app.post('/api/message', async (req, res) => {
     console.error(`${agent} mid-run message failed:`, err);
     events.emitSystem(`${agent} message error: ${err instanceof Error ? err.message : 'Unknown'}`);
   });
+});
+
+// Verify receipt signature — Ed25519 over JCS-canonicalized receipt
+app.post('/api/verify-receipt', async (req, res) => {
+  try {
+    const { receipt, receipt_signature } = req.body as {
+      receipt?: Record<string, unknown>;
+      receipt_signature?: string;
+    };
+
+    if (!receipt || !receipt_signature) {
+      res.status(400).json({ verified: false, error: 'receipt and receipt_signature are required' });
+      return;
+    }
+
+    // Fetch relay public key
+    const healthRes = await fetch(`${RELAY_URL}/health`);
+    if (!healthRes.ok) {
+      res.json({ verified: false, error: 'Could not fetch relay public key' });
+      return;
+    }
+    const health = await healthRes.json() as Record<string, unknown>;
+    const pubKeyHex = health.verifying_key_hex as string | undefined;
+    if (!pubKeyHex) {
+      res.json({ verified: false, error: 'Relay did not provide verifying_key_hex' });
+      return;
+    }
+
+    // Strip the `signature` field — Rust signs the UnsignedReceipt (all fields except signature)
+    const { signature: _sig, ...unsignedReceipt } = receipt;
+
+    // Verification: message = "VCAV-RECEIPT-V1:" + JCS(unsigned_receipt), hash = sha256(message)
+    const canonical = canonicalize(unsignedReceipt);
+    const message = `VCAV-RECEIPT-V1:${canonical}`;
+    const hash = sha256(new TextEncoder().encode(message));
+
+    const sigBytes = hexToBytes(receipt_signature);
+    const pubKeyBytes = hexToBytes(pubKeyHex);
+    const valid = ed25519.verify(sigBytes, hash, pubKeyBytes);
+
+    res.json({ verified: valid });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.json({ verified: false, error: msg });
+  }
 });
 
 // Reset — clear state for a new run

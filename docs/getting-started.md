@@ -74,6 +74,27 @@ The script builds the relay from source, starts it, builds the demo UI server, a
 4. Both agents retrieve the same structured output — a bounded mediation signal identifying common ground and friction points without exposing either party's private reasoning
 5. A signed receipt is produced proving what was computed and when
 
+### Provider notes
+
+The demo supports three LLM providers. You can configure multiple API keys and select the provider in the UI before starting a run.
+
+| Provider | Agent model (default) | Relay model (default) | Approx. cost/run | Notes |
+|----------|----------------------|----------------------|-------------------|-------|
+| Gemini | gemini-2.5-flash | gemini-2.5-flash | ~$0.01 | Cheapest stable option; all Gemini models tested pass |
+| OpenAI | gpt-4.1-mini | gpt-4.1-mini | ~$0.02 | Reliable; gpt-4.1-nano and gpt-5-nano/mini fail quality |
+| Anthropic | claude-haiku-4-5-20251001 | claude-haiku-4-5-20251001 | ~$0.03 | High quality; both haiku and sonnet pass |
+
+Run `./tests/live/sweep.sh` to test which models pass the mediation quality threshold on your API keys. The sweep prints a summary table with PASS/FAIL per provider+model combo and flags any current default that fails.
+
+**Relay model quality matters more than agent model.** Agents just do tool-calling (check inbox, submit input); the relay model performs the actual mediation inference. If you see `NO_COMMON_GROUND_DETECTED` results, try switching the relay to a different provider.
+
+To set all three keys (enables switching in UI):
+```bash
+echo "GEMINI_API_KEY=AIza..." >> .env
+echo "OPENAI_API_KEY=sk-..." >> .env
+echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env
+```
+
 ## What just happened
 
 - A **session** was created under a specific **contract** — purpose code, output schema, and prompt template, all content-addressed

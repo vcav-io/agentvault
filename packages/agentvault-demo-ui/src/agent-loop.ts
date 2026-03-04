@@ -103,6 +103,13 @@ async function runLLMBurst(
 ): Promise<BurstResult> {
   const { name, provider, registry, systemPrompt, events, state } = params;
 
+  // Guard: if session already completed, exit immediately. Prevents queued
+  // heartbeat bursts (enqueued before completion) from resetting status to
+  // 'running'→'idle' and defeating the no-cost heartbeat tick.
+  if (state.status === 'completed') {
+    return 'idle';
+  }
+
   const toolDefs: ToolDefinition[] = registry.toolDefs.map((td) => ({
     name: td.name,
     description: td.description,
@@ -126,14 +133,6 @@ async function runLLMBurst(
 
   try {
     for (let turn = 0; turn < MAX_TURNS; turn++) {
-      // If session completed on the previous turn, exit now.
-      // The LLM already got one turn to react to the result.
-      if (sessionDone) {
-        state.status = 'completed';
-        events.emitStatus(name, 'completed', 'Session completed');
-        return 'session_completed';
-      }
-
       state.turnCount++;
 
       const response = await provider.chat({
@@ -142,8 +141,11 @@ async function runLLMBurst(
         system: systemPrompt,
       });
 
-      // If no tool calls, burst is done
-      if (!response.wantsToolUse || response.toolUseBlocks.length === 0) {
+      // If no tool calls, burst is done.
+      // Check toolUseBlocks.length rather than wantsToolUse to prevent orphaned
+      // tool_calls in state.messages — OpenAI rejects histories where an assistant
+      // message contains tool_calls without matching tool results.
+      if (response.toolUseBlocks.length === 0) {
         const isHeartbeatOk = response.textBlocks.length === 1
           && response.textBlocks[0].text.trim() === 'HEARTBEAT_OK';
 
@@ -218,7 +220,9 @@ async function runLLMBurst(
         if (!toolName.includes('relay_signal')) continue;
         try {
           const parsed = JSON.parse(tr.content);
-          if (parsed?.state === 'COMPLETED' || parsed?.state === 'FAILED') {
+          // Tool results use envelope format: { ok, status, data: { state } }
+          const state = parsed?.data?.state ?? parsed?.state;
+          if (state === 'COMPLETED' || state === 'FAILED') {
             sessionDone = true;
           }
         } catch {
@@ -277,6 +281,14 @@ export async function runHeartbeatLoop(
     : params;
 
   while (!signal.aborted) {
+    // No-cost local tick after session completion — loop stays alive but
+    // no LLM call. Prevents budget models from spinning on post-completion
+    // heartbeats (get_identity loops, session restarts).
+    if (state.status === 'completed') {
+      await delay(HEARTBEAT_INTERVAL_MS, signal);
+      continue;
+    }
+
     if (state.started) {
       events.emitSystem(`${name}: Heartbeat`);
       await queue.enqueue(() => runLLMBurst(heartbeatParams, HEARTBEAT_PROMPT));

@@ -37,9 +37,10 @@ export const RELAY_TOOLS = [
       '- First call: provide mode, counterparty/from, purpose/expected_purpose, my_input.\n' +
       '- If action_required = CALL_AGAIN: you MUST call again with ONLY resume_token.\n' +
       '  Do NOT include mode, my_input, or any other args on resume calls.\n' +
-      '- If state = COMPLETED: stop. Read output.\n' +
+      '- If state = COMPLETED: stop. Read output. Do not call again — the session is finished.\n' +
       '- If state = FAILED: read error_code and user_message. Follow user_message.\n' +
-      '- NEVER call without resume_token after the first call.\n\n' +
+      '- NEVER call without resume_token after the first call.\n' +
+      '- Each session requires exactly one my_input submission per agent. Do not re-submit.\n\n' +
       'Call agentvault.get_identity first to see your agent_id and known agents.\n\n' +
       'DISPLAY RULES:\n' +
       '- When state = COMPLETED: use interpretation_context for signal field meanings and epistemic limits.\n' +
@@ -95,7 +96,13 @@ export const RELAY_TOOLS = [
         },
         my_input: {
           type: 'string',
-          description: "This agent's private context/input (all modes)",
+          description:
+            "Private context for this relay session. The counterparty will only receive the bounded, " +
+            "schema-limited signal produced by the relay, not this raw input. " +
+            "To get a high-quality signal, include concrete facts, constraints, and preferences from " +
+            "your user's perspective (numbers, timelines, priorities, non-negotiables). " +
+            "Avoid generic summaries that remove decision-relevant details. " +
+            "Do not include secrets you are not willing to send to the relay/model provider.",
         },
         relay_url: {
           type: 'string',

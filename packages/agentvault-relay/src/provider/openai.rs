@@ -87,9 +87,16 @@ impl OpenAIProvider {
         let mut body = serde_json::json!({
             "model": self.model_id,
             "max_completion_tokens": request.max_tokens,
-            "temperature": 0.0,
             "messages": messages,
         });
+
+        // gpt-5 family doesn't support temperature != 1. Only set it for
+        // models that accept it (gpt-4*, o1*, etc.).
+        if !self.model_id.starts_with("gpt-5") {
+            body.as_object_mut()
+                .unwrap()
+                .insert("temperature".to_string(), serde_json::json!(0.0));
+        }
 
         if let Some(ref schema) = request.output_schema {
             let mut strict_schema = schema.clone();
@@ -134,7 +141,7 @@ impl OpenAIProvider {
             .map_err(|e| RelayError::Provider(format!("failed to read response body: {e}")))?;
 
         if !status.is_success() {
-            tracing::debug!(status = %status, "OpenAI API error");
+            tracing::debug!(status = %status, body = %response_text, "OpenAI API error");
             return Err(match status.as_u16() {
                 401 | 403 => RelayError::Provider("OpenAI API authentication error".to_string()),
                 429 => RelayError::Provider("OpenAI API rate limited".to_string()),

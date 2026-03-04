@@ -137,6 +137,10 @@ export class GeminiProvider implements LLMProvider {
           name: unsanitizeName(part.functionCall.name, this.nameMap),
           input: (part.functionCall.args ?? {}) as Record<string, unknown>,
         };
+        // Preserve thoughtSignature for round-trip (required by Gemini 3+ models)
+        if (part.thoughtSignature) {
+          tu._providerMeta = { thoughtSignature: part.thoughtSignature };
+        }
         toolUseBlocks.push(tu);
         contentBlocks.push(tu);
       }
@@ -185,12 +189,18 @@ export class GeminiProvider implements LLMProvider {
           if (block.type === 'text') {
             parts.push({ text: block.text });
           } else if (block.type === 'tool_use') {
-            parts.push({
+            const part: GeminiPart = {
               functionCall: {
                 name: sanitizeName(block.name, this.nameMap),
                 args: block.input,
               },
-            });
+            };
+            // Replay thoughtSignature if present (required by Gemini 3+ models)
+            const sig = block._providerMeta?.thoughtSignature as string | undefined;
+            if (sig) {
+              part.thoughtSignature = sig;
+            }
+            parts.push(part);
           }
         }
         if (parts.length > 0) result.push({ role: 'model', parts });
@@ -242,6 +252,7 @@ interface GeminiPart {
   text?: string;
   functionCall?: { name: string; args: unknown };
   functionResponse?: { name: string; response: unknown };
+  thoughtSignature?: string;
 }
 
 interface GeminiResponse {

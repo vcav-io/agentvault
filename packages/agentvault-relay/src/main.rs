@@ -98,14 +98,14 @@ async fn main() {
         }
 
         // Derive policy filename from lockfile — no hardcoded filenames.
-        let lockfile_entries =
-            match enforcement_policy::load_lockfile_entries(&relay_policies_dir) {
-                Ok(entries) => entries,
-                Err(e) => {
-                    tracing::error!(error = %e, "failed to read enforcement policy lockfile — refusing to start");
-                    std::process::exit(1);
-                }
-            };
+        let lockfile_entries = match enforcement_policy::load_lockfile_entries(&relay_policies_dir)
+        {
+            Ok(entries) => entries,
+            Err(e) => {
+                tracing::error!(error = %e, "failed to read enforcement policy lockfile — refusing to start");
+                std::process::exit(1);
+            }
+        };
         if lockfile_entries.len() != 1 {
             tracing::error!(
                 count = lockfile_entries.len(),
@@ -119,14 +119,15 @@ async fn main() {
             .to_string_lossy()
             .into_owned();
 
-        let loaded_policy =
-            match enforcement_policy::load_enforcement_policy(&enforcement_policy_path) {
-                Ok(p) => p,
-                Err(e) => {
-                    tracing::error!(error = %e, "failed to load enforcement policy — refusing to start");
-                    std::process::exit(1);
-                }
-            };
+        let loaded_policy = match enforcement_policy::load_enforcement_policy(
+            &enforcement_policy_path,
+        ) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!(error = %e, "failed to load enforcement policy — refusing to start");
+                std::process::exit(1);
+            }
+        };
 
         if let Err(e) = enforcement_policy::validate_policy_scope(&loaded_policy) {
             tracing::error!(error = %e, "enforcement policy scope validation failed — refusing to start");

@@ -15,6 +15,108 @@ RESULTS_DIR="${REPO_ROOT}/tests/live/results"
 source "${HARNESS_DIR}/lib.sh"
 
 # ---------------------------------------------------------------------------
+# check_quality: evaluate relay output against quality_checks from criteria.json
+#
+# Args:
+#   $1 output_file   — path to relay output JSON (e.g., alice_output.json)
+#   $2 criteria_file  — path to criteria.json with quality_checks section
+#
+# Returns: 0 (PASS) or 1 (FAIL)
+# Outputs: JSON object with { pass: bool, checks: [...] } to stdout
+# ---------------------------------------------------------------------------
+
+check_quality() {
+  local output_file="$1"
+  local criteria_file="$2"
+
+  require_cmd jq
+
+  # Check if quality_checks section exists
+  local has_quality
+  has_quality="$(jq -r 'has("quality_checks")' "${criteria_file}")"
+  if [[ "${has_quality}" != "true" ]]; then
+    echo '{"pass": false, "checks": [], "skipped": true}'
+    return 1
+  fi
+
+  local quality_json
+  quality_json="$(jq '.quality_checks' "${criteria_file}")"
+
+  # Data-driven check: iterate over all keys in quality_checks.
+  # Key naming convention:
+  #   <field>_acceptable  → output.<field> must be IN the list
+  #   <field>_unacceptable → output.<field> must NOT be in the list
+  #   <field>_not          → output.<field> must NOT be in the list
+  #
+  # The <field> is derived by stripping the suffix from the key name.
+
+  local pass=true
+  local checks="[]"
+
+  local all_keys
+  all_keys="$(echo "${quality_json}" | jq -r 'keys[]')"
+
+  for key in ${all_keys}; do
+    local field="" check_type=""
+
+    if [[ "${key}" == *_acceptable ]]; then
+      field="${key%_acceptable}"
+      check_type="acceptable"
+    elif [[ "${key}" == *_unacceptable ]]; then
+      field="${key%_unacceptable}"
+      check_type="unacceptable"
+    elif [[ "${key}" == *_not ]]; then
+      field="${key%_not}"
+      check_type="not"
+    else
+      continue
+    fi
+
+    # Extract the field value from output
+    local field_val
+    field_val="$(jq -r --arg f "${field}" '.output[$f] // "MISSING"' "${output_file}")"
+
+    local check_pass="true"
+
+    if [[ "${check_type}" == "acceptable" ]]; then
+      # Value must be in the list
+      local in_list
+      in_list="$(echo "${quality_json}" | jq -r --arg k "${key}" --arg v "${field_val}" '.[$k] | map(. == $v) | any')"
+      if [[ "${in_list}" != "true" ]]; then
+        check_pass="false"
+        pass=false
+      fi
+    else
+      # unacceptable or not: value must NOT be in the list
+      local in_bad
+      in_bad="$(echo "${quality_json}" | jq -r --arg k "${key}" --arg v "${field_val}" '.[$k] | map(. == $v) | any')"
+      if [[ "${in_bad}" == "true" ]]; then
+        check_pass="false"
+        pass=false
+      fi
+    fi
+
+    checks="$(echo "${checks}" | jq --arg name "${key}" --arg val "${field_val}" --argjson passed "${check_pass}" \
+      '. + [{"name": $name, "value": $val, "passed": $passed}]')"
+  done
+
+  local result
+  if [[ "${pass}" == "true" ]]; then
+    result="$(echo "${checks}" | jq --argjson p true '{pass: $p, checks: .}')"
+  else
+    result="$(echo "${checks}" | jq --argjson p false '{pass: $p, checks: .}')"
+  fi
+
+  echo "${result}"
+
+  if [[ "${pass}" == "true" ]]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # generate_report: create report.json + report.md in run_dir
 #
 # Args:
