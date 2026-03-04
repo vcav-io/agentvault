@@ -60,6 +60,9 @@ pub struct AppState {
     pub agent_registry: AgentRegistry,
     /// In-memory inbox store for async invites.
     pub inbox_store: InboxStore,
+    /// Max completion tokens for LLM provider calls.
+    /// Read from VCAV_MAX_COMPLETION_TOKENS at startup, defaults to 4096.
+    pub max_completion_tokens: u32,
     /// Whether VCAV_ENV=dev — enables diagnostic endpoints.
     pub is_dev: bool,
 }

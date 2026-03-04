@@ -258,6 +258,23 @@ async fn main() {
     // Start background inbox reaper
     inbox_store.clone().start_reaper();
 
+    let max_completion_tokens: u32 = match std::env::var("VCAV_MAX_COMPLETION_TOKENS") {
+        Ok(val) => match val.parse() {
+            Ok(n) => {
+                tracing::info!(max_completion_tokens = n, "Using VCAV_MAX_COMPLETION_TOKENS");
+                n
+            }
+            Err(_) => {
+                tracing::warn!(
+                    value = %val,
+                    "VCAV_MAX_COMPLETION_TOKENS is not a valid u32, falling back to 4096"
+                );
+                4096
+            }
+        },
+        Err(_) => 4096,
+    };
+
     if anthropic_api_key.is_none() && openai_api_key.is_none() && gemini_api_key.is_none() {
         tracing::error!(
             "No inference providers configured. Set at least one of ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY."
@@ -292,6 +309,7 @@ async fn main() {
         enforcement_policy_hash,
         agent_registry,
         inbox_store,
+        max_completion_tokens,
         is_dev,
     });
 
