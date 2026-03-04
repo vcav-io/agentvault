@@ -20,7 +20,7 @@ use crate::AppState;
 
 /// Git commit SHA embedded at build time by build.rs.
 /// Falls back to "unknown" in environments where .git/ is not present.
-const GIT_SHA: &str = env!("VCAV_GIT_SHA");
+const GIT_SHA: &str = env!("AV_GIT_SHA");
 
 /// Compute SHA-256 hash of an output schema using JCS canonicalization.
 /// Bound into receipts as `output_schema_hash`.
@@ -687,7 +687,7 @@ fn build_receipt_v2(
     };
 
     let operator_id =
-        std::env::var("VCAV_OPERATOR_ID").unwrap_or_else(|_| "agentvault-relay-dev".to_string());
+        std::env::var("AV_OPERATOR_ID").unwrap_or_else(|_| "agentvault-relay-dev".to_string());
 
     let provider_latency_ms = (inference_end - inference_start)
         .num_milliseconds()

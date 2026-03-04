@@ -34,7 +34,7 @@ export async function handleGetIdentity(
   knownAgents: NormalizedKnownAgent[],
   inboxService?: InboxService,
 ): Promise<ToolResponse<GetIdentityOutput>> {
-  const agentId = process.env['VCAV_AGENT_ID'];
+  const agentId = process.env['AV_AGENT_ID'];
   const result: GetIdentityOutput = { agent_id: agentId, known_agents: knownAgents };
 
   if (inboxService) {

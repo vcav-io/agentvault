@@ -5,7 +5,7 @@ set -euo pipefail
 # workspace.sh — agent working directory setup and isolation
 # ---------------------------------------------------------------------------
 #
-# Base directory: VCAV_TEST_DIR env var or ~/vcav-test/
+# Base directory: AV_TEST_DIR env var or ~/vcav-test/
 # Agent dirs: alice/ and bob/
 # Cleans each dir except .mcp.json, then verifies safety.
 
@@ -14,24 +14,24 @@ HARNESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 source "${HARNESS_DIR}/lib.sh"
 
-VCAV_TEST_BASE="${VCAV_TEST_DIR:-${HOME}/vcav-test}"
+AV_TEST_BASE="${AV_TEST_DIR:-${HOME}/vcav-test}"
 
 # ---------------------------------------------------------------------------
 # setup_workspace: create and clean agent directories
 #
-# Args: none (reads VCAV_TEST_BASE)
+# Args: none (reads AV_TEST_BASE)
 # Side-effects: sets ALICE_DIR and BOB_DIR in caller's environment
 # ---------------------------------------------------------------------------
 
 setup_workspace() {
-  ALICE_DIR="${VCAV_TEST_BASE}/alice"
-  BOB_DIR="${VCAV_TEST_BASE}/bob"
+  ALICE_DIR="${AV_TEST_BASE}/alice"
+  BOB_DIR="${AV_TEST_BASE}/bob"
   export ALICE_DIR BOB_DIR
 
   _prepare_agent_dir "${ALICE_DIR}" "alice"
   _prepare_agent_dir "${BOB_DIR}" "bob"
 
-  log_success "Workspace ready: ${VCAV_TEST_BASE}"
+  log_success "Workspace ready: ${AV_TEST_BASE}"
 }
 
 # ---------------------------------------------------------------------------
@@ -60,10 +60,10 @@ _prepare_agent_dir() {
     exit 1
   fi
 
-  # Safety: must be under VCAV_TEST_BASE
+  # Safety: must be under AV_TEST_BASE
   local real_dir real_base
   real_dir="$(cd "${dir}" && pwd -P)"
-  real_base="$(cd "${VCAV_TEST_BASE}" && pwd -P)"
+  real_base="$(cd "${AV_TEST_BASE}" && pwd -P)"
   case "${real_dir}" in
     "${real_base}"/*) ;;
     *)

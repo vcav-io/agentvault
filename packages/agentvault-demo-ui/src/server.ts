@@ -52,7 +52,7 @@ const PUBLIC_DIR = path.resolve(__dirname, '../public');
 const DEMO_DIR = path.resolve(__dirname, '..');
 
 const PORT = parseInt(process.env['DEMO_PORT'] ?? '3200', 10);
-const RELAY_URL = process.env['VCAV_RELAY_URL'] ?? 'http://localhost:3100';
+const RELAY_URL = process.env['AV_RELAY_URL'] ?? 'http://localhost:3100';
 const RUNS_DIR = process.env['DEMO_RUNS_DIR'] ?? path.join(DEMO_DIR, 'runs');
 const BOB_AFAL_PORT = parseInt(process.env['BOB_AFAL_PORT'] ?? '3201', 10);
 const ALICE_AFAL_PORT = parseInt(process.env['ALICE_AFAL_PORT'] ?? '3202', 10);
@@ -250,7 +250,7 @@ async function setupAndStartHeartbeats(): Promise<void> {
   const heartbeatProvider = createHeartbeatProvider();
 
   // Set environment variables for tool handlers
-  process.env['VCAV_RELAY_URL'] = RELAY_URL;
+  process.env['AV_RELAY_URL'] = RELAY_URL;
 
   // Generate identities
   const alice = generateIdentity();

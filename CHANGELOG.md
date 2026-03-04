@@ -25,7 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   check; capability derivation from rules; and receipt binding
   (`guardian_policy_hash`). 28 unit tests. Example policy:
   `prompt_programs/relay_policies/compatibility_safe_v1.json`. Dev override
-  requires both `VCAV_ENV=dev` and `VCAV_ENFORCEMENT_LOCKFILE_SKIP=1`.
+  requires both `AV_ENV=dev` and `AV_ENFORCEMENT_LOCKFILE_SKIP=1`.
   (PR #26)
 - **OpenClaw skill and VPS runbook:** `skills/openclaw/agentvault/SKILL.md`
   documents the full INITIATE/RESPOND flow, resume loop, completion, failure,
@@ -60,7 +60,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Health endpoint returns `git_sha`. (PR #23)
 - **OpenAI provider:** Relay now supports both Anthropic and OpenAI providers.
   Provider selected per session. Receipts record `model_identity` (provider +
-  model ID) dynamically. Configured via `OPENAI_API_KEY`, `VCAV_OPENAI_MODEL_ID`
+  model ID) dynamically. Configured via `OPENAI_API_KEY`, `AV_OPENAI_MODEL_ID`
   (default `gpt-4o`), and `OPENAI_BASE_URL`. (PR #18, #19)
 - **Red team test suite:** Adversarial scenarios (extraction, credential
   exfiltration, cross-session accumulation, encoding reflection, social

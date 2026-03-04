@@ -3,22 +3,22 @@ import { handleGetIdentity, type InboxService } from '../tools/getIdentity.js';
 import type { NormalizedKnownAgent } from '../tools/relaySignal.js';
 
 describe('handleGetIdentity', () => {
-  const originalAgentId = process.env['VCAV_AGENT_ID'];
+  const originalAgentId = process.env['AV_AGENT_ID'];
 
   beforeEach(() => {
-    delete process.env['VCAV_AGENT_ID'];
+    delete process.env['AV_AGENT_ID'];
   });
 
   afterEach(() => {
     if (originalAgentId === undefined) {
-      delete process.env['VCAV_AGENT_ID'];
+      delete process.env['AV_AGENT_ID'];
     } else {
-      process.env['VCAV_AGENT_ID'] = originalAgentId;
+      process.env['AV_AGENT_ID'] = originalAgentId;
     }
   });
 
   it('returns agent_id from env', async () => {
-    process.env['VCAV_AGENT_ID'] = 'test-agent-123';
+    process.env['AV_AGENT_ID'] = 'test-agent-123';
     const result = await handleGetIdentity([]);
     expect(result.ok).toBe(true);
     expect(result.data?.agent_id).toBe('test-agent-123');

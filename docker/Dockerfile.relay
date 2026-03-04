@@ -21,8 +21,8 @@ RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib
 COPY --from=builder /build/target/release/agentvault-relay /usr/local/bin/agentvault-relay
 COPY packages/agentvault-relay/prompt_programs /opt/agentvault/prompt_programs
 
-ENV VCAV_PROMPT_PROGRAM_DIR=/opt/agentvault/prompt_programs
-ENV VCAV_PORT=3100
+ENV AV_PROMPT_PROGRAM_DIR=/opt/agentvault/prompt_programs
+ENV AV_PORT=3100
 EXPOSE 3100
 
 HEALTHCHECK --interval=10s --timeout=3s --retries=3 \

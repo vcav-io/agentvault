@@ -57,7 +57,7 @@ if [[ -f "${REPO_ROOT}/.env" ]]; then
   set +a
 fi
 
-# Validate relay is up and VCAV_ENV=dev (metadata endpoint required)
+# Validate relay is up and AV_ENV=dev (metadata endpoint required)
 health_check "${RELAY_URL}/health" 10
 
 RUN_ID="catc-$(date -u '+%Y%m%dT%H%M%SZ')"
@@ -236,7 +236,7 @@ process.stdout.write(String((e - s) / 1000));
     SHORT_TIMINGS+=("${duration}")
     log_info "  Short session ${i}: ${duration}s"
   else
-    log_error "  Short session ${i}: metadata not available (is VCAV_ENV=dev set?)"
+    log_error "  Short session ${i}: metadata not available (is AV_ENV=dev set?)"
     exit 1
   fi
 done
@@ -270,7 +270,7 @@ process.stdout.write(String((e - s) / 1000));
     LONG_TIMINGS+=("${duration}")
     log_info "  Long session ${i}: ${duration}s"
   else
-    log_error "  Long session ${i}: metadata not available (is VCAV_ENV=dev set?)"
+    log_error "  Long session ${i}: metadata not available (is AV_ENV=dev set?)"
     exit 1
   fi
 done

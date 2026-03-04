@@ -16,7 +16,7 @@ set -euo pipefail
 #   --all        run all scenarios in tests/live/scenarios/
 #
 # Environment:
-#   ANTHROPIC_API_KEY, OPENAI_API_KEY, VCAV_MOCK, VCAV_TEST_DIR
+#   ANTHROPIC_API_KEY, OPENAI_API_KEY, AV_MOCK, AV_TEST_DIR
 # ---------------------------------------------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,15 +47,15 @@ FLAG_SMOKE=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --mock)
-      export VCAV_MOCK=1
+      export AV_MOCK=1
       FLAG_MOCK=1
       shift
       ;;
     --provider)
       case "${2:-}" in
-        anthropic) unset VCAV_MOCK 2>/dev/null || true; export VCAV_PROVIDER=anthropic ;;
-        openai)    unset VCAV_MOCK 2>/dev/null || true; export VCAV_PROVIDER=openai ;;
-        mock)      export VCAV_MOCK=1; FLAG_MOCK=1 ;;
+        anthropic) unset AV_MOCK 2>/dev/null || true; export AV_PROVIDER=anthropic ;;
+        openai)    unset AV_MOCK 2>/dev/null || true; export AV_PROVIDER=openai ;;
+        mock)      export AV_MOCK=1; FLAG_MOCK=1 ;;
         *)
           log_error "Unknown provider: ${2:-}. Use: anthropic, openai, mock"
           exit 1
@@ -151,9 +151,9 @@ setup_cleanup_trap
 # ---------------------------------------------------------------------------
 
 # Generate relay signing key if not already set
-if [[ -z "${VCAV_SIGNING_KEY_HEX:-}" ]]; then
-  export VCAV_SIGNING_KEY_HEX
-  VCAV_SIGNING_KEY_HEX="$(openssl rand -hex 32)"
+if [[ -z "${AV_SIGNING_KEY_HEX:-}" ]]; then
+  export AV_SIGNING_KEY_HEX
+  AV_SIGNING_KEY_HEX="$(openssl rand -hex 32)"
   log_info "Generated relay signing key"
 fi
 
@@ -229,7 +229,7 @@ done
 # ---------------------------------------------------------------------------
 
 _provider_display() {
-  if [[ "${VCAV_MOCK:-}" == "1" ]]; then echo "mock"
+  if [[ "${AV_MOCK:-}" == "1" ]]; then echo "mock"
   elif [[ -n "${OPENAI_API_KEY:-}" ]]; then echo "openai (via proxy)"
   elif [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then echo "anthropic (direct)"
   else echo "unknown"; fi

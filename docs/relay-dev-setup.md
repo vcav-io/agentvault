@@ -15,15 +15,15 @@ For a quick demo using Docker, see [Getting Started](getting-started.md).
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `ANTHROPIC_API_KEY` | Yes | — | Anthropic API key |
-| `VCAV_PORT` | No | `3100` | Port the relay listens on |
-| `VCAV_MODEL_ID` | No | `claude-sonnet-4-6` | Anthropic model to use |
-| `VCAV_SIGNING_KEY_HEX` | No | ephemeral | 64-char hex Ed25519 signing key. If unset, generates a random key on each start (receipts won't verify across restarts) |
-| `VCAV_PROMPT_PROGRAM_DIR` | No | `prompt_programs` | Directory containing prompt programs and lockfiles. The default is relative to CWD — when running from the repo root, set to `packages/agentvault-relay/prompt_programs` |
-| `VCAV_SESSION_TTL_SECS` | No | `600` | Session expiry in seconds |
-| `VCAV_ENV` | No | — | Set to `dev` for local development (enables dev-only overrides) |
-| `VCAV_INBOX_AUTH` | No | — | Set to `off` (with `VCAV_ENV=dev`) to skip agent registry requirement |
+| `AV_PORT` | No | `3100` | Port the relay listens on |
+| `AV_MODEL_ID` | No | `claude-sonnet-4-6` | Anthropic model to use |
+| `AV_SIGNING_KEY_HEX` | No | ephemeral | 64-char hex Ed25519 signing key. If unset, generates a random key on each start (receipts won't verify across restarts) |
+| `AV_PROMPT_PROGRAM_DIR` | No | `prompt_programs` | Directory containing prompt programs and lockfiles. The default is relative to CWD — when running from the repo root, set to `packages/agentvault-relay/prompt_programs` |
+| `AV_SESSION_TTL_SECS` | No | `600` | Session expiry in seconds |
+| `AV_ENV` | No | — | Set to `dev` for local development (enables dev-only overrides) |
+| `AV_INBOX_AUTH` | No | — | Set to `off` (with `AV_ENV=dev`) to skip agent registry requirement |
 | `OPENAI_API_KEY` | No | — | Enables the OpenAI provider |
-| `VCAV_OPENAI_MODEL_ID` | No | `gpt-4o` | OpenAI model to use |
+| `AV_OPENAI_MODEL_ID` | No | `gpt-4o` | OpenAI model to use |
 | `ANTHROPIC_BASE_URL` | No | — | Override Anthropic API base URL (for proxies) |
 | `OPENAI_BASE_URL` | No | — | Override OpenAI API base URL (for proxies) |
 
@@ -44,7 +44,7 @@ set -a && source .env && set +a
 cargo run -p agentvault-relay
 ```
 
-The `.env.example` includes dev-mode defaults (`VCAV_ENV=dev`, `VCAV_INBOX_AUTH=off`) that let you start the relay without an agent registry. For production, see the [OpenClaw VPS Runbook](guides/openclaw-vps-runbook.md).
+The `.env.example` includes dev-mode defaults (`AV_ENV=dev`, `AV_INBOX_AUTH=off`) that let you start the relay without an agent registry. For production, see the [OpenClaw VPS Runbook](guides/openclaw-vps-runbook.md).
 
 The relay starts on port 3100 by default. Verify with:
 

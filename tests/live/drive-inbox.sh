@@ -136,9 +136,9 @@ start_relay() {
   relay_port="$(echo "${RELAY_URL}" | grep -oE '[0-9]+$')"
 
   local relay_log="${RESULTS_BASE}/_drive_inbox_relay.log"
-  VCAV_PORT="${relay_port}" \
-  VCAV_PROMPT_PROGRAM_DIR="${REPO_ROOT}/packages/agentvault-relay/prompt_programs" \
-  VCAV_AGENT_REGISTRY_PATH="${AGENTS_FILE}" \
+  AV_PORT="${relay_port}" \
+  AV_PROMPT_PROGRAM_DIR="${REPO_ROOT}/packages/agentvault-relay/prompt_programs" \
+  AV_AGENT_REGISTRY_PATH="${AGENTS_FILE}" \
   ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
   OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
     "${relay_bin}" > "${relay_log}" 2>&1 &

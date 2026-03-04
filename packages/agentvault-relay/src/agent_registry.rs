@@ -25,7 +25,7 @@ struct RegistryConfig {
 /// Registry of agents authorized for inbox operations.
 ///
 /// Loaded from a JSON config file at startup. Fail-closed: missing file = startup
-/// failure unless `VCAV_INBOX_AUTH=off` is explicitly set.
+/// failure unless `AV_INBOX_AUTH=off` is explicitly set.
 #[derive(Clone)]
 pub struct AgentRegistry {
     /// token -> RegisteredAgent (for constant-time-ish lookup by token)
@@ -86,7 +86,7 @@ impl AgentRegistry {
         })
     }
 
-    /// Create an empty registry (for dev mode with VCAV_INBOX_AUTH=off).
+    /// Create an empty registry (for dev mode with AV_INBOX_AUTH=off).
     pub fn empty() -> Self {
         Self {
             by_token: HashMap::new(),

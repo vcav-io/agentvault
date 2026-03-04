@@ -5,17 +5,17 @@
  * Minimal MCP server exposing AgentVault relay tools under the agentvault namespace.
  *
  * Configuration:
- *   VCAV_RELAY_URL              — relay base URL (required for CREATE/JOIN modes)
- *   VCAV_AGENT_ID               — this agent's ID (used for contract building and idempotency)
- *   VCAV_RESUME_TOKEN_SECRET    — secret for HMAC-signing resume tokens (optional but recommended)
+ *   AV_RELAY_URL              — relay base URL (required for CREATE/JOIN modes)
+ *   AV_AGENT_ID               — this agent's ID (used for contract building and idempotency)
+ *   AV_RESUME_TOKEN_SECRET    — secret for HMAC-signing resume tokens (optional but recommended)
  *
  * AFAL Direct Transport (opt-in):
- *   VCAV_AFAL_SEED_HEX          — Ed25519 seed (required for AFAL direct mode)
- *   VCAV_AFAL_HTTP_PORT          — port for AFAL HTTP server (enables RESPOND mode)
- *   VCAV_AFAL_BIND_ADDRESS       — bind address (default: 127.0.0.1)
- *   VCAV_AFAL_TRUSTED_AGENTS     — JSON: [{"agentId":"...","publicKeyHex":"..."}]
- *   VCAV_AFAL_ALLOWED_PURPOSES   — comma-separated: "MEDIATION,COMPATIBILITY"
- *   VCAV_AFAL_PEER_DESCRIPTOR_URL — peer descriptor URL (INITIATE mode)
+ *   AV_AFAL_SEED_HEX          — Ed25519 seed (required for AFAL direct mode)
+ *   AV_AFAL_HTTP_PORT          — port for AFAL HTTP server (enables RESPOND mode)
+ *   AV_AFAL_BIND_ADDRESS       — bind address (default: 127.0.0.1)
+ *   AV_AFAL_TRUSTED_AGENTS     — JSON: [{"agentId":"...","publicKeyHex":"..."}]
+ *   AV_AFAL_ALLOWED_PURPOSES   — comma-separated: "MEDIATION,COMPATIBILITY"
+ *   AV_AFAL_PEER_DESCRIPTOR_URL — peer descriptor URL (INITIATE mode)
  *
  * Transport injection:
  *   INITIATE and RESPOND modes require an InviteTransport implementation.
@@ -109,28 +109,28 @@ export function createAgentVaultServer(
 }
 
 /**
- * Build a DirectAfalTransport from VCAV_AFAL_* environment variables.
- * Returns null if VCAV_AFAL_SEED_HEX is not set.
+ * Build a DirectAfalTransport from AV_AFAL_* environment variables.
+ * Returns null if AV_AFAL_SEED_HEX is not set.
  */
 function buildDirectTransportFromEnv(): DirectAfalTransport | null {
-  const seedHex = process.env['VCAV_AFAL_SEED_HEX'];
+  const seedHex = process.env['AV_AFAL_SEED_HEX'];
   if (!seedHex) return null;
 
-  const agentId = process.env['VCAV_AGENT_ID'];
+  const agentId = process.env['AV_AGENT_ID'];
   if (!agentId) {
-    console.error('VCAV_AGENT_ID is required when VCAV_AFAL_SEED_HEX is set');
+    console.error('AV_AGENT_ID is required when AV_AFAL_SEED_HEX is set');
     return null;
   }
-  const httpPort = process.env['VCAV_AFAL_HTTP_PORT'];
-  const bindAddress = process.env['VCAV_AFAL_BIND_ADDRESS'] ?? '127.0.0.1';
-  const peerDescriptorUrl = process.env['VCAV_AFAL_PEER_DESCRIPTOR_URL'];
+  const httpPort = process.env['AV_AFAL_HTTP_PORT'];
+  const bindAddress = process.env['AV_AFAL_BIND_ADDRESS'] ?? '127.0.0.1';
+  const peerDescriptorUrl = process.env['AV_AFAL_PEER_DESCRIPTOR_URL'];
 
   let pubKeyHex: string;
   try {
     pubKeyHex = bytesToHex(ed25519.getPublicKey(hexToBytes(seedHex)));
   } catch (err) {
     console.error(
-      `VCAV_AFAL_SEED_HEX is not a valid 32-byte hex seed: ${err instanceof Error ? err.message : String(err)}`,
+      `AV_AFAL_SEED_HEX is not a valid 32-byte hex seed: ${err instanceof Error ? err.message : String(err)}`,
     );
     return null;
   }
@@ -170,35 +170,35 @@ function buildDirectTransportFromEnv(): DirectAfalTransport | null {
   if (httpPort) {
     const port = parseInt(httpPort, 10);
     if (Number.isNaN(port) || port < 0 || port > 65535) {
-      console.error(`VCAV_AFAL_HTTP_PORT is not a valid port: ${httpPort}`);
+      console.error(`AV_AFAL_HTTP_PORT is not a valid port: ${httpPort}`);
       return null;
     }
 
     let trustedAgents: TrustedAgent[] = [];
-    const trustedJson = process.env['VCAV_AFAL_TRUSTED_AGENTS'];
+    const trustedJson = process.env['AV_AFAL_TRUSTED_AGENTS'];
     if (trustedJson) {
       try {
         const parsed: unknown = JSON.parse(trustedJson);
         if (!Array.isArray(parsed)) {
-          console.error('VCAV_AFAL_TRUSTED_AGENTS must be a JSON array');
+          console.error('AV_AFAL_TRUSTED_AGENTS must be a JSON array');
           return null;
         }
         for (const entry of parsed) {
           if (typeof entry?.agentId !== 'string' || typeof entry?.publicKeyHex !== 'string') {
             console.error(
-              'VCAV_AFAL_TRUSTED_AGENTS entries must have string agentId and publicKeyHex',
+              'AV_AFAL_TRUSTED_AGENTS entries must have string agentId and publicKeyHex',
             );
             return null;
           }
         }
         trustedAgents = parsed as TrustedAgent[];
       } catch {
-        console.error(`VCAV_AFAL_TRUSTED_AGENTS is not valid JSON: ${trustedJson}`);
+        console.error(`AV_AFAL_TRUSTED_AGENTS is not valid JSON: ${trustedJson}`);
         return null;
       }
     }
 
-    const allowedPurposes = (process.env['VCAV_AFAL_ALLOWED_PURPOSES'] ?? 'MEDIATION')
+    const allowedPurposes = (process.env['AV_AFAL_ALLOWED_PURPOSES'] ?? 'MEDIATION')
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
@@ -218,60 +218,60 @@ function buildDirectTransportFromEnv(): DirectAfalTransport | null {
 }
 
 /**
- * Parse VCAV_KNOWN_AGENTS environment variable.
+ * Parse AV_KNOWN_AGENTS environment variable.
  * Expected format: JSON array of {agent_id: string, aliases: string[]}.
  */
 function parseKnownAgentsFromEnv(): NormalizedKnownAgent[] {
-  const raw = process.env['VCAV_KNOWN_AGENTS'];
+  const raw = process.env['AV_KNOWN_AGENTS'];
   if (!raw) return [];
   try {
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) {
-      console.error('VCAV_KNOWN_AGENTS must be a JSON array');
+      console.error('AV_KNOWN_AGENTS must be a JSON array');
       return [];
     }
     for (const entry of parsed) {
       if (typeof entry?.agent_id !== 'string' || !Array.isArray(entry?.aliases)) {
-        console.error('VCAV_KNOWN_AGENTS entries must have string agent_id and aliases array');
+        console.error('AV_KNOWN_AGENTS entries must have string agent_id and aliases array');
         return [];
       }
     }
     return parsed as NormalizedKnownAgent[];
   } catch {
-    console.error(`VCAV_KNOWN_AGENTS is not valid JSON: ${raw}`);
+    console.error(`AV_KNOWN_AGENTS is not valid JSON: ${raw}`);
     return [];
   }
 }
 
 /**
- * Build a RelayInboxTransport from VCAV_INBOX_* environment variables.
- * Returns null if VCAV_INBOX_TOKEN is not set or VCAV_INBOX_TRANSPORT !== 'relay'.
+ * Build a RelayInboxTransport from AV_INBOX_* environment variables.
+ * Returns null if AV_INBOX_TOKEN is not set or AV_INBOX_TRANSPORT !== 'relay'.
  */
 function buildRelayInboxTransportFromEnv(): RelayInboxTransport | null {
-  if (process.env['VCAV_INBOX_TRANSPORT'] !== 'relay') return null;
+  if (process.env['AV_INBOX_TRANSPORT'] !== 'relay') return null;
   // Fail-closed: when relay mode is explicitly requested, missing env vars are fatal.
-  const inboxToken = process.env['VCAV_INBOX_TOKEN'];
+  const inboxToken = process.env['AV_INBOX_TOKEN'];
   if (!inboxToken) {
     throw new Error(
-      'VCAV_INBOX_TOKEN is required when VCAV_INBOX_TRANSPORT=relay. ' +
-        'Set the inbox token or remove VCAV_INBOX_TRANSPORT to use a different mode.',
+      'AV_INBOX_TOKEN is required when AV_INBOX_TRANSPORT=relay. ' +
+        'Set the inbox token or remove AV_INBOX_TRANSPORT to use a different mode.',
     );
   }
-  const agentId = process.env['VCAV_AGENT_ID'];
+  const agentId = process.env['AV_AGENT_ID'];
   if (!agentId) {
-    throw new Error('VCAV_AGENT_ID is required when VCAV_INBOX_TRANSPORT=relay.');
+    throw new Error('AV_AGENT_ID is required when AV_INBOX_TRANSPORT=relay.');
   }
-  const relayUrl = process.env['VCAV_RELAY_URL'];
+  const relayUrl = process.env['AV_RELAY_URL'];
   if (!relayUrl) {
-    throw new Error('VCAV_RELAY_URL is required when VCAV_INBOX_TRANSPORT=relay.');
+    throw new Error('AV_RELAY_URL is required when AV_INBOX_TRANSPORT=relay.');
   }
   return new RelayInboxTransport({ agentId, inboxToken, relayUrl });
 }
 
 // Standalone entry point — runs without an InviteTransport
 // (CREATE/JOIN modes only unless the host injects one).
-// If VCAV_AFAL_SEED_HEX is set, also starts DirectAfalTransport.
-// If VCAV_INBOX_TRANSPORT=relay, uses RelayInboxTransport.
+// If AV_AFAL_SEED_HEX is set, also starts DirectAfalTransport.
+// If AV_INBOX_TRANSPORT=relay, uses RelayInboxTransport.
 async function main() {
   const directTransport = buildDirectTransportFromEnv();
   const relayInboxTransport = buildRelayInboxTransportFromEnv();
@@ -301,7 +301,7 @@ async function main() {
 
   if (!chosenTransport) {
     console.error(
-      'Note: INITIATE/RESPOND modes require a transport. Set VCAV_INBOX_TRANSPORT=relay + VCAV_INBOX_TOKEN, or VCAV_AFAL_SEED_HEX. Only CREATE/JOIN modes available in standalone mode.',
+      'Note: INITIATE/RESPOND modes require a transport. Set AV_INBOX_TRANSPORT=relay + AV_INBOX_TOKEN, or AV_AFAL_SEED_HEX. Only CREATE/JOIN modes available in standalone mode.',
     );
   }
 
@@ -334,9 +334,9 @@ if (isDirectExecution) {
           command: 'npx',
           args: ['-y', 'agentvault-mcp-server'],
           env: {
-            VCAV_RELAY_URL: 'http://localhost:8080',
-            VCAV_AGENT_ID: 'your-agent-id',
-            VCAV_RESUME_TOKEN_SECRET: 'your-secret-here',
+            AV_RELAY_URL: 'http://localhost:8080',
+            AV_AGENT_ID: 'your-agent-id',
+            AV_RESUME_TOKEN_SECRET: 'your-secret-here',
           },
         },
       },

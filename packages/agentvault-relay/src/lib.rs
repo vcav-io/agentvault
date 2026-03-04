@@ -39,7 +39,7 @@ use crate::types::{
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-const GIT_SHA: &str = env!("VCAV_GIT_SHA");
+const GIT_SHA: &str = env!("AV_GIT_SHA");
 
 pub struct AppState {
     pub signing_key: SigningKey,
@@ -63,15 +63,15 @@ pub struct AppState {
     /// In-memory inbox store for async invites.
     pub inbox_store: InboxStore,
     /// Max completion tokens for LLM provider calls.
-    /// Read from VCAV_MAX_COMPLETION_TOKENS at startup, defaults to 4096.
+    /// Read from AV_MAX_COMPLETION_TOKENS at startup, defaults to 4096.
     pub max_completion_tokens: u32,
-    /// Relay-level session TTL in seconds (from VCAV_SESSION_TTL_SECS).
+    /// Relay-level session TTL in seconds (from AV_SESSION_TTL_SECS).
     pub session_ttl_secs: u64,
-    /// Relay-level invite TTL in seconds (from VCAV_INVITE_TTL_SECS).
+    /// Relay-level invite TTL in seconds (from AV_INVITE_TTL_SECS).
     pub invite_ttl_secs: u64,
     /// Content-addressed output schema registry.
     pub schema_registry: SchemaRegistry,
-    /// Whether VCAV_ENV=dev — enables diagnostic endpoints.
+    /// Whether AV_ENV=dev — enables diagnostic endpoints.
     pub is_dev: bool,
 }
 

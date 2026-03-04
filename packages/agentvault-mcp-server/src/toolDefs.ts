@@ -140,7 +140,7 @@ export const RELAY_TOOLS = [
         },
         relay_url: {
           type: 'string',
-          description: 'Relay base URL. Defaults to VCAV_RELAY_URL environment variable.',
+          description: 'Relay base URL. Defaults to AV_RELAY_URL environment variable.',
         },
         session_id: {
           type: 'string',

@@ -68,7 +68,7 @@ export function createToolRegistry(config: ToolRegistryConfig): ToolRegistry {
   const agentId = config.agentId ?? transport.agentId;
 
   /**
-   * Set VCAV_AGENT_ID before each handler call.
+   * Set AV_AGENT_ID before each handler call.
    *
    * SAFETY NOTE: This is safe only because handleRelaySignal captures agentId
    * from transport.agentId at function entry (before any await). The env var is
@@ -78,7 +78,7 @@ export function createToolRegistry(config: ToolRegistryConfig): ToolRegistry {
    */
   function setAgentEnv(): void {
     if (agentId) {
-      process.env['VCAV_AGENT_ID'] = agentId;
+      process.env['AV_AGENT_ID'] = agentId;
     }
   }
 

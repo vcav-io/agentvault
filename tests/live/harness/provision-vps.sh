@@ -127,12 +127,12 @@ cat > ~/.mcporter/mcporter.json <<MPEOF
       "command": "node",
       "args": ["/opt/agentvault-mcp-server/node_modules/agentvault-mcp-server/dist/index.js"],
       "env": {
-        "VCAV_INBOX_TRANSPORT": "relay",
-        "VCAV_AGENT_ID": "${AGENT_ID}",
-        "VCAV_INBOX_TOKEN": "${INBOX_TOKEN}",
-        "VCAV_RELAY_URL": "${RELAY_URL}",
-        "VCAV_KNOWN_AGENTS": "[{\"agent_id\":\"alice\",\"aliases\":[\"alice\",\"Alice\"]},{\"agent_id\":\"bob\",\"aliases\":[\"bob\",\"Bob\"]}]",
-        "VCAV_WORKDIR": "/root/.openclaw/workspace"
+        "AV_INBOX_TRANSPORT": "relay",
+        "AV_AGENT_ID": "${AGENT_ID}",
+        "AV_INBOX_TOKEN": "${INBOX_TOKEN}",
+        "AV_RELAY_URL": "${RELAY_URL}",
+        "AV_KNOWN_AGENTS": "[{\"agent_id\":\"alice\",\"aliases\":[\"alice\",\"Alice\"]},{\"agent_id\":\"bob\",\"aliases\":[\"bob\",\"Bob\"]}]",
+        "AV_WORKDIR": "/root/.openclaw/workspace"
       }
     }
   }

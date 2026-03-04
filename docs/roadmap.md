@@ -233,7 +233,7 @@ local enforcement config — distinct from the vcav orchestrator's governance
   `RuleScopeKind`, `EnforcementClass` — no stringly-typed variants)
 - RFC 8785 JCS content addressing (via `receipt_core::canonicalize_serializable`)
 - Lockfile validation (fail-closed by default; dev override requires both
-  `VCAV_ENV=dev` and `VCAV_ENFORCEMENT_LOCKFILE_SKIP=1`)
+  `AV_ENV=dev` and `AV_ENFORCEMENT_LOCKFILE_SKIP=1`)
 - Reverse lockfile check (disk → lockfile, not just lockfile → disk)
 - Capability derivation from rules (not declared in JSON)
 - Receipt binding: `guardian_policy_hash` = real enforcement policy content hash
