@@ -17,24 +17,17 @@
 | Docker | Multi-stage Dockerfile, GHCR workflow, demo docker-compose | Complete |
 | Testing | Category C driver, paraphrase stability, session metadata endpoint | Complete |
 | Red Team | 7 adversarial scenarios, 20/20 pass rate, canary-guarded | Complete |
-| Demo Safety | Receipt card + verify button, enforcement policy card, model profile enforcement | In PR #140 |
-| Model Sweep | e2e-sweep.sh for testing provider/model combos across demo | In PR #140 |
-
-## In-Flight PRs
-
-| PR | Description | Status |
-|----|-------------|--------|
-| [#140](https://github.com/vcav-io/agentvault/pull/140) | Demo safety guarantees + model capability sweep | Needs final e2e verification after bug fixes |
-
-### PR #140 remaining items
-- OpenAI tool_call validation fix (committed but not yet e2e verified)
-- Browser refresh reconnection handling (committed but not yet e2e verified)
-- Both fixes need a clean run: reset → start → complete → verify signature → green checkmark
+| Demo Safety | Receipt card + verify button, enforcement policy card, model profile enforcement | Complete |
+| Model Sweep | e2e-sweep.sh for testing provider/model combos across demo | Complete |
 
 ## Open Work
 
 | Issue | Description | Size | Status |
 |-------|-------------|------|--------|
+| [#150](https://github.com/vcav-io/agentvault/issues/150) | Health endpoint exposes provider and model_id | S | Ready |
+| [#149](https://github.com/vcav-io/agentvault/issues/149) | Read max_completion_tokens at startup, not per-call | S | Ready |
+| [#148](https://github.com/vcav-io/agentvault/issues/148) | verify-receipt endpoint: validate hex input lengths | S | Ready |
+| [#147](https://github.com/vcav-io/agentvault/issues/147) | Bind enforcement policy into the contract (content-addressed) | L | Ready |
 | [#146](https://github.com/vcav-io/agentvault/issues/146) | Reduce demo startup friction (scripts, env, docs) | M | Ready |
 | [#145](https://github.com/vcav-io/agentvault/issues/145) | Optimal model families per provider (cost/quality balance) | M | Ready |
 | [#144](https://github.com/vcav-io/agentvault/issues/144) | Receipt Verification Guide for integrators | M | Ready |
