@@ -1,6 +1,6 @@
 # Contract & Receipt v2 — Unified Architecture Spec
 
-> **Status:** Draft
+> **Status:** Implemented (PRs #173, #174)
 > **Canonical schema:** `agentvault-receipt-schema-v2.1.0.revised.json`
 > **Issues:** #155 (receipt hardening), #151 (contract completeness), #147 (enforcement policy)
 
