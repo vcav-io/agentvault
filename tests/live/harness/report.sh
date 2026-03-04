@@ -15,6 +15,131 @@ RESULTS_DIR="${REPO_ROOT}/tests/live/results"
 source "${HARNESS_DIR}/lib.sh"
 
 # ---------------------------------------------------------------------------
+# check_quality: evaluate relay output against quality_checks from criteria.json
+#
+# Args:
+#   $1 output_file   — path to relay output JSON (e.g., alice_output.json)
+#   $2 criteria_file  — path to criteria.json with quality_checks section
+#
+# Returns: 0 (PASS) or 1 (FAIL)
+# Outputs: JSON object with { pass: bool, checks: [...] } to stdout
+# ---------------------------------------------------------------------------
+
+check_quality() {
+  local output_file="$1"
+  local criteria_file="$2"
+
+  require_cmd jq
+
+  # Check if quality_checks section exists
+  local has_quality
+  has_quality="$(jq -r 'has("quality_checks")' "${criteria_file}")"
+  if [[ "${has_quality}" != "true" ]]; then
+    echo '{"pass": true, "checks": [], "skipped": true}'
+    return 0
+  fi
+
+  local quality_json
+  quality_json="$(jq '.quality_checks' "${criteria_file}")"
+
+  # Extract output fields from relay response
+  local outcome a_move b_move shared_move conflict_type
+  outcome="$(jq -r '.output.outcome // "MISSING"' "${output_file}")"
+  a_move="$(jq -r '.output.a_move // "MISSING"' "${output_file}")"
+  b_move="$(jq -r '.output.b_move // "MISSING"' "${output_file}")"
+  shared_move="$(jq -r '.output.shared_move // "MISSING"' "${output_file}")"
+  conflict_type="$(jq -r '.output.conflict_type // "MISSING"' "${output_file}")"
+
+  local pass=true
+  local checks="[]"
+
+  # Check outcome_acceptable: outcome must be in the list
+  local acceptable
+  acceptable="$(echo "${quality_json}" | jq -r '.outcome_acceptable // empty')"
+  if [[ -n "${acceptable}" ]]; then
+    local in_list
+    in_list="$(echo "${quality_json}" | jq -r --arg v "${outcome}" '.outcome_acceptable | map(. == $v) | any')"
+    local check_pass="true"
+    if [[ "${in_list}" != "true" ]]; then
+      check_pass="false"
+      pass=false
+    fi
+    checks="$(echo "${checks}" | jq --arg name "outcome_acceptable" --arg val "${outcome}" --argjson passed "${check_pass}" '. + [{"name": $name, "value": $val, "passed": $passed}]')"
+  fi
+
+  # Check outcome_unacceptable: outcome must NOT be in the list
+  local unacceptable
+  unacceptable="$(echo "${quality_json}" | jq -r '.outcome_unacceptable // empty')"
+  if [[ -n "${unacceptable}" ]]; then
+    local in_bad
+    in_bad="$(echo "${quality_json}" | jq -r --arg v "${outcome}" '.outcome_unacceptable | map(. == $v) | any')"
+    local check_pass="true"
+    if [[ "${in_bad}" == "true" ]]; then
+      check_pass="false"
+      pass=false
+    fi
+    checks="$(echo "${checks}" | jq --arg name "outcome_not_unacceptable" --arg val "${outcome}" --argjson passed "${check_pass}" '. + [{"name": $name, "value": $val, "passed": $passed}]')"
+  fi
+
+  # Check a_move_not: a_move must NOT be in the list
+  local a_move_not
+  a_move_not="$(echo "${quality_json}" | jq -r '.a_move_not // empty')"
+  if [[ -n "${a_move_not}" ]]; then
+    local in_bad
+    in_bad="$(echo "${quality_json}" | jq -r --arg v "${a_move}" '.a_move_not | map(. == $v) | any')"
+    local check_pass="true"
+    if [[ "${in_bad}" == "true" ]]; then
+      check_pass="false"
+      pass=false
+    fi
+    checks="$(echo "${checks}" | jq --arg name "a_move_not_blocked" --arg val "${a_move}" --argjson passed "${check_pass}" '. + [{"name": $name, "value": $val, "passed": $passed}]')"
+  fi
+
+  # Check b_move_not: b_move must NOT be in the list
+  local b_move_not
+  b_move_not="$(echo "${quality_json}" | jq -r '.b_move_not // empty')"
+  if [[ -n "${b_move_not}" ]]; then
+    local in_bad
+    in_bad="$(echo "${quality_json}" | jq -r --arg v "${b_move}" '.b_move_not | map(. == $v) | any')"
+    local check_pass="true"
+    if [[ "${in_bad}" == "true" ]]; then
+      check_pass="false"
+      pass=false
+    fi
+    checks="$(echo "${checks}" | jq --arg name "b_move_not_blocked" --arg val "${b_move}" --argjson passed "${check_pass}" '. + [{"name": $name, "value": $val, "passed": $passed}]')"
+  fi
+
+  # Check conflict_type_not: conflict_type must NOT be in the list
+  local ct_not
+  ct_not="$(echo "${quality_json}" | jq -r '.conflict_type_not // empty')"
+  if [[ -n "${ct_not}" ]]; then
+    local in_bad
+    in_bad="$(echo "${quality_json}" | jq -r --arg v "${conflict_type}" '.conflict_type_not | map(. == $v) | any')"
+    local check_pass="true"
+    if [[ "${in_bad}" == "true" ]]; then
+      check_pass="false"
+      pass=false
+    fi
+    checks="$(echo "${checks}" | jq --arg name "conflict_type_not_blocked" --arg val "${conflict_type}" --argjson passed "${check_pass}" '. + [{"name": $name, "value": $val, "passed": $passed}]')"
+  fi
+
+  local result
+  if [[ "${pass}" == "true" ]]; then
+    result="$(echo "${checks}" | jq --argjson p true '{pass: $p, checks: .}')"
+  else
+    result="$(echo "${checks}" | jq --argjson p false '{pass: $p, checks: .}')"
+  fi
+
+  echo "${result}"
+
+  if [[ "${pass}" == "true" ]]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # generate_report: create report.json + report.md in run_dir
 #
 # Args:

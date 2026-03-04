@@ -22,5 +22,12 @@
       "vanity metric"
     ],
     "no_raw_prompt_leakage": true
+  },
+  "quality_checks": {
+    "outcome_acceptable": ["PROGRESS"],
+    "outcome_unacceptable": ["ESCALATE"],
+    "a_move_not": ["NONE"],
+    "b_move_not": ["NONE"],
+    "conflict_type_not": ["UNKNOWN"]
   }
 }

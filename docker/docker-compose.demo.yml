@@ -7,8 +7,8 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - VCAV_MODEL_ID=${VCAV_MODEL_ID:-claude-sonnet-4-6}
-      - VCAV_OPENAI_MODEL_ID=${VCAV_OPENAI_MODEL_ID:-gpt-4o}
+      - VCAV_MODEL_ID=${VCAV_MODEL_ID:-claude-haiku-4-5-20251001}
+      - VCAV_OPENAI_MODEL_ID=${VCAV_OPENAI_MODEL_ID:-gpt-4.1-mini}
       - VCAV_GEMINI_MODEL_ID=${VCAV_GEMINI_MODEL_ID:-gemini-2.5-flash}
       - VCAV_ENV=dev
       - VCAV_INBOX_AUTH=off
