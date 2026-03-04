@@ -233,15 +233,22 @@ pub async fn relay_core(
 
     // 2. Enforce model profile allowlist
     if !state.enforcement_policy.model_profile_allowlist.is_empty() {
-        if let Some(profile_id) = &contract.model_profile_id {
-            if !state
-                .enforcement_policy
-                .model_profile_allowlist
-                .contains(profile_id)
-            {
+        match &contract.model_profile_id {
+            Some(profile_id)
+                if state
+                    .enforcement_policy
+                    .model_profile_allowlist
+                    .contains(profile_id) => {}
+            Some(profile_id) => {
                 return Err(RelayError::ContractValidation(format!(
                     "model_profile_id '{profile_id}' not in enforcement allowlist"
                 )));
+            }
+            None => {
+                return Err(RelayError::ContractValidation(
+                    "model_profile_id is required when enforcement policy specifies an allowlist"
+                        .to_string(),
+                ));
             }
         }
     }
@@ -253,7 +260,7 @@ pub async fn relay_core(
     // 4. Load and validate prompt program
     let program = load_prompt_program(&state.prompt_program_dir, &contract.prompt_template_hash)?;
 
-    // 4. Assemble provider request
+    // 5. Assemble provider request
     let assembled = program.assemble(contract, input_a, input_b)?;
 
     let provider_request = ProviderRequest {
@@ -263,7 +270,7 @@ pub async fn relay_core(
         max_tokens: max_completion_tokens(),
     };
 
-    // 5. Call provider
+    // 6. Call provider
     let inference_start = Utc::now();
     let provider_response = match provider_name {
         "anthropic" => {

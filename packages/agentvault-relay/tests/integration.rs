@@ -673,6 +673,109 @@ async fn test_relay_endpoint_rejects_invalid_provider() {
 }
 
 // ============================================================================
+// Model profile allowlist enforcement tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_relay_rejects_missing_model_profile_when_allowlist_set() {
+    let (prompt_dir, prompt_hash) = setup_prompt_program("e2e-allowlist-none");
+
+    let mut state = test_app_state("http://unused", &prompt_dir);
+    state.enforcement_policy.model_profile_allowlist =
+        vec!["api-claude-sonnet-v1".to_string()];
+    let app = build_router(Arc::new(state));
+
+    // Contract without model_profile_id should be rejected
+    let relay_request = serde_json::json!({
+        "contract": {
+            "purpose_code": "MEDIATION",
+            "output_schema_id": "vault_result_mediation",
+            "output_schema": mediation_schema(),
+            "participants": ["alice", "bob"],
+            "prompt_template_hash": prompt_hash
+        },
+        "input_a": { "role": "alice", "context": {} },
+        "input_b": { "role": "bob", "context": {} },
+        "provider": "anthropic"
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/relay")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&relay_request).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let error_msg = json["error"].as_str().unwrap_or("");
+    assert!(
+        error_msg.contains("model_profile_id is required"),
+        "Expected allowlist error, got: {error_msg}"
+    );
+
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}
+
+#[tokio::test]
+async fn test_relay_rejects_wrong_model_profile() {
+    let (prompt_dir, prompt_hash) = setup_prompt_program("e2e-allowlist-wrong");
+
+    let mut state = test_app_state("http://unused", &prompt_dir);
+    state.enforcement_policy.model_profile_allowlist =
+        vec!["api-claude-sonnet-v1".to_string()];
+    let app = build_router(Arc::new(state));
+
+    // Contract with wrong model_profile_id should be rejected
+    let relay_request = serde_json::json!({
+        "contract": {
+            "purpose_code": "MEDIATION",
+            "output_schema_id": "vault_result_mediation",
+            "output_schema": mediation_schema(),
+            "participants": ["alice", "bob"],
+            "prompt_template_hash": prompt_hash,
+            "model_profile_id": "api-gpt4o-v1"
+        },
+        "input_a": { "role": "alice", "context": {} },
+        "input_b": { "role": "bob", "context": {} },
+        "provider": "anthropic"
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/relay")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&relay_request).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let error_msg = json["error"].as_str().unwrap_or("");
+    assert!(
+        error_msg.contains("not in enforcement allowlist"),
+        "Expected allowlist error, got: {error_msg}"
+    );
+
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}
+
+// ============================================================================
 // Bilateral session tests
 // ============================================================================
 
