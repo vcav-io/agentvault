@@ -489,6 +489,24 @@ pub fn generate_enforcement_lockfile(dir: &str) -> Result<(), RelayError> {
     Ok(())
 }
 
+/// Return a no-op enforcement policy used when the lockfile is skipped in dev mode.
+///
+/// All fields are empty/None — no rules, no allowlists — so every request passes through.
+/// This is only reachable when both `VCAV_ENFORCEMENT_LOCKFILE_SKIP=1` and `VCAV_ENV=dev`
+/// are set.
+pub fn dev_skip_policy() -> RelayEnforcementPolicy {
+    RelayEnforcementPolicy {
+        policy_version: "dev-skip".to_string(),
+        policy_id: "dev-skip".to_string(),
+        policy_scope: "RELAY_GLOBAL".to_string(),
+        model_profile_allowlist: vec![],
+        provider_allowlist: vec![],
+        max_output_tokens: None,
+        rules: vec![],
+        entropy_constraints: None,
+    }
+}
+
 // ============================================================================
 // Tests
 // ============================================================================

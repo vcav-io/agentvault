@@ -74,79 +74,101 @@ async fn main() {
         .to_string_lossy()
         .into_owned();
 
-    if let Err(e) = enforcement_policy::validate_enforcement_lockfile(&relay_policies_dir) {
-        tracing::error!(error = %e, "enforcement policy lockfile validation failed — refusing to start");
-        std::process::exit(1);
-    }
+    // Check dev skip flags before loading — validate_enforcement_lockfile returns Ok(()) when
+    // both flags are set, but the subsequent load calls would still fail without the lockfile.
+    let lockfile_skip = std::env::var("VCAV_ENFORCEMENT_LOCKFILE_SKIP")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+    let is_dev_for_lockfile = std::env::var("VCAV_ENV")
+        .map(|v| v == "dev")
+        .unwrap_or(false);
+    let skip_enforcement = lockfile_skip && is_dev_for_lockfile;
 
-    // Derive policy filename from lockfile — no hardcoded filenames.
-    let lockfile_entries = match enforcement_policy::load_lockfile_entries(&relay_policies_dir) {
-        Ok(entries) => entries,
-        Err(e) => {
-            tracing::error!(error = %e, "failed to read enforcement policy lockfile — refusing to start");
-            std::process::exit(1);
-        }
-    };
-    if lockfile_entries.len() != 1 {
-        tracing::error!(
-            count = lockfile_entries.len(),
-            "expected exactly one enforcement policy in lockfile (multi-policy selection not yet implemented)"
+    let (loaded_policy, enforcement_policy_hash) = if skip_enforcement {
+        tracing::warn!(
+            "VCAV_ENFORCEMENT_LOCKFILE_SKIP=1 + VCAV_ENV=dev — skipping enforcement policy (dev mode only)"
         );
-        std::process::exit(1);
-    }
-    let policy_id = lockfile_entries.keys().next().unwrap();
-    let enforcement_policy_path = std::path::Path::new(&relay_policies_dir)
-        .join(format!("{policy_id}.json"))
-        .to_string_lossy()
-        .into_owned();
-
-    let loaded_policy = match enforcement_policy::load_enforcement_policy(&enforcement_policy_path)
-    {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::error!(error = %e, "failed to load enforcement policy — refusing to start");
-            std::process::exit(1);
-        }
-    };
-
-    if let Err(e) = enforcement_policy::validate_policy_scope(&loaded_policy) {
-        tracing::error!(error = %e, "enforcement policy scope validation failed — refusing to start");
-        std::process::exit(1);
-    }
-
-    if let Err(e) = enforcement_policy::validate_rule_categories(&loaded_policy) {
-        tracing::error!(error = %e, "enforcement policy contains unsupported rule categories — refusing to start");
-        std::process::exit(1);
-    }
-
-    if let Err(e) = enforcement_policy::validate_capabilities(&loaded_policy) {
-        tracing::error!(error = %e, "enforcement policy requires unsupported capabilities — refusing to start");
-        std::process::exit(1);
-    }
-
-    if loaded_policy.rules.is_empty() {
-        tracing::warn!("0 enforcement rules loaded — guard disabled");
+        let policy = enforcement_policy::dev_skip_policy();
+        let hash = enforcement_policy::content_hash(&policy).unwrap_or_default();
+        (policy, hash)
     } else {
-        tracing::info!(
-            rule_count = loaded_policy.rules.len(),
-            scope = %loaded_policy.policy_scope,
-            "Enforcement rules apply to all output schemas"
-        );
-    }
-
-    let enforcement_policy_hash = match enforcement_policy::content_hash(&loaded_policy) {
-        Ok(h) => h,
-        Err(e) => {
-            tracing::error!(error = %e, "failed to compute enforcement policy hash — refusing to start");
+        if let Err(e) = enforcement_policy::validate_enforcement_lockfile(&relay_policies_dir) {
+            tracing::error!(error = %e, "enforcement policy lockfile validation failed — refusing to start");
             std::process::exit(1);
         }
-    };
 
-    tracing::info!(
-        policy_id = %loaded_policy.policy_id,
-        hash = %enforcement_policy_hash,
-        "Enforcement policy loaded"
-    );
+        // Derive policy filename from lockfile — no hardcoded filenames.
+        let lockfile_entries =
+            match enforcement_policy::load_lockfile_entries(&relay_policies_dir) {
+                Ok(entries) => entries,
+                Err(e) => {
+                    tracing::error!(error = %e, "failed to read enforcement policy lockfile — refusing to start");
+                    std::process::exit(1);
+                }
+            };
+        if lockfile_entries.len() != 1 {
+            tracing::error!(
+                count = lockfile_entries.len(),
+                "expected exactly one enforcement policy in lockfile (multi-policy selection not yet implemented)"
+            );
+            std::process::exit(1);
+        }
+        let policy_id = lockfile_entries.keys().next().unwrap();
+        let enforcement_policy_path = std::path::Path::new(&relay_policies_dir)
+            .join(format!("{policy_id}.json"))
+            .to_string_lossy()
+            .into_owned();
+
+        let loaded_policy =
+            match enforcement_policy::load_enforcement_policy(&enforcement_policy_path) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::error!(error = %e, "failed to load enforcement policy — refusing to start");
+                    std::process::exit(1);
+                }
+            };
+
+        if let Err(e) = enforcement_policy::validate_policy_scope(&loaded_policy) {
+            tracing::error!(error = %e, "enforcement policy scope validation failed — refusing to start");
+            std::process::exit(1);
+        }
+
+        if let Err(e) = enforcement_policy::validate_rule_categories(&loaded_policy) {
+            tracing::error!(error = %e, "enforcement policy contains unsupported rule categories — refusing to start");
+            std::process::exit(1);
+        }
+
+        if let Err(e) = enforcement_policy::validate_capabilities(&loaded_policy) {
+            tracing::error!(error = %e, "enforcement policy requires unsupported capabilities — refusing to start");
+            std::process::exit(1);
+        }
+
+        if loaded_policy.rules.is_empty() {
+            tracing::warn!("0 enforcement rules loaded — guard disabled");
+        } else {
+            tracing::info!(
+                rule_count = loaded_policy.rules.len(),
+                scope = %loaded_policy.policy_scope,
+                "Enforcement rules apply to all output schemas"
+            );
+        }
+
+        let enforcement_policy_hash = match enforcement_policy::content_hash(&loaded_policy) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::error!(error = %e, "failed to compute enforcement policy hash — refusing to start");
+                std::process::exit(1);
+            }
+        };
+
+        tracing::info!(
+            policy_id = %loaded_policy.policy_id,
+            hash = %enforcement_policy_hash,
+            "Enforcement policy loaded"
+        );
+
+        (loaded_policy, enforcement_policy_hash)
+    };
 
     let session_ttl_secs: u64 = std::env::var("VCAV_SESSION_TTL_SECS")
         .ok()
