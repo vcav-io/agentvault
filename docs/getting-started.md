@@ -80,9 +80,9 @@ The demo supports three LLM providers. You can configure multiple API keys and s
 
 | Provider | Agent model (default) | Relay model (default) | Approx. cost/run | Notes |
 |----------|----------------------|----------------------|-------------------|-------|
-| Gemini | gemini-2.5-flash | gemini-2.5-flash | ~$0.01 | Cheapest; quality varies — run `sweep.sh` to verify |
-| OpenAI | gpt-4.1-mini | gpt-4.1-mini | ~$0.02 | Reliable tool-calling and mediation |
-| Anthropic | claude-haiku-4-5-20251001 | claude-haiku-4-5-20251001 | ~$0.03 | High quality mediation output |
+| Gemini | gemini-2.5-flash | gemini-2.5-flash | ~$0.01 | Cheapest stable option; all Gemini models tested pass |
+| OpenAI | gpt-4.1-mini | gpt-4.1-mini | ~$0.02 | Reliable; gpt-4.1-nano and gpt-5-nano/mini fail quality |
+| Anthropic | claude-haiku-4-5-20251001 | claude-haiku-4-5-20251001 | ~$0.03 | High quality; both haiku and sonnet pass |
 
 Run `./tests/live/sweep.sh` to test which models pass the mediation quality threshold on your API keys. The sweep prints a summary table with PASS/FAIL per provider+model combo and flags any current default that fails.
 
