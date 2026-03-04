@@ -1240,6 +1240,48 @@ body {
   color: var(--color-error-bright);
 }
 
+/* ── v2 receipt: assurance level ──────────────────────────── */
+.receipt-card__assurance {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--color-text-secondary);
+  background: rgba(26, 40, 72, 0.3);
+  padding: 3px 8px;
+  border-radius: 3px;
+  margin-bottom: 6px;
+}
+
+/* ── v2 receipt: commitments & claims sections ───────────── */
+.receipt-card__section {
+  margin-top: 6px;
+  padding: 4px 0;
+}
+.receipt-card__section--commitments {
+  border-left: 2px solid var(--color-success, #34d399);
+  padding-left: 8px;
+}
+.receipt-card__section--claims {
+  border-left: 2px solid var(--color-text-dim, #666);
+  padding-left: 8px;
+  opacity: 0.85;
+}
+.receipt-card__section-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--color-text-dim);
+  margin-bottom: 3px;
+}
+.receipt-card__section--commitments .receipt-card__section-label {
+  color: var(--color-success, #34d399);
+}
+
+/* ── Contract enforcement card ───────────────────────────── */
+.vault-card--contract .vault-card__header {
+  border-left: 3px solid var(--color-accent, #6ba3f7);
+}
+
 /* Reconnect notice for mid-session browser refresh */
 .reconnect-notice {
   padding: 0.75rem 1rem;

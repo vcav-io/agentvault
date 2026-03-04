@@ -25,6 +25,10 @@
     "./inbox": {
       "import": "./dist/inbox.js",
       "types": "./dist/inbox.d.ts"
+    },
+    "./verify": {
+      "import": "./dist/verify-receipt.js",
+      "types": "./dist/verify-receipt.d.ts"
     }
   },
   "license": "MIT OR Apache-2.0",
@@ -45,6 +49,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@noble/curves": "^1.8.1",
     "@noble/hashes": "^1.8.0",
     "json-canonicalize": "^2.0.0"
   },
