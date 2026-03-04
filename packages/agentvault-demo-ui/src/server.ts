@@ -125,7 +125,11 @@ function createHeartbeatProvider(): LLMProvider {
   const defaultModel = HEARTBEAT_DEFAULTS[provider];
   if (!defaultModel) throw new Error(`No default heartbeat model defined for provider: ${provider}`);
   const model = process.env['HEARTBEAT_MODEL'] ?? defaultModel;
-  console.log(`Heartbeat model: ${model}`);
+  if (!process.env['HEARTBEAT_MODEL']) {
+    console.log(`Using ${provider} heartbeat provider, model: ${model} (default — set HEARTBEAT_MODEL to override)`);
+  } else {
+    console.log(`Using ${provider} heartbeat provider, model: ${model}`);
+  }
 
   if (provider === 'gemini') {
     const apiKey = process.env['GEMINI_API_KEY'];
