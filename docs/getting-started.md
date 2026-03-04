@@ -43,7 +43,7 @@ echo "GEMINI_API_KEY=AIza..." > .env
 # 2. Start the relay and demo UI
 docker compose -f docker/docker-compose.demo.yml up
 
-# 3. Open http://localhost:3200 and click "Start Demo"
+# 3. Open http://localhost:3200 and click "Start Protocol"
 ```
 
 To stop: press `Ctrl-C` or `docker compose -f docker/docker-compose.demo.yml down`.
@@ -61,7 +61,7 @@ echo "GEMINI_API_KEY=AIza..." > .env
 # 2. Build and start everything (relay + demo server, opens browser)
 ./run-demo.sh
 
-# 3. Click "Start Demo" in the browser
+# 3. Click "Start Protocol" in the browser
 ```
 
 The script builds the relay from source, starts it, builds the demo UI server, and opens your browser. To stop: press `Ctrl-C`.

@@ -347,8 +347,9 @@ var VaultCardManager = (function () {
                 assuranceEl.className = 'receipt-card__assurance';
                 var assuranceDescriptions = {
                   SELF_ASSERTED: 'relay asserts its own honesty, no hardware attestation',
-                  HARDWARE_ATTESTED: 'backed by hardware attestation',
-                  THIRD_PARTY_AUDITED: 'verified by third-party audit',
+                  OPERATOR_AUDITED: 'relay operator publishes verifiable audit trail',
+                  PROVIDER_ATTESTED: 'model provider supplied signed inference metadata',
+                  TEE_ATTESTED: 'hardware TEE attestation binds receipt to enclave measurement',
                 };
                 assuranceEl.textContent = assurance + ' \u2014 ' + (assuranceDescriptions[assurance] || 'unknown assurance level');
                 rcSection.appendChild(assuranceEl);
@@ -363,7 +364,7 @@ var VaultCardManager = (function () {
                   opKey.textContent = 'operator';
                   var opVal = document.createElement('span');
                   opVal.className = 'receipt-card__value';
-                  opVal.textContent = (operator.operator_id || 'unknown') + (operator.key_fingerprint ? ' (' + truncate(operator.key_fingerprint, 12) + ')' : '');
+                  opVal.textContent = (operator.operator_id || 'unknown') + (operator.operator_key_fingerprint ? ' (' + truncate(operator.operator_key_fingerprint, 12) + ')' : '');
                   opLine.appendChild(opKey);
                   opLine.appendChild(opVal);
                   rcSection.appendChild(opLine);
@@ -400,7 +401,9 @@ var VaultCardManager = (function () {
                 if (inputComm && typeof inputComm === 'object') {
                   var inputKeys = Object.keys(inputComm);
                   for (var ik = 0; ik < inputKeys.length; ik++) {
-                    commFields.push(['input: ' + inputKeys[ik], inputComm[inputKeys[ik]]]);
+                    var ic = inputComm[inputKeys[ik]];
+                    var icDisplay = (ic && typeof ic === 'object') ? (ic.input_hash || ic.hash || JSON.stringify(ic)) : ic;
+                    commFields.push(['input: ' + inputKeys[ik], icDisplay]);
                   }
                 }
                 for (var ci = 0; ci < commFields.length; ci++) {
