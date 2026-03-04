@@ -162,6 +162,8 @@ cd packages/agentvault-mcp-server && npm install && npm run build
 
 Requires Rust 1.88.0+. See [docs/relay-dev-setup.md](docs/relay-dev-setup.md) to run the relay from source.
 
+See [docs/receipt-verification-guide.md](docs/receipt-verification-guide.md) for receipt verification.
+
 ---
 
 ## License
