@@ -88,6 +88,7 @@ fn test_app_state(mock_base_url: &str, prompt_dir: &str) -> AppState {
         enforcement_policy_hash: "0".repeat(64),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
+        max_completion_tokens: 4096,
         is_dev: false,
     }
 }
@@ -1052,6 +1053,7 @@ async fn test_submit_token_is_one_time_use() {
         enforcement_policy_hash: "0".repeat(64),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
+        max_completion_tokens: 4096,
         is_dev: false,
     }));
 
@@ -1234,6 +1236,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         enforcement_policy_hash: "0".repeat(64),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
+        max_completion_tokens: 4096,
         is_dev: false,
     }));
 
@@ -1284,6 +1287,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         enforcement_policy_hash: "0".repeat(64),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
+        max_completion_tokens: 4096,
         is_dev: false,
     }));
 
@@ -1348,6 +1352,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         enforcement_policy_hash: "0".repeat(64),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
+        max_completion_tokens: 4096,
         is_dev: false,
     }));
 
@@ -1431,6 +1436,7 @@ async fn test_submit_with_correct_contract_hash_succeeds() {
         enforcement_policy_hash: "0".repeat(64),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
+        max_completion_tokens: 4096,
         is_dev: false,
     }));
 
@@ -1496,6 +1502,7 @@ async fn test_submit_with_wrong_contract_hash_rejected() {
         enforcement_policy_hash: "0".repeat(64),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
+        max_completion_tokens: 4096,
         is_dev: false,
     }));
 
@@ -1562,6 +1569,7 @@ async fn test_submit_without_contract_hash_still_works() {
         enforcement_policy_hash: "0".repeat(64),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
+        max_completion_tokens: 4096,
         is_dev: false,
     }));
 
@@ -1627,6 +1635,7 @@ fn inbox_test_app_state() -> AppState {
         enforcement_policy_hash: "0".repeat(64),
         agent_registry: registry,
         inbox_store: InboxStore::new(Duration::from_secs(600)),
+        max_completion_tokens: 4096,
         is_dev: false,
     }
 }

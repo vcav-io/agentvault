@@ -14,17 +14,6 @@ use crate::session::AbortReason;
 use crate::types::{Contract, RelayInput, RelayRequest, RelayResponse};
 use crate::AppState;
 
-/// Default max_completion_tokens sent to the LLM provider.
-/// Reasoning models (gpt-5, o-series) consume tokens internally for chain-of-thought,
-/// so this must be large enough to cover both reasoning and the actual JSON output.
-/// Override with VCAV_MAX_COMPLETION_TOKENS env var.
-fn max_completion_tokens() -> u32 {
-    std::env::var("VCAV_MAX_COMPLETION_TOKENS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(4096)
-}
-
 /// Git commit SHA embedded at build time by build.rs.
 /// Falls back to "unknown" in environments where .git/ is not present.
 const GIT_SHA: &str = env!("VCAV_GIT_SHA");
@@ -267,7 +256,7 @@ pub async fn relay_core(
         system: assembled.system,
         user_message: assembled.user_message,
         output_schema: Some(contract.output_schema.clone()),
-        max_tokens: max_completion_tokens(),
+        max_tokens: state.max_completion_tokens,
     };
 
     // 6. Call provider
