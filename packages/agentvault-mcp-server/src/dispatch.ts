@@ -26,6 +26,10 @@ export async function dispatch(
         knownAgents,
       );
     }
+    case 'agentvault.verify_receipt': {
+      const { handleVerifyReceipt } = await import('./tools/verify-receipt.js');
+      return handleVerifyReceipt(args as unknown as Parameters<typeof handleVerifyReceipt>[0]);
+    }
     default:
       throw new Error(`Unknown tool: ${toolName}`);
   }

@@ -11,10 +11,12 @@
 import type { AfalTransport } from './afal-transport.js';
 import type { NormalizedKnownAgent, RelaySignalArgs } from './tools/relaySignal.js';
 import type { InboxService, GetIdentityOutput } from './tools/getIdentity.js';
+import type { VerifyReceiptArgs, VerifyReceiptOutput } from './tools/verify-receipt.js';
 import type { ToolResponse } from './envelope.js';
 import { handleGetIdentity } from './tools/getIdentity.js';
 import { handleRelaySignal } from './tools/relaySignal.js';
-import { IDENTITY_TOOLS, RELAY_TOOLS } from './toolDefs.js';
+import { handleVerifyReceipt } from './tools/verify-receipt.js';
+import { IDENTITY_TOOLS, RELAY_TOOLS, VERIFY_TOOLS } from './toolDefs.js';
 
 // ── Configuration ────────────────────────────────────────────────────────
 
@@ -48,6 +50,7 @@ export interface ToolDefinition {
 export interface ToolRegistry {
   handleGetIdentity(): Promise<ToolResponse<GetIdentityOutput>>;
   handleRelaySignal(args: RelaySignalArgs): Promise<ToolResponse<unknown>>;
+  handleVerifyReceipt(args: VerifyReceiptArgs): Promise<ToolResponse<VerifyReceiptOutput>>;
   dispatch(toolName: string, args: Record<string, unknown>): Promise<ToolResponse<unknown>>;
   toolDefs: ToolDefinition[];
 }
@@ -90,14 +93,22 @@ export function createToolRegistry(config: ToolRegistryConfig): ToolRegistry {
       return handleRelaySignal(args, transport, knownAgents);
     },
 
+    handleVerifyReceipt(args: VerifyReceiptArgs) {
+      return handleVerifyReceipt(args);
+    },
+
     dispatch(toolName: string, args: Record<string, unknown>) {
       switch (toolName) {
         case 'agentvault.get_identity':
           return registry.handleGetIdentity();
         case 'agentvault.relay_signal':
           return registry.handleRelaySignal(args as RelaySignalArgs);
+        case 'agentvault.verify_receipt':
+          return registry.handleVerifyReceipt(args as unknown as VerifyReceiptArgs);
         default:
-          throw new Error(`Unknown tool: ${toolName}. Available: agentvault.get_identity, agentvault.relay_signal`);
+          throw new Error(
+            `Unknown tool: ${toolName}. Available: agentvault.get_identity, agentvault.relay_signal, agentvault.verify_receipt`,
+          );
       }
     },
 
@@ -112,7 +123,7 @@ export function createToolRegistry(config: ToolRegistryConfig): ToolRegistry {
  * Useful for registering tools with an LLM provider.
  */
 export function getToolDefs(): ToolDefinition[] {
-  return [...IDENTITY_TOOLS, ...RELAY_TOOLS] as ToolDefinition[];
+  return [...IDENTITY_TOOLS, ...RELAY_TOOLS, ...VERIFY_TOOLS] as ToolDefinition[];
 }
 
 // ── Re-exports for consumer convenience ──────────────────────────────────
@@ -121,4 +132,5 @@ export type { AfalTransport } from './afal-transport.js';
 export type { AfalInviteMessage, AcceptResult } from './afal-transport.js';
 export type { NormalizedKnownAgent, RelaySignalArgs } from './tools/relaySignal.js';
 export type { InboxService, GetIdentityOutput } from './tools/getIdentity.js';
+export type { VerifyReceiptArgs, VerifyReceiptOutput } from './tools/verify-receipt.js';
 export type { ToolResponse, StatusCode, ErrorCode } from './envelope.js';

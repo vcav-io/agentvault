@@ -31,7 +31,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
 import { buildError } from './envelope.js';
-import { RELAY_TOOLS, IDENTITY_TOOLS } from './toolDefs.js';
+import { RELAY_TOOLS, IDENTITY_TOOLS, VERIFY_TOOLS } from './toolDefs.js';
 import { dispatch } from './dispatch.js';
 import type { InviteTransport } from './invite-transport.js';
 import { OrchestratorInboxAdapter } from './afal-transport.js';
@@ -77,7 +77,7 @@ export function createAgentVaultServer(
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    return { tools: [...IDENTITY_TOOLS, ...RELAY_TOOLS] };
+    return { tools: [...IDENTITY_TOOLS, ...RELAY_TOOLS, ...VERIFY_TOOLS] };
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
