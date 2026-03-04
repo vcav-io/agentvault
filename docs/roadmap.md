@@ -209,21 +209,15 @@ dependency via `VAULT_CORE_TOKEN` secret (PR #22). All jobs green.
 Scope: Align implementation with design principles without major architecture
 shift.
 
-## 6. Output Schema as Standalone Artefact
+## 6. Output Schema as Standalone Artefact — DONE
 
-Currently:
-- Schema embedded inside contract
-- Referenced by `output_schema_id` (human-readable string)
+*Completed: PRs #173, #174.*
 
-Target:
-- Standalone schema artefact
-- Referenced by `output_schema_hash`
-- Schema registry (simple JSON or directory-based)
+- Schema embedded in contract is now also content-addressed via `output_schema_hash`
+- Receipt v2 `commitments.schema_hash` binds the schema independently of the full contract hash
+- Schema registry lookup by hash is supported
 
-Receipt includes `output_schema_hash`.
-
-**Current state:** Not started. Schema is embedded in contract and bound
-indirectly via contract hash. No separate content-addressing.
+Contract retains the inline `output_schema` field for single-request convenience; the hash allows external lookup without embedding.
 
 ## 7. RelayEnforcementPolicy Phase A — DONE
 
@@ -418,21 +412,20 @@ Properties:
 Trust model for registry discovery and key distribution is explicitly out of
 scope for AgentVault (see Out of Scope section).
 
-## 14. Receipt Completeness Improvements
+## 14. Receipt Completeness Improvements — DONE
 
-Add explicit binding of:
+*Completed: PRs #173, #174 (receipt v2).*
 
-- `output_schema_hash`
-- `policy_bundle_hash`
-- `runtime_build_hash` (real)
-- `model_profile_hash` (already present)
-- `prompt_program_hash` (already present)
+Receipt v2 adds:
 
-Receipts must reflect actual enforced artefacts.
+- `commitments.schema_hash` — SHA-256 of the output schema
+- `commitments.output_hash` — SHA-256 of the bounded output
+- `commitments.input_commitments[]` — per-participant input hashes
+- `commitments.preflight_bundle.policy_hash` — enforcement policy binding
+- `assurance_level` — `SELF_ASSERTED` | `OPERATOR_AUDITED` | `PROVIDER_ATTESTED` | `TEE_ATTESTED`
+- `operator` — relay identity and key fingerprint
 
-**Current state:** Receipts bind 24+ fields including contract hash, prompt
-template hash, model profile hash, model identity, entropy, and budget usage.
-Missing: `output_schema_hash`, `policy_bundle_hash`, real `runtime_build_hash`.
+The flat v1 field layout is reorganised into `commitments` (independently verifiable) and `claims` (relay assertions). v1 receipts remain verifiable.
 
 ## 15. Extended Accumulation Experiment (N=20-100)
 
@@ -527,19 +520,22 @@ AgentVault remains software-attested, relay-based.
 **Phase 2 progress:**
 4. ~~OpenClaw skill + VPS runbook (Phase 2b, item 10)~~ — **done** (PR #25)
 5. ~~RelayEnforcementPolicy Phase A (Phase 2, item 7)~~ — **done** (PR #26)
+6. ~~Async invites & inbox (Phase 2b, item 11)~~ — **done** (PR #36)
+7. ~~Output schema as standalone artefact (Phase 2, item 6)~~ — **done** (PRs #173, #174)
+8. ~~Receipt completeness improvements (Phase 3, item 14)~~ — **done** (receipt v2, PRs #173, #174)
+9. ~~Contract completeness — model constraints, TTLs, entropy enforcement (#151)~~ — **done** (PR #173)
+10. ~~Enforcement policy binding into contract (#147)~~ — **done** (PR #173)
+11. ~~`agentvault.verify_receipt` MCP tool (#143)~~ — **done** (PR #174)
 
 **Next priorities:**
-6. ~~Async invites & inbox (Phase 2b, item 11)~~ — **done** (PR #36)
-7. First live async invite session (Phase 2b, item 11a)
-   — **Current state:** Skill, runbook, and async inbox all exist. Run `drive-inbox.sh`
-   against a real provider to validate the wire format end-to-end.
-8. Output schema as standalone artefact (Phase 2, item 6)
-   — **Current state:** Schema embedded in contract, referenced by human-readable
-   `output_schema_id`. No content-addressing.
-9. RelayEnforcementPolicy Phase B — wire guard to policy config
-   — **Current state:** Phase A complete. Hardcoded guard runs independently of policy.
-10. Extract inbox protocol types to VFC (Phase 2b, item 11c)
-   — **Blocked on:** item 11a (live session validates wire format).
+12. First live async invite session (Phase 2b, item 11a)
+    — **Current state:** Skill, runbook, and async inbox all exist. Run `drive-inbox.sh`
+    against a real provider to validate the wire format end-to-end.
+13. RelayEnforcementPolicy Phase B — wire hardcoded guard to policy config
+    — **Current state:** Phase A complete (PR #26). Hardcoded Nd/Sc guard runs
+    independently of policy. Phase B wires the guard to read from the policy JSON.
+14. Extract inbox protocol types to VFC (Phase 2b, item 11c)
+    — **Blocked on:** item 12 (live session validates wire format).
 
 Stop there before expanding scope.
 

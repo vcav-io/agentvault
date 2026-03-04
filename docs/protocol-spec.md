@@ -132,48 +132,65 @@ The signed audit record returned with every completed session. This is the core
 verifiable artefact of the protocol. All hash fields are 64-character lowercase hex
 strings (SHA-256).
 
+Receipt v2 (schema version `"2.0.0"`) organises fields into two top-level groups:
+**commitments** (independently verifiable hashes) and **claims** (relay assertions).
+See [docs/architecture/contract-receipt-v2.md](architecture/contract-receipt-v2.md)
+for the full field reference and migration notes.
+
+**Top-level fields:**
+
 | Field | Type | Description |
 |-------|------|-------------|
-| `schema_version` | string | Receipt format version. Currently `"2.0.0"`. |
-| `session_id` | string (64 hex) | SHA-256 of a random UUID v4. |
-| `purpose_code` | string enum | From contract. |
-| `participant_ids` | array of string | From `contract.participants`. |
-| `contract_hash` | string (64 hex) or null | SHA-256 of canonical contract. |
-| `output_schema_id` | string or null | From contract. |
-| `output_schema_hash` | string (64 hex) or null | SHA-256 of canonical `contract.output_schema`. |
-| `guardian_policy_hash` | string (64 hex) | SHA-256 of canonical guardian policy. |
+| `receipt_schema_version` | string | Receipt format version. `"2.0.0"`. |
+| `receipt_canonicalization` | string | `"JCS_V1"`. |
+| `receipt_id` | string (UUID) | Unique receipt identifier. |
+| `session_id` | string (UUID) | Session identifier. |
+| `issued_at` | string (ISO 8601) | When the receipt was signed. |
+| `assurance_level` | string enum | `SELF_ASSERTED`, `OPERATOR_AUDITED`, `PROVIDER_ATTESTED`, or `TEE_ATTESTED`. |
+| `operator` | object | `{operator_id, operator_key_fingerprint, operator_key_discovery?}`. |
+| `commitments` | object | Independently verifiable hashes. See below. |
+| `claims` | object | Relay assertions; not independently verifiable. See below. |
+| `signature` | object | `{alg, value, signed_fields}`. Ed25519 by default. |
+
+**Commitments** (verifiable — a third party who holds the inputs and artefacts can
+independently recompute all these hashes):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `contract_hash` | string (64 hex) | SHA-256(JCS(contract)). |
+| `schema_hash` | string (64 hex) | SHA-256(JCS(output_schema)). |
+| `output_hash` | string (64 hex) | SHA-256(JCS(output)). |
+| `output` | object or null | Inline bounded output (convenience). |
+| `input_commitments` | array | Per-participant `{participant_id, input_hash, hash_alg, canonicalization}`. |
+| `assembled_prompt_hash` | string (64 hex) | SHA-256 of the assembled prompt bytes. |
+| `prompt_assembly_version` | string | Prompt assembler version (e.g., `"1.0.0"`). |
 | `prompt_template_hash` | string (64 hex) or null | SHA-256 of canonical prompt program. |
-| `model_profile_hash` | string (64 hex) or null | SHA-256 of canonical model profile. Null if `contract.model_profile_id` is null. |
-| `runtime_hash` | string (64 hex) | SHA-256 of the relay's git commit SHA string. Attests to source version, not to a reproducible build artefact. |
-| `model_weights_hash` | string (64 hex) | Sentinel: `SHA-256(b"api-mediated-no-local-weights")`. See [Appendix B](#appendix-b--known-hash-vectors). |
-| `llama_cpp_version` | string | `"n/a"` for API-mediated execution. |
-| `inference_config_hash` | string (64 hex) | Sentinel: `SHA-256(b"api-mediated-no-local-inference")`. See [Appendix B](#appendix-b--known-hash-vectors). |
-| `output_schema_version` | string | Schema version string (e.g., `"1.0.0"`). |
-| `output` | object or null | The validated, bounded output JSON. |
-| `output_entropy_bits` | integer | Computed upper-bound entropy of the output (bits). |
-| `entropy_budget_bits_opt` | integer or null | From `contract.entropy_budget_bits`. |
-| `budget_usage` | object | See below. |
-| `model_identity` | object or null | `{provider, model_id, model_version}` — the model actually used. Operator assertion; not independently verifiable via hash. |
-| `session_start` | string (ISO 8601) | Timestamp when inference started. |
-| `session_end` | string (ISO 8601) | Timestamp when inference ended. |
-| `fixed_window_duration_seconds` | integer | Budget window duration (0 for single-session). |
-| `status` | string enum | `"COMPLETED"`. |
-| `execution_lane` | string enum | `"API_MEDIATED"`. |
-| `signal_class` | string or null | `"SESSION_COMPLETED"`. |
-| `contract_timing_class` | string or null | From contract. |
+| `preflight_bundle` | object or null | `{policy_hash, prompt_template_hash, model_profile_hash, schema_hash, enforcement_parameters}`. |
 
-**Budget usage record** (`budget_usage`):
+**Claims** (relay assertions — believed but not cryptographically verifiable):
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `pair_id` | string (64 hex) | SHA-256 of the sorted participant IDs (order-independent). |
-| `window_start` | string (ISO 8601) | Session start time. |
-| `bits_used_before` | integer | 0 in current implementations (no cross-session accumulation). |
-| `bits_used_after` | integer | Equals `output_entropy_bits`. |
-| `budget_limit` | integer | `contract.entropy_budget_bits` or 128 if unset. |
-| `budget_tier` | string | `"Default"`. |
-| `budget_enforcement` | string or null | `"disabled"` for API-mediated relay. |
-| `compartment_id` | string or null | Null for API-mediated relay. |
+| `model_identity_asserted` | string or null | Model ID as reported by the provider API. |
+| `model_identity_attested` | string or null | Model ID from provider attestation (if available). |
+| `model_profile_hash_asserted` | string (64 hex) or null | SHA-256 of the model profile used. |
+| `runtime_hash_asserted` | string (64 hex) or null | SHA-256 of the relay's git commit SHA string. |
+| `budget_enforcement_mode` | string or null | `"enforced"`, `"advisory"`, or `"disabled"`. |
+| `provider_latency_ms` | integer or null | Wall-clock latency of the provider call. |
+| `token_usage` | object or null | `{prompt_tokens, completion_tokens, total_tokens}`. |
+| `relay_software_version` | string or null | Relay software version string. |
+
+**Assurance levels:**
+
+| Level | Description |
+|-------|-------------|
+| `SELF_ASSERTED` | Relay signs its own receipt. No external attestation. Current default. |
+| `OPERATOR_AUDITED` | Operator publishes a verifiable audit trail alongside the receipt. |
+| `PROVIDER_ATTESTED` | Model provider supplied signed inference metadata bound into the receipt. |
+| `TEE_ATTESTED` | Hardware TEE attestation binds the receipt to an enclave measurement. |
+
+"Receipt verified" must always be reported with its assurance level. A `SELF_ASSERTED`
+receipt proves the relay's stated rules were declared — it does not prove relay honesty.
 
 ---
 
@@ -481,19 +498,35 @@ match the ones the verifier holds.
 
 ### 7.5 Trust Model
 
-**What receipts prove:**
+Receipt fields fall into two categories: **commitments** and **claims**.
 
-- The output was produced by a relay that holds the corresponding private key.
-- The output conforms to the schema identified by `output_schema_hash`.
-- The guardian policy identified by `guardian_policy_hash` was applied.
-- The prompt program identified by `prompt_template_hash` was used.
+**Commitments** — independently verifiable by any party who holds the inputs and
+artefacts. A verifier recomputes the hash from the source artefact and confirms it
+matches the receipt.
+
+**Claims** — relay assertions. The relay reports what it believes to be true (e.g.,
+which model it called), but these fields cannot be independently verified from the
+receipt alone.
+
+**What receipts prove (at `SELF_ASSERTED` level):**
+
+- The output was produced by a relay that holds the corresponding signing key.
+- The output conforms to the schema identified by `commitments.schema_hash`.
+- The guardian policy identified by `commitments.preflight_bundle.policy_hash` was loaded at startup.
+- The prompt program identified by `commitments.prompt_template_hash` was used.
+- Each participant's input is bound by hash in `commitments.input_commitments`.
 
 **What receipts do not prove:**
 
 - The relay is honest (it could have modified inputs or fabricated output).
-- The model identified by `model_identity` was actually called (the relay's assertion).
+- The model identified by `claims.model_identity_asserted` was actually called.
 - Either party's inputs were private from the relay.
 - The output was delivered simultaneously to both parties.
+
+**Assurance levels** extend what receipts prove beyond `SELF_ASSERTED`. See
+[Section 2.6](#26-receipt) for the level definitions. Higher assurance levels
+(`OPERATOR_AUDITED`, `PROVIDER_ATTESTED`, `TEE_ATTESTED`) are defined in the schema
+and receipt v2 spec but are not yet active in the production relay.
 
 ---
 

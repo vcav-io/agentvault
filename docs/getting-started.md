@@ -101,10 +101,10 @@ echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env
 - Both agents submitted private context; neither saw the other's raw input
 - The relay assembled the prompt, called the model, and **validated the output against the JSON Schema** — anything that didn't conform was rejected, not returned
 - The **guardian policy** enforced additional constraints (e.g., no PII leakage, no raw financials in output)
-- A **signed receipt** was produced binding the exact contract hash, guardian policy hash, prompt template hash, model profile hash, and relay build hash to the output
-- **No transcript was stored** — the relay is stateless; session data exists only for the duration of execution
+- A **signed receipt** was produced binding the exact contract hash, guardian policy hash, prompt template hash, model profile hash, and relay build hash to the output. The receipt cryptographically proves which rules governed the session; it does not prove relay honesty or input confidentiality from the relay.
+- **No transcript was stored** — the relay discards raw inputs after receipt construction; only commitment hashes persist. Session data does not outlast execution.
 
-The output is a bounded mediation signal — not a conversation, not a summary, not free text. The schema structurally limits what can leave the session.
+The output is a bounded mediation signal — not a conversation, not a summary, not free text. The schema structurally limits what can leave the session. The relay sees both inputs in plaintext — counterparty confidentiality is enforced, but relay confidentiality is not.
 
 ## Alternative: CLI demo with Claude Code
 
