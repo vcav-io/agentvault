@@ -14,7 +14,16 @@ use crate::session::AbortReason;
 use crate::types::{Contract, RelayInput, RelayRequest, RelayResponse};
 use crate::AppState;
 
-const MAX_TOKENS: u32 = 1024;
+/// Default max_completion_tokens sent to the LLM provider.
+/// Reasoning models (gpt-5, o-series) consume tokens internally for chain-of-thought,
+/// so this must be large enough to cover both reasoning and the actual JSON output.
+/// Override with VCAV_MAX_COMPLETION_TOKENS env var.
+fn max_completion_tokens() -> u32 {
+    std::env::var("VCAV_MAX_COMPLETION_TOKENS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(4096)
+}
 
 /// Git commit SHA embedded at build time by build.rs.
 /// Falls back to "unknown" in environments where .git/ is not present.
@@ -222,11 +231,27 @@ pub async fn relay_core(
         ));
     }
 
-    // 2. Compute contract hash and output schema hash
+    // 2. Enforce model profile allowlist
+    if !state.enforcement_policy.model_profile_allowlist.is_empty() {
+        if let Some(profile_id) = &contract.model_profile_id {
+            if !state
+                .enforcement_policy
+                .model_profile_allowlist
+                .contains(profile_id)
+            {
+                return Err(RelayError::ContractValidation(format!(
+                    "model_profile_id '{}' not in enforcement allowlist",
+                    profile_id
+                )));
+            }
+        }
+    }
+
+    // 3. Compute contract hash and output schema hash
     let contract_hash = compute_contract_hash(contract)?;
     let output_schema_hash = compute_output_schema_hash(&contract.output_schema)?;
 
-    // 3. Load and validate prompt program
+    // 4. Load and validate prompt program
     let program = load_prompt_program(&state.prompt_program_dir, &contract.prompt_template_hash)?;
 
     // 4. Assemble provider request
@@ -236,7 +261,7 @@ pub async fn relay_core(
         system: assembled.system,
         user_message: assembled.user_message,
         output_schema: Some(contract.output_schema.clone()),
-        max_tokens: MAX_TOKENS,
+        max_tokens: max_completion_tokens(),
     };
 
     // 5. Call provider

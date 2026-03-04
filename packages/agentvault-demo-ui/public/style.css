@@ -1138,3 +1138,98 @@ body {
   font-size: 24px;
   opacity: 0.5;
 }
+
+/* ── Policy card (enforcement display) ──────────────────────── */
+.vault-card--policy {
+  border-color: hsla(270, 50%, 60%, 0.35);
+  background: hsla(270, 40%, 50%, 0.04);
+}
+
+.vault-card--policy .vault-card__step-tag {
+  color: hsl(270, 50%, 70%);
+  border-color: hsla(270, 50%, 60%, 0.3);
+  background: hsla(270, 40%, 50%, 0.08);
+}
+
+.vault-card--policy .vault-card__title {
+  color: hsl(270, 50%, 80%);
+}
+
+/* ── Receipt card (within vault card body) ──────────────────── */
+.receipt-card {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(26, 40, 72, 0.4);
+}
+
+.receipt-card__label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--color-text-dim);
+  margin-bottom: 4px;
+}
+
+.receipt-card__line {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  line-height: 1.6;
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+}
+
+.receipt-card__key {
+  color: var(--color-text-dim);
+  min-width: 90px;
+  flex-shrink: 0;
+}
+
+.receipt-card__value {
+  color: var(--color-text-secondary);
+  word-break: break-all;
+}
+
+.receipt-card__verify-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.receipt-card__verify-btn {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border: 1px solid var(--color-accent-dim);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--color-accent);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.receipt-card__verify-btn:hover:not(:disabled) {
+  background: rgba(107, 163, 247, 0.08);
+  border-color: var(--color-accent);
+}
+
+.receipt-card__verify-btn:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.receipt-card__verify-status {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.receipt-card__verify-status.verified {
+  color: var(--color-success);
+}
+
+.receipt-card__verify-status.failed {
+  color: var(--color-error-bright);
+}

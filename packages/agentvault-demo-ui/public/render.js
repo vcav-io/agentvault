@@ -308,6 +308,118 @@ var VaultCardManager = (function () {
             break;
           }
 
+          // COMPLETE — the big milestone (checked first: a COMPLETE result
+          // takes priority over mode-based milestone filters, since collision
+          // redirect can return COMPLETE on what the agent sent as INITIATE)
+          if (status === 'COMPLETE') {
+            var outputWrap = data.output || result.output || {};
+            var output = outputWrap.output || null;
+            var receipt = outputWrap.receipt || null;
+            var receiptSignature = outputWrap.receipt_signature || null;
+
+            // Hero result card — output signal
+            var card = addCard(label + ' — session complete', 'vault-card--hero vault-card--expanded');
+            if (output) {
+              var outputKeys = Object.keys(output);
+              for (var i = 0; i < outputKeys.length; i++) {
+                addLine(card, outputKeys[i], output[outputKeys[i]]);
+              }
+            }
+            addStatus(card, true, 'Complete');
+
+            // Receipt card — cryptographic proof details
+            if (receipt) {
+              var rcBody = card.querySelector('.vault-card__body');
+              if (rcBody) {
+                var rcSection = document.createElement('div');
+                rcSection.className = 'receipt-card';
+
+                var rcLabel = document.createElement('div');
+                rcLabel.className = 'receipt-card__label';
+                rcLabel.textContent = 'CRYPTOGRAPHIC RECEIPT';
+                rcSection.appendChild(rcLabel);
+
+                var rcFields = [
+                  ['session_id', truncate(receipt.session_id || '', 24)],
+                ];
+                if (receipt.model_identity) {
+                  rcFields.push(['model', (receipt.model_identity.provider || '') + ' / ' + (receipt.model_identity.model_id || '')]);
+                }
+                if (receipt.contract_hash) rcFields.push(['contract hash', truncate(receipt.contract_hash, 16)]);
+                if (receipt.guardian_policy_hash) rcFields.push(['policy hash', truncate(receipt.guardian_policy_hash, 16)]);
+                if (receipt.prompt_template_hash) rcFields.push(['template hash', truncate(receipt.prompt_template_hash, 16)]);
+                if (receipt.output_entropy_bits !== undefined) rcFields.push(['entropy bits', String(receipt.output_entropy_bits)]);
+
+                for (var fi = 0; fi < rcFields.length; fi++) {
+                  var rcLine = document.createElement('div');
+                  rcLine.className = 'receipt-card__line';
+                  var rcKey = document.createElement('span');
+                  rcKey.className = 'receipt-card__key';
+                  rcKey.textContent = rcFields[fi][0];
+                  var rcVal = document.createElement('span');
+                  rcVal.className = 'receipt-card__value';
+                  rcVal.textContent = rcFields[fi][1];
+                  rcLine.appendChild(rcKey);
+                  rcLine.appendChild(rcVal);
+                  rcSection.appendChild(rcLine);
+                }
+
+                // Verify button
+                if (receiptSignature) {
+                  var verifyBtn = document.createElement('button');
+                  verifyBtn.className = 'receipt-card__verify-btn';
+                  verifyBtn.textContent = 'Verify Signature';
+                  var verifyStatus = document.createElement('span');
+                  verifyStatus.className = 'receipt-card__verify-status';
+
+                  verifyBtn.addEventListener('click', function () {
+                    verifyBtn.disabled = true;
+                    verifyBtn.textContent = 'Verifying\u2026';
+                    fetch('/api/verify-receipt', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ receipt: receipt, receipt_signature: receiptSignature }),
+                    })
+                      .then(function (r) { return r.json(); })
+                      .then(function (res) {
+                        verifyBtn.textContent = 'Verify Signature';
+                        verifyBtn.disabled = false;
+                        if (res.verified) {
+                          verifyStatus.className = 'receipt-card__verify-status verified';
+                          verifyStatus.textContent = '\u2713 Signature valid';
+                        } else {
+                          verifyStatus.className = 'receipt-card__verify-status failed';
+                          verifyStatus.textContent = '\u2717 ' + (res.error || 'Verification failed');
+                        }
+                      })
+                      .catch(function () {
+                        verifyBtn.textContent = 'Verify Signature';
+                        verifyBtn.disabled = false;
+                        verifyStatus.className = 'receipt-card__verify-status failed';
+                        verifyStatus.textContent = '\u2717 Request failed';
+                      });
+                  });
+
+                  var verifyRow = document.createElement('div');
+                  verifyRow.className = 'receipt-card__verify-row';
+                  verifyRow.appendChild(verifyBtn);
+                  verifyRow.appendChild(verifyStatus);
+                  rcSection.appendChild(verifyRow);
+                }
+
+                rcBody.appendChild(rcSection);
+              }
+            }
+
+            // Notify chat panels
+            if (onOutputSignal && output) {
+              onOutputSignal(agent, output, receipt);
+            }
+
+            agentState[agent] = Object.assign({}, prev, { completed: true });
+            break;
+          }
+
           // INITIATE mode first call — session starting
           if (call.args.mode === 'INITIATE' && !prev.initiated) {
             var card = addCard(label + ' starting session');
@@ -341,34 +453,6 @@ var VaultCardManager = (function () {
             break;
           }
 
-          // COMPLETE — the big milestone
-          if (status === 'COMPLETE') {
-            var outputWrap = data.output || result.output || {};
-            var output = outputWrap.output || null;
-            var receipt = outputWrap.receipt || null;
-
-            // Hero result card
-            var card = addCard(label + ' — session complete', 'vault-card--hero vault-card--expanded');
-            if (output) {
-              var outputKeys = Object.keys(output);
-              for (var i = 0; i < outputKeys.length; i++) {
-                addLine(card, outputKeys[i], output[outputKeys[i]]);
-              }
-            }
-            if (receipt && receipt.session_id) {
-              addLine(card, 'receipt', truncate(receipt.session_id, 24));
-            }
-            addStatus(card, true, 'Complete');
-
-            // Notify chat panels
-            if (onOutputSignal && output) {
-              onOutputSignal(agent, output, receipt);
-            }
-
-            agentState[agent] = Object.assign({}, prev, { completed: true });
-            break;
-          }
-
           // Everything else (repeated PENDING/CALL_AGAIN polling) — suppress
           break;
         }
@@ -395,8 +479,27 @@ var VaultCardManager = (function () {
         break;
       }
 
-      // system events — suppress most noise
-      case 'system': break;
+      // system events — relay_policy creates enforcement card, others suppressed
+      case 'system': {
+        if (event.agent === 'relay_policy') {
+          var p = event.payload;
+          var card = addCard('Relay Enforcement Active', 'vault-card--policy vault-card--expanded');
+          addLine(card, 'policy', truncate(String(p.policy_id || 'unknown'), 40));
+          addLine(card, 'policy hash', truncate(String(p.policy_hash || ''), 16));
+          var allowlist = p.model_profile_allowlist;
+          if (Array.isArray(allowlist) && allowlist.length > 0) {
+            addLine(card, 'model constraint', allowlist.join(', '));
+          }
+          var rules = p.enforcement_rules;
+          if (Array.isArray(rules) && rules.length > 0) {
+            addLine(card, 'rules', rules.join(', '));
+          }
+          addLine(card, 'relay model', String(p.model_id || 'unknown'));
+          addLine(card, 'signing key', truncate(String(p.verifying_key_hex || ''), 20));
+          addStatus(card, true, 'Enforcement policy bound');
+        }
+        break;
+      }
     }
   }
 

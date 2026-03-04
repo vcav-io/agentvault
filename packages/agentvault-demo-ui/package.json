@@ -18,6 +18,7 @@
     "agentvault-mcp-server": "file:../agentvault-mcp-server",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "json-canonicalize": "^2.0.0",
     "openai": "^4.78.1"
   },
   "devDependencies": {

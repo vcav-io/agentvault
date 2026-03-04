@@ -31,9 +31,9 @@ use crate::inbox::InboxStore;
 use crate::relay::compute_contract_hash;
 use crate::session::{AbortReason, SessionState, SessionStore, TokenRole};
 use crate::types::{
-    CapabilitiesResponse, CreateSessionRequest, CreateSessionResponse, HealthResponse, RelayInput,
-    RelayRequest, RelayResponse, SessionMetadata, SessionOutputResponse, SessionStatusResponse,
-    SubmitInputRequest,
+    CapabilitiesResponse, CreateSessionRequest, CreateSessionResponse, HealthResponse,
+    PolicySummary, RelayInput, RelayRequest, RelayResponse, SessionMetadata,
+    SessionOutputResponse, SessionStatusResponse, SubmitInputRequest,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -122,12 +122,36 @@ fn auto_select_provider(state: &AppState) -> Result<String, RelayError> {
 // Health and capabilities
 // ============================================================================
 
-async fn health_handler() -> Json<HealthResponse> {
+async fn health_handler(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
+    let provider = auto_select_provider(&state).unwrap_or_else(|_| "none".to_string());
+    let model_id = match provider.as_str() {
+        "anthropic" => state.anthropic_model_id.clone(),
+        "openai" => state.openai_model_id.clone(),
+        "gemini" => state.gemini_model_id.clone(),
+        _ => "unknown".to_string(),
+    };
+    let verifying_key_hex =
+        receipt_core::public_key_to_hex(&state.signing_key.verifying_key());
+    let policy_summary = PolicySummary {
+        policy_id: state.enforcement_policy.policy_id.clone(),
+        policy_hash: state.enforcement_policy_hash.clone(),
+        model_profile_allowlist: state.enforcement_policy.model_profile_allowlist.clone(),
+        enforcement_rules: state
+            .enforcement_policy
+            .rules
+            .iter()
+            .map(|r| r.rule_id.clone())
+            .collect(),
+    };
     Json(HealthResponse {
         status: "ok",
         version: VERSION,
         git_sha: GIT_SHA,
         execution_lane: "API_MEDIATED",
+        provider,
+        model_id,
+        verifying_key_hex,
+        policy_summary,
     })
 }
 
