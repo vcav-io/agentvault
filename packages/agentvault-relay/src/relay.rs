@@ -240,8 +240,7 @@ pub async fn relay_core(
                 .contains(profile_id)
             {
                 return Err(RelayError::ContractValidation(format!(
-                    "model_profile_id '{}' not in enforcement allowlist",
-                    profile_id
+                    "model_profile_id '{profile_id}' not in enforcement allowlist"
                 )));
             }
         }
