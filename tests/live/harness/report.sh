@@ -35,8 +35,8 @@ check_quality() {
   local has_quality
   has_quality="$(jq -r 'has("quality_checks")' "${criteria_file}")"
   if [[ "${has_quality}" != "true" ]]; then
-    echo '{"pass": true, "checks": [], "skipped": true}'
-    return 0
+    echo '{"pass": false, "checks": [], "skipped": true}'
+    return 1
   fi
 
   local quality_json

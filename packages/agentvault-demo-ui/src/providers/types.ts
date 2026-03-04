@@ -17,6 +17,8 @@ export interface ToolUseContent {
   id: string;
   name: string;
   input: Record<string, unknown>;
+  /** Opaque provider metadata that must survive the round-trip (e.g. Gemini thoughtSignature). */
+  _providerMeta?: Record<string, unknown>;
 }
 
 export interface ToolResultContent {

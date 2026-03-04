@@ -1057,6 +1057,7 @@ async function phaseInvite(
     initiatorRead: created.initiatorReadToken,
   };
   handle.purpose = purposeHint ?? undefined;
+  handle.myInput = args.my_input;
   handle.proposalId = proposalId;
 
   writeLastSessionFile(created.sessionId, 'INITIATOR', created.initiatorReadToken, relayUrl);
@@ -1290,6 +1291,7 @@ async function phasePollRelay(
             timeoutMs: HANDLE_TTL_MS,
           });
           respondHandle.expectedPurpose = handle.purpose;
+          respondHandle.myInput = handle.myInput;
           // Mark old handle as abandoned
           handle.phase = 'FAILED';
           return await phaseDiscover(respondHandle, transport);
@@ -1751,11 +1753,15 @@ export async function handleRelaySignal(
 
     // ── Resume path ─────────────────────────────────────────────────
     if (args.resume_token) {
+      // Budget models often include mode/counterparty alongside resume_token.
+      // Instead of rejecting, strip extra args and proceed — the resume_token
+      // carries all the state needed.
       if (hasExtraArgs(args)) {
-        return buildError(
-          'INVALID_INPUT',
-          'When resume_token is provided, do NOT include any other args (mode, my_input, counterparty, etc.).',
-        );
+        const extra = Object.keys(args).filter((k) => k !== 'resume_token');
+        console.info(`relay_signal resume: ignoring extra args [${extra.join(', ')}] alongside resume_token`);
+        for (const k of extra) {
+          delete (args as Record<string, unknown>)[k];
+        }
       }
 
       const agentId = transport?.agentId ?? process.env['VCAV_AGENT_ID'] ?? '';
@@ -1833,6 +1839,37 @@ export async function handleRelaySignal(
 
         const counterparty = resolveAgentAlias(args.counterparty, knownAgents);
         const agentId = transport.agentId ?? process.env['VCAV_AGENT_ID'] ?? '';
+
+        // ── Pre-INITIATE collision detection ─────────────────────────
+        // If the counterparty already sent us an invite, join their session
+        // instead of creating a redundant one. The agent with the later
+        // INITIATE call becomes the de-facto RESPONDER.
+        const pendingInbox = await transport.peekInbox();
+        const existingInvite = pendingInbox.invites.find(
+          (inv) => inv.from_agent_id === counterparty,
+        );
+        if (existingInvite) {
+          console.info(
+            `relay_signal INITIATE: ${agentId} found existing invite from ${counterparty} — ` +
+            `redirecting to RESPOND (auto-collision-resolve).`,
+          );
+          const respondIdempotencyKey = computeRelayIdempotencyKey(agentId, [
+            counterparty,
+            hashInput(args.my_input ?? ''),
+            'auto-respond',
+          ]);
+          const respondHandle = createRelayHandle({
+            agentId,
+            role: 'RESPONDER',
+            phase: 'DISCOVER',
+            counterparty,
+            idempotencyKey: respondIdempotencyKey,
+            timeoutMs: HANDLE_TTL_MS,
+          });
+          respondHandle.expectedPurpose = args.purpose;
+          respondHandle.myInput = args.my_input;
+          return await phaseDiscover(respondHandle, transport);
+        }
 
         // Compute idempotency key
         const inputHash = hashInput(args.my_input ?? '');

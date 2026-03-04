@@ -51,9 +51,13 @@ export class OpenAIProvider implements LLMProvider {
 
     const openaiMessages = this.toOpenAIMessages(params.messages, params.system);
 
+    // gpt-5 family models require max_completion_tokens instead of max_tokens.
+    const usesCompletionTokens = this.model.startsWith('gpt-5') || this.model.startsWith('o');
     const response = await this.client.chat.completions.create({
       model: this.model,
-      max_tokens: 4096,
+      ...(usesCompletionTokens
+        ? { max_completion_tokens: 4096 }
+        : { max_tokens: 4096 }),
       messages: openaiMessages,
       tools: openaiTools.length > 0 ? openaiTools : undefined,
     });
@@ -175,6 +179,35 @@ export class OpenAIProvider implements LLMProvider {
       }
     }
 
-    return result;
+    // Validate: every 'tool' message must follow an 'assistant' with tool_calls
+    // containing the referenced tool_call_id. If not, drop the orphaned tool message
+    // to avoid OpenAI 400 errors.
+    const validated: OpenAI.ChatCompletionMessageParam[] = [];
+    let lastAssistantToolIds: Set<string> | null = null;
+
+    for (const msg of result) {
+      if (msg.role === 'assistant') {
+        const aMsg = msg as OpenAI.ChatCompletionAssistantMessageParam;
+        lastAssistantToolIds = aMsg.tool_calls
+          ? new Set(aMsg.tool_calls.map((tc) => tc.id))
+          : null;
+        validated.push(msg);
+      } else if (msg.role === 'tool') {
+        const tMsg = msg as OpenAI.ChatCompletionToolMessageParam;
+        if (lastAssistantToolIds?.has(tMsg.tool_call_id)) {
+          validated.push(msg);
+        } else {
+          console.warn(
+            `Dropping orphaned tool message (tool_call_id=${tMsg.tool_call_id}) — ` +
+            'no matching assistant tool_calls found',
+          );
+        }
+      } else {
+        lastAssistantToolIds = null;
+        validated.push(msg);
+      }
+    }
+
+    return validated;
   }
 }
