@@ -359,6 +359,43 @@ const app = express();
 app.use(express.json());
 app.use(express.static(PUBLIC_DIR));
 
+// Config endpoint — available providers and models for UI selectors
+app.get('/api/config', (_req, res) => {
+  const providers: Array<{ name: string; models: Array<{ id: string; tier: string; default?: boolean }> }> = [];
+  if (process.env['GEMINI_API_KEY']) {
+    providers.push({
+      name: 'gemini',
+      models: [
+        { id: 'gemini-2.5-flash', tier: 'mid', default: true },
+        { id: 'gemini-2.5-flash-lite', tier: 'budget' },
+        { id: 'gemini-3-flash-preview', tier: 'budget' },
+      ],
+    });
+  }
+  if (process.env['OPENAI_API_KEY']) {
+    providers.push({
+      name: 'openai',
+      models: [
+        { id: 'gpt-4.1-mini', tier: 'mid', default: true },
+        { id: 'gpt-4.1-nano', tier: 'budget' },
+        { id: 'gpt-5-mini', tier: 'budget' },
+      ],
+    });
+  }
+  if (process.env['ANTHROPIC_API_KEY']) {
+    providers.push({
+      name: 'anthropic',
+      models: [
+        { id: 'claude-haiku-4-5-20251001', tier: 'budget', default: true },
+        { id: 'claude-sonnet-4-6', tier: 'reference' },
+      ],
+    });
+  }
+  let defaultProvider: string | null = null;
+  try { defaultProvider = detectProvider(); } catch { /* no keys configured */ }
+  res.json({ providers, defaultProvider });
+});
+
 // SSE events endpoint
 app.get('/api/events', (_req, res) => {
   events.addClient(res);
@@ -385,6 +422,8 @@ app.post('/api/start', async (req, res) => {
   try {
     // Per-run provider override: if agentProvider is specified, switch the
     // module-level provider for this run (persists until next /api/start or reset).
+    // Note: heartbeat loops keep their startup provider — they're lightweight polling
+    // loops and restarting them mid-session would risk losing in-flight state.
     const agentProvider = req.body?.agentProvider as string | undefined;
     const agentModel = req.body?.agentModel as string | undefined;
     if (agentProvider) {

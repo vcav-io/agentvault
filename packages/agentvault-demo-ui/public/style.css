@@ -1011,6 +1011,12 @@ body {
   color: var(--color-text);
 }
 
+.setup-selectors {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
 .template-selector {
   display: flex;
   align-items: center;
