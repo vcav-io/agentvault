@@ -32,8 +32,8 @@ use crate::relay::compute_contract_hash;
 use crate::session::{AbortReason, SessionState, SessionStore, TokenRole};
 use crate::types::{
     CapabilitiesResponse, CreateSessionRequest, CreateSessionResponse, HealthResponse,
-    PolicySummary, RelayInput, RelayRequest, RelayResponse, SessionMetadata,
-    SessionOutputResponse, SessionStatusResponse, SubmitInputRequest,
+    PolicySummary, RelayInput, RelayRequest, RelayResponse, SessionMetadata, SessionOutputResponse,
+    SessionStatusResponse, SubmitInputRequest,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -130,8 +130,7 @@ async fn health_handler(State(state): State<Arc<AppState>>) -> Json<HealthRespon
         "gemini" => state.gemini_model_id.clone(),
         _ => "unknown".to_string(),
     };
-    let verifying_key_hex =
-        receipt_core::public_key_to_hex(&state.signing_key.verifying_key());
+    let verifying_key_hex = receipt_core::public_key_to_hex(&state.signing_key.verifying_key());
     let policy_summary = PolicySummary {
         policy_id: state.enforcement_policy.policy_id.clone(),
         policy_hash: state.enforcement_policy_hash.clone(),

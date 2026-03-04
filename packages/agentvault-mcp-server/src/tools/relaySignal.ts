@@ -1759,9 +1759,7 @@ export async function handleRelaySignal(
       if (hasExtraArgs(args)) {
         const extra = Object.keys(args).filter((k) => k !== 'resume_token');
         console.info(`relay_signal resume: ignoring extra args [${extra.join(', ')}] alongside resume_token`);
-        for (const k of extra) {
-          delete (args as Record<string, unknown>)[k];
-        }
+        args = { resume_token: args.resume_token } as typeof args;
       }
 
       const agentId = transport?.agentId ?? process.env['VCAV_AGENT_ID'] ?? '';

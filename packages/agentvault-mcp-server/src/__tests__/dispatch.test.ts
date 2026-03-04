@@ -69,13 +69,14 @@ describe('handleRelaySignal input validation', () => {
     }
   });
 
-  it('rejects resume_token with extra args', async () => {
+  it('strips extra args alongside resume_token and proceeds to decode', async () => {
     const result = await handleRelaySignal({
       resume_token: 'some-token',
       mode: 'INITIATE',
     });
+    // Extra args are stripped; the fake token then fails decoding
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe('INVALID_INPUT');
-    expect(result.error?.detail).toContain('do NOT include any other args');
+    expect(result.error?.detail).toContain('Invalid or expired resume_token');
   });
 });
