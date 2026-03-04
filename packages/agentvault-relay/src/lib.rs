@@ -407,6 +407,7 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
                         session.output = Some(result.output);
                         session.receipt = Some(result.receipt);
                         session.receipt_signature = Some(result.receipt_signature);
+                        session.receipt_v2 = Some(result.receipt_v2);
                         session.state = SessionState::Completed;
 
                         if is_dev {
@@ -500,6 +501,7 @@ async fn session_output_handler(
             output: session.output.clone(),
             receipt: session.receipt.clone(),
             receipt_signature: session.receipt_signature.clone(),
+            receipt_v2: session.receipt_v2.clone(),
         })
         .await
         .ok_or(RelayError::Unauthorized)?;

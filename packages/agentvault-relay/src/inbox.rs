@@ -831,6 +831,13 @@ mod tests {
             timing_class: None,
             metadata: serde_json::Value::Null,
             model_profile_id: None,
+            enforcement_policy_hash: None,
+            output_schema_hash: None,
+            model_constraints: None,
+            max_completion_tokens: None,
+            session_ttl_secs: None,
+            invite_ttl_secs: None,
+            entropy_enforcement: None,
         }
     }
 

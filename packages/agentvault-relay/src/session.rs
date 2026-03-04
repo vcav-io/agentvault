@@ -68,6 +68,7 @@ pub struct Session {
     pub output: Option<serde_json::Value>,
     pub receipt: Option<receipt_core::Receipt>,
     pub receipt_signature: Option<String>,
+    pub receipt_v2: Option<receipt_core::ReceiptV2>,
     pub tokens: SessionTokens,
     pub initiator_submitted: bool,
     pub responder_submitted: bool,
@@ -146,6 +147,7 @@ impl SessionStore {
             output: None,
             receipt: None,
             receipt_signature: None,
+            receipt_v2: None,
             tokens: tokens.clone(),
             initiator_submitted: false,
             responder_submitted: false,
@@ -227,6 +229,13 @@ mod tests {
             timing_class: None,
             metadata: serde_json::Value::Null,
             model_profile_id: None,
+            enforcement_policy_hash: None,
+            output_schema_hash: None,
+            model_constraints: None,
+            max_completion_tokens: None,
+            session_ttl_secs: None,
+            invite_ttl_secs: None,
+            entropy_enforcement: None,
         }
     }
 
