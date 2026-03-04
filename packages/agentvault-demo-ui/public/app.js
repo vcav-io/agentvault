@@ -56,8 +56,12 @@
     signalOverlay: $('signal-overlay'),
   };
 
-  // Track messages we rendered client-side to avoid SSE duplicates
+  // Track messages we rendered client-side to avoid SSE duplicates.
+  // Keyed by a monotonically incrementing integer ID (not content) so identical
+  // message text from the same agent cannot cause collisions.
   var localMessageIds = {};
+  var nextLocalMsgId = 1;
+  var MAX_LOCAL_MESSAGE_IDS = 100; // size cap to prevent unbounded growth on missed echoes
 
   var eventSource = null;
   var totalEvents = 0;
@@ -163,9 +167,10 @@
   function handleEvent(event) {
     if (event.type === 'user_message') {
       // Mid-run user message — render as prompt bubble (skip if already rendered locally)
-      var msgKey = event.agent + ':' + event.payload.text;
-      if (localMessageIds[msgKey]) {
-        delete localMessageIds[msgKey];
+      // Look up by unique ID echoed back from the server, then fall through to render
+      var echoId = event.payload.localId;
+      if (echoId !== undefined && localMessageIds[echoId]) {
+        delete localMessageIds[echoId];
         return;
       }
       var panel = event.agent === 'alice' ? els.aliceLog : event.agent === 'bob' ? els.bobLog : null;
@@ -257,6 +262,8 @@
     totalEvents = 0;
     completedAgents = {};
     resultCardRendered = false;
+    localMessageIds = {};
+    nextLocalMsgId = 1;
     els.eventCount.textContent = '0 events';
     VaultCardManager.init(els.vaultEvents);
     VaultCardManager.setOutputSignalCallback(function (agent, output, receipt) {
@@ -340,21 +347,38 @@
     // Clear input immediately
     inputEl.value = '';
 
-    // Mark as locally rendered to skip SSE duplicate
-    localMessageIds[agent + ':' + text] = true;
+    // Assign a unique local ID for deduplication — avoids collision on identical text
+    var localId = nextLocalMsgId++;
+    if (Object.keys(localMessageIds).length >= MAX_LOCAL_MESSAGE_IDS) {
+      // Size cap: clear stale entries that never received an echo
+      localMessageIds = {};
+    }
+    localMessageIds[localId] = true;
 
     // Render prompt bubble immediately
     logEl.appendChild(createPromptBubble(text, 'You'));
     scrollToBottom(logEl);
 
-    // Send to server
+    // Send to server — pass the local ID so the server can echo it back
     inputEl.disabled = true;
     fetch('/api/message', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agent: agent, message: text }),
+      body: JSON.stringify({ agent: agent, message: text, localId: localId }),
     })
-      .catch(function (err) { console.error('Send message error:', err); })
+      .then(function (res) {
+        if (!res.ok) {
+          return res.json().then(function (data) {
+            console.error('Send message rejected:', data.error || res.statusText);
+            // Remove the optimistic dedup entry since delivery failed
+            delete localMessageIds[localId];
+          }).catch(function () {
+            console.error('Send message rejected:', res.status, res.statusText);
+            delete localMessageIds[localId];
+          });
+        }
+      })
+      .catch(function (err) { console.error('Send message error:', err); delete localMessageIds[localId]; })
       .then(function () { inputEl.disabled = false; inputEl.focus(); });
   }
 

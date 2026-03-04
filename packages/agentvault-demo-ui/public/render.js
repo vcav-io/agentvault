@@ -157,8 +157,10 @@ var VaultCardManager = (function () {
 
   // Track state per agent to detect milestone transitions
   var agentState = {};
-  // Pending tool_call context (tool name, agent, args) awaiting its result
-  var pendingCall = null;
+  // Pending tool_call context queue — each entry is { tool, agent, args }.
+  // Using a queue (FIFO) instead of a single slot handles parallel tool calls
+  // correctly: earlier tool_results are matched to earlier tool_calls.
+  var pendingCalls = [];
   // Callback for result cards in chat panels
   var onOutputSignal = null;
 
@@ -166,13 +168,13 @@ var VaultCardManager = (function () {
     container = el;
     stepCount = 0;
     agentState = {};
-    pendingCall = null;
+    pendingCalls = [];
   }
 
   function reset() {
     stepCount = 0;
     agentState = {};
-    pendingCall = null;
+    pendingCalls = [];
   }
 
   function setOutputSignalCallback(cb) {
@@ -257,19 +259,18 @@ var VaultCardManager = (function () {
   function routeEvent(event) {
     switch (event.type) {
       case 'tool_call': {
-        // Stash the call context; we decide what to show when the result arrives
-        pendingCall = {
+        // Enqueue the call context; dequeued FIFO when the matching result arrives
+        pendingCalls.push({
           tool: event.payload.tool || '',
           agent: event.agent || '',
           args: event.payload.args || {},
-        };
+        });
         break;
       }
 
       case 'tool_result': {
-        if (!pendingCall) break;
-        var call = pendingCall;
-        pendingCall = null;
+        if (!pendingCalls.length) break;
+        var call = pendingCalls.shift();
         var result = event.payload.result || {};
         var agent = event.agent || call.agent;
         var label = agentLabel(agent);

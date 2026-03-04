@@ -188,6 +188,12 @@ async function runLLMBurst(
       }
       state.messages.push({ role: 'assistant', content: response.contentBlocks });
 
+      // Build a map from tool_use_id -> tool name so we can filter completions
+      // by tool name in the loop below.
+      const toolNameById = new Map<string, string>(
+        response.toolUseBlocks.map((tu) => [tu.id, tu.name]),
+      );
+
       // Execute tool calls
       const toolResults = await executeToolCalls(
         response.toolUseBlocks,
@@ -203,9 +209,13 @@ async function runLLMBurst(
       // Update messages reference for next turn
       messages = state.messages;
 
-      // Check if any tool result indicates session completion.
+      // Check if any relay_signal tool result indicates session completion.
+      // Scoped to relay_signal only — other tools returning { state: 'COMPLETED' }
+      // should not terminate the agent loop.
       // Don't return immediately — set flag so the LLM gets one more turn to react.
       for (const tr of toolResults) {
+        const toolName = toolNameById.get(tr.tool_use_id) ?? '';
+        if (!toolName.includes('relay_signal')) continue;
         try {
           const parsed = JSON.parse(tr.content);
           if (parsed?.state === 'COMPLETED' || parsed?.state === 'FAILED') {
