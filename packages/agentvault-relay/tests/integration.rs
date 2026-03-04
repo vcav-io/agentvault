@@ -681,8 +681,7 @@ async fn test_relay_rejects_missing_model_profile_when_allowlist_set() {
     let (prompt_dir, prompt_hash) = setup_prompt_program("e2e-allowlist-none");
 
     let mut state = test_app_state("http://unused", &prompt_dir);
-    state.enforcement_policy.model_profile_allowlist =
-        vec!["api-claude-sonnet-v1".to_string()];
+    state.enforcement_policy.model_profile_allowlist = vec!["api-claude-sonnet-v1".to_string()];
     let app = build_router(Arc::new(state));
 
     // Contract without model_profile_id should be rejected
@@ -730,8 +729,7 @@ async fn test_relay_rejects_wrong_model_profile() {
     let (prompt_dir, prompt_hash) = setup_prompt_program("e2e-allowlist-wrong");
 
     let mut state = test_app_state("http://unused", &prompt_dir);
-    state.enforcement_policy.model_profile_allowlist =
-        vec!["api-claude-sonnet-v1".to_string()];
+    state.enforcement_policy.model_profile_allowlist = vec!["api-claude-sonnet-v1".to_string()];
     let app = build_router(Arc::new(state));
 
     // Contract with wrong model_profile_id should be rejected
