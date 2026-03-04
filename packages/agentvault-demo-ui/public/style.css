@@ -1233,3 +1233,12 @@ body {
 .receipt-card__verify-status.failed {
   color: var(--color-error-bright);
 }
+
+/* Reconnect notice for mid-session browser refresh */
+.reconnect-notice {
+  padding: 0.75rem 1rem;
+  font-size: 0.8rem;
+  color: var(--color-text-muted, #999);
+  text-align: center;
+  border-bottom: 1px solid var(--color-border, #333);
+}

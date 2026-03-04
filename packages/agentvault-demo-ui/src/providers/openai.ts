@@ -179,33 +179,67 @@ export class OpenAIProvider implements LLMProvider {
       }
     }
 
-    // Validate: every 'tool' message must follow an 'assistant' with tool_calls
-    // containing the referenced tool_call_id. If not, drop the orphaned tool message
-    // to avoid OpenAI 400 errors.
+    // Validate tool_call / tool_result pairing to avoid OpenAI 400 errors.
+    // OpenAI requires every assistant message with tool_calls to be immediately
+    // followed by tool-role messages answering ALL tool_call_ids. Violations
+    // happen when a reset races with an in-flight LLM burst, leaving an
+    // assistant message with tool_calls but no (or partial) tool results.
+    //
+    // Strategy: forward scan. For each assistant with tool_calls, collect the
+    // tool_call_ids and check that all are answered by immediately following
+    // tool messages. If not, strip tool_calls from the assistant (keep text)
+    // and drop the orphaned tool messages.
     const validated: OpenAI.ChatCompletionMessageParam[] = [];
-    let lastAssistantToolIds: Set<string> | null = null;
 
-    for (const msg of result) {
+    for (let i = 0; i < result.length; i++) {
+      const msg = result[i];
+
       if (msg.role === 'assistant') {
         const aMsg = msg as OpenAI.ChatCompletionAssistantMessageParam;
-        lastAssistantToolIds = aMsg.tool_calls
-          ? new Set(aMsg.tool_calls.map((tc) => tc.id))
-          : null;
-        validated.push(msg);
-      } else if (msg.role === 'tool') {
-        const tMsg = msg as OpenAI.ChatCompletionToolMessageParam;
-        if (lastAssistantToolIds?.has(tMsg.tool_call_id)) {
-          validated.push(msg);
-        } else {
-          console.warn(
-            `Dropping orphaned tool message (tool_call_id=${tMsg.tool_call_id}) — ` +
-            'no matching assistant tool_calls found',
-          );
+        if (aMsg.tool_calls && aMsg.tool_calls.length > 0) {
+          // Collect tool_call_ids and look ahead for matching tool messages
+          const expectedIds = new Set(aMsg.tool_calls.map((tc) => tc.id));
+          const toolMsgs: OpenAI.ChatCompletionMessageParam[] = [];
+          let j = i + 1;
+          while (j < result.length && result[j].role === 'tool') {
+            const tMsg = result[j] as OpenAI.ChatCompletionToolMessageParam;
+            if (expectedIds.has(tMsg.tool_call_id)) {
+              toolMsgs.push(result[j]);
+              expectedIds.delete(tMsg.tool_call_id);
+            }
+            j++;
+          }
+
+          if (expectedIds.size === 0) {
+            // All tool_calls answered — keep as-is
+            validated.push(msg);
+            for (const tm of toolMsgs) validated.push(tm);
+          } else {
+            // Unanswered tool_calls — strip them, keep text content only
+            console.warn(
+              `Stripping ${expectedIds.size} unanswered tool_calls from assistant message` +
+              ` (likely reset race condition)`,
+            );
+            if (aMsg.content) {
+              validated.push({ role: 'assistant', content: aMsg.content });
+            }
+            // Drop all following tool messages for this assistant
+          }
+          i = j - 1; // skip past the tool messages we already processed
+          continue;
         }
-      } else {
-        lastAssistantToolIds = null;
-        validated.push(msg);
       }
+
+      if (msg.role === 'tool') {
+        // Orphaned tool message (no preceding assistant with matching tool_calls)
+        const tMsg = msg as OpenAI.ChatCompletionToolMessageParam;
+        console.warn(
+          `Dropping orphaned tool message (tool_call_id=${tMsg.tool_call_id})`,
+        );
+        continue;
+      }
+
+      validated.push(msg);
     }
 
     return validated;
