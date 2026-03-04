@@ -152,8 +152,9 @@ describe('computeOutputSchemaHash', () => {
  * Or by running the Rust relay tests.
  */
 describe('golden hash vectors (cross-language parity)', () => {
-  // Verified against live Rust relay (POST /sessions → contract_hash).
-  // If these fail, TypeScript JCS canonicalization has diverged from Rust.
+  // Golden hashes include v2 contract fields (enforcement_policy_hash,
+  // entropy_enforcement, output_schema_hash). Must re-verify against live
+  // Rust relay after template changes (POST /sessions → contract_hash).
   //
   // To regenerate: POST the contract JSON to the relay's /sessions endpoint,
   // record contract_hash from the response.
@@ -161,12 +162,12 @@ describe('golden hash vectors (cross-language parity)', () => {
   it('mediation contract hash matches Rust relay', () => {
     const contract = buildRelayContract('MEDIATION', ['alice-demo', 'bob-demo'])!;
     const hash = computeRelayContractHash(contract);
-    expect(hash).toBe('4389e049a6ffd803cd8ac607a1e8ad3b0b98ae6291da904593e8cc46e0565b52');
+    expect(hash).toBe('034ef466fc903f5394a86775b8e751c2de544ab85d100cfae87c806288be5e37');
   });
 
   it('compatibility contract hash matches Rust relay', () => {
     const contract = buildRelayContract('COMPATIBILITY', ['alice-demo', 'bob-demo'])!;
     const hash = computeRelayContractHash(contract);
-    expect(hash).toBe('ade915527b6351b729f758f2c0c11140ee3cf7846950a13113cb6a7d35ed5de0');
+    expect(hash).toBe('8efa3d99bc44dd8f3ae2c977751895acdc2b6d7ee6c8f529cc513d00d85ec069');
   });
 });

@@ -315,6 +315,7 @@ var VaultCardManager = (function () {
             var outputWrap = data.output || result.output || {};
             var output = outputWrap.output || null;
             var receipt = outputWrap.receipt || null;
+            var receiptV2 = outputWrap.receipt_v2 || null;
             var receiptSignature = outputWrap.receipt_signature || null;
 
             // Hero result card — output signal
@@ -327,16 +328,217 @@ var VaultCardManager = (function () {
             }
             addStatus(card, true, 'Complete');
 
-            // Receipt card — cryptographic proof details
-            if (receipt) {
-              var rcBody = card.querySelector('.vault-card__body');
-              if (rcBody) {
-                var rcSection = document.createElement('div');
-                rcSection.className = 'receipt-card';
+            // Receipt card — prefer v2 if available, fall back to v1
+            var rcBody = card.querySelector('.vault-card__body');
+            if (rcBody && (receiptV2 || receipt)) {
+              var rcSection = document.createElement('div');
+              rcSection.className = 'receipt-card';
 
+              if (receiptV2) {
+                // ── v2 receipt: commitments/claims split ──
                 var rcLabel = document.createElement('div');
                 rcLabel.className = 'receipt-card__label';
-                rcLabel.textContent = 'CRYPTOGRAPHIC RECEIPT';
+                rcLabel.textContent = 'CRYPTOGRAPHIC RECEIPT (v2)';
+                rcSection.appendChild(rcLabel);
+
+                // Assurance level — mandatory context
+                var assurance = receiptV2.assurance_level || 'UNKNOWN';
+                var assuranceEl = document.createElement('div');
+                assuranceEl.className = 'receipt-card__assurance';
+                var assuranceDescriptions = {
+                  SELF_ASSERTED: 'relay asserts its own honesty, no hardware attestation',
+                  OPERATOR_AUDITED: 'relay operator publishes verifiable audit trail',
+                  PROVIDER_ATTESTED: 'model provider supplied signed inference metadata',
+                  TEE_ATTESTED: 'hardware TEE attestation binds receipt to enclave measurement',
+                };
+                assuranceEl.textContent = assurance + ' \u2014 ' + (assuranceDescriptions[assurance] || 'unknown assurance level');
+                rcSection.appendChild(assuranceEl);
+
+                // Operator info
+                var operator = receiptV2.operator;
+                if (operator) {
+                  var opLine = document.createElement('div');
+                  opLine.className = 'receipt-card__line';
+                  var opKey = document.createElement('span');
+                  opKey.className = 'receipt-card__key';
+                  opKey.textContent = 'operator';
+                  var opVal = document.createElement('span');
+                  opVal.className = 'receipt-card__value';
+                  opVal.textContent = (operator.operator_id || 'unknown') + (operator.operator_key_fingerprint ? ' (' + truncate(operator.operator_key_fingerprint, 12) + ')' : '');
+                  opLine.appendChild(opKey);
+                  opLine.appendChild(opVal);
+                  rcSection.appendChild(opLine);
+                }
+
+                // Session ID
+                var sessionLine = document.createElement('div');
+                sessionLine.className = 'receipt-card__line';
+                var sKey = document.createElement('span');
+                sKey.className = 'receipt-card__key';
+                sKey.textContent = 'session_id';
+                var sVal = document.createElement('span');
+                sVal.className = 'receipt-card__value';
+                sVal.textContent = truncate(receiptV2.session_id || '', 24);
+                sessionLine.appendChild(sKey);
+                sessionLine.appendChild(sVal);
+                rcSection.appendChild(sessionLine);
+
+                // ── Commitments section (cryptographically verifiable) ──
+                var commitments = receiptV2.commitments || {};
+                var commSection = document.createElement('div');
+                commSection.className = 'receipt-card__section receipt-card__section--commitments';
+                var commLabel = document.createElement('div');
+                commLabel.className = 'receipt-card__section-label';
+                commLabel.textContent = '\u2713 Cryptographically verifiable commitments';
+                commSection.appendChild(commLabel);
+                var commFields = [
+                  ['contract hash', commitments.contract_hash],
+                  ['schema hash', commitments.output_schema_hash || commitments.schema_hash],
+                  ['output hash', commitments.output_hash],
+                  ['template hash', commitments.prompt_template_hash],
+                ];
+                var inputComm = commitments.input_commitments;
+                if (inputComm && typeof inputComm === 'object') {
+                  var inputKeys = Object.keys(inputComm);
+                  for (var ik = 0; ik < inputKeys.length; ik++) {
+                    var ic = inputComm[inputKeys[ik]];
+                    var icDisplay = (ic && typeof ic === 'object') ? (ic.input_hash || ic.hash || JSON.stringify(ic)) : ic;
+                    commFields.push(['input: ' + inputKeys[ik], icDisplay]);
+                  }
+                }
+                for (var ci = 0; ci < commFields.length; ci++) {
+                  if (!commFields[ci][1]) continue;
+                  var cLine = document.createElement('div');
+                  cLine.className = 'receipt-card__line';
+                  var cKey = document.createElement('span');
+                  cKey.className = 'receipt-card__key';
+                  cKey.textContent = commFields[ci][0];
+                  var cVal = document.createElement('span');
+                  cVal.className = 'receipt-card__value';
+                  cVal.textContent = truncate(String(commFields[ci][1]), 16);
+                  cLine.appendChild(cKey);
+                  cLine.appendChild(cVal);
+                  commSection.appendChild(cLine);
+                }
+                rcSection.appendChild(commSection);
+
+                // ── Claims section (relay-asserted, not independently verifiable) ──
+                var claims = receiptV2.claims || {};
+                var claimsSection = document.createElement('div');
+                claimsSection.className = 'receipt-card__section receipt-card__section--claims';
+                var claimsLabel = document.createElement('div');
+                claimsLabel.className = 'receipt-card__section-label';
+                claimsLabel.textContent = '\u24D8 Relay-asserted claims (not independently verifiable)';
+                claimsSection.appendChild(claimsLabel);
+                var modelAsserted = claims.model_identity_asserted || claims.model_identity;
+                if (modelAsserted) {
+                  var mLine = document.createElement('div');
+                  mLine.className = 'receipt-card__line';
+                  var mKey = document.createElement('span');
+                  mKey.className = 'receipt-card__key';
+                  mKey.textContent = 'model';
+                  var mVal = document.createElement('span');
+                  mVal.className = 'receipt-card__value';
+                  if (typeof modelAsserted === 'object') {
+                    mVal.textContent = (modelAsserted.provider || '') + ' / ' + (modelAsserted.model_id || '');
+                  } else {
+                    mVal.textContent = String(modelAsserted);
+                  }
+                  mLine.appendChild(mKey);
+                  mLine.appendChild(mVal);
+                  claimsSection.appendChild(mLine);
+                }
+                if (claims.budget_enforcement_mode) {
+                  var bLine = document.createElement('div');
+                  bLine.className = 'receipt-card__line';
+                  var bKey = document.createElement('span');
+                  bKey.className = 'receipt-card__key';
+                  bKey.textContent = 'enforcement';
+                  var bVal = document.createElement('span');
+                  bVal.className = 'receipt-card__value';
+                  bVal.textContent = String(claims.budget_enforcement_mode);
+                  bLine.appendChild(bKey);
+                  bLine.appendChild(bVal);
+                  claimsSection.appendChild(bLine);
+                }
+                var tokenUsage = claims.token_usage;
+                if (tokenUsage && typeof tokenUsage === 'object') {
+                  var tLine = document.createElement('div');
+                  tLine.className = 'receipt-card__line';
+                  var tKey = document.createElement('span');
+                  tKey.className = 'receipt-card__key';
+                  tKey.textContent = 'tokens';
+                  var tVal = document.createElement('span');
+                  tVal.className = 'receipt-card__value';
+                  tVal.textContent = (tokenUsage.prompt_tokens || '?') + ' in / ' + (tokenUsage.completion_tokens || '?') + ' out';
+                  tLine.appendChild(tKey);
+                  tLine.appendChild(tVal);
+                  claimsSection.appendChild(tLine);
+                }
+                if (claims.output_entropy_bits !== undefined) {
+                  var eLine = document.createElement('div');
+                  eLine.className = 'receipt-card__line';
+                  var eKey = document.createElement('span');
+                  eKey.className = 'receipt-card__key';
+                  eKey.textContent = 'entropy bits';
+                  var eVal = document.createElement('span');
+                  eVal.className = 'receipt-card__value';
+                  eVal.textContent = String(claims.output_entropy_bits);
+                  eLine.appendChild(eKey);
+                  eLine.appendChild(eVal);
+                  claimsSection.appendChild(eLine);
+                }
+                rcSection.appendChild(claimsSection);
+
+                // Verify button — sends the full v2 receipt (signature is an object)
+                var verifyReceipt = receiptV2;
+                var verifyBtn = document.createElement('button');
+                verifyBtn.className = 'receipt-card__verify-btn';
+                verifyBtn.textContent = 'Verify Signature';
+                var verifyStatus = document.createElement('span');
+                verifyStatus.className = 'receipt-card__verify-status';
+
+                verifyBtn.addEventListener('click', (function (vReceipt, vBtn, vStatus) {
+                  return function () {
+                    vBtn.disabled = true;
+                    vBtn.textContent = 'Verifying\u2026';
+                    fetch('/api/verify-receipt', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ receipt: vReceipt }),
+                    })
+                      .then(function (r) { return r.json(); })
+                      .then(function (res) {
+                        vBtn.textContent = 'Verify Signature';
+                        vBtn.disabled = false;
+                        if (res.verified) {
+                          vStatus.className = 'receipt-card__verify-status verified';
+                          vStatus.textContent = '\u2713 Signature valid (v' + (res.schema_version || '2') + ')';
+                        } else {
+                          vStatus.className = 'receipt-card__verify-status failed';
+                          vStatus.textContent = '\u2717 ' + ((res.errors && res.errors[0]) || res.error || 'Verification failed');
+                        }
+                      })
+                      .catch(function () {
+                        vBtn.textContent = 'Verify Signature';
+                        vBtn.disabled = false;
+                        vStatus.className = 'receipt-card__verify-status failed';
+                        vStatus.textContent = '\u2717 Request failed';
+                      });
+                  };
+                })(verifyReceipt, verifyBtn, verifyStatus));
+
+                var verifyRow = document.createElement('div');
+                verifyRow.className = 'receipt-card__verify-row';
+                verifyRow.appendChild(verifyBtn);
+                verifyRow.appendChild(verifyStatus);
+                rcSection.appendChild(verifyRow);
+
+              } else if (receipt) {
+                // ── v1 receipt: flat fields (backward compat) ──
+                var rcLabel = document.createElement('div');
+                rcLabel.className = 'receipt-card__label';
+                rcLabel.textContent = 'CRYPTOGRAPHIC RECEIPT (v1)';
                 rcSection.appendChild(rcLabel);
 
                 var rcFields = [
@@ -364,7 +566,7 @@ var VaultCardManager = (function () {
                   rcSection.appendChild(rcLine);
                 }
 
-                // Verify button
+                // Verify button — v1 sends the full receipt (signature field will be stripped server-side)
                 if (receiptSignature) {
                   var verifyBtn = document.createElement('button');
                   verifyBtn.className = 'receipt-card__verify-btn';
@@ -372,33 +574,35 @@ var VaultCardManager = (function () {
                   var verifyStatus = document.createElement('span');
                   verifyStatus.className = 'receipt-card__verify-status';
 
-                  verifyBtn.addEventListener('click', function () {
-                    verifyBtn.disabled = true;
-                    verifyBtn.textContent = 'Verifying\u2026';
-                    fetch('/api/verify-receipt', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ receipt: receipt, receipt_signature: receiptSignature }),
-                    })
-                      .then(function (r) { return r.json(); })
-                      .then(function (res) {
-                        verifyBtn.textContent = 'Verify Signature';
-                        verifyBtn.disabled = false;
-                        if (res.verified) {
-                          verifyStatus.className = 'receipt-card__verify-status verified';
-                          verifyStatus.textContent = '\u2713 Signature valid';
-                        } else {
-                          verifyStatus.className = 'receipt-card__verify-status failed';
-                          verifyStatus.textContent = '\u2717 ' + (res.error || 'Verification failed');
-                        }
+                  verifyBtn.addEventListener('click', (function (vReceipt, vBtn, vStatus) {
+                    return function () {
+                      vBtn.disabled = true;
+                      vBtn.textContent = 'Verifying\u2026';
+                      fetch('/api/verify-receipt', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ receipt: vReceipt }),
                       })
-                      .catch(function () {
-                        verifyBtn.textContent = 'Verify Signature';
-                        verifyBtn.disabled = false;
-                        verifyStatus.className = 'receipt-card__verify-status failed';
-                        verifyStatus.textContent = '\u2717 Request failed';
-                      });
-                  });
+                        .then(function (r) { return r.json(); })
+                        .then(function (res) {
+                          vBtn.textContent = 'Verify Signature';
+                          vBtn.disabled = false;
+                          if (res.verified) {
+                            vStatus.className = 'receipt-card__verify-status verified';
+                            vStatus.textContent = '\u2713 Signature valid (v1)';
+                          } else {
+                            vStatus.className = 'receipt-card__verify-status failed';
+                            vStatus.textContent = '\u2717 ' + ((res.errors && res.errors[0]) || res.error || 'Verification failed');
+                          }
+                        })
+                        .catch(function () {
+                          vBtn.textContent = 'Verify Signature';
+                          vBtn.disabled = false;
+                          vStatus.className = 'receipt-card__verify-status failed';
+                          vStatus.textContent = '\u2717 Request failed';
+                        });
+                    };
+                  })(receipt, verifyBtn, verifyStatus));
 
                   var verifyRow = document.createElement('div');
                   verifyRow.className = 'receipt-card__verify-row';
@@ -406,9 +610,9 @@ var VaultCardManager = (function () {
                   verifyRow.appendChild(verifyStatus);
                   rcSection.appendChild(verifyRow);
                 }
-
-                rcBody.appendChild(rcSection);
               }
+
+              rcBody.appendChild(rcSection);
             }
 
             // Notify chat panels
@@ -479,7 +683,7 @@ var VaultCardManager = (function () {
         break;
       }
 
-      // system events — relay_policy creates enforcement card, others suppressed
+      // system events — relay_policy and contract_enforcement create cards
       case 'system': {
         if (event.agent === 'relay_policy') {
           var p = event.payload;
@@ -488,15 +692,61 @@ var VaultCardManager = (function () {
           addLine(card, 'policy hash', truncate(String(p.policy_hash || ''), 16));
           var allowlist = p.model_profile_allowlist;
           if (Array.isArray(allowlist) && allowlist.length > 0) {
-            addLine(card, 'model constraint', allowlist.join(', '));
+            addLine(card, 'model profiles', allowlist.join(', '));
           }
+          var providerAllowlist = p.provider_allowlist;
+          if (Array.isArray(providerAllowlist) && providerAllowlist.length > 0) {
+            addLine(card, 'providers', providerAllowlist.join(', '));
+          }
+
+          // Human-readable rule descriptions
+          var RULE_DESCRIPTIONS = {
+            no_digits: 'blocks decimal digits (Unicode Nd) in output strings',
+            no_currency_symbols: 'blocks currency symbols (Unicode Sc) in output strings',
+          };
           var rules = p.enforcement_rules;
-          if (Array.isArray(rules) && rules.length > 0) {
-            addLine(card, 'rules', rules.join(', '));
+          if (Array.isArray(rules)) {
+            for (var ri = 0; ri < rules.length; ri++) {
+              var ruleObj = rules[ri];
+              var ruleId = typeof ruleObj === 'string' ? ruleObj : (ruleObj.rule_id || '');
+              var ruleClass = typeof ruleObj === 'object' ? (ruleObj.classification || '') : '';
+              var ruleDesc = RULE_DESCRIPTIONS[ruleId] || ruleId;
+              var ruleDisplay = ruleId + ' \u2014 ' + ruleDesc;
+              if (ruleClass) ruleDisplay += ' [' + ruleClass + ']';
+              addLine(card, 'rule', ruleDisplay);
+            }
           }
+
+          // Entropy constraints
+          var entropy = p.entropy_constraints;
+          if (entropy) {
+            addLine(card, 'entropy budget', (entropy.budget_bits || '?') + ' bits (' + (entropy.classification || 'ADVISORY') + ')');
+          }
+
           addLine(card, 'relay model', String(p.model_id || 'unknown'));
           addLine(card, 'signing key', truncate(String(p.verifying_key_hex || ''), 20));
           addStatus(card, true, 'Enforcement policy bound');
+        }
+
+        // Contract enforcement parameters (emitted at session start)
+        if (event.agent === 'contract_enforcement') {
+          var c = event.payload;
+          var card = addCard('Contract Enforcement', 'vault-card--contract vault-card--expanded');
+          addLine(card, 'version', 'v2');
+          addLine(card, 'purpose', String(c.purpose_code || 'unknown'));
+          if (c.output_schema_id) addLine(card, 'output schema', String(c.output_schema_id));
+          if (c.enforcement_policy_hash) addLine(card, 'policy hash', truncate(String(c.enforcement_policy_hash), 16));
+          if (c.output_schema_hash) addLine(card, 'schema hash', truncate(String(c.output_schema_hash), 16));
+          if (c.entropy_enforcement) addLine(card, 'entropy mode', String(c.entropy_enforcement));
+          if (c.max_completion_tokens) addLine(card, 'max tokens', String(c.max_completion_tokens));
+          var modelConstraints = c.model_constraints;
+          if (modelConstraints) {
+            if (modelConstraints.allowed_providers) addLine(card, 'allowed providers', modelConstraints.allowed_providers.join(', '));
+            if (modelConstraints.allowed_models) addLine(card, 'allowed models', modelConstraints.allowed_models.join(', '));
+          }
+          if (c.session_ttl_secs) addLine(card, 'session TTL', c.session_ttl_secs + 's');
+          if (c.invite_ttl_secs) addLine(card, 'invite TTL', c.invite_ttl_secs + 's');
+          addStatus(card, true, 'Contract bound');
         }
         break;
       }

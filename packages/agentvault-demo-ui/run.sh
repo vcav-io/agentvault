@@ -194,7 +194,7 @@ ${BOLD}  AgentVault Demo UI${NC}
 ${BOLD}═══════════════════════════════════════════════════════════════${NC}
 
   Open ${BOLD}http://localhost:3200${NC} in your browser.
-  Click "Start Demo" to run the co-founder mediation scenario.
+  Click "Start Protocol" to run the co-founder mediation scenario.
 
   ${BOLD}Relay:${NC}     ${RELAY_URL}
   ${BOLD}Demo UI:${NC}   http://localhost:3200

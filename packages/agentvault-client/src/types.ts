@@ -45,6 +45,8 @@ export interface SessionOutputResponse {
   output?: unknown;
   receipt?: Receipt;
   receipt_signature?: string;
+  /** v2 receipt with commitments/claims split and structured signature. */
+  receipt_v2?: Record<string, unknown>;
 }
 
 // ── Inbox Types ──────────────────────────────────────────────────────────

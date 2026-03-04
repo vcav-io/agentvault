@@ -15,6 +15,11 @@ import { bytesToHex } from '@noble/hashes/utils';
  * Full relay contract as sent to the relay. All fields must be present
  * (including nulls) to ensure hash parity with Rust serde serialization.
  */
+export interface ModelConstraints {
+  allowed_providers: string[];
+  allowed_models: string[];
+}
+
 export interface RelayContract {
   purpose_code: string;
   output_schema_id: string;
@@ -25,6 +30,22 @@ export interface RelayContract {
   timing_class: string | null;
   metadata: Record<string, string> | null;
   model_profile_id: string | null;
+
+  // v2 contract fields (optional — Rust uses skip_serializing_if = "Option::is_none")
+  /** Content hash of the enforcement policy governing this session. */
+  enforcement_policy_hash?: string;
+  /** SHA-256 of JCS(output_schema) — allows schema lookup by hash. */
+  output_schema_hash?: string;
+  /** Model constraints (allowed providers/models). */
+  model_constraints?: ModelConstraints;
+  /** Per-session max completion tokens. */
+  max_completion_tokens?: number;
+  /** Session TTL in seconds. */
+  session_ttl_secs?: number;
+  /** Invite TTL in seconds. */
+  invite_ttl_secs?: number;
+  /** Entropy enforcement mode: Advisory | Gate | Strict. */
+  entropy_enforcement?: string;
 }
 
 type ContractTemplate = Omit<RelayContract, 'participants'>;
@@ -84,6 +105,9 @@ const TEMPLATES: Record<string, ContractTemplate> = {
     model_profile_id: 'api-claude-sonnet-v1',
     metadata: { scenario: 'cofounder-mediation', version: '3' },
     timing_class: null,
+    // v2 fields — enforcement_policy_hash from relay_policies.lock
+    enforcement_policy_hash: 'b977379e7787cd2165e2dcf9d790ed339cbc90df481f343c3bd0fec4ec5fe459',
+    entropy_enforcement: 'Advisory',
   },
   COMPATIBILITY: {
     purpose_code: 'COMPATIBILITY',
@@ -171,8 +195,17 @@ const TEMPLATES: Record<string, ContractTemplate> = {
     model_profile_id: 'api-claude-sonnet-v1',
     metadata: { scenario: 'scheduling-compatibility', version: '2' },
     timing_class: null,
+    // v2 fields — enforcement_policy_hash from relay_policies.lock
+    enforcement_policy_hash: 'b977379e7787cd2165e2dcf9d790ed339cbc90df481f343c3bd0fec4ec5fe459',
+    entropy_enforcement: 'Advisory',
   },
 };
+
+// Compute and bind output_schema_hash for each template at module init
+for (const key of Object.keys(TEMPLATES)) {
+  const tpl = TEMPLATES[key];
+  tpl.output_schema_hash = computeOutputSchemaHash(tpl.output_schema);
+}
 
 const WHITESPACE_RE = /\s/;
 

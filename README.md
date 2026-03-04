@@ -23,7 +23,7 @@ echo "GEMINI_API_KEY=AIza..." > .env
 # 2. Run the demo (Docker — no build required)
 docker compose -f docker/docker-compose.demo.yml up
 
-# 3. Open http://localhost:3200 and click "Start Demo"
+# 3. Open http://localhost:3200 and click "Start Protocol"
 ```
 
 No Docker? Build from source: `./run-demo.sh` (requires Rust 1.88+ and Node.js).

@@ -11,10 +11,12 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { config as dotenvConfig } from 'dotenv';
 import { ed25519 } from '@noble/curves/ed25519';
-import { sha256 } from '@noble/hashes/sha256';
-import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
+import { bytesToHex } from '@noble/hashes/utils';
 import { randomBytes } from 'node:crypto';
-import { canonicalize } from 'json-canonicalize';
+import {
+  verifyReceipt,
+  fetchRelayPublicKey,
+} from 'agentvault-client/verify';
 
 import {
   createToolRegistry,
@@ -31,6 +33,11 @@ import type {
   TrustedAgent,
 } from 'agentvault-mcp-server';
 import { signMessage, DOMAIN_PREFIXES } from 'agentvault-mcp-server';
+import {
+  buildRelayContract,
+  computeRelayContractHash,
+  computeOutputSchemaHash,
+} from 'agentvault-client/contracts';
 
 import { EventBus } from './events.js';
 import { replayToSSE, listRuns } from './replay.js';
@@ -124,7 +131,7 @@ function createProvider(): LLMProvider {
 /** Default heartbeat models per provider — cheapest with tool use support. */
 const HEARTBEAT_DEFAULTS: Record<string, string> = {
   gemini: 'gemini-2.5-flash-lite',
-  openai: 'gpt-4o-mini',
+  openai: 'gpt-4.1-nano',
   anthropic: 'claude-haiku-4-5-20251001',
 };
 
@@ -368,7 +375,6 @@ app.get('/api/config', (_req, res) => {
       models: [
         { id: 'gemini-2.5-flash', tier: 'mid', default: true },
         { id: 'gemini-2.5-flash-lite', tier: 'budget' },
-        { id: 'gemini-3-flash-preview', tier: 'budget' },
       ],
     });
   }
@@ -378,7 +384,6 @@ app.get('/api/config', (_req, res) => {
       models: [
         { id: 'gpt-4.1-mini', tier: 'mid', default: true },
         { id: 'gpt-4.1-nano', tier: 'budget' },
-        { id: 'gpt-5-mini', tier: 'budget' },
       ],
     });
   }
@@ -449,7 +454,9 @@ app.post('/api/start', async (req, res) => {
             policy_id: policySummary?.policy_id ?? 'unknown',
             policy_hash: policySummary?.policy_hash ?? 'unknown',
             model_profile_allowlist: policySummary?.model_profile_allowlist ?? [],
+            provider_allowlist: policySummary?.provider_allowlist ?? [],
             enforcement_rules: policySummary?.enforcement_rules ?? [],
+            entropy_constraints: policySummary?.entropy_constraints ?? null,
             verifying_key_hex: health.verifying_key_hex ?? 'unknown',
             model_id: health.model_id ?? 'unknown',
           },
@@ -457,6 +464,34 @@ app.post('/api/start', async (req, res) => {
       }
     } catch (err) {
       console.warn('Failed to fetch relay health for policy event:', err instanceof Error ? err.message : String(err));
+    }
+
+    // Emit contract enforcement parameters for the default MEDIATION contract
+    try {
+      const mediationContract = buildRelayContract('MEDIATION', ['alice', 'bob']);
+      if (mediationContract) {
+        const schemaHash = computeOutputSchemaHash(mediationContract.output_schema);
+        events.emit({
+          ts: new Date().toISOString(),
+          type: 'system',
+          agent: 'contract_enforcement',
+          payload: {
+            purpose_code: mediationContract.purpose_code,
+            output_schema_id: mediationContract.output_schema_id,
+            output_schema_hash: schemaHash,
+            enforcement_policy_hash: mediationContract.enforcement_policy_hash ?? null,
+            entropy_enforcement: mediationContract.entropy_enforcement ?? 'Advisory',
+            entropy_budget_bits: mediationContract.entropy_budget_bits,
+            max_completion_tokens: mediationContract.max_completion_tokens ?? null,
+            model_constraints: mediationContract.model_constraints ?? null,
+            session_ttl_secs: mediationContract.session_ttl_secs ?? null,
+            invite_ttl_secs: mediationContract.invite_ttl_secs ?? null,
+            model_profile_id: mediationContract.model_profile_id,
+          },
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to emit contract enforcement event:', err instanceof Error ? err.message : String(err));
     }
 
     // Load prompts — use request body if provided, else fall back to files
@@ -543,45 +578,35 @@ app.post('/api/message', async (req, res) => {
   });
 });
 
-// Verify receipt signature — Ed25519 over JCS-canonicalized receipt
+// Verify receipt signature — supports both v1 and v2 receipts via shared verifier
 app.post('/api/verify-receipt', async (req, res) => {
   try {
-    const { receipt, receipt_signature } = req.body as {
+    const { receipt } = req.body as {
       receipt?: Record<string, unknown>;
-      receipt_signature?: string;
     };
 
-    if (!receipt || !receipt_signature) {
-      res.status(400).json({ verified: false, error: 'receipt and receipt_signature are required' });
+    if (!receipt) {
+      res.status(400).json({ verified: false, error: 'receipt is required' });
       return;
     }
 
-    // Fetch relay public key
-    const healthRes = await fetch(`${RELAY_URL}/health`);
-    if (!healthRes.ok) {
-      res.json({ verified: false, error: 'Could not fetch relay public key' });
-      return;
-    }
-    const health = await healthRes.json() as Record<string, unknown>;
-    const pubKeyHex = health.verifying_key_hex as string | undefined;
-    if (!pubKeyHex) {
-      res.json({ verified: false, error: 'Relay did not provide verifying_key_hex' });
+    let pubKeyHex: string;
+    try {
+      pubKeyHex = await fetchRelayPublicKey(RELAY_URL);
+    } catch (err) {
+      res.json({ verified: false, error: `Could not fetch relay public key: ${err instanceof Error ? err.message : String(err)}` });
       return;
     }
 
-    // Strip the `signature` field — Rust signs the UnsignedReceipt (all fields except signature)
-    const { signature: _sig, ...unsignedReceipt } = receipt;
-
-    // Verification: message = "VCAV-RECEIPT-V1:" + JCS(unsigned_receipt), hash = sha256(message)
-    const canonical = canonicalize(unsignedReceipt);
-    const message = `VCAV-RECEIPT-V1:${canonical}`;
-    const hash = sha256(new TextEncoder().encode(message));
-
-    const sigBytes = hexToBytes(receipt_signature);
-    const pubKeyBytes = hexToBytes(pubKeyHex);
-    const valid = ed25519.verify(sigBytes, hash, pubKeyBytes);
-
-    res.json({ verified: valid });
+    const result = verifyReceipt(receipt, pubKeyHex);
+    res.json({
+      verified: result.valid,
+      schema_version: result.schema_version,
+      assurance_level: result.assurance_level,
+      operator_id: result.operator_id,
+      errors: result.errors,
+      warnings: result.warnings,
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     res.json({ verified: false, error: msg });
