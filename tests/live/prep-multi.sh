@@ -17,7 +17,7 @@ set -euo pipefail
 #   ./tests/live/prep-multi.sh <experiment_id> <session_number> [--mock]
 #
 # Environment:
-#   ANTHROPIC_API_KEY, OPENAI_API_KEY, VCAV_MOCK, VCAV_TEST_DIR, VCAV_PORT
+#   ANTHROPIC_API_KEY, OPENAI_API_KEY, AV_MOCK, AV_TEST_DIR, AV_PORT
 # ---------------------------------------------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,10 +36,10 @@ source "${HARNESS_DIR}/provision.sh"
 # shellcheck source=harness/workspace.sh
 source "${HARNESS_DIR}/workspace.sh"
 
-RELAY_PORT="${VCAV_PORT:-3100}"
-VCAV_TEST_BASE="${VCAV_TEST_DIR:-${HOME}/vcav-test}"
-ALICE_DIR="${VCAV_TEST_BASE}/alice"
-BOB_DIR="${VCAV_TEST_BASE}/bob"
+RELAY_PORT="${AV_PORT:-3100}"
+AV_TEST_BASE="${AV_TEST_DIR:-${HOME}/vcav-test}"
+ALICE_DIR="${AV_TEST_BASE}/alice"
+BOB_DIR="${AV_TEST_BASE}/bob"
 
 # ---------------------------------------------------------------------------
 # Usage
@@ -373,9 +373,9 @@ EOF
   setup_cleanup_trap
 
   # --- Generate relay signing key if not set --------------------------------
-  if [[ -z "${VCAV_SIGNING_KEY_HEX:-}" ]]; then
-    export VCAV_SIGNING_KEY_HEX
-    VCAV_SIGNING_KEY_HEX="$(openssl rand -hex 32)"
+  if [[ -z "${AV_SIGNING_KEY_HEX:-}" ]]; then
+    export AV_SIGNING_KEY_HEX
+    AV_SIGNING_KEY_HEX="$(openssl rand -hex 32)"
     log_info "Generated relay signing key"
   fi
 
@@ -419,7 +419,7 @@ EOF
 
   # --- Provider display helper (matches prep.sh) ----------------------------
   _provider_display() {
-    if [[ "${VCAV_MOCK:-}" == "1" ]]; then echo "mock"
+    if [[ "${AV_MOCK:-}" == "1" ]]; then echo "mock"
     elif [[ -n "${OPENAI_API_KEY:-}" ]]; then echo "openai (via proxy)"
     elif [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then echo "anthropic (direct)"
     else echo "unknown"; fi
@@ -536,7 +536,7 @@ case "$1" in
           shift 2
           ;;
         --mock)
-          export VCAV_MOCK=1
+          export AV_MOCK=1
           FLAG_MOCK=1
           shift
           ;;
@@ -608,7 +608,7 @@ case "$1" in
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --mock)
-          export VCAV_MOCK=1
+          export AV_MOCK=1
           shift
           ;;
         *)

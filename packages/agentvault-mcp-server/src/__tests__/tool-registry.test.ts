@@ -52,8 +52,8 @@ function createMockTransport(invites: AfalInviteMessage[] = []): AfalTransport {
 beforeEach(() => {
   _resetHandlesForTesting();
   _setDiscoverPollConfigForTesting(0, 0);
-  process.env['VCAV_RELAY_URL'] = 'http://relay.test';
-  process.env['VCAV_AGENT_ID'] = 'test-agent';
+  process.env['AV_RELAY_URL'] = 'http://relay.test';
+  process.env['AV_AGENT_ID'] = 'test-agent';
 });
 
 afterEach(() => {

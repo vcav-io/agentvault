@@ -232,7 +232,7 @@ A multi-step protocol where each participant submits independently:
 
 Submit tokens are consumed on use. Resubmission returns 401 (constant-shape). All
 tokens for a session share the same session TTL. Sessions expire after
-`VCAV_SESSION_TTL_SECS` (default: 600 seconds); expired sessions return 401 for all
+`AV_SESSION_TTL_SECS` (default: 600 seconds); expired sessions return 401 for all
 subsequent requests. Read tokens remain valid until the session TTL elapses or the
 session store reaper removes a terminal session, whichever comes first.
 

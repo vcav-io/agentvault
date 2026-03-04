@@ -122,9 +122,9 @@ api_key_for_provider() {
 # Relay model env var per provider
 model_env_var_for_provider() {
   case "$1" in
-    anthropic) echo "VCAV_MODEL_ID" ;;
-    openai)    echo "VCAV_OPENAI_MODEL_ID" ;;
-    gemini)    echo "VCAV_GEMINI_MODEL_ID" ;;
+    anthropic) echo "AV_MODEL_ID" ;;
+    openai)    echo "AV_OPENAI_MODEL_ID" ;;
+    gemini)    echo "AV_GEMINI_MODEL_ID" ;;
     *)         echo "" ;;
   esac
 }
@@ -395,10 +395,10 @@ for current_provider in ${PROVIDERS}; do
     # not Anthropic by default when all keys are present.
     relay_log="${SWEEP_DIR}/${current_provider}_${relay_model}_relay.log"
     relay_env_args=(
-      "VCAV_PORT=${RELAY_PORT}"
-      "VCAV_PROMPT_PROGRAM_DIR=${REPO_ROOT}/packages/agentvault-relay/prompt_programs"
-      "VCAV_ENV=dev"
-      "VCAV_INBOX_AUTH=off"
+      "AV_PORT=${RELAY_PORT}"
+      "AV_PROMPT_PROGRAM_DIR=${REPO_ROOT}/packages/agentvault-relay/prompt_programs"
+      "AV_ENV=dev"
+      "AV_INBOX_AUTH=off"
       "${model_env}=${relay_model}"
     )
     # Set ONLY the current provider's key.
@@ -435,7 +435,7 @@ for current_provider in ${PROVIDERS}; do
     demo_log="${SWEEP_DIR}/${current_provider}_${relay_model}_demo.log"
     env \
       DEMO_PORT="${DEMO_PORT}" \
-      VCAV_RELAY_URL="${RELAY_URL}" \
+      AV_RELAY_URL="${RELAY_URL}" \
       ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
       OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
       GEMINI_API_KEY="${GEMINI_API_KEY:-}" \

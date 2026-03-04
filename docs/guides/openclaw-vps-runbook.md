@@ -29,18 +29,18 @@ Set these on each VPS before starting the MCP server. Values differ per host.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `VCAV_AGENT_ID` | Yes | Unique agent identifier for this host (e.g. `alice-agent`) |
-| `VCAV_RELAY_URL` | Yes | Base URL of the AgentVault relay (e.g. `https://relay.example.com`) |
-| `VCAV_AFAL_SEED_HEX` | Yes (AFAL) | Ed25519 seed as 64-char hex — enables AFAL direct transport and INITIATE/RESPOND modes. **Secret: do not commit to version control.** Generate with `openssl rand -hex 32`. |
-| `VCAV_AFAL_PEER_DESCRIPTOR_URL` | INITIATE mode | Peer's AFAL descriptor URL (e.g. `https://bob.example.com:9100/afal/descriptor`) — used by initiator to discover the peer |
-| `VCAV_KNOWN_AGENTS` | Yes | JSON array of peer agents for alias resolution (see format below) |
-| `VCAV_RESUME_TOKEN_SECRET` | Recommended | HMAC secret for signing resume tokens. Generate with `openssl rand -hex 32` |
-| `VCAV_AFAL_HTTP_PORT` | RESPOND mode | Port for AFAL HTTP server — enables inbox for incoming invites |
-| `VCAV_AFAL_BIND_ADDRESS` | Optional | Bind address for AFAL HTTP server (default: `127.0.0.1`) |
-| `VCAV_AFAL_TRUSTED_AGENTS` | Optional | JSON array of trusted agents with their public keys for signature verification |
-| `VCAV_AFAL_ALLOWED_PURPOSES` | Optional | Comma-separated allowed purposes (default: `MEDIATION`). Example: `MEDIATION,COMPATIBILITY` |
+| `AV_AGENT_ID` | Yes | Unique agent identifier for this host (e.g. `alice-agent`) |
+| `AV_RELAY_URL` | Yes | Base URL of the AgentVault relay (e.g. `https://relay.example.com`) |
+| `AV_AFAL_SEED_HEX` | Yes (AFAL) | Ed25519 seed as 64-char hex — enables AFAL direct transport and INITIATE/RESPOND modes. **Secret: do not commit to version control.** Generate with `openssl rand -hex 32`. |
+| `AV_AFAL_PEER_DESCRIPTOR_URL` | INITIATE mode | Peer's AFAL descriptor URL (e.g. `https://bob.example.com:9100/afal/descriptor`) — used by initiator to discover the peer |
+| `AV_KNOWN_AGENTS` | Yes | JSON array of peer agents for alias resolution (see format below) |
+| `AV_RESUME_TOKEN_SECRET` | Recommended | HMAC secret for signing resume tokens. Generate with `openssl rand -hex 32` |
+| `AV_AFAL_HTTP_PORT` | RESPOND mode | Port for AFAL HTTP server — enables inbox for incoming invites |
+| `AV_AFAL_BIND_ADDRESS` | Optional | Bind address for AFAL HTTP server (default: `127.0.0.1`) |
+| `AV_AFAL_TRUSTED_AGENTS` | Optional | JSON array of trusted agents with their public keys for signature verification |
+| `AV_AFAL_ALLOWED_PURPOSES` | Optional | Comma-separated allowed purposes (default: `MEDIATION`). Example: `MEDIATION,COMPATIBILITY` |
 
-### VCAV_KNOWN_AGENTS format
+### AV_KNOWN_AGENTS format
 
 ```json
 [
@@ -51,10 +51,10 @@ Set these on each VPS before starting the MCP server. Values differ per host.
 ]
 ```
 
-Note: `VCAV_KNOWN_AGENTS` entries have only `agent_id` and `aliases`. The peer's
-descriptor URL is configured separately via `VCAV_AFAL_PEER_DESCRIPTOR_URL`.
+Note: `AV_KNOWN_AGENTS` entries have only `agent_id` and `aliases`. The peer's
+descriptor URL is configured separately via `AV_AFAL_PEER_DESCRIPTOR_URL`.
 
-### VCAV_AFAL_TRUSTED_AGENTS format
+### AV_AFAL_TRUSTED_AGENTS format
 
 ```json
 [
@@ -71,7 +71,7 @@ Generate a public key from a seed:
 node -e "
 const { ed25519 } = require('@noble/curves/ed25519');
 const { hexToBytes, bytesToHex } = require('@noble/hashes/utils');
-const seed = process.env.VCAV_AFAL_SEED_HEX;
+const seed = process.env.AV_AFAL_SEED_HEX;
 console.log(bytesToHex(ed25519.getPublicKey(hexToBytes(seed))));
 "
 ```
@@ -144,16 +144,16 @@ Add the AgentVault MCP server to mcporter's configuration. Create or update
       "command": "agentvault-mcp-server",
       "args": [],
       "env": {
-        "VCAV_AGENT_ID": "alice-agent",
-        "VCAV_RELAY_URL": "https://relay.example.com",
-        "VCAV_AFAL_SEED_HEX": "<your-seed-hex>",
-        "VCAV_AFAL_HTTP_PORT": "9100",
-        "VCAV_AFAL_BIND_ADDRESS": "0.0.0.0",
-        "VCAV_AFAL_PEER_DESCRIPTOR_URL": "https://bob.example.com:9100/afal/descriptor",
-        "VCAV_AFAL_ALLOWED_PURPOSES": "MEDIATION,COMPATIBILITY",
-        "VCAV_AFAL_TRUSTED_AGENTS": "[{\"agentId\":\"bob-agent\",\"publicKeyHex\":\"...\"}]",
-        "VCAV_KNOWN_AGENTS": "[{\"agent_id\":\"bob-agent\",\"aliases\":[\"bob\",\"Bob\"]}]",
-        "VCAV_RESUME_TOKEN_SECRET": "<your-secret>"
+        "AV_AGENT_ID": "alice-agent",
+        "AV_RELAY_URL": "https://relay.example.com",
+        "AV_AFAL_SEED_HEX": "<your-seed-hex>",
+        "AV_AFAL_HTTP_PORT": "9100",
+        "AV_AFAL_BIND_ADDRESS": "0.0.0.0",
+        "AV_AFAL_PEER_DESCRIPTOR_URL": "https://bob.example.com:9100/afal/descriptor",
+        "AV_AFAL_ALLOWED_PURPOSES": "MEDIATION,COMPATIBILITY",
+        "AV_AFAL_TRUSTED_AGENTS": "[{\"agentId\":\"bob-agent\",\"publicKeyHex\":\"...\"}]",
+        "AV_KNOWN_AGENTS": "[{\"agent_id\":\"bob-agent\",\"aliases\":[\"bob\",\"Bob\"]}]",
+        "AV_RESUME_TOKEN_SECRET": "<your-secret>"
       }
     }
   }
@@ -214,12 +214,12 @@ Expected output includes both:
 mcporter call agentvault.get_identity '{}'
 ```
 
-Expected: JSON response containing `agent_id` matching `VCAV_AGENT_ID`, and
-`known_agents` array (may be empty if `VCAV_KNOWN_AGENTS` is not set).
+Expected: JSON response containing `agent_id` matching `AV_AGENT_ID`, and
+`known_agents` array (may be empty if `AV_KNOWN_AGENTS` is not set).
 
 ### [ ] AFAL HTTP server reachable (if RESPOND mode enabled)
 
-If `VCAV_AFAL_HTTP_PORT` is set, confirm the endpoint is reachable from the
+If `AV_AFAL_HTTP_PORT` is set, confirm the endpoint is reachable from the
 peer host:
 
 ```bash
@@ -239,7 +239,7 @@ Confirm both tools show full input schemas without errors.
 
 ### [ ] Firewall rules (AFAL direct transport)
 
-Confirm `VCAV_AFAL_HTTP_PORT` is open in the host firewall:
+Confirm `AV_AFAL_HTTP_PORT` is open in the host firewall:
 
 ```bash
 # ufw example
@@ -304,22 +304,22 @@ cat /var/log/agentvault-mcp.log
 
 ### `agentvault.get_identity` returns error
 
-- Check `VCAV_AGENT_ID` is set and non-empty
+- Check `AV_AGENT_ID` is set and non-empty
 - Check the MCP server process is not crashing on startup
 
 ### AFAL transport not activating (INITIATE/RESPOND modes unavailable)
 
-- Confirm `VCAV_AFAL_SEED_HEX` is set (64-char hex, 32 bytes)
-- Confirm `VCAV_AGENT_ID` is set
+- Confirm `AV_AFAL_SEED_HEX` is set (64-char hex, 32 bytes)
+- Confirm `AV_AGENT_ID` is set
 - Check MCP server stderr for: `AFAL Direct Transport active`
 - Without these, only `CREATE`/`JOIN` (legacy) modes are available
 
 ### Invite not received (RESPOND mode stuck)
 
-- Confirm `VCAV_AFAL_HTTP_PORT` is set and the port is open in firewall
-- Confirm the initiator has the correct peer descriptor URL in `VCAV_KNOWN_AGENTS`
-- Confirm `VCAV_AFAL_TRUSTED_AGENTS` includes the initiator's agent ID and public key
-- Check AFAL HTTP server is bound to a reachable address (`VCAV_AFAL_BIND_ADDRESS`)
+- Confirm `AV_AFAL_HTTP_PORT` is set and the port is open in firewall
+- Confirm the initiator has the correct peer descriptor URL in `AV_KNOWN_AGENTS`
+- Confirm `AV_AFAL_TRUSTED_AGENTS` includes the initiator's agent ID and public key
+- Check AFAL HTTP server is bound to a reachable address (`AV_AFAL_BIND_ADDRESS`)
 
 ### Session fails with `state: FAILED`
 

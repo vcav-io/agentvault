@@ -269,7 +269,7 @@ const LOCKFILE_NAME: &str = "relay_policies.lock";
 /// expected content hash.
 ///
 /// **Fail-closed by default**: missing lockfile = startup failure unless
-/// BOTH `VCAV_ENFORCEMENT_LOCKFILE_SKIP=1` AND `VCAV_ENV=dev` are set.
+/// BOTH `AV_ENFORCEMENT_LOCKFILE_SKIP=1` AND `AV_ENV=dev` are set.
 pub fn validate_enforcement_lockfile(dir: &str) -> Result<(), RelayError> {
     let lockfile_path = std::path::Path::new(dir).join(LOCKFILE_NAME);
 
@@ -277,24 +277,24 @@ pub fn validate_enforcement_lockfile(dir: &str) -> Result<(), RelayError> {
         Ok(d) => d,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             // Check dev override: requires BOTH flags
-            let skip = std::env::var("VCAV_ENFORCEMENT_LOCKFILE_SKIP")
+            let skip = std::env::var("AV_ENFORCEMENT_LOCKFILE_SKIP")
                 .map(|v| v == "1")
                 .unwrap_or(false);
-            let is_dev = std::env::var("VCAV_ENV")
+            let is_dev = std::env::var("AV_ENV")
                 .map(|v| v == "dev")
                 .unwrap_or(false);
 
             if skip && is_dev {
                 tracing::warn!(
                     path = %lockfile_path.display(),
-                    "relay_policies.lock not found — skipping enforcement policy lockfile validation (VCAV_ENV=dev override)"
+                    "relay_policies.lock not found — skipping enforcement policy lockfile validation (AV_ENV=dev override)"
                 );
                 return Ok(());
             }
 
             return Err(RelayError::EnforcementPolicy(format!(
                 "relay_policies.lock not found at {} — relay refuses to start without enforcement policy lockfile. \
-                 Set VCAV_ENFORCEMENT_LOCKFILE_SKIP=1 and VCAV_ENV=dev to skip in development.",
+                 Set AV_ENFORCEMENT_LOCKFILE_SKIP=1 and AV_ENV=dev to skip in development.",
                 lockfile_path.display()
             )));
         }
@@ -492,7 +492,7 @@ pub fn generate_enforcement_lockfile(dir: &str) -> Result<(), RelayError> {
 /// Return a no-op enforcement policy used when the lockfile is skipped in dev mode.
 ///
 /// All fields are empty/None — no rules, no allowlists — so every request passes through.
-/// This is only reachable when both `VCAV_ENFORCEMENT_LOCKFILE_SKIP=1` and `VCAV_ENV=dev`
+/// This is only reachable when both `AV_ENFORCEMENT_LOCKFILE_SKIP=1` and `AV_ENV=dev`
 /// are set.
 pub fn dev_skip_policy() -> RelayEnforcementPolicy {
     RelayEnforcementPolicy {
@@ -747,14 +747,14 @@ mod tests {
         // No lockfile written
 
         unsafe {
-            std::env::set_var("VCAV_ENV", "production");
-            std::env::remove_var("VCAV_ENFORCEMENT_LOCKFILE_SKIP");
+            std::env::set_var("AV_ENV", "production");
+            std::env::remove_var("AV_ENFORCEMENT_LOCKFILE_SKIP");
         }
 
         let result = validate_enforcement_lockfile(dir.to_str().unwrap());
 
         unsafe {
-            std::env::remove_var("VCAV_ENV");
+            std::env::remove_var("AV_ENV");
         }
 
         assert!(
@@ -773,20 +773,20 @@ mod tests {
         // No lockfile written
 
         unsafe {
-            std::env::set_var("VCAV_ENFORCEMENT_LOCKFILE_SKIP", "1");
-            std::env::set_var("VCAV_ENV", "dev");
+            std::env::set_var("AV_ENFORCEMENT_LOCKFILE_SKIP", "1");
+            std::env::set_var("AV_ENV", "dev");
         }
 
         let result = validate_enforcement_lockfile(dir.to_str().unwrap());
 
         unsafe {
-            std::env::remove_var("VCAV_ENFORCEMENT_LOCKFILE_SKIP");
-            std::env::remove_var("VCAV_ENV");
+            std::env::remove_var("AV_ENFORCEMENT_LOCKFILE_SKIP");
+            std::env::remove_var("AV_ENV");
         }
 
         assert!(
             result.is_ok(),
-            "missing lockfile with VCAV_ENV=dev + VCAV_ENFORCEMENT_LOCKFILE_SKIP=1 should warn but not fail"
+            "missing lockfile with AV_ENV=dev + AV_ENFORCEMENT_LOCKFILE_SKIP=1 should warn but not fail"
         );
 
         std::fs::remove_dir_all(&dir).ok();
@@ -799,20 +799,20 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         unsafe {
-            std::env::set_var("VCAV_ENFORCEMENT_LOCKFILE_SKIP", "1");
-            std::env::set_var("VCAV_ENV", "production");
+            std::env::set_var("AV_ENFORCEMENT_LOCKFILE_SKIP", "1");
+            std::env::set_var("AV_ENV", "production");
         }
 
         let result = validate_enforcement_lockfile(dir.to_str().unwrap());
 
         unsafe {
-            std::env::remove_var("VCAV_ENFORCEMENT_LOCKFILE_SKIP");
-            std::env::remove_var("VCAV_ENV");
+            std::env::remove_var("AV_ENFORCEMENT_LOCKFILE_SKIP");
+            std::env::remove_var("AV_ENV");
         }
 
         assert!(
             result.is_err(),
-            "VCAV_ENFORCEMENT_LOCKFILE_SKIP=1 without VCAV_ENV=dev should still fail"
+            "AV_ENFORCEMENT_LOCKFILE_SKIP=1 without AV_ENV=dev should still fail"
         );
 
         std::fs::remove_dir_all(&dir).ok();
@@ -828,8 +828,8 @@ mod tests {
         write_policy_file(&dir, &policy);
 
         unsafe {
-            std::env::remove_var("VCAV_ENFORCEMENT_LOCKFILE_SKIP");
-            std::env::remove_var("VCAV_ENV");
+            std::env::remove_var("AV_ENFORCEMENT_LOCKFILE_SKIP");
+            std::env::remove_var("AV_ENV");
         }
 
         generate_enforcement_lockfile(dir.to_str().unwrap()).unwrap();

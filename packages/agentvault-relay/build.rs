@@ -15,5 +15,5 @@ fn main() {
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "unknown".to_string());
 
-    println!("cargo:rustc-env=VCAV_GIT_SHA={sha}");
+    println!("cargo:rustc-env=AV_GIT_SHA={sha}");
 }

@@ -150,7 +150,7 @@ pub struct CapabilitiesResponse {
 // Session metadata (dev-only diagnostic endpoint)
 // ============================================================================
 
-/// Timing data for session phases. Only populated when VCAV_ENV=dev.
+/// Timing data for session phases. Only populated when AV_ENV=dev.
 /// inference_start_at = immediately before provider.call()
 /// inference_end_at = full response received (non-streaming)
 #[derive(Debug, Clone, Serialize)]

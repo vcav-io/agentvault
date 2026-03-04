@@ -94,7 +94,7 @@ JSON
     log_info "Identity keys written to ${run_dir}/identities.json"
   fi
 
-  # VCAV_KNOWN_AGENTS: aliases for get_identity tool (not crypto keys)
+  # AV_KNOWN_AGENTS: aliases for get_identity tool (not crypto keys)
   # Inner quotes escaped for embedding in heredoc JSON string values
   local alice_known_agents='[{\"agent_id\":\"bob\",\"aliases\":[\"Bob\"]}]'
   local bob_known_agents='[{\"agent_id\":\"alice\",\"aliases\":[\"Alice\"]}]'
@@ -113,13 +113,13 @@ JSON
       "command": "node",
       "args": ["${MCP_SERVER_DIST}"],
       "env": {
-        "VCAV_RELAY_URL": "${relay_url}",
-        "VCAV_AGENT_ID": "alice",
-        "VCAV_AFAL_SEED_HEX": "${alice_seed}",
-        "VCAV_AFAL_PEER_DESCRIPTOR_URL": "http://localhost:3201/afal/descriptor",
-        "VCAV_KNOWN_AGENTS": "${alice_known_agents}",
-        "VCAV_RESUME_TOKEN_SECRET": "${alice_resume_secret}",
-        "VCAV_WORKDIR": "${alice_dir}"
+        "AV_RELAY_URL": "${relay_url}",
+        "AV_AGENT_ID": "alice",
+        "AV_AFAL_SEED_HEX": "${alice_seed}",
+        "AV_AFAL_PEER_DESCRIPTOR_URL": "http://localhost:3201/afal/descriptor",
+        "AV_KNOWN_AGENTS": "${alice_known_agents}",
+        "AV_RESUME_TOKEN_SECRET": "${alice_resume_secret}",
+        "AV_WORKDIR": "${alice_dir}"
       }
     }
   }
@@ -129,7 +129,7 @@ JSON
 
   # -------------------------------------------------------------------------
   # Bob's .mcp.json (RESPONDER role)
-  # VCAV_AFAL_HTTP_PORT=3201 starts bob's AFAL HTTP server for descriptor
+  # AV_AFAL_HTTP_PORT=3201 starts bob's AFAL HTTP server for descriptor
   # serving and incoming PROPOSE messages.
   # -------------------------------------------------------------------------
   mkdir -p "${bob_dir}"
@@ -140,15 +140,15 @@ JSON
       "command": "node",
       "args": ["${MCP_SERVER_DIST}"],
       "env": {
-        "VCAV_RELAY_URL": "${relay_url}",
-        "VCAV_AGENT_ID": "bob",
-        "VCAV_AFAL_SEED_HEX": "${bob_seed}",
-        "VCAV_AFAL_HTTP_PORT": "3201",
-        "VCAV_AFAL_TRUSTED_AGENTS": "[{\"agentId\":\"alice\",\"publicKeyHex\":\"${alice_pubkey}\"}]",
-        "VCAV_AFAL_ALLOWED_PURPOSES": "MEDIATION,COMPATIBILITY",
-        "VCAV_KNOWN_AGENTS": "${bob_known_agents}",
-        "VCAV_RESUME_TOKEN_SECRET": "${bob_resume_secret}",
-        "VCAV_WORKDIR": "${bob_dir}"
+        "AV_RELAY_URL": "${relay_url}",
+        "AV_AGENT_ID": "bob",
+        "AV_AFAL_SEED_HEX": "${bob_seed}",
+        "AV_AFAL_HTTP_PORT": "3201",
+        "AV_AFAL_TRUSTED_AGENTS": "[{\"agentId\":\"alice\",\"publicKeyHex\":\"${alice_pubkey}\"}]",
+        "AV_AFAL_ALLOWED_PURPOSES": "MEDIATION,COMPATIBILITY",
+        "AV_KNOWN_AGENTS": "${bob_known_agents}",
+        "AV_RESUME_TOKEN_SECRET": "${bob_resume_secret}",
+        "AV_WORKDIR": "${bob_dir}"
       }
     }
   }

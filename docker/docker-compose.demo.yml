@@ -7,11 +7,11 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - VCAV_MODEL_ID=${VCAV_MODEL_ID:-claude-haiku-4-5-20251001}
-      - VCAV_OPENAI_MODEL_ID=${VCAV_OPENAI_MODEL_ID:-gpt-4.1-mini}
-      - VCAV_GEMINI_MODEL_ID=${VCAV_GEMINI_MODEL_ID:-gemini-2.5-flash}
-      - VCAV_ENV=dev
-      - VCAV_INBOX_AUTH=off
+      - AV_MODEL_ID=${AV_MODEL_ID:-claude-haiku-4-5-20251001}
+      - AV_OPENAI_MODEL_ID=${AV_OPENAI_MODEL_ID:-gpt-4.1-mini}
+      - AV_GEMINI_MODEL_ID=${AV_GEMINI_MODEL_ID:-gemini-2.5-flash}
+      - AV_ENV=dev
+      - AV_INBOX_AUTH=off
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:3100/health"]
       interval: 10s
@@ -26,7 +26,7 @@ services:
       relay:
         condition: service_healthy
     environment:
-      - VCAV_RELAY_URL=http://relay:3100
+      - AV_RELAY_URL=http://relay:3100
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}

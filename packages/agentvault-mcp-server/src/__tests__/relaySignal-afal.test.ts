@@ -61,8 +61,8 @@ beforeEach(() => {
   _resetHandlesForTesting();
   // Disable bounded polling — single check, no sleep
   _setDiscoverPollConfigForTesting(0, 0);
-  process.env['VCAV_RELAY_URL'] = 'http://relay.test';
-  process.env['VCAV_AGENT_ID'] = 'alice-demo';
+  process.env['AV_RELAY_URL'] = 'http://relay.test';
+  process.env['AV_AGENT_ID'] = 'alice-demo';
 });
 
 afterEach(() => {

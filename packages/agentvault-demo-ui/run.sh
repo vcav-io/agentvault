@@ -115,10 +115,10 @@ if [[ "${NO_RELAY}" == "false" ]]; then
     log_success "Relay binary ready"
 
     RELAY_BIN="${REPO_ROOT}/target/release/agentvault-relay"
-    VCAV_PORT=3100 \
-    VCAV_PROMPT_PROGRAM_DIR="${REPO_ROOT}/packages/agentvault-relay/prompt_programs" \
-    VCAV_ENV=dev \
-    VCAV_INBOX_AUTH=off \
+    AV_PORT=3100 \
+    AV_PROMPT_PROGRAM_DIR="${REPO_ROOT}/packages/agentvault-relay/prompt_programs" \
+    AV_ENV=dev \
+    AV_INBOX_AUTH=off \
     ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
     OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
     GEMINI_API_KEY="${GEMINI_API_KEY:-}" \
@@ -164,7 +164,7 @@ fi
 # ---------------------------------------------------------------------------
 
 log_info "Starting demo UI server..."
-VCAV_RELAY_URL="${RELAY_URL}" \
+AV_RELAY_URL="${RELAY_URL}" \
   node "${DEMO_DIR}/dist/server.js" &
 DEMO_PID=$!
 

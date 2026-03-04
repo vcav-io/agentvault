@@ -76,10 +76,10 @@ beforeEach(() => {
   mockGetOutput.mockResolvedValue({ state: 'COMPLETED', output: {} });
   // Use a temp directory for session state files
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vcav-heartbeat-test-'));
-  process.env['VCAV_WORKDIR'] = tmpDir;
-  process.env['VCAV_RELAY_URL'] = 'http://relay.test';
-  process.env['VCAV_AGENT_ID'] = 'alice-demo';
-  delete process.env['VCAV_RESUME_TOKEN_SECRET'];
+  process.env['AV_WORKDIR'] = tmpDir;
+  process.env['AV_RELAY_URL'] = 'http://relay.test';
+  process.env['AV_AGENT_ID'] = 'alice-demo';
+  delete process.env['AV_RESUME_TOKEN_SECRET'];
 });
 
 afterEach(() => {
@@ -92,7 +92,7 @@ afterEach(() => {
   } catch {
     /* ignore */
   }
-  delete process.env['VCAV_WORKDIR'];
+  delete process.env['AV_WORKDIR'];
 });
 
 /** Helper: INITIATE and return the resume token + initial data. */
@@ -399,28 +399,28 @@ describe('crash recovery', () => {
   });
 });
 
-// ── VCAV_WORKDIR tests ───────────────────────────────────────────────────
+// ── AV_WORKDIR tests ───────────────────────────────────────────────────
 
-describe('VCAV_WORKDIR', () => {
-  it('uses VCAV_WORKDIR for session state files', async () => {
+describe('AV_WORKDIR', () => {
+  it('uses AV_WORKDIR for session state files', async () => {
     const transport = createMockAfalTransport();
     await initiateSession(transport);
 
-    // Session files should be in tmpDir (which is VCAV_WORKDIR)
+    // Session files should be in tmpDir (which is AV_WORKDIR)
     const index = readSessionIndex();
     expect(index.length).toBe(1);
     expect(fs.existsSync(path.join(tmpDir, '.agentvault', 'active_sessions.json'))).toBe(true);
   });
 
-  it('logs warning when VCAV_WORKDIR is not set', async () => {
-    delete process.env['VCAV_WORKDIR'];
+  it('logs warning when AV_WORKDIR is not set', async () => {
+    delete process.env['AV_WORKDIR'];
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const transport = createMockAfalTransport();
     await initiateSession(transport);
 
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('[VCAV WARNING] VCAV_WORKDIR not set'),
+      expect.stringContaining('[AV WARNING] AV_WORKDIR not set'),
     );
     warnSpy.mockRestore();
   });

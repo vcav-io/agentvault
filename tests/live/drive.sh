@@ -175,8 +175,8 @@ start_relay() {
 
   # Start relay
   local relay_log="${RESULTS_BASE}/_drive_relay.log"
-  VCAV_PORT="${relay_port}" \
-  VCAV_PROMPT_PROGRAM_DIR="${REPO_ROOT}/packages/agentvault-relay/prompt_programs" \
+  AV_PORT="${relay_port}" \
+  AV_PROMPT_PROGRAM_DIR="${REPO_ROOT}/packages/agentvault-relay/prompt_programs" \
   ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
   OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
     "${relay_bin}" > "${relay_log}" 2>&1 &

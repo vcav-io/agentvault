@@ -125,10 +125,10 @@ if [[ "${NO_RELAY}" == "false" ]]; then
     log_success "Relay binary ready"
 
     RELAY_BIN="${REPO_ROOT}/target/release/agentvault-relay"
-    VCAV_PORT=3100 \
-    VCAV_PROMPT_PROGRAM_DIR="${REPO_ROOT}/packages/agentvault-relay/prompt_programs" \
-    VCAV_ENV=dev \
-    VCAV_INBOX_AUTH=off \
+    AV_PORT=3100 \
+    AV_PROMPT_PROGRAM_DIR="${REPO_ROOT}/packages/agentvault-relay/prompt_programs" \
+    AV_ENV=dev \
+    AV_INBOX_AUTH=off \
     ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" \
       "${RELAY_BIN}" &>/tmp/vcav-demo-relay.log &
     RELAY_PID=$!
@@ -209,13 +209,13 @@ cat >"${DEMO_DIR}/alice/.mcp.json" <<JSON
       "command": "node",
       "args": ["${MCP_DIST}"],
       "env": {
-        "VCAV_RELAY_URL": "${RELAY_URL}",
-        "VCAV_AGENT_ID": "alice",
-        "VCAV_AFAL_SEED_HEX": "${ALICE_SEED}",
-        "VCAV_AFAL_PEER_DESCRIPTOR_URL": "http://localhost:3201/afal/descriptor",
-        "VCAV_KNOWN_AGENTS": "[{\"agent_id\":\"bob\",\"aliases\":[\"Bob\"]}]",
-        "VCAV_RESUME_TOKEN_SECRET": "${ALICE_RESUME}",
-        "VCAV_WORKDIR": "${DEMO_DIR}/alice"
+        "AV_RELAY_URL": "${RELAY_URL}",
+        "AV_AGENT_ID": "alice",
+        "AV_AFAL_SEED_HEX": "${ALICE_SEED}",
+        "AV_AFAL_PEER_DESCRIPTOR_URL": "http://localhost:3201/afal/descriptor",
+        "AV_KNOWN_AGENTS": "[{\"agent_id\":\"bob\",\"aliases\":[\"Bob\"]}]",
+        "AV_RESUME_TOKEN_SECRET": "${ALICE_RESUME}",
+        "AV_WORKDIR": "${DEMO_DIR}/alice"
       }
     }
   }
@@ -229,15 +229,15 @@ cat >"${DEMO_DIR}/bob/.mcp.json" <<JSON
       "command": "node",
       "args": ["${MCP_DIST}"],
       "env": {
-        "VCAV_RELAY_URL": "${RELAY_URL}",
-        "VCAV_AGENT_ID": "bob",
-        "VCAV_AFAL_SEED_HEX": "${BOB_SEED}",
-        "VCAV_AFAL_HTTP_PORT": "3201",
-        "VCAV_AFAL_TRUSTED_AGENTS": "[{\"agentId\":\"alice\",\"publicKeyHex\":\"${ALICE_PUB}\"}]",
-        "VCAV_AFAL_ALLOWED_PURPOSES": "MEDIATION,COMPATIBILITY",
-        "VCAV_KNOWN_AGENTS": "[{\"agent_id\":\"alice\",\"aliases\":[\"Alice\"]}]",
-        "VCAV_RESUME_TOKEN_SECRET": "${BOB_RESUME}",
-        "VCAV_WORKDIR": "${DEMO_DIR}/bob"
+        "AV_RELAY_URL": "${RELAY_URL}",
+        "AV_AGENT_ID": "bob",
+        "AV_AFAL_SEED_HEX": "${BOB_SEED}",
+        "AV_AFAL_HTTP_PORT": "3201",
+        "AV_AFAL_TRUSTED_AGENTS": "[{\"agentId\":\"alice\",\"publicKeyHex\":\"${ALICE_PUB}\"}]",
+        "AV_AFAL_ALLOWED_PURPOSES": "MEDIATION,COMPATIBILITY",
+        "AV_KNOWN_AGENTS": "[{\"agent_id\":\"alice\",\"aliases\":[\"Alice\"]}]",
+        "AV_RESUME_TOKEN_SECRET": "${BOB_RESUME}",
+        "AV_WORKDIR": "${DEMO_DIR}/bob"
       }
     }
   }

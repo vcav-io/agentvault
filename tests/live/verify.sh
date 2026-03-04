@@ -67,10 +67,10 @@ fi
 require_cmd node
 require_cmd curl
 
-RELAY_URL="${VCAV_RELAY_URL:-http://localhost:3100}"
-VCAV_TEST_BASE="${VCAV_TEST_DIR:-${HOME}/vcav-test}"
-ALICE_SESSION_FILE="${VCAV_TEST_BASE}/alice/.agentvault/last_session.json"
-BOB_SESSION_FILE="${VCAV_TEST_BASE}/bob/.agentvault/last_session.json"
+RELAY_URL="${AV_RELAY_URL:-http://localhost:3100}"
+AV_TEST_BASE="${AV_TEST_DIR:-${HOME}/vcav-test}"
+ALICE_SESSION_FILE="${AV_TEST_BASE}/alice/.agentvault/last_session.json"
+BOB_SESSION_FILE="${AV_TEST_BASE}/bob/.agentvault/last_session.json"
 
 # ---------------------------------------------------------------------------
 # Read session IDs and tokens from session files

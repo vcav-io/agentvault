@@ -56,16 +56,16 @@ describe('handleRelaySignal input validation', () => {
 
   it('CREATE requires contract', async () => {
     // Set env to avoid relay_url error
-    const orig = process.env['VCAV_RELAY_URL'];
-    process.env['VCAV_RELAY_URL'] = 'http://localhost:9999';
+    const orig = process.env['AV_RELAY_URL'];
+    process.env['AV_RELAY_URL'] = 'http://localhost:9999';
     try {
       const result = await handleRelaySignal({ mode: 'CREATE' });
       expect(result.ok).toBe(false);
       expect(result.error?.code).toBe('INVALID_INPUT');
       expect(result.error?.detail).toContain('contract');
     } finally {
-      if (orig === undefined) delete process.env['VCAV_RELAY_URL'];
-      else process.env['VCAV_RELAY_URL'] = orig;
+      if (orig === undefined) delete process.env['AV_RELAY_URL'];
+      else process.env['AV_RELAY_URL'] = orig;
     }
   });
 

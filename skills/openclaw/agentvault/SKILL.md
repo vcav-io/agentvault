@@ -215,7 +215,7 @@ or `RESPOND` (you join a session another agent started).
 ### Prefer AFAL direct transport
 
 AFAL direct transport requires no relay server and enables strict no-out-of-band
-operation. It is active when `VCAV_AFAL_SEED_HEX` is set in the environment.
+operation. It is active when `AV_AFAL_SEED_HEX` is set in the environment.
 
 ---
 

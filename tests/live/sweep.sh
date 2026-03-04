@@ -108,9 +108,9 @@ api_key_for_provider() {
 
 model_env_var_for_provider() {
   case "$1" in
-    anthropic) echo "VCAV_MODEL_ID" ;;
-    openai)    echo "VCAV_OPENAI_MODEL_ID" ;;
-    gemini)    echo "VCAV_GEMINI_MODEL_ID" ;;
+    anthropic) echo "AV_MODEL_ID" ;;
+    openai)    echo "AV_OPENAI_MODEL_ID" ;;
+    gemini)    echo "AV_GEMINI_MODEL_ID" ;;
     *)         echo "" ;;
   esac
 }
@@ -185,10 +185,10 @@ for (( i=0; i<NUM_MODELS; i++ )); do
   relay_log="${SWEEP_DIR}/${provider}_${model}.relay.log"
 
   env \
-    VCAV_PORT="${RELAY_PORT}" \
-    VCAV_PROMPT_PROGRAM_DIR="${REPO_ROOT}/packages/agentvault-relay/prompt_programs" \
-    VCAV_ENV=dev \
-    VCAV_INBOX_AUTH=off \
+    AV_PORT="${RELAY_PORT}" \
+    AV_PROMPT_PROGRAM_DIR="${REPO_ROOT}/packages/agentvault-relay/prompt_programs" \
+    AV_ENV=dev \
+    AV_INBOX_AUTH=off \
     ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
     OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
     GEMINI_API_KEY="${GEMINI_API_KEY:-}" \

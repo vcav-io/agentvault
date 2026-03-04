@@ -18,24 +18,24 @@ async fn main() {
 
     let anthropic_api_key = std::env::var("ANTHROPIC_API_KEY").ok();
     let model_id =
-        std::env::var("VCAV_MODEL_ID").unwrap_or_else(|_| "claude-sonnet-4-6".to_string());
+        std::env::var("AV_MODEL_ID").unwrap_or_else(|_| "claude-sonnet-4-6".to_string());
     let prompt_dir =
-        std::env::var("VCAV_PROMPT_PROGRAM_DIR").unwrap_or_else(|_| "prompt_programs".to_string());
-    let port: u16 = std::env::var("VCAV_PORT")
+        std::env::var("AV_PROMPT_PROGRAM_DIR").unwrap_or_else(|_| "prompt_programs".to_string());
+    let port: u16 = std::env::var("AV_PORT")
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(3100);
 
-    let signing_key = match std::env::var("VCAV_SIGNING_KEY_HEX") {
+    let signing_key = match std::env::var("AV_SIGNING_KEY_HEX") {
         Ok(hex_str) => {
-            let bytes = hex::decode(&hex_str).expect("VCAV_SIGNING_KEY_HEX must be valid hex");
+            let bytes = hex::decode(&hex_str).expect("AV_SIGNING_KEY_HEX must be valid hex");
             let bytes: [u8; 32] = bytes
                 .try_into()
-                .expect("VCAV_SIGNING_KEY_HEX must be exactly 64 hex characters (32 bytes)");
+                .expect("AV_SIGNING_KEY_HEX must be exactly 64 hex characters (32 bytes)");
             let key = SigningKey::from_bytes(&bytes);
             tracing::info!(
                 verifying_key_hex = %receipt_core::public_key_to_hex(&key.verifying_key()),
-                "Loaded relay signing key from VCAV_SIGNING_KEY_HEX"
+                "Loaded relay signing key from AV_SIGNING_KEY_HEX"
             );
             key
         }
@@ -43,7 +43,7 @@ async fn main() {
             let key = SigningKey::generate(&mut rand::thread_rng());
             tracing::warn!(
                 verifying_key_hex = %receipt_core::public_key_to_hex(&key.verifying_key()),
-                "No VCAV_SIGNING_KEY_HEX set — generated ephemeral signing key (receipts will not verify across restarts)"
+                "No AV_SIGNING_KEY_HEX set — generated ephemeral signing key (receipts will not verify across restarts)"
             );
             key
         }
@@ -53,12 +53,12 @@ async fn main() {
 
     let openai_api_key = std::env::var("OPENAI_API_KEY").ok();
     let openai_model_id =
-        std::env::var("VCAV_OPENAI_MODEL_ID").unwrap_or_else(|_| "gpt-4o".to_string());
+        std::env::var("AV_OPENAI_MODEL_ID").unwrap_or_else(|_| "gpt-4o".to_string());
     let openai_base_url = std::env::var("OPENAI_BASE_URL").ok();
 
     let gemini_api_key = std::env::var("GEMINI_API_KEY").ok();
     let gemini_model_id =
-        std::env::var("VCAV_GEMINI_MODEL_ID").unwrap_or_else(|_| "gemini-2.5-flash".to_string());
+        std::env::var("AV_GEMINI_MODEL_ID").unwrap_or_else(|_| "gemini-2.5-flash".to_string());
     let gemini_base_url = std::env::var("GEMINI_BASE_URL").ok();
 
     // Validate model profile lockfile before binding to port.
@@ -76,17 +76,17 @@ async fn main() {
 
     // Check dev skip flags before loading — validate_enforcement_lockfile returns Ok(()) when
     // both flags are set, but the subsequent load calls would still fail without the lockfile.
-    let lockfile_skip = std::env::var("VCAV_ENFORCEMENT_LOCKFILE_SKIP")
+    let lockfile_skip = std::env::var("AV_ENFORCEMENT_LOCKFILE_SKIP")
         .map(|v| v == "1")
         .unwrap_or(false);
-    let is_dev_for_lockfile = std::env::var("VCAV_ENV")
+    let is_dev_for_lockfile = std::env::var("AV_ENV")
         .map(|v| v == "dev")
         .unwrap_or(false);
     let skip_enforcement = lockfile_skip && is_dev_for_lockfile;
 
     let (loaded_policy, enforcement_policy_hash) = if skip_enforcement {
         tracing::warn!(
-            "VCAV_ENFORCEMENT_LOCKFILE_SKIP=1 + VCAV_ENV=dev — skipping enforcement policy (dev mode only)"
+            "AV_ENFORCEMENT_LOCKFILE_SKIP=1 + AV_ENV=dev — skipping enforcement policy (dev mode only)"
         );
         let policy = enforcement_policy::dev_skip_policy();
         let hash = enforcement_policy::content_hash(&policy).unwrap_or_default();
@@ -171,7 +171,7 @@ async fn main() {
         (loaded_policy, enforcement_policy_hash)
     };
 
-    let session_ttl_secs: u64 = std::env::var("VCAV_SESSION_TTL_SECS")
+    let session_ttl_secs: u64 = std::env::var("AV_SESSION_TTL_SECS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(600);
@@ -181,21 +181,21 @@ async fn main() {
     session_store.clone().start_reaper();
 
     // Load agent registry for inbox auth.
-    // Fail-closed: missing file = startup failure unless VCAV_INBOX_AUTH=off + VCAV_ENV=dev.
-    let inbox_auth_off = std::env::var("VCAV_INBOX_AUTH")
+    // Fail-closed: missing file = startup failure unless AV_INBOX_AUTH=off + AV_ENV=dev.
+    let inbox_auth_off = std::env::var("AV_INBOX_AUTH")
         .map(|v| v == "off")
         .unwrap_or(false);
-    let is_dev = std::env::var("VCAV_ENV")
+    let is_dev = std::env::var("AV_ENV")
         .map(|v| v == "dev")
         .unwrap_or(false);
     if inbox_auth_off && !is_dev {
         tracing::error!(
-            "VCAV_INBOX_AUTH=off requires VCAV_ENV=dev — refusing to start. \
+            "AV_INBOX_AUTH=off requires AV_ENV=dev — refusing to start. \
              This is a safety check to prevent accidentally disabling inbox auth in production."
         );
         std::process::exit(1);
     }
-    let agent_registry_path = std::env::var("VCAV_AGENT_REGISTRY_PATH").ok();
+    let agent_registry_path = std::env::var("AV_AGENT_REGISTRY_PATH").ok();
     let agent_registry = match agent_registry_path {
         Some(ref path) => match AgentRegistry::load_from_file(path) {
             Ok(registry) => {
@@ -209,36 +209,36 @@ async fn main() {
         },
         None if inbox_auth_off && is_dev => {
             tracing::warn!(
-                "VCAV_INBOX_AUTH=off + VCAV_ENV=dev — inbox endpoints disabled (no agent registry)"
+                "AV_INBOX_AUTH=off + AV_ENV=dev — inbox endpoints disabled (no agent registry)"
             );
             AgentRegistry::empty()
         }
         None => {
             tracing::error!(
-                "VCAV_AGENT_REGISTRY_PATH not set and VCAV_INBOX_AUTH != off — refusing to start. \
-                 Set VCAV_AGENT_REGISTRY_PATH to an agents.json file, or set VCAV_INBOX_AUTH=off + VCAV_ENV=dev to disable inbox."
+                "AV_AGENT_REGISTRY_PATH not set and AV_INBOX_AUTH != off — refusing to start. \
+                 Set AV_AGENT_REGISTRY_PATH to an agents.json file, or set AV_INBOX_AUTH=off + AV_ENV=dev to disable inbox."
             );
             std::process::exit(1);
         }
     };
 
-    // Feature-gate warning: VCAV_INBOX_DB_PATH set but persistence not compiled
-    if std::env::var("VCAV_INBOX_DB_PATH").is_ok() {
+    // Feature-gate warning: AV_INBOX_DB_PATH set but persistence not compiled
+    if std::env::var("AV_INBOX_DB_PATH").is_ok() {
         #[cfg(not(feature = "persistence"))]
         tracing::warn!(
-            "VCAV_INBOX_DB_PATH is set but binary was compiled without 'persistence' feature. \
+            "AV_INBOX_DB_PATH is set but binary was compiled without 'persistence' feature. \
              Using in-memory inbox. Rebuild with --features persistence to enable SQLite."
         );
     }
 
     // Create inbox store with configurable TTL (default 7 days)
-    let invite_ttl_secs: u64 = std::env::var("VCAV_INVITE_TTL_SECS")
+    let invite_ttl_secs: u64 = std::env::var("AV_INVITE_TTL_SECS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(604800);
 
     #[cfg(feature = "persistence")]
-    let inbox_store = match std::env::var("VCAV_INBOX_DB_PATH") {
+    let inbox_store = match std::env::var("AV_INBOX_DB_PATH") {
         Ok(path) => {
             tracing::info!(path = %path, "Opening SQLite inbox database");
             match InboxStore::new_with_sqlite(Duration::from_secs(invite_ttl_secs), path).await {
@@ -258,19 +258,19 @@ async fn main() {
     // Start background inbox reaper
     inbox_store.clone().start_reaper();
 
-    let max_completion_tokens: u32 = match std::env::var("VCAV_MAX_COMPLETION_TOKENS") {
+    let max_completion_tokens: u32 = match std::env::var("AV_MAX_COMPLETION_TOKENS") {
         Ok(val) => match val.parse() {
             Ok(n) => {
                 tracing::info!(
                     max_completion_tokens = n,
-                    "Using VCAV_MAX_COMPLETION_TOKENS"
+                    "Using AV_MAX_COMPLETION_TOKENS"
                 );
                 n
             }
             Err(_) => {
                 tracing::warn!(
                     value = %val,
-                    "VCAV_MAX_COMPLETION_TOKENS is not a valid u32, falling back to 4096"
+                    "AV_MAX_COMPLETION_TOKENS is not a valid u32, falling back to 4096"
                 );
                 4096
             }
@@ -279,7 +279,7 @@ async fn main() {
     };
 
     // Load schema registry (optional — empty registry if dir not found)
-    let schema_registry_dir = std::env::var("VCAV_SCHEMA_DIR").unwrap_or_else(|_| {
+    let schema_registry_dir = std::env::var("AV_SCHEMA_DIR").unwrap_or_else(|_| {
         std::path::Path::new(&prompt_dir)
             .parent()
             .unwrap_or(std::path::Path::new("."))

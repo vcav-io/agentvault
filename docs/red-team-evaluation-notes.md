@@ -269,13 +269,13 @@ export $(grep -v '^#' .env | xargs)
 for s in 04-adversarial-extraction 05-tool-exfiltration \
          09-encoding-reflection 10-social-engineering; do
   ./tests/live/drive.sh --scenario $s --provider anthropic
-  VCAV_OPENAI_MODEL_ID="gpt-4.1" ./tests/live/drive.sh --scenario $s --provider openai
+  AV_OPENAI_MODEL_ID="gpt-4.1" ./tests/live/drive.sh --scenario $s --provider openai
 done
 
 # Multi-session scenarios (3 sessions each)
 for s in 07-accumulation-strategic 08-accumulation-expert; do
   ./tests/live/drive.sh --scenario $s --provider anthropic --sessions 3
-  VCAV_OPENAI_MODEL_ID="gpt-4.1" ./tests/live/drive.sh --scenario $s --provider openai --sessions 3
+  AV_OPENAI_MODEL_ID="gpt-4.1" ./tests/live/drive.sh --scenario $s --provider openai --sessions 3
 done
 ```
 

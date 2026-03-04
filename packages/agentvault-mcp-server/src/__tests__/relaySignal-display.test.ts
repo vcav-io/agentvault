@@ -88,9 +88,9 @@ beforeEach(() => {
   mockPollUntilDone.mockResolvedValue({ state: 'PROCESSING' });
   mockGetStatus.mockResolvedValue({ state: 'PROCESSING' });
   mockGetOutput.mockResolvedValue({ state: 'COMPLETED', output: {} });
-  process.env['VCAV_RELAY_URL'] = 'http://relay.test';
-  process.env['VCAV_AGENT_ID'] = 'alice-demo';
-  delete process.env['VCAV_RESUME_TOKEN_SECRET'];
+  process.env['AV_RELAY_URL'] = 'http://relay.test';
+  process.env['AV_AGENT_ID'] = 'alice-demo';
+  delete process.env['AV_RESUME_TOKEN_SECRET'];
 });
 
 describe('completedResponse display directives', () => {

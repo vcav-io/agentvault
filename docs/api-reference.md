@@ -232,4 +232,4 @@ All errors return a JSON body with an `error` field:
 
 ## Session lifecycle
 
-Sessions expire after `VCAV_SESSION_TTL_SECS` (default: 600 seconds). A background reaper cleans up expired sessions. Tokens for expired sessions return `401 Unauthorized`.
+Sessions expire after `AV_SESSION_TTL_SECS` (default: 600 seconds). A background reaper cleans up expired sessions. Tokens for expired sessions return `401 Unauthorized`.

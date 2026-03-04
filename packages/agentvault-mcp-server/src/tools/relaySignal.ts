@@ -534,9 +534,9 @@ function buildInterpretationContext(
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 function resolveRelayUrl(argsUrl?: string): string {
-  const url = argsUrl ?? process.env['VCAV_RELAY_URL'];
+  const url = argsUrl ?? process.env['AV_RELAY_URL'];
   if (!url) {
-    throw new Error('relay_url is required (or set VCAV_RELAY_URL environment variable)');
+    throw new Error('relay_url is required (or set AV_RELAY_URL environment variable)');
   }
   return url;
 }
@@ -592,7 +592,7 @@ function writeLastSessionFile(
   relayUrl: string,
 ): void {
   try {
-    const workdir = process.env['VCAV_WORKDIR'] ?? process.cwd();
+    const workdir = process.env['AV_WORKDIR'] ?? process.cwd();
     const dir = path.join(workdir, '.agentvault');
     fs.mkdirSync(dir, { recursive: true });
     const finalPath = path.join(dir, 'last_session.json');
@@ -647,17 +647,17 @@ function isRetryableTransportError(err: unknown): boolean {
 }
 
 function getResumeTokenSecret(): string | null {
-  return process.env['VCAV_RESUME_TOKEN_SECRET'] ?? null;
+  return process.env['AV_RESUME_TOKEN_SECRET'] ?? null;
 }
 
 // ── Session State Files ─────────────────────────────────────────────────
 
 function resolveWorkdir(): string {
-  const dir = process.env['VCAV_WORKDIR'] ?? process.cwd();
-  if (!process.env['VCAV_WORKDIR']) {
+  const dir = process.env['AV_WORKDIR'] ?? process.cwd();
+  if (!process.env['AV_WORKDIR']) {
     console.warn(
-      `[VCAV WARNING] VCAV_WORKDIR not set — writing session state to ${dir}. ` +
-        'The heartbeat agent may not find these files. Set VCAV_WORKDIR to your workspace directory.',
+      `[AV WARNING] AV_WORKDIR not set — writing session state to ${dir}. ` +
+        'The heartbeat agent may not find these files. Set AV_WORKDIR to your workspace directory.',
     );
   }
   return dir;
@@ -1763,7 +1763,7 @@ export async function handleRelaySignal(
         args = { resume_token: resumeToken } as typeof args;
       }
 
-      const agentId = transport?.agentId ?? process.env['VCAV_AGENT_ID'] ?? '';
+      const agentId = transport?.agentId ?? process.env['AV_AGENT_ID'] ?? '';
       const handle = decodeRelayToken(resumeToken, agentId, getResumeTokenSecret());
       if (!handle) {
         return buildError(
@@ -1837,7 +1837,7 @@ export async function handleRelaySignal(
         }
 
         const counterparty = resolveAgentAlias(args.counterparty, knownAgents);
-        const agentId = transport.agentId ?? process.env['VCAV_AGENT_ID'] ?? '';
+        const agentId = transport.agentId ?? process.env['AV_AGENT_ID'] ?? '';
 
         // ── Pre-INITIATE collision detection ─────────────────────────
         // If the counterparty already sent us an invite, join their session
@@ -1951,7 +1951,7 @@ export async function handleRelaySignal(
         }
 
         const from = resolveAgentAlias(args.from, knownAgents);
-        const agentId = transport.agentId ?? process.env['VCAV_AGENT_ID'] ?? '';
+        const agentId = transport.agentId ?? process.env['AV_AGENT_ID'] ?? '';
 
         // Compute idempotency key
         const inputHash = hashInput(args.my_input ?? '');
@@ -2022,7 +2022,7 @@ export async function handleRelaySignal(
     const { code, detail } = mapRelayError(error);
     // Diagnostic file log for debugging live test failures
     try {
-      const workdir = process.env['VCAV_WORKDIR'] ?? process.cwd();
+      const workdir = process.env['AV_WORKDIR'] ?? process.cwd();
       const debugDir = path.join(workdir, '.agentvault');
       fs.mkdirSync(debugDir, { recursive: true });
       const entry = `[${new Date().toISOString()}] error_code=${code} detail=${detail} raw=${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`;
