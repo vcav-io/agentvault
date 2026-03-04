@@ -1781,6 +1781,25 @@ export async function handleRelaySignal(
         case 'JOIN':
           return await phaseJoin(handle, transport);
         case 'COMPLETED':
+          // Session already finished — return success instead of error so
+          // the LLM doesn't waste a round-trip processing an error.
+          return buildSuccess('COMPLETE', {
+            mode: handle.role === 'INITIATOR' ? 'INITIATE' : 'RESPOND',
+            state: 'COMPLETED',
+            phase: 'COMPLETED',
+            resume_token: null,
+            resume_token_display: null,
+            session_id: handle.sessionId,
+            action_required: 'NONE',
+            next_tool: null,
+            next_args_patch: null,
+            next_update_seconds: null,
+            user_message: 'Session already complete. No further action needed.',
+            display: {
+              forbidden: ['PRINT_RESUME_TOKEN'],
+              redact: ['resume_token'],
+            },
+          });
         case 'ABORTED':
         case 'FAILED':
           return buildError(
@@ -1862,6 +1881,27 @@ export async function handleRelaySignal(
             'RESPOND mode requires AfalTransport (agent mode only)',
           );
         }
+
+        // Auto-infer missing params from inbox when there's exactly one
+        // pending invite. Saves 1-2 LLM round-trips discovering required
+        // parameters (from, expected_purpose).
+        if (!args.from || (!args.expected_purpose && !args.expected_contract_hash)) {
+          try {
+            const inbox = await transport.peekInbox();
+            if (inbox.invites.length === 1) {
+              const invite = inbox.invites[0];
+              if (!args.from && invite.from_agent_id) {
+                args.from = invite.from_agent_id;
+              }
+              if (!args.expected_purpose && !args.expected_contract_hash && invite.afalPropose?.purpose_code) {
+                args.expected_purpose = invite.afalPropose.purpose_code;
+              }
+            }
+          } catch {
+            // Non-fatal — fall through to manual validation below
+          }
+        }
+
         if (!args.from) {
           const knownNames = knownAgents.map(a => a.agent_id).join(', ');
           return buildError(

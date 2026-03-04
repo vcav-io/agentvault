@@ -87,6 +87,37 @@ describe('handleGetIdentity', () => {
       expect(result.data?.inbox_hint).toBe('You have 1 pending invite(s).');
     });
 
+    it('pre-fills from and expected_purpose in next_action when single invite has metadata', async () => {
+      const inboxService: InboxService = {
+        checkInbox: async () => ({
+          invites: [{
+            invite_id: 'inv-1',
+            from_agent_id: 'alice',
+            afalPropose: { purpose_code: 'MEDIATION' },
+          }],
+        }),
+      };
+      const result = await handleGetIdentity([], inboxService);
+      expect(result.data?.next_action).toEqual({
+        tool: 'agentvault.relay_signal',
+        args: { mode: 'RESPOND', from: 'alice', expected_purpose: 'MEDIATION' },
+        reason: 'pending_invite',
+      });
+    });
+
+    it('does not pre-fill from/purpose with multiple invites', async () => {
+      const inboxService: InboxService = {
+        checkInbox: async () => ({
+          invites: [
+            { invite_id: 'inv-1', from_agent_id: 'alice', afalPropose: { purpose_code: 'MEDIATION' } },
+            { invite_id: 'inv-2', from_agent_id: 'bob', afalPropose: { purpose_code: 'COMPATIBILITY' } },
+          ],
+        }),
+      };
+      const result = await handleGetIdentity([], inboxService);
+      expect(result.data?.next_action?.args).toEqual({ mode: 'RESPOND' });
+    });
+
     it('returns correct count with 3 pending invites', async () => {
       const inboxService: InboxService = {
         checkInbox: async () => ({
