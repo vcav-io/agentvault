@@ -263,7 +263,7 @@ body {
 .sim-grid {
   flex: 1;
   display: grid;
-  grid-template-columns: 1.3fr 0.8fr 1.3fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 10px;
   margin: 12px 12px 0;
   min-height: 0;
