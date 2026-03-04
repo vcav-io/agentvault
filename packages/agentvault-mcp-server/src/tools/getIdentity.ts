@@ -5,9 +5,15 @@
 import { buildSuccess, type ToolResponse } from '../envelope.js';
 import type { NormalizedKnownAgent } from './relaySignal.js';
 
+export interface InboxInvite {
+  invite_id: string;
+  from_agent_id?: string;
+  afalPropose?: { purpose_code?: string };
+}
+
 export interface InboxService {
-  checkInbox(): Promise<{ invites: { invite_id: string }[] }>;
-  peekInbox?(): Promise<{ invites: { invite_id: string }[] }>;
+  checkInbox(): Promise<{ invites: InboxInvite[] }>;
+  peekInbox?(): Promise<{ invites: InboxInvite[] }>;
 }
 
 export interface NextAction {
@@ -38,9 +44,17 @@ export async function handleGetIdentity(
         : await inboxService.checkInbox();
       result.pending_invites = inbox.invites.length;
       if (inbox.invites.length > 0) {
+        const respondArgs: Record<string, unknown> = { mode: 'RESPOND' };
+        // When exactly one invite, pre-fill from and purpose so the LLM
+        // doesn't waste round-trips discovering required parameters.
+        if (inbox.invites.length === 1) {
+          const invite = inbox.invites[0];
+          if (invite.from_agent_id) respondArgs['from'] = invite.from_agent_id;
+          if (invite.afalPropose?.purpose_code) respondArgs['expected_purpose'] = invite.afalPropose.purpose_code;
+        }
         result.next_action = {
           tool: 'agentvault.relay_signal',
-          args: { mode: 'RESPOND' },
+          args: respondArgs,
           reason: 'pending_invite',
         };
         result.inbox_hint =
