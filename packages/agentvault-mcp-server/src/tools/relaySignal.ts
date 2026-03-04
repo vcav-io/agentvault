@@ -1587,7 +1587,10 @@ async function phaseJoin(
       const msg = submitErr instanceof Error ? submitErr.message : String(submitErr);
       // 401/UNAUTHORIZED means the session is stale (already submitted or aborted).
       // Fail gracefully so the FSM can retry with a fresh invite.
-      if (msg.includes('401') || msg.includes('nauthorized')) {
+      // Match the RelayHttpError format ("Relay HTTP 401: ...") to avoid false positives
+      // from unrelated strings that happen to contain "401" (e.g., "returned 4013 bytes").
+      const is401 = msg.includes('Relay HTTP 401') || msg.includes('401 Unauthorized') || msg.includes('Unauthorized');
+      if (is401) {
         return failedResponse(
           handle,
           'SESSION_ERROR',
