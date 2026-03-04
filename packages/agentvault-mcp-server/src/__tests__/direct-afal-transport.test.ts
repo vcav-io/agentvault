@@ -731,7 +731,7 @@ describe('DirectAfalTransport', () => {
       const propose = makePropose();
       await expect(
         fresh.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' }),
-      ).rejects.toThrow('No peer descriptor URL configured');
+      ).rejects.toThrow('Cannot initiate: no peer connection configured');
     });
 
     it('throws when descriptor fetch returns non-200', async () => {

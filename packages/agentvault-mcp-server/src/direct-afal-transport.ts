@@ -369,7 +369,10 @@ export class DirectAfalTransport implements AfalTransport {
     }
 
     if (!this.config.peerDescriptorUrl) {
-      throw new Error('No peer descriptor URL configured');
+      throw new Error(
+        'Cannot initiate: no peer connection configured. ' +
+        'Check your inbox for pending invites (call get_identity) and use RESPOND mode instead.',
+      );
     }
 
     const response = await fetch(this.config.peerDescriptorUrl);

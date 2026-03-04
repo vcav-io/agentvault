@@ -52,7 +52,8 @@ const DEMO_DIR = path.resolve(__dirname, '..');
 const PORT = parseInt(process.env['DEMO_PORT'] ?? '3200', 10);
 const RELAY_URL = process.env['VCAV_RELAY_URL'] ?? 'http://localhost:3100';
 const RUNS_DIR = process.env['DEMO_RUNS_DIR'] ?? path.join(DEMO_DIR, 'runs');
-const AFAL_PORT = 3201;
+const BOB_AFAL_PORT = parseInt(process.env['BOB_AFAL_PORT'] ?? '3201', 10);
+const ALICE_AFAL_PORT = parseInt(process.env['ALICE_AFAL_PORT'] ?? '3202', 10);
 
 // ── Load .env ────────────────────────────────────────────────────────────
 
@@ -234,39 +235,49 @@ async function setupAndStartHeartbeats(): Promise<void> {
   const bob = generateIdentity();
   events.emitSystem('Generated agent identities');
 
-  // Build Bob's AFAL transport (responder — listens on HTTP)
-  const bobDescriptor = buildDescriptor('bob', bob.seedHex, bob.pubKeyHex, AFAL_PORT);
+  // Build descriptors (both agents get ports for their AFAL listeners)
+  const bobDescriptor = buildDescriptor('bob', bob.seedHex, bob.pubKeyHex, BOB_AFAL_PORT);
+  const aliceDescriptor = buildDescriptor('alice', alice.seedHex, alice.pubKeyHex, ALICE_AFAL_PORT);
 
-  const bobPolicy: AdmissionPolicy = {
-    trustedAgents: [{ agentId: 'alice', publicKeyHex: alice.pubKeyHex }] as TrustedAgent[],
+  // Admission policies — each agent trusts the other
+  const sharedPolicyFields = {
     allowedPurposeCodes: ['MEDIATION', 'COMPATIBILITY'],
     allowedLaneIds: ['API_MEDIATED'],
     maxEntropyBits: 256,
-    defaultTier: 'DENY',
+    defaultTier: 'DENY' as const,
+  };
+  const bobPolicy: AdmissionPolicy = {
+    trustedAgents: [{ agentId: 'alice', publicKeyHex: alice.pubKeyHex }] as TrustedAgent[],
+    ...sharedPolicyFields,
+  };
+  const alicePolicy: AdmissionPolicy = {
+    trustedAgents: [{ agentId: 'bob', publicKeyHex: bob.pubKeyHex }] as TrustedAgent[],
+    ...sharedPolicyFields,
   };
 
+  // Symmetric transport configs — both can initiate AND respond
   const bobTransportConfig: DirectAfalTransportConfig = {
     agentId: 'bob',
     seedHex: bob.seedHex,
     localDescriptor: bobDescriptor,
-    respondMode: { httpPort: AFAL_PORT, bindAddress: '127.0.0.1', policy: bobPolicy },
+    peerDescriptorUrl: `http://127.0.0.1:${ALICE_AFAL_PORT}/afal/descriptor`,
+    respondMode: { httpPort: BOB_AFAL_PORT, bindAddress: '127.0.0.1', policy: bobPolicy },
   };
-
-  bobTransport = new DirectAfalTransport(bobTransportConfig);
-  await bobTransport.start();
-  events.emitSystem(`Bob AFAL transport started on port ${AFAL_PORT}`);
-
-  // Build Alice's AFAL transport (initiator — uses Bob's descriptor URL)
-  const aliceDescriptor = buildDescriptor('alice', alice.seedHex, alice.pubKeyHex);
-
   const aliceTransportConfig: DirectAfalTransportConfig = {
     agentId: 'alice',
     seedHex: alice.seedHex,
     localDescriptor: aliceDescriptor,
-    peerDescriptorUrl: `http://127.0.0.1:${AFAL_PORT}/afal/descriptor`,
+    peerDescriptorUrl: `http://127.0.0.1:${BOB_AFAL_PORT}/afal/descriptor`,
+    respondMode: { httpPort: ALICE_AFAL_PORT, bindAddress: '127.0.0.1', policy: alicePolicy },
   };
 
+  // Start both AFAL HTTP listeners before any transport use
+  bobTransport = new DirectAfalTransport(bobTransportConfig);
   aliceTransport = new DirectAfalTransport(aliceTransportConfig);
+  await bobTransport.start();
+  events.emitSystem(`Bob AFAL listening on port ${BOB_AFAL_PORT}`);
+  await aliceTransport.start();
+  events.emitSystem(`Alice AFAL listening on port ${ALICE_AFAL_PORT}`);
 
   // Create tool registries
   const aliceKnownAgents = [{ agent_id: 'bob', aliases: ['Bob'] }];
@@ -441,13 +452,15 @@ app.post('/api/reset', async (_req, res) => {
     // Abort current heartbeat loops
     abortController.abort();
 
-    // Stop Bob's transport
-    try {
-      await bobTransport.stop();
-    } catch (stopErr) {
-      const msg = stopErr instanceof Error ? stopErr.message : String(stopErr);
-      console.error('Failed to stop Bob transport during reset:', msg);
-      events.emitSystem(`Warning: Bob transport stop failed: ${msg}`);
+    // Stop both AFAL transports
+    for (const [name, transport] of [['Bob', bobTransport], ['Alice', aliceTransport]] as const) {
+      try {
+        await transport.stop();
+      } catch (stopErr) {
+        const msg = stopErr instanceof Error ? stopErr.message : String(stopErr);
+        console.error(`Failed to stop ${name} transport during reset:`, msg);
+        events.emitSystem(`Warning: ${name} transport stop failed: ${msg}`);
+      }
     }
 
     // Clear agent state

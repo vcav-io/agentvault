@@ -1196,7 +1196,10 @@ async function phasePollInvite(
  * immediately on completion or abort. This eliminates repeated LLM round-trips
  * for mechanical "call again with resume_token" decisions.
  */
-async function phasePollRelay(handle: RelayHandle): Promise<ToolResponse<RelaySignalOutput>> {
+async function phasePollRelay(
+  handle: RelayHandle,
+  transport?: AfalTransport,
+): Promise<ToolResponse<RelaySignalOutput>> {
   if (Date.now() > handle.timeoutDeadline) {
     return failedResponse(
       handle,
@@ -1254,6 +1257,49 @@ async function phasePollRelay(handle: RelayHandle): Promise<ToolResponse<RelaySi
         `Session aborted: ${desc} Call agentvault.relay_signal INITIATE to retry.`,
         { state: 'ABORTED', abort_reason: status.abort_reason },
       );
+    }
+
+    // ── Dual-initiate collision detection ───────────────────────────
+    // If both agents initiated simultaneously, each has their own session
+    // but neither will join the other's. Detect this by peeking the inbox
+    // for an incoming invite from the same counterparty. The agent with
+    // the higher lexicographic agent_id yields and switches to RESPOND.
+    if (transport && handle.counterparty && handle.agentId > handle.counterparty) {
+      try {
+        const inbox = await transport.peekInbox();
+        const hasCounterpartyInvite = inbox.invites.some(
+          (inv) => inv.from_agent_id === handle.counterparty,
+        );
+        if (hasCounterpartyInvite) {
+          console.info(
+            `phasePollRelay: dual-initiate detected for ${handle.agentId} ↔ ${handle.counterparty}. ` +
+            `Yielding (${handle.agentId} > ${handle.counterparty}).`,
+          );
+          // Transition to RESPOND: create a new handle and route to DISCOVER
+          const yieldIdempotencyKey = computeRelayIdempotencyKey(handle.agentId, [
+            handle.counterparty,
+            handle.purpose ?? '',
+            'dual-initiate-yield',
+          ]);
+          const respondHandle = createRelayHandle({
+            agentId: handle.agentId,
+            role: 'RESPONDER',
+            phase: 'DISCOVER',
+            counterparty: handle.counterparty,
+            idempotencyKey: yieldIdempotencyKey,
+            timeoutMs: HANDLE_TTL_MS,
+          });
+          respondHandle.expectedPurpose = handle.purpose;
+          // Mark old handle as abandoned
+          handle.phase = 'FAILED';
+          return await phaseDiscover(respondHandle, transport);
+        }
+      } catch (peekErr) {
+        // Non-fatal — continue polling normally
+        console.warn(
+          `phasePollRelay: inbox peek failed during collision check: ${peekErr instanceof Error ? peekErr.message : String(peekErr)}`,
+        );
+      }
     }
 
     // Budget exhausted?
@@ -1729,7 +1775,7 @@ export async function handleRelaySignal(
         case 'POLL_INVITE':
           return await phasePollInvite(handle, transport);
         case 'POLL_RELAY':
-          return await phasePollRelay(handle);
+          return await phasePollRelay(handle, transport);
         case 'DISCOVER':
           return await phaseDiscover(handle, transport);
         case 'JOIN':
@@ -1792,7 +1838,7 @@ export async function handleRelaySignal(
           if (existing.phase === 'PROPOSE_RETRY')
             return await phaseRetryPropose(existing, transport);
           if (existing.phase === 'POLL_INVITE') return await phasePollInvite(existing, transport);
-          if (existing.phase === 'POLL_RELAY') return await phasePollRelay(existing);
+          if (existing.phase === 'POLL_RELAY') return await phasePollRelay(existing, transport);
           return awaitingResponse(existing, 'Reattached to existing relay session.');
         }
 
@@ -1817,9 +1863,11 @@ export async function handleRelaySignal(
           );
         }
         if (!args.from) {
+          const knownNames = knownAgents.map(a => a.agent_id).join(', ');
           return buildError(
             'INVALID_INPUT',
-            'from is required for RESPOND mode (agent ID of expected sender)',
+            `from is required for RESPOND mode — set it to the agent_id of the sender. ` +
+            `Your known agents: ${knownNames || 'none'}`,
           );
         }
 
