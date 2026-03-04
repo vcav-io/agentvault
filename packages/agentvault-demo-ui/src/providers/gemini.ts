@@ -18,11 +18,16 @@ import type {
 const DEFAULT_BASE_URL = 'https://generativelanguage.googleapis.com';
 
 // Gemini tool names must match ^[a-zA-Z0-9_]+$ — no dots or hyphens.
-function sanitizeName(name: string): string {
-  return name.replace(/[.\-]/g, '_');
+// Returns the sanitized name and records the mapping in the provided map for round-trip fidelity.
+function sanitizeName(name: string, nameMap?: Map<string, string>): string {
+  const sanitized = name.replace(/[.\-]/g, '_');
+  if (nameMap && sanitized !== name) {
+    nameMap.set(sanitized, name);
+  }
+  return sanitized;
 }
-function unsanitizeName(name: string): string {
-  return name.replace(/^(agentvault)_/, '$1.');
+function unsanitizeName(sanitized: string, nameMap: Map<string, string>): string {
+  return nameMap.get(sanitized) ?? sanitized;
 }
 
 // Gemini doesn't support these JSON Schema keywords.
@@ -48,6 +53,8 @@ export class GeminiProvider implements LLMProvider {
   private apiKey: string;
   private model: string;
   private baseUrl: string;
+  /** Bijective map: sanitized Gemini name → original MCP tool name. */
+  private readonly nameMap = new Map<string, string>();
 
   readonly name = 'gemini';
 
@@ -79,7 +86,7 @@ export class GeminiProvider implements LLMProvider {
     if (params.tools.length > 0) {
       body.tools = [{
         functionDeclarations: params.tools.map((t) => ({
-          name: sanitizeName(t.name),
+          name: sanitizeName(t.name, this.nameMap),
           description: t.description,
           parameters: stripUnsupported(t.inputSchema),
         })),
@@ -127,7 +134,7 @@ export class GeminiProvider implements LLMProvider {
         const tu: ToolUseContent = {
           type: 'tool_use',
           id: `gemini_call_${callIndex++}`,
-          name: unsanitizeName(part.functionCall.name),
+          name: unsanitizeName(part.functionCall.name, this.nameMap),
           input: (part.functionCall.args ?? {}) as Record<string, unknown>,
         };
         toolUseBlocks.push(tu);
@@ -159,7 +166,7 @@ export class GeminiProvider implements LLMProvider {
       if (msg.role !== 'assistant' || typeof msg.content === 'string') continue;
       for (const block of msg.content) {
         if (block.type === 'tool_use') {
-          idToName.set(block.id, sanitizeName(block.name));
+          idToName.set(block.id, sanitizeName(block.name, this.nameMap));
         }
       }
     }
@@ -180,7 +187,7 @@ export class GeminiProvider implements LLMProvider {
           } else if (block.type === 'tool_use') {
             parts.push({
               functionCall: {
-                name: sanitizeName(block.name),
+                name: sanitizeName(block.name, this.nameMap),
                 args: block.input,
               },
             });
@@ -193,12 +200,21 @@ export class GeminiProvider implements LLMProvider {
         const textParts = msg.content.filter((b) => b.type === 'text');
 
         if (toolResults.length > 0) {
-          const parts: GeminiPart[] = toolResults.map((tr) => ({
-            functionResponse: {
-              name: idToName.get(tr.tool_use_id) ?? tr.tool_use_id,
-              response: { content: tr.content },
-            },
-          }));
+          const parts: GeminiPart[] = toolResults.map((tr) => {
+            const fnName = idToName.get(tr.tool_use_id);
+            if (!fnName) {
+              throw new Error(
+                `Cannot map tool_use_id "${tr.tool_use_id}" to a function name — ` +
+                `no matching tool_use block found in conversation history`,
+              );
+            }
+            return {
+              functionResponse: {
+                name: fnName,
+                response: { content: tr.content },
+              },
+            };
+          });
           result.push({ role: 'user', parts });
         }
 
