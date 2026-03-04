@@ -11,6 +11,7 @@ pub mod inbox_types;
 pub mod prompt_program;
 pub mod provider;
 pub mod relay;
+pub mod schema_registry;
 pub mod session;
 pub mod types;
 
@@ -29,6 +30,7 @@ use crate::enforcement_policy::RelayEnforcementPolicy;
 use crate::error::RelayError;
 use crate::inbox::InboxStore;
 use crate::relay::compute_contract_hash;
+use crate::schema_registry::SchemaRegistry;
 use crate::session::{AbortReason, SessionState, SessionStore, TokenRole};
 use crate::types::{
     CapabilitiesResponse, CreateSessionRequest, CreateSessionResponse, HealthResponse,
@@ -63,6 +65,12 @@ pub struct AppState {
     /// Max completion tokens for LLM provider calls.
     /// Read from VCAV_MAX_COMPLETION_TOKENS at startup, defaults to 4096.
     pub max_completion_tokens: u32,
+    /// Relay-level session TTL in seconds (from VCAV_SESSION_TTL_SECS).
+    pub session_ttl_secs: u64,
+    /// Relay-level invite TTL in seconds (from VCAV_INVITE_TTL_SECS).
+    pub invite_ttl_secs: u64,
+    /// Content-addressed output schema registry.
+    pub schema_registry: SchemaRegistry,
     /// Whether VCAV_ENV=dev — enables diagnostic endpoints.
     pub is_dev: bool,
 }

@@ -1,10 +1,9 @@
 use chrono::Utc;
 use entropy_core::calculate_schema_entropy_upper_bound;
 use receipt_core::{
-    AssuranceLevel, BudgetEnforcementMode, BudgetUsageRecord, Claims, Commitments,
-    ExecutionLane, HashAlgorithm, InputCommitment, Operator, PreflightBundle, Receipt,
-    ReceiptStatus, ReceiptV2, SignalClass, UnsignedReceiptV2, CANONICALIZATION_V2,
-    SCHEMA_VERSION_V2,
+    AssuranceLevel, BudgetEnforcementMode, BudgetUsageRecord, Claims, Commitments, ExecutionLane,
+    HashAlgorithm, InputCommitment, Operator, PreflightBundle, Receipt, ReceiptStatus, ReceiptV2,
+    SignalClass, UnsignedReceiptV2, CANONICALIZATION_V2, SCHEMA_VERSION_V2,
 };
 use sha2::{Digest, Sha256};
 use vault_family_types::{generate_pair_id, BudgetTier};
@@ -248,9 +247,120 @@ pub async fn relay_core(
         }
     }
 
-    // 3. Compute contract hash and output schema hash
+    // 2b. Validate contract enforcement_policy_hash matches relay's loaded policy (#147)
+    if let Some(ref contract_policy_hash) = contract.enforcement_policy_hash {
+        if *contract_policy_hash != state.enforcement_policy_hash {
+            return Err(RelayError::ContractValidation(format!(
+                "contract enforcement_policy_hash '{}' does not match relay policy '{}'",
+                contract_policy_hash, state.enforcement_policy_hash,
+            )));
+        }
+    }
+
+    // 2c. Validate model constraints from contract (#151 gap 3)
+    if let Some(ref constraints) = contract.model_constraints {
+        if !constraints.allowed_providers.is_empty()
+            && !constraints
+                .allowed_providers
+                .contains(&provider_name.to_string())
+        {
+            return Err(RelayError::ContractValidation(format!(
+                "provider '{}' not in contract model_constraints.allowed_providers {:?}",
+                provider_name, constraints.allowed_providers,
+            )));
+        }
+    }
+
+    // 2d. Resolve effective model_id for the selected provider
+    let effective_model_id = match provider_name {
+        "anthropic" => state.anthropic_model_id.clone(),
+        "openai" => state.openai_model_id.clone(),
+        "gemini" => state.gemini_model_id.clone(),
+        _ => String::new(),
+    };
+
+    // 2e. Validate model_id against contract allowed_models (#151 gap 3)
+    if let Some(ref constraints) = contract.model_constraints {
+        if !constraints.allowed_models.is_empty() {
+            let model_allowed = constraints.allowed_models.iter().any(|pattern| {
+                if let Some(prefix) = pattern.strip_suffix('*') {
+                    effective_model_id.starts_with(prefix)
+                } else {
+                    *pattern == effective_model_id
+                }
+            });
+            if !model_allowed {
+                return Err(RelayError::ContractValidation(format!(
+                    "model '{}' not in contract model_constraints.allowed_models {:?}",
+                    effective_model_id, constraints.allowed_models,
+                )));
+            }
+        }
+    }
+
+    // 2f. Validate contract TTLs against relay maximums (#151 gap 5)
+    if let Some(contract_session_ttl) = contract.session_ttl_secs {
+        if u64::from(contract_session_ttl) > state.session_ttl_secs {
+            return Err(RelayError::ContractValidation(format!(
+                "contract session_ttl_secs ({}) exceeds relay maximum ({})",
+                contract_session_ttl, state.session_ttl_secs,
+            )));
+        }
+    }
+    if let Some(contract_invite_ttl) = contract.invite_ttl_secs {
+        if u64::from(contract_invite_ttl) > state.invite_ttl_secs {
+            return Err(RelayError::ContractValidation(format!(
+                "contract invite_ttl_secs ({}) exceeds relay maximum ({})",
+                contract_invite_ttl, state.invite_ttl_secs,
+            )));
+        }
+    }
+
+    // 2g. Resolve effective max_completion_tokens (#149 + contract override)
+    // Contract can request lower but not higher than relay ceiling.
+    let effective_max_tokens = match contract.max_completion_tokens {
+        Some(contract_max) => std::cmp::min(contract_max, state.max_completion_tokens),
+        None => state.max_completion_tokens,
+    };
+
+    // 3. Compute contract hash and resolve output schema
     let contract_hash = compute_contract_hash(contract)?;
-    let output_schema_hash = compute_output_schema_hash(&contract.output_schema)?;
+
+    // 3b. Resolve effective output schema — registry lookup or inline
+    // A schema is a "stub" (requiring registry lookup) if it has no `properties` key.
+    let is_stub_schema = contract
+        .output_schema
+        .as_object()
+        .map(|obj| !obj.contains_key("properties"))
+        .unwrap_or(true);
+    let effective_schema = if let Some(ref requested_hash) = contract.output_schema_hash {
+        if is_stub_schema {
+            // Contract references schema by hash — look up from registry
+            state
+                .schema_registry
+                .get(requested_hash)
+                .cloned()
+                .ok_or_else(|| {
+                    RelayError::ContractValidation(format!(
+                        "output_schema_hash '{}' not found in schema registry",
+                        requested_hash,
+                    ))
+                })?
+        } else {
+            // Both inline schema and hash provided — verify consistency
+            let computed_hash = compute_output_schema_hash(&contract.output_schema)?;
+            if *requested_hash != computed_hash {
+                return Err(RelayError::ContractValidation(format!(
+                    "output_schema_hash mismatch: contract says '{}' but inline schema hashes to '{}'",
+                    requested_hash, computed_hash,
+                )));
+            }
+            contract.output_schema.clone()
+        }
+    } else {
+        contract.output_schema.clone()
+    };
+    let output_schema_hash = compute_output_schema_hash(&effective_schema)?;
 
     // 4. Load and validate prompt program
     let program = load_prompt_program(&state.prompt_program_dir, &contract.prompt_template_hash)?;
@@ -297,8 +407,8 @@ pub async fn relay_core(
     let provider_request = ProviderRequest {
         system: assembled.system,
         user_message: assembled.user_message,
-        output_schema: Some(contract.output_schema.clone()),
-        max_tokens: state.max_completion_tokens,
+        output_schema: Some(effective_schema.clone()),
+        max_tokens: effective_max_tokens,
     };
 
     // 6. Call provider
@@ -350,26 +460,40 @@ pub async fn relay_core(
         .map_err(|e| RelayError::OutputValidation(format!("output is not valid JSON: {e}")))?;
 
     // 8. Validate output against schema
-    validate_output_schema(&output, &contract.output_schema)?;
+    validate_output_schema(&output, &effective_schema)?;
 
     // 8b. Enforcement rules: reject forbidden characters in string values
     validate_output_enforcement_rules(&output, &state.enforcement_policy.rules)?;
 
-    // 9. Compute entropy (advisory — logged but not enforced)
-    let entropy_bits = calculate_schema_entropy_upper_bound(&contract.output_schema)
+    // 9. Compute entropy and enforce per contract mode (#151 gap 6)
+    let entropy_bits = calculate_schema_entropy_upper_bound(&effective_schema)
         .map(|v| v as u32)
         .unwrap_or_else(|e| {
             tracing::warn!("entropy calculation failed: {e}; recording 0");
             0
         });
 
+    let entropy_mode = contract
+        .entropy_enforcement
+        .unwrap_or(vault_family_types::EntropyEnforcementMode::Advisory);
+
     if let Some(budget) = contract.entropy_budget_bits {
         if entropy_bits > budget {
-            tracing::warn!(
-                entropy_bits,
-                budget,
-                "schema entropy exceeds contract budget (advisory only)"
-            );
+            match entropy_mode {
+                vault_family_types::EntropyEnforcementMode::Advisory => {
+                    tracing::warn!(
+                        entropy_bits,
+                        budget,
+                        "schema entropy exceeds contract budget (advisory only)"
+                    );
+                }
+                vault_family_types::EntropyEnforcementMode::Gate
+                | vault_family_types::EntropyEnforcementMode::Strict => {
+                    return Err(RelayError::ContractValidation(format!(
+                        "schema entropy ({entropy_bits} bits) exceeds contract budget ({budget} bits) — enforcement mode: {entropy_mode:?}"
+                    )));
+                }
+            }
         }
     }
 
@@ -388,7 +512,14 @@ pub async fn relay_core(
         bits_used_after: entropy_bits,
         budget_limit: contract.entropy_budget_bits.unwrap_or(128),
         budget_tier: BudgetTier::Default,
-        budget_enforcement: Some("disabled".to_string()),
+        budget_enforcement: Some(
+            match entropy_mode {
+                vault_family_types::EntropyEnforcementMode::Advisory => "advisory",
+                vault_family_types::EntropyEnforcementMode::Gate => "gate",
+                vault_family_types::EntropyEnforcementMode::Strict => "strict",
+            }
+            .to_string(),
+        ),
         compartment_id: None,
     };
 
@@ -454,6 +585,11 @@ pub async fn relay_core(
     let receipt = unsigned.sign(signature);
 
     // --- v2 receipt construction ---
+    let v2_enforcement_mode = match entropy_mode {
+        vault_family_types::EntropyEnforcementMode::Advisory => BudgetEnforcementMode::Advisory,
+        vault_family_types::EntropyEnforcementMode::Gate
+        | vault_family_types::EntropyEnforcementMode::Strict => BudgetEnforcementMode::Enforced,
+    };
     let receipt_v2 = build_receipt_v2(
         &session_id,
         &contract_hash,
@@ -469,6 +605,8 @@ pub async fn relay_core(
         state,
         inference_start,
         inference_end,
+        v2_enforcement_mode,
+        effective_max_tokens,
     )?;
 
     let timing = InferenceTiming {
@@ -506,6 +644,8 @@ fn build_receipt_v2(
     state: &AppState,
     inference_start: chrono::DateTime<chrono::Utc>,
     inference_end: chrono::DateTime<chrono::Utc>,
+    budget_enforcement_mode: BudgetEnforcementMode,
+    effective_max_tokens: u32,
 ) -> Result<ReceiptV2, RelayError> {
     // Compute output hash
     let output_hash = {
@@ -518,7 +658,7 @@ fn build_receipt_v2(
 
     // Build preflight bundle
     let enforcement_parameters = serde_json::json!({
-        "max_completion_tokens": state.max_completion_tokens,
+        "max_completion_tokens": effective_max_tokens,
     });
     let preflight_bundle = PreflightBundle {
         policy_hash: state.enforcement_policy_hash.clone(),
@@ -546,8 +686,8 @@ fn build_receipt_v2(
         hex::encode(hasher.finalize())
     };
 
-    let operator_id = std::env::var("VCAV_OPERATOR_ID")
-        .unwrap_or_else(|_| "agentvault-relay-dev".to_string());
+    let operator_id =
+        std::env::var("VCAV_OPERATOR_ID").unwrap_or_else(|_| "agentvault-relay-dev".to_string());
 
     let provider_latency_ms = (inference_end - inference_start)
         .num_milliseconds()
@@ -589,7 +729,7 @@ fn build_receipt_v2(
             model_profile_hash_asserted: model_profile_hash.map(str::to_string),
             runtime_hash_asserted: Some(runtime_hash.to_string()),
             runtime_hash_attested: None,
-            budget_enforcement_mode: Some(BudgetEnforcementMode::Advisory),
+            budget_enforcement_mode: Some(budget_enforcement_mode),
             provider_latency_ms: Some(provider_latency_ms),
             token_usage: None,
             relay_software_version: Some(env!("CARGO_PKG_VERSION").to_string()),
