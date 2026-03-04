@@ -530,8 +530,11 @@ app.post('/api/verify-receipt', async (req, res) => {
       return;
     }
 
-    // Verification: message = "VCAV-RECEIPT-V1:" + JCS(receipt), hash = sha256(message)
-    const canonical = canonicalize(receipt);
+    // Strip the `signature` field — Rust signs the UnsignedReceipt (all fields except signature)
+    const { signature: _sig, ...unsignedReceipt } = receipt;
+
+    // Verification: message = "VCAV-RECEIPT-V1:" + JCS(unsigned_receipt), hash = sha256(message)
+    const canonical = canonicalize(unsignedReceipt);
     const message = `VCAV-RECEIPT-V1:${canonical}`;
     const hash = sha256(new TextEncoder().encode(message));
 
