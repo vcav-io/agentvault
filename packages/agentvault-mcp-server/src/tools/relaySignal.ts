@@ -1753,17 +1753,18 @@ export async function handleRelaySignal(
 
     // ── Resume path ─────────────────────────────────────────────────
     if (args.resume_token) {
+      const resumeToken: string = args.resume_token;
       // Budget models often include mode/counterparty alongside resume_token.
       // Instead of rejecting, strip extra args and proceed — the resume_token
       // carries all the state needed.
       if (hasExtraArgs(args)) {
         const extra = Object.keys(args).filter((k) => k !== 'resume_token');
         console.info(`relay_signal resume: ignoring extra args [${extra.join(', ')}] alongside resume_token`);
-        args = { resume_token: args.resume_token } as typeof args;
+        args = { resume_token: resumeToken } as typeof args;
       }
 
       const agentId = transport?.agentId ?? process.env['VCAV_AGENT_ID'] ?? '';
-      const handle = decodeRelayToken(args.resume_token, agentId, getResumeTokenSecret());
+      const handle = decodeRelayToken(resumeToken, agentId, getResumeTokenSecret());
       if (!handle) {
         return buildError(
           'INVALID_INPUT',
