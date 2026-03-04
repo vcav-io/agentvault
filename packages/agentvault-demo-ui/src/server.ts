@@ -391,7 +391,8 @@ app.get('/api/config', (_req, res) => {
       ],
     });
   }
-  const defaultProvider = detectProvider();
+  let defaultProvider: string | null = null;
+  try { defaultProvider = detectProvider(); } catch { /* no keys configured */ }
   res.json({ providers, defaultProvider });
 });
 
@@ -421,6 +422,8 @@ app.post('/api/start', async (req, res) => {
   try {
     // Per-run provider override: if agentProvider is specified, switch the
     // module-level provider for this run (persists until next /api/start or reset).
+    // Note: heartbeat loops keep their startup provider — they're lightweight polling
+    // loops and restarting them mid-session would risk losing in-flight state.
     const agentProvider = req.body?.agentProvider as string | undefined;
     const agentModel = req.body?.agentModel as string | undefined;
     if (agentProvider) {
