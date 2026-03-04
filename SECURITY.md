@@ -4,9 +4,8 @@
 
 We use GitHub Security Advisories for coordinated disclosure. To report a vulnerability:
 
-1. Go to the [Security Advisories page](https://github.com/vcav-io/agentvault/security/advisories) for this repository
-2. Click "Report a vulnerability"
-3. Provide a description of the issue, steps to reproduce, and any relevant context
+1. **Email:** Send a report to [security@vcav.io](mailto:security@vcav.io)
+2. **GitHub:** Go to the [Security Advisories page](https://github.com/vcav-io/agentvault/security/advisories), click "Report a vulnerability", and provide a description of the issue, steps to reproduce, and any relevant context
 
 Please do **not** open a public issue for security vulnerabilities.
 
