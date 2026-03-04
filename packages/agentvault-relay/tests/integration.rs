@@ -91,6 +91,7 @@ fn test_app_state(mock_base_url: &str, prompt_dir: &str) -> AppState {
         max_completion_tokens: 4096,
         session_ttl_secs: 600,
         invite_ttl_secs: 604800,
+        schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
     }
 }
@@ -1058,6 +1059,7 @@ async fn test_submit_token_is_one_time_use() {
         max_completion_tokens: 4096,
         session_ttl_secs: 600,
         invite_ttl_secs: 604800,
+        schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
     }));
 
@@ -1243,6 +1245,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         max_completion_tokens: 4096,
         session_ttl_secs: 600,
         invite_ttl_secs: 604800,
+        schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
     }));
 
@@ -1296,6 +1299,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         max_completion_tokens: 4096,
         session_ttl_secs: 600,
         invite_ttl_secs: 604800,
+        schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
     }));
 
@@ -1363,6 +1367,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         max_completion_tokens: 4096,
         session_ttl_secs: 600,
         invite_ttl_secs: 604800,
+        schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
     }));
 
@@ -1449,6 +1454,7 @@ async fn test_submit_with_correct_contract_hash_succeeds() {
         max_completion_tokens: 4096,
         session_ttl_secs: 600,
         invite_ttl_secs: 604800,
+        schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
     }));
 
@@ -1517,6 +1523,7 @@ async fn test_submit_with_wrong_contract_hash_rejected() {
         max_completion_tokens: 4096,
         session_ttl_secs: 600,
         invite_ttl_secs: 604800,
+        schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
     }));
 
@@ -1586,6 +1593,7 @@ async fn test_submit_without_contract_hash_still_works() {
         max_completion_tokens: 4096,
         session_ttl_secs: 600,
         invite_ttl_secs: 604800,
+        schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
     }));
 
@@ -1654,6 +1662,7 @@ fn inbox_test_app_state() -> AppState {
         max_completion_tokens: 4096,
         session_ttl_secs: 600,
         invite_ttl_secs: 604800,
+        schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
     }
 }
@@ -2578,6 +2587,102 @@ async fn test_contract_session_ttl_exceeds_relay_max_rejected() {
     assert!(
         error_msg.contains("exceeds relay maximum"),
         "Expected TTL exceeded error, got: {error_msg}"
+    );
+
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}
+
+#[tokio::test]
+async fn test_contract_schema_hash_mismatch_rejected() {
+    let (prompt_dir, prompt_hash) = setup_prompt_program("schema-hash-mismatch");
+
+    let state = test_app_state("http://unused", &prompt_dir);
+    let app = build_router(Arc::new(state));
+
+    // Provide a real inline schema but a wrong hash — should be rejected
+    let relay_request = serde_json::json!({
+        "contract": {
+            "purpose_code": "MEDIATION",
+            "output_schema_id": "vault_result_mediation",
+            "output_schema": mediation_schema(),
+            "participants": ["alice", "bob"],
+            "prompt_template_hash": prompt_hash,
+            "output_schema_hash": "deadbeef".repeat(8)
+        },
+        "input_a": { "role": "alice", "context": {} },
+        "input_b": { "role": "bob", "context": {} },
+        "provider": "anthropic"
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/relay")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&relay_request).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let error_msg = json["error"].as_str().unwrap_or("");
+    assert!(
+        error_msg.contains("output_schema_hash mismatch"),
+        "Expected schema hash mismatch error, got: {error_msg}"
+    );
+
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}
+
+#[tokio::test]
+async fn test_contract_schema_hash_not_in_registry_rejected() {
+    let (prompt_dir, prompt_hash) = setup_prompt_program("schema-not-in-registry");
+
+    let state = test_app_state("http://unused", &prompt_dir);
+    let app = build_router(Arc::new(state));
+
+    // Provide a stub schema + hash — registry is empty, so lookup should fail
+    let relay_request = serde_json::json!({
+        "contract": {
+            "purpose_code": "MEDIATION",
+            "output_schema_id": "vault_result_mediation",
+            "output_schema": {},
+            "participants": ["alice", "bob"],
+            "prompt_template_hash": prompt_hash,
+            "output_schema_hash": "abc123"
+        },
+        "input_a": { "role": "alice", "context": {} },
+        "input_b": { "role": "bob", "context": {} },
+        "provider": "anthropic"
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/relay")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&relay_request).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let error_msg = json["error"].as_str().unwrap_or("");
+    assert!(
+        error_msg.contains("not found in schema registry"),
+        "Expected registry lookup error, got: {error_msg}"
     );
 
     std::fs::remove_dir_all(&prompt_dir).ok();

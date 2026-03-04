@@ -278,6 +278,39 @@ async fn main() {
         Err(_) => 4096,
     };
 
+    // Load schema registry (optional — empty registry if dir not found)
+    let schema_registry_dir = std::env::var("VCAV_SCHEMA_DIR").unwrap_or_else(|_| {
+        std::path::Path::new(&prompt_dir)
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join("schemas")
+            .join("output")
+            .to_string_lossy()
+            .into_owned()
+    });
+    let schema_registry = {
+        let path = std::path::Path::new(&schema_registry_dir);
+        if path.is_dir() {
+            match agentvault_relay::schema_registry::SchemaRegistry::load_from_dir(path) {
+                Ok(reg) => {
+                    tracing::info!(
+                        schema_count = reg.len(),
+                        dir = %schema_registry_dir,
+                        "Schema registry loaded"
+                    );
+                    reg
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to load schema registry — using empty registry");
+                    agentvault_relay::schema_registry::SchemaRegistry::empty()
+                }
+            }
+        } else {
+            tracing::info!(dir = %schema_registry_dir, "Schema directory not found — using empty registry");
+            agentvault_relay::schema_registry::SchemaRegistry::empty()
+        }
+    };
+
     if anthropic_api_key.is_none() && openai_api_key.is_none() && gemini_api_key.is_none() {
         tracing::error!(
             "No inference providers configured. Set at least one of ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY."
@@ -315,6 +348,7 @@ async fn main() {
         max_completion_tokens,
         session_ttl_secs,
         invite_ttl_secs,
+        schema_registry,
         is_dev,
     });
 

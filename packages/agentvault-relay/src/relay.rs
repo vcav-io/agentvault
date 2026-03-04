@@ -323,9 +323,40 @@ pub async fn relay_core(
         None => state.max_completion_tokens,
     };
 
-    // 3. Compute contract hash and output schema hash
+    // 3. Compute contract hash and resolve output schema
     let contract_hash = compute_contract_hash(contract)?;
-    let output_schema_hash = compute_output_schema_hash(&contract.output_schema)?;
+
+    // 3b. Resolve effective output schema — registry lookup or inline
+    let is_stub_schema = contract.output_schema == serde_json::json!({})
+        || contract.output_schema == serde_json::json!({"type": "object"});
+    let effective_schema = if let Some(ref requested_hash) = contract.output_schema_hash {
+        if is_stub_schema {
+            // Contract references schema by hash — look up from registry
+            state
+                .schema_registry
+                .get(requested_hash)
+                .cloned()
+                .ok_or_else(|| {
+                    RelayError::ContractValidation(format!(
+                        "output_schema_hash '{}' not found in schema registry",
+                        requested_hash,
+                    ))
+                })?
+        } else {
+            // Both inline schema and hash provided — verify consistency
+            let computed_hash = compute_output_schema_hash(&contract.output_schema)?;
+            if *requested_hash != computed_hash {
+                return Err(RelayError::ContractValidation(format!(
+                    "output_schema_hash mismatch: contract says '{}' but inline schema hashes to '{}'",
+                    requested_hash, computed_hash,
+                )));
+            }
+            contract.output_schema.clone()
+        }
+    } else {
+        contract.output_schema.clone()
+    };
+    let output_schema_hash = compute_output_schema_hash(&effective_schema)?;
 
     // 4. Load and validate prompt program
     let program = load_prompt_program(&state.prompt_program_dir, &contract.prompt_template_hash)?;
@@ -372,7 +403,7 @@ pub async fn relay_core(
     let provider_request = ProviderRequest {
         system: assembled.system,
         user_message: assembled.user_message,
-        output_schema: Some(contract.output_schema.clone()),
+        output_schema: Some(effective_schema.clone()),
         max_tokens: effective_max_tokens,
     };
 
@@ -425,13 +456,13 @@ pub async fn relay_core(
         .map_err(|e| RelayError::OutputValidation(format!("output is not valid JSON: {e}")))?;
 
     // 8. Validate output against schema
-    validate_output_schema(&output, &contract.output_schema)?;
+    validate_output_schema(&output, &effective_schema)?;
 
     // 8b. Enforcement rules: reject forbidden characters in string values
     validate_output_enforcement_rules(&output, &state.enforcement_policy.rules)?;
 
     // 9. Compute entropy and enforce per contract mode (#151 gap 6)
-    let entropy_bits = calculate_schema_entropy_upper_bound(&contract.output_schema)
+    let entropy_bits = calculate_schema_entropy_upper_bound(&effective_schema)
         .map(|v| v as u32)
         .unwrap_or_else(|e| {
             tracing::warn!("entropy calculation failed: {e}; recording 0");
