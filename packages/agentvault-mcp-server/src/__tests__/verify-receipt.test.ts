@@ -79,7 +79,7 @@ function signV2Receipt(
   return {
     ...unsigned,
     signature: {
-      alg: 'ed25519',
+      alg: 'Ed25519',
       value: bytesToBase64url(sig),
       signed_fields: Object.keys(unsigned),
     },
@@ -93,7 +93,7 @@ function buildMinimalV2Receipt(): Record<string, unknown> {
     issued_at: '2024-01-01T00:00:00Z',
     purpose: 'MEDIATION',
     assurance_level: 'STANDARD',
-    operator_id: 'op-test',
+    operator: { operator_id: 'op-test', operator_key_fingerprint: 'a'.repeat(64) },
     output: { mediation_signal: 'compatible' },
   };
 }
@@ -252,7 +252,7 @@ describe('handleVerifyReceipt — v2 receipts', () => {
     const base = buildMinimalV2Receipt();
     const withBadSig = {
       ...base,
-      signature: { alg: 'ed25519', value: '!!!invalid!!!', signed_fields: [] },
+      signature: { alg: 'Ed25519', value: '!!!invalid!!!', signed_fields: [] },
     };
 
     const result = await handleVerifyReceipt({ receipt: withBadSig, public_key_hex: publicKeyHex });

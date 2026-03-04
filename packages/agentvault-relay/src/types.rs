@@ -48,6 +48,8 @@ pub struct RelayResponse {
     pub output: serde_json::Value,
     pub receipt: receipt_core::Receipt,
     pub receipt_signature: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub receipt_v2: Option<receipt_core::ReceiptV2>,
 }
 
 // ============================================================================

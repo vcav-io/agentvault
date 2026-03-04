@@ -147,7 +147,7 @@ function verifyV2(
   const alg = sig['alg'];
   const value = sig['value'];
 
-  if (alg !== 'ed25519') {
+  if (alg !== 'Ed25519') {
     errors.push(`Unsupported signature algorithm: ${String(alg)}`);
     return { valid: false, errors, warnings };
   }
@@ -264,8 +264,12 @@ export async function handleVerifyReceipt(
     if (typeof receipt['assurance_level'] === 'string') {
       output.assurance_level = receipt['assurance_level'] as string;
     }
-    if (typeof receipt['operator_id'] === 'string') {
-      output.operator_id = receipt['operator_id'] as string;
+    const op = receipt['operator'];
+    if (typeof op === 'object' && op !== null) {
+      const opObj = op as Record<string, unknown>;
+      if (typeof opObj['operator_id'] === 'string') {
+        output.operator_id = opObj['operator_id'] as string;
+      }
     }
   }
 

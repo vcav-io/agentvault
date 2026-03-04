@@ -630,6 +630,7 @@ pub async fn relay(request: RelayRequest, state: &AppState) -> Result<RelayRespo
         output: result.output,
         receipt: result.receipt,
         receipt_signature: result.receipt_signature,
+        receipt_v2: Some(result.receipt_v2),
     })
 }
 
