@@ -473,6 +473,8 @@ async fn test_health_endpoint() {
 
     assert_eq!(json["status"], "ok");
     assert_eq!(json["execution_lane"], "API_MEDIATED");
+    assert_eq!(json["provider"], "anthropic");
+    assert_eq!(json["model_id"], "test-model");
 }
 
 #[tokio::test]
