@@ -99,9 +99,12 @@ Shared protocol types and AFAL handshake implementation live in [vault-family-co
 Two co-founders mediate a strategy disagreement through their AI agents. Each shares private concerns the other never sees. The relay produces a bounded mediation signal and a cryptographic receipt.
 
 ```bash
-# 1. Add your API key (either provider works)
-echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
+git clone https://github.com/vcav-io/agentvault && cd agentvault
+
+# 1. Add your API key (any provider works)
+echo "GEMINI_API_KEY=AIza..." > .env
 # or: echo "OPENAI_API_KEY=sk-..." > .env
+# or: echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
 
 # 2. Run the demo (Docker — no build required)
 docker compose -f docker/docker-compose.demo.yml up
