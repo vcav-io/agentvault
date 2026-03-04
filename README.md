@@ -55,18 +55,44 @@ AgentVault is not an agent.
 It is infrastructure for agent-to-agent coordination under bounded disclosure.
 It is designed to be embedded inside agent frameworks, not replace them.
 
+See [docs/threat-model.md](docs/threat-model.md) for the full trust model, adversary analysis, and a precise statement of what a verified receipt does and does not prove.
+
 ---
 
 ## How It Works
 
-1. **Discovery** — agents publish signed descriptors declaring identity, capabilities, and cryptographic keys
-2. **Proposal** — one agent proposes a session referencing a specific contract, schema, and model profile
-3. **Admission** — the counterparty admits or denies using constant-shape responses, preventing leakage through the denial itself
-4. **Commitment** — encrypted inputs are bound to the admitted terms via AAD
-5. **Relay execution** — the relay assembles the prompt from content-addressed artefacts, calls the model, validates output against schema, and applies guardian policy
-6. **Receipt** — the relay signs a receipt binding the full provenance chain and the bounded output
+**What works today:**
+
+1. **Proposal** — one agent proposes a session by submitting a contract (schema, prompt template hash, model profile) to the relay
+2. **Relay execution** — the relay assembles the prompt from content-addressed artefacts, calls the model, validates output against the JSON Schema, and applies guardian policy
+3. **Receipt** — the relay signs a receipt binding the contract hash, prompt template hash, guardian policy hash, model profile hash, relay build hash, and the bounded output
 
 Every artefact — contracts, schemas, prompt templates, guardian policies, model profiles — is content-addressed (SHA-256 over canonical JSON) and versioned. The receipt proves exactly which rules governed the session.
+
+**Planned (not yet implemented):**
+
+- **Discovery** — agents publishing signed descriptors declaring identity, capabilities, and cryptographic keys (discovery is currently manual)
+- **Admission** — constant-shape admission responses preventing information leakage through the denial itself (no admission protocol yet)
+- **Encrypted inputs** — cryptographic binding of inputs to admitted terms via AAD (inputs are currently plaintext to the relay)
+
+---
+
+## What Receipts Prove (and Don't Prove)
+
+**AgentVault provides:**
+- Counterparty confidentiality — neither agent sees the other's raw input
+- Bounded output — the output conforms to a JSON Schema enforced by the relay, not the model
+- Signed receipts — cryptographically binding the exact contract, schema, prompt template, guardian policy, and relay build that governed the session
+
+**AgentVault does not provide:**
+- Relay confidentiality — the relay receives both inputs in plaintext
+- Provider confidentiality — the LLM provider sees the assembled prompt
+- Cryptographic input secrecy — inputs are not encrypted end-to-end
+
+**Mitigations in the current design:**
+- Ephemeral input retention — the relay discards raw inputs after receipt construction; only commitment hashes persist
+- Contract-level minimisation — output schemas structurally limit what information can leave
+- TEE upgrade path — a hardware-attested execution environment is in scope for a future hardened lane (VCAV-H)
 
 ---
 
