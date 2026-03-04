@@ -83,27 +83,38 @@ fn extract_bearer_token(headers: &HeaderMap) -> Result<&str, RelayError> {
 
 /// Resolve a requested provider string to an available provider.
 /// Empty string means auto-select the first configured provider.
+///
+/// `"anthropic"` is also treated as auto-select when Anthropic is not configured,
+/// because vault-family-types hardcodes `"anthropic"` as the default provider in
+/// `CreateInviteRequest` (issue #110). Clients that omit the provider field should
+/// get auto-selection behaviour regardless of which providers are configured on the relay.
 pub fn resolve_provider(requested: &str, state: &AppState) -> Result<String, RelayError> {
     match requested {
-        "" => {
-            if state.anthropic_api_key.is_some() {
-                Ok("anthropic".to_string())
-            } else if state.openai_api_key.is_some() {
-                Ok("openai".to_string())
-            } else if state.gemini_api_key.is_some() {
-                Ok("gemini".to_string())
-            } else {
-                Err(RelayError::ContractValidation(
-                    "no inference providers configured".to_string(),
-                ))
-            }
-        }
-        "anthropic" if state.anthropic_api_key.is_some() => Ok("anthropic".to_string()),
+        // Empty string → auto-select
+        "" => auto_select_provider(state),
+        // "anthropic" with no Anthropic key → treat as auto-select (VFT hardcoded default)
+        "anthropic" if state.anthropic_api_key.is_none() => auto_select_provider(state),
+        "anthropic" => Ok("anthropic".to_string()),
         "openai" if state.openai_api_key.is_some() => Ok("openai".to_string()),
         "gemini" if state.gemini_api_key.is_some() => Ok("gemini".to_string()),
         other => Err(RelayError::ContractValidation(format!(
             "provider '{other}' is not configured on this relay"
         ))),
+    }
+}
+
+/// Auto-select the first configured inference provider.
+fn auto_select_provider(state: &AppState) -> Result<String, RelayError> {
+    if state.anthropic_api_key.is_some() {
+        Ok("anthropic".to_string())
+    } else if state.openai_api_key.is_some() {
+        Ok("openai".to_string())
+    } else if state.gemini_api_key.is_some() {
+        Ok("gemini".to_string())
+    } else {
+        Err(RelayError::ContractValidation(
+            "no inference providers configured".to_string(),
+        ))
     }
 }
 
