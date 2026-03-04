@@ -327,8 +327,12 @@ pub async fn relay_core(
     let contract_hash = compute_contract_hash(contract)?;
 
     // 3b. Resolve effective output schema — registry lookup or inline
-    let is_stub_schema = contract.output_schema == serde_json::json!({})
-        || contract.output_schema == serde_json::json!({"type": "object"});
+    // A schema is a "stub" (requiring registry lookup) if it has no `properties` key.
+    let is_stub_schema = contract
+        .output_schema
+        .as_object()
+        .map(|obj| !obj.contains_key("properties"))
+        .unwrap_or(true);
     let effective_schema = if let Some(ref requested_hash) = contract.output_schema_hash {
         if is_stub_schema {
             // Contract references schema by hash — look up from registry
@@ -508,7 +512,14 @@ pub async fn relay_core(
         bits_used_after: entropy_bits,
         budget_limit: contract.entropy_budget_bits.unwrap_or(128),
         budget_tier: BudgetTier::Default,
-        budget_enforcement: Some(format!("{entropy_mode:?}").to_lowercase()),
+        budget_enforcement: Some(
+            match entropy_mode {
+                vault_family_types::EntropyEnforcementMode::Advisory => "advisory",
+                vault_family_types::EntropyEnforcementMode::Gate => "gate",
+                vault_family_types::EntropyEnforcementMode::Strict => "strict",
+            }
+            .to_string(),
+        ),
         compartment_id: None,
     };
 
