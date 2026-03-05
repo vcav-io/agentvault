@@ -1312,6 +1312,20 @@ body {
   border-left: 3px solid var(--color-accent, #6ba3f7);
 }
 
+/* ── Failure receipt styling (#189) ───────────────────────── */
+.receipt-card--failure {
+  border-top: 2px solid var(--color-error);
+}
+
+.receipt-card--failure .receipt-card__label {
+  color: var(--color-error-bright);
+}
+
+.receipt-card__value--failure {
+  color: var(--color-error-bright);
+  font-weight: 600;
+}
+
 /* Reconnect notice for mid-session browser refresh */
 .reconnect-notice {
   padding: 0.75rem 1rem;
