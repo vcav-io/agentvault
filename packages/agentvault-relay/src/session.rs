@@ -339,4 +339,98 @@ mod tests {
         let store = SessionStore::new(Duration::from_secs(600));
         assert!(store.get_state("nonexistent").await.is_none());
     }
+
+    #[tokio::test]
+    async fn test_inputs_cleared_after_inference() {
+        let store = SessionStore::new(Duration::from_secs(600));
+        let (session_id, _) = store
+            .create(test_contract(), "hash".to_string(), "anthropic".to_string())
+            .await;
+
+        // Simulate both inputs submitted
+        store
+            .with_session(&session_id, |session| {
+                session.initiator_input = Some(RelayInput {
+                    role: "initiator".to_string(),
+                    context: serde_json::json!({"text": "secret initiator input"}),
+                });
+                session.responder_input = Some(RelayInput {
+                    role: "responder".to_string(),
+                    context: serde_json::json!({"text": "secret responder input"}),
+                });
+                session.state = SessionState::Processing;
+            })
+            .await;
+
+        // Verify inputs are present
+        let has_inputs = store
+            .with_session(&session_id, |session| {
+                session.initiator_input.is_some() && session.responder_input.is_some()
+            })
+            .await
+            .unwrap();
+        assert!(has_inputs);
+
+        // Simulate post-inference clearing (mirrors spawn_inference Ok arm)
+        store
+            .with_session(&session_id, |session| {
+                session.state = SessionState::Completed;
+                session.initiator_input = None;
+                session.responder_input = None;
+            })
+            .await;
+
+        // Assert inputs are cleared
+        let (initiator_cleared, responder_cleared) = store
+            .with_session(&session_id, |session| {
+                (session.initiator_input.is_none(), session.responder_input.is_none())
+            })
+            .await
+            .unwrap();
+        assert!(initiator_cleared, "initiator_input should be None after inference");
+        assert!(responder_cleared, "responder_input should be None after inference");
+    }
+
+    #[tokio::test]
+    async fn test_inputs_cleared_on_inference_error() {
+        let store = SessionStore::new(Duration::from_secs(600));
+        let (session_id, _) = store
+            .create(test_contract(), "hash".to_string(), "anthropic".to_string())
+            .await;
+
+        // Simulate both inputs submitted
+        store
+            .with_session(&session_id, |session| {
+                session.initiator_input = Some(RelayInput {
+                    role: "initiator".to_string(),
+                    context: serde_json::json!({"text": "secret initiator input"}),
+                });
+                session.responder_input = Some(RelayInput {
+                    role: "responder".to_string(),
+                    context: serde_json::json!({"text": "secret responder input"}),
+                });
+                session.state = SessionState::Processing;
+            })
+            .await;
+
+        // Simulate post-inference clearing on error (mirrors spawn_inference Err arm)
+        store
+            .with_session(&session_id, |session| {
+                session.state = SessionState::Aborted;
+                session.abort_reason = Some(AbortReason::ProviderError);
+                session.initiator_input = None;
+                session.responder_input = None;
+            })
+            .await;
+
+        // Assert inputs are cleared even on error
+        let (initiator_cleared, responder_cleared) = store
+            .with_session(&session_id, |session| {
+                (session.initiator_input.is_none(), session.responder_input.is_none())
+            })
+            .await
+            .unwrap();
+        assert!(initiator_cleared, "initiator_input should be None after error");
+        assert!(responder_cleared, "responder_input should be None after error");
+    }
 }

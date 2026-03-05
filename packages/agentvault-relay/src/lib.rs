@@ -433,6 +433,11 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
                             meta.sizes.receipt_bytes = receipt_bytes;
                             session.metadata = Some(meta);
                         }
+
+                        // Clear raw inputs — commitment hashes are already computed
+                        // inside relay_core, so inputs are no longer needed.
+                        session.initiator_input = None;
+                        session.responder_input = None;
                     })
                     .await;
             }
@@ -447,6 +452,10 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
                     .with_session(&session_id, |session| {
                         session.state = SessionState::Aborted;
                         session.abort_reason = Some(abort_reason);
+
+                        // Clear raw inputs on error too.
+                        session.initiator_input = None;
+                        session.responder_input = None;
                     })
                     .await;
             }
