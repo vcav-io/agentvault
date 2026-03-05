@@ -343,8 +343,7 @@ pub async fn relay_core(
                 .cloned()
                 .ok_or_else(|| {
                     RelayError::ContractValidation(format!(
-                        "output_schema_hash '{}' not found in schema registry",
-                        requested_hash,
+                        "output_schema_hash '{requested_hash}' not found in schema registry"
                     ))
                 })?
         } else {
@@ -352,8 +351,7 @@ pub async fn relay_core(
             let computed_hash = compute_output_schema_hash(&contract.output_schema)?;
             if *requested_hash != computed_hash {
                 return Err(RelayError::ContractValidation(format!(
-                    "output_schema_hash mismatch: contract says '{}' but inline schema hashes to '{}'",
-                    requested_hash, computed_hash,
+                    "output_schema_hash mismatch: contract says '{requested_hash}' but inline schema hashes to '{computed_hash}'"
                 )));
             }
             contract.output_schema.clone()
