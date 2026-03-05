@@ -280,9 +280,7 @@ pub fn validate_enforcement_lockfile(dir: &str) -> Result<(), RelayError> {
             let skip = std::env::var("AV_ENFORCEMENT_LOCKFILE_SKIP")
                 .map(|v| v == "1")
                 .unwrap_or(false);
-            let is_dev = std::env::var("AV_ENV")
-                .map(|v| v == "dev")
-                .unwrap_or(false);
+            let is_dev = std::env::var("AV_ENV").map(|v| v == "dev").unwrap_or(false);
 
             if skip && is_dev {
                 tracing::warn!(
