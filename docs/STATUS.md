@@ -19,7 +19,7 @@
 | Docker | Multi-stage Dockerfile, GHCR workflow, demo docker-compose | Complete |
 | Testing | Category C driver, paraphrase stability, session metadata endpoint | Complete |
 | Red Team | 7 adversarial scenarios, 20/20 pass rate, canary-guarded | Complete |
-| Demo UI | Three-panel protocol observatory with receipt v2 cards, contract enforcement display, policy transparency | Complete |
+| Demo UI | Three-panel protocol observatory with receipt v2 cards, contract enforcement display, policy transparency, 15 scenarios with canary checking | Complete |
 | Model Sweep | e2e-sweep.sh for testing provider/model combos across demo | Complete |
 | Receipt v2 | Commitments/claims split, assurance levels, input commitment hashes, channel capacity, status, execution lane | Complete |
 | MCP verify_receipt | `agentvault.verify_receipt` tool — v1 + v2 dispatch, shared verifier | Complete |
@@ -79,6 +79,7 @@
 
 | Issue | Description | PR |
 |-------|-------------|-----|
+| [#192](https://github.com/vcav-io/agentvault/issues/192) | Expand demo UI to 15 scenarios with opt-in canary checking | #193 |
 | #188, #190 | v2 receipt claims: channel capacity, execution lane, session status (success path) | #191 |
 | — | Demo UI v2 alignment: receipt v2 cards, contract enforcement, policy transparency | #180 |
 | — | README rewrite as demo-UI-first on-ramp | #178 |
