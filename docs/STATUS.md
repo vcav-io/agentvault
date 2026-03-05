@@ -25,6 +25,8 @@
 | MCP verify_receipt | `agentvault.verify_receipt` tool — v1 + v2 dispatch, shared verifier, commitment recomputation | Complete |
 | Key Pinning | Contract-level relay verifying key pinning with contract validation | Complete |
 | Input Privacy | Raw inputs cleared from session state after inference (success and error paths) | Complete |
+| TEE Receipt Introspection | `verify_receipt` surfaces `tee_info` from v2 TEE receipts (tee_type, measurement, attestation_hash, transcript_hash) | Complete |
+| Execution Environments | Two-lane framing (standard vs confidential), trust model table, limitations docs | Complete |
 
 ## Open Work
 
@@ -59,6 +61,7 @@
 
 | Issue | Description | PR |
 |-------|-------------|-----|
+| — | TEE receipt introspection + execution environments docs | #203 |
 | [#186](https://github.com/vcav-io/agentvault/issues/186) | Provider notes with current-gen model sweep results | — |
 | [#187](https://github.com/vcav-io/agentvault/issues/187) | Red team template for schema boundary violation testing | — |
 | [#179](https://github.com/vcav-io/agentvault/issues/179) | Post-PR follow-ups: README v2 updates, model defaults refresh | — |
