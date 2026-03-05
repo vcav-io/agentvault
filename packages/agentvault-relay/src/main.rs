@@ -17,8 +17,7 @@ async fn main() {
         .init();
 
     let anthropic_api_key = std::env::var("ANTHROPIC_API_KEY").ok();
-    let model_id =
-        std::env::var("AV_MODEL_ID").unwrap_or_else(|_| "claude-sonnet-4-6".to_string());
+    let model_id = std::env::var("AV_MODEL_ID").unwrap_or_else(|_| "claude-sonnet-4-6".to_string());
     let prompt_dir =
         std::env::var("AV_PROMPT_PROGRAM_DIR").unwrap_or_else(|_| "prompt_programs".to_string());
     let port: u16 = std::env::var("AV_PORT")
@@ -79,9 +78,7 @@ async fn main() {
     let lockfile_skip = std::env::var("AV_ENFORCEMENT_LOCKFILE_SKIP")
         .map(|v| v == "1")
         .unwrap_or(false);
-    let is_dev_for_lockfile = std::env::var("AV_ENV")
-        .map(|v| v == "dev")
-        .unwrap_or(false);
+    let is_dev_for_lockfile = std::env::var("AV_ENV").map(|v| v == "dev").unwrap_or(false);
     let skip_enforcement = lockfile_skip && is_dev_for_lockfile;
 
     let (loaded_policy, enforcement_policy_hash) = if skip_enforcement {
@@ -185,9 +182,7 @@ async fn main() {
     let inbox_auth_off = std::env::var("AV_INBOX_AUTH")
         .map(|v| v == "off")
         .unwrap_or(false);
-    let is_dev = std::env::var("AV_ENV")
-        .map(|v| v == "dev")
-        .unwrap_or(false);
+    let is_dev = std::env::var("AV_ENV").map(|v| v == "dev").unwrap_or(false);
     if inbox_auth_off && !is_dev {
         tracing::error!(
             "AV_INBOX_AUTH=off requires AV_ENV=dev — refusing to start. \
@@ -261,10 +256,7 @@ async fn main() {
     let max_completion_tokens: u32 = match std::env::var("AV_MAX_COMPLETION_TOKENS") {
         Ok(val) => match val.parse() {
             Ok(n) => {
-                tracing::info!(
-                    max_completion_tokens = n,
-                    "Using AV_MAX_COMPLETION_TOKENS"
-                );
+                tracing::info!(max_completion_tokens = n, "Using AV_MAX_COMPLETION_TOKENS");
                 n
             }
             Err(_) => {
