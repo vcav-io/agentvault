@@ -1,33 +1,33 @@
 /**
- * Shared receipt verification for AgentVault v1 and v2 receipts.
+ * Receipt verification for the AgentVault client.
  *
- * Pure cryptographic verification — no MCP envelope wrapping.
- * Used by both the MCP server tool and the demo UI server.
- *
- * v1 algorithm:
- *   1. Strip `signature` (hex string) from receipt
- *   2. JCS canonicalize the remainder
- *   3. message = "VCAV-RECEIPT-V1:" + canonical
- *   4. digest = SHA-256(message)
- *   5. Verify Ed25519 signature over digest
- *
- * v2 algorithm:
- *   1. Strip `signature` object (has alg, value, signed_fields) from receipt
- *   2. JCS canonicalize the remainder
- *   3. message = "VCAV-RECEIPT-V2:" + canonical
- *   4. digest = SHA-256(message)
- *   5. Decode base64url signature.value
- *   6. Verify Ed25519 signature over digest
+ * Supports v1 receipts (schema_version: "1.0.0") and v2 receipts
+ * (receipt_schema_version: "2.0.0"). Optionally recomputes commitment
+ * hashes when artefacts are provided.
  */
 
 import { ed25519 } from '@noble/curves/ed25519';
 import { sha256 } from '@noble/hashes/sha256';
-import { hexToBytes, utf8ToBytes } from '@noble/hashes/utils';
+import { bytesToHex, hexToBytes, utf8ToBytes } from '@noble/hashes/utils';
 import { canonicalize } from 'json-canonicalize';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+export interface VerifyArtefacts {
+  output?: unknown;
+  contract?: unknown;
+  outputSchema?: unknown;
+  promptTemplate?: string;
+}
+
+export interface CommitmentCheck {
+  field: string;
+  expected: string;
+  computed: string;
+  match: boolean;
+}
 
 export interface VerifyResult {
   valid: boolean;
@@ -36,10 +36,11 @@ export interface VerifyResult {
   operator_id?: string;
   errors: string[];
   warnings: string[];
+  commitment_checks?: CommitmentCheck[];
 }
 
 // ---------------------------------------------------------------------------
-// Base64url decode (no padding required)
+// Base64url decode
 // ---------------------------------------------------------------------------
 
 function base64urlToBytes(b64url: string): Uint8Array {
@@ -54,20 +55,32 @@ function base64urlToBytes(b64url: string): Uint8Array {
 }
 
 // ---------------------------------------------------------------------------
-// Verify helpers
+// Commitment hash computation
 // ---------------------------------------------------------------------------
 
-function verifyV1(
+export function computeCommitmentHash(artefact: unknown): string {
+  const canonical = canonicalize(artefact);
+  return bytesToHex(sha256(utf8ToBytes(canonical)));
+}
+
+export function computePromptTemplateHash(template: string): string {
+  return bytesToHex(sha256(utf8ToBytes(template)));
+}
+
+// ---------------------------------------------------------------------------
+// Signature verification helpers
+// ---------------------------------------------------------------------------
+
+function verifySignatureV1(
   receipt: Record<string, unknown>,
   publicKeyHex: string,
-): { valid: boolean; errors: string[]; warnings: string[] } {
+): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
-  const warnings: string[] = [];
 
   const sigHex = receipt['signature'];
   if (typeof sigHex !== 'string') {
     errors.push('Missing or non-string signature field');
-    return { valid: false, errors, warnings };
+    return { valid: false, errors };
   }
 
   const { signature: _sig, ...unsigned } = receipt;
@@ -81,13 +94,13 @@ function verifyV1(
     sigBytes = hexToBytes(sigHex);
   } catch {
     errors.push('signature is not valid hex');
-    return { valid: false, errors, warnings };
+    return { valid: false, errors };
   }
   try {
     pubKeyBytes = hexToBytes(publicKeyHex);
   } catch {
     errors.push('public_key_hex is not valid hex');
-    return { valid: false, errors, warnings };
+    return { valid: false, errors };
   }
 
   let valid: boolean;
@@ -95,40 +108,36 @@ function verifyV1(
     valid = ed25519.verify(sigBytes, digest, pubKeyBytes);
   } catch (err) {
     errors.push(`Ed25519 verification threw: ${err instanceof Error ? err.message : String(err)}`);
-    return { valid: false, errors, warnings };
+    return { valid: false, errors };
   }
 
   if (!valid) {
-    errors.push('Signature verification failed — receipt may have been tampered');
+    errors.push('Signature verification failed');
   }
 
-  return { valid, errors, warnings };
+  return { valid, errors };
 }
 
-function verifyV2(
+function verifySignatureV2(
   receipt: Record<string, unknown>,
   publicKeyHex: string,
-): { valid: boolean; errors: string[]; warnings: string[] } {
+): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
-  const warnings: string[] = [];
 
   const sigObj = receipt['signature'];
   if (typeof sigObj !== 'object' || sigObj === null) {
     errors.push('Missing or invalid signature object');
-    return { valid: false, errors, warnings };
+    return { valid: false, errors };
   }
 
   const sig = sigObj as Record<string, unknown>;
-  const alg = sig['alg'];
-  const value = sig['value'];
-
-  if (alg !== 'Ed25519') {
-    errors.push(`Unsupported signature algorithm: ${String(alg)}`);
-    return { valid: false, errors, warnings };
+  if (sig['alg'] !== 'Ed25519') {
+    errors.push(`Unsupported signature algorithm: ${String(sig['alg'])}`);
+    return { valid: false, errors };
   }
-  if (typeof value !== 'string') {
+  if (typeof sig['value'] !== 'string') {
     errors.push('signature.value must be a string');
-    return { valid: false, errors, warnings };
+    return { valid: false, errors };
   }
 
   const { signature: _sig, ...unsigned } = receipt;
@@ -139,16 +148,16 @@ function verifyV2(
   let sigBytes: Uint8Array;
   let pubKeyBytes: Uint8Array;
   try {
-    sigBytes = base64urlToBytes(value);
+    sigBytes = base64urlToBytes(sig['value'] as string);
   } catch {
     errors.push('signature.value is not valid base64url');
-    return { valid: false, errors, warnings };
+    return { valid: false, errors };
   }
   try {
     pubKeyBytes = hexToBytes(publicKeyHex);
   } catch {
     errors.push('public_key_hex is not valid hex');
-    return { valid: false, errors, warnings };
+    return { valid: false, errors };
   }
 
   let valid: boolean;
@@ -156,19 +165,159 @@ function verifyV2(
     valid = ed25519.verify(sigBytes, digest, pubKeyBytes);
   } catch (err) {
     errors.push(`Ed25519 verification threw: ${err instanceof Error ? err.message : String(err)}`);
-    return { valid: false, errors, warnings };
+    return { valid: false, errors };
   }
 
   if (!valid) {
-    errors.push('Signature verification failed — receipt may have been tampered');
+    errors.push('Signature verification failed');
   }
 
-  return { valid, errors, warnings };
+  return { valid, errors };
 }
 
 // ---------------------------------------------------------------------------
-// Public API
+// Commitment verification
 // ---------------------------------------------------------------------------
+
+interface CommitmentMapping {
+  artefactKey: keyof VerifyArtefacts;
+  receiptField: string;
+  isString: boolean;
+}
+
+const COMMITMENT_MAPPINGS: CommitmentMapping[] = [
+  { artefactKey: 'output', receiptField: 'output_hash', isString: false },
+  { artefactKey: 'contract', receiptField: 'contract_hash', isString: false },
+  { artefactKey: 'outputSchema', receiptField: 'schema_hash', isString: false },
+  { artefactKey: 'promptTemplate', receiptField: 'prompt_template_hash', isString: true },
+];
+
+function verifyCommitments(
+  receipt: Record<string, unknown>,
+  artefacts: VerifyArtefacts,
+  isV2: boolean,
+): { checks: CommitmentCheck[]; errors: string[] } {
+  const checks: CommitmentCheck[] = [];
+  const errors: string[] = [];
+
+  // v2: commitments are at receipt.commitments; v1: top-level fields
+  const commitments = isV2
+    ? (receipt['commitments'] as Record<string, unknown> | undefined) ?? {}
+    : receipt;
+
+  for (const mapping of COMMITMENT_MAPPINGS) {
+    const artefact = artefacts[mapping.artefactKey];
+    if (artefact === undefined) continue;
+
+    const expected = commitments[mapping.receiptField];
+    if (typeof expected !== 'string') continue;
+
+    const computed = mapping.isString
+      ? computePromptTemplateHash(artefact as string)
+      : computeCommitmentHash(artefact);
+
+    const match = computed === expected;
+    checks.push({ field: mapping.receiptField, expected, computed, match });
+
+    if (!match) {
+      errors.push(
+        `Commitment mismatch: ${mapping.receiptField} expected ${expected.slice(0, 16)}... got ${computed.slice(0, 16)}...`,
+      );
+    }
+  }
+
+  return { checks, errors };
+}
+
+// ---------------------------------------------------------------------------
+// Main entry point
+// ---------------------------------------------------------------------------
+
+export function verifyReceipt(
+  receipt: Record<string, unknown>,
+  publicKeyHex: string,
+  artefacts?: VerifyArtefacts,
+): VerifyResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  // Detect version
+  const receiptSchemaVersion = receipt['receipt_schema_version'];
+  const schemaVersion = receipt['schema_version'];
+
+  let detectedVersion: string;
+  let isV2: boolean;
+  if (receiptSchemaVersion === '2.0.0') {
+    detectedVersion = '2.0.0';
+    isV2 = true;
+  } else if (schemaVersion === '1.0.0') {
+    detectedVersion = '1.0.0';
+    isV2 = false;
+  } else {
+    errors.push(
+      'Cannot detect receipt version: expected receipt_schema_version "2.0.0" or schema_version "1.0.0"',
+    );
+    return {
+      valid: false,
+      schema_version: String(receiptSchemaVersion ?? schemaVersion ?? 'unknown'),
+      errors,
+      warnings,
+    };
+  }
+
+  // Verify signature
+  const sigResult = isV2
+    ? verifySignatureV2(receipt, publicKeyHex)
+    : verifySignatureV1(receipt, publicKeyHex);
+
+  errors.push(...sigResult.errors);
+  let valid = sigResult.valid;
+
+  // Verify commitments if artefacts provided
+  let commitment_checks: CommitmentCheck[] | undefined;
+  if (artefacts) {
+    const commitResult = verifyCommitments(receipt, artefacts, isV2);
+    if (commitResult.checks.length > 0) {
+      commitment_checks = commitResult.checks;
+    }
+    if (commitResult.errors.length > 0) {
+      errors.push(...commitResult.errors);
+      valid = false;
+    }
+
+    // Cross-check relay verifying key from contract (#184)
+    if (artefacts.contract && typeof artefacts.contract === 'object') {
+      const contractObj = artefacts.contract as Record<string, unknown>;
+      if (typeof contractObj.relay_verifying_key_hex === 'string') {
+        if (contractObj.relay_verifying_key_hex !== publicKeyHex) {
+          errors.push(
+            `Contract pins relay key '${contractObj.relay_verifying_key_hex.slice(0, 12)}...' but receipt was signed by '${publicKeyHex.slice(0, 12)}...'`,
+          );
+          valid = false;
+        }
+      }
+    }
+  }
+
+  return {
+    valid,
+    schema_version: detectedVersion,
+    assurance_level:
+      detectedVersion === '2.0.0' && typeof receipt['assurance_level'] === 'string'
+        ? (receipt['assurance_level'] as string)
+        : undefined,
+    operator_id:
+      detectedVersion === '2.0.0' &&
+      typeof receipt['operator'] === 'object' &&
+      receipt['operator'] !== null &&
+      typeof (receipt['operator'] as Record<string, unknown>)['operator_id'] === 'string'
+        ? ((receipt['operator'] as Record<string, unknown>)['operator_id'] as string)
+        : undefined,
+    errors,
+    warnings,
+    commitment_checks,
+  };
+}
 
 /** Detect receipt version from the receipt object. */
 export function detectReceiptVersion(
@@ -177,55 +326,6 @@ export function detectReceiptVersion(
   if (receipt['receipt_schema_version'] === '2.0.0') return '2.0.0';
   if (receipt['schema_version'] === '1.0.0') return '1.0.0';
   return null;
-}
-
-/**
- * Verify a receipt's cryptographic signature. Supports v1 and v2 receipts.
- *
- * @param receipt - The full receipt object (including signature)
- * @param publicKeyHex - The relay's Ed25519 public key in hex
- */
-export function verifyReceipt(
-  receipt: Record<string, unknown>,
-  publicKeyHex: string,
-): VerifyResult {
-  const version = detectReceiptVersion(receipt);
-
-  if (!version) {
-    return {
-      valid: false,
-      schema_version: String(receipt['receipt_schema_version'] ?? receipt['schema_version'] ?? 'unknown'),
-      errors: ['Cannot detect receipt version: expected receipt_schema_version "2.0.0" or schema_version "1.0.0"'],
-      warnings: [],
-    };
-  }
-
-  const result = version === '2.0.0'
-    ? verifyV2(receipt, publicKeyHex)
-    : verifyV1(receipt, publicKeyHex);
-
-  const output: VerifyResult = {
-    valid: result.valid,
-    schema_version: version,
-    errors: result.errors,
-    warnings: result.warnings,
-  };
-
-  // Include v2-specific fields
-  if (version === '2.0.0') {
-    if (typeof receipt['assurance_level'] === 'string') {
-      output.assurance_level = receipt['assurance_level'] as string;
-    }
-    const op = receipt['operator'];
-    if (typeof op === 'object' && op !== null) {
-      const opObj = op as Record<string, unknown>;
-      if (typeof opObj['operator_id'] === 'string') {
-        output.operator_id = opObj['operator_id'] as string;
-      }
-    }
-  }
-
-  return output;
 }
 
 /**

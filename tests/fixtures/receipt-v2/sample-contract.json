@@ -1,0 +1,7 @@
+{
+  "purpose_code": "COMPATIBILITY",
+  "output_schema_id": "test-schema",
+  "output_schema": {"type": "object", "properties": {"decision": {"type": "string", "enum": ["approve", "reject"]}}},
+  "participants": ["alice", "bob"],
+  "prompt_template_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
