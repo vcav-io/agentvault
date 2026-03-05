@@ -42,15 +42,7 @@
         <div class="setup-selectors">
           <div class="template-selector">
             <label for="template-select">Template</label>
-            <select id="template-select">
-              <option value="mediation">Co-founder Mediation</option>
-              <option value="architecture">Architecture Dispute</option>
-              <optgroup label="Red Team">
-                <option value="redteam_extraction">Adversarial Extraction</option>
-                <option value="redteam_social">Social Engineering</option>
-              </optgroup>
-              <option value="custom">Blank</option>
-            </select>
+            <select id="template-select"></select>
           </div>
           <div class="template-selector">
             <label for="provider-select">Agent Provider</label>
@@ -66,6 +58,10 @@
           </div>
         </div>
       </div>
+      <label class="canary-toggle" id="canary-toggle-wrap">
+        <input type="checkbox" id="canary-check-toggle">
+        <span>Run canary checks after session</span>
+      </label>
       <div class="prompt-editors">
         <div class="prompt-editor alice">
           <div class="prompt-label">
@@ -159,6 +155,7 @@
     </div>
   </main>
 
+  <script src="scenarios.js"></script>
   <script src="render.js"></script>
   <script src="app.js"></script>
 </body>

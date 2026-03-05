@@ -874,3 +874,115 @@ function triggerSignalOverlay(json) {
     right.classList.add('signal-block--animate-right');
   }, 800);
 }
+
+// ── Canary check result card (vault column) ─────────────────────
+
+function createCanaryResultCard(result, scenario) {
+  var card = document.createElement('div');
+  card.className = 'vault-card vault-card--expanded'
+    + (result.passed ? ' vault-card--success' : ' vault-card--error');
+
+  var header = document.createElement('div');
+  header.className = 'vault-card__header';
+
+  var tag = document.createElement('span');
+  tag.className = 'vault-card__step-tag';
+  tag.textContent = '\u2690';
+  header.appendChild(tag);
+
+  var titleEl = document.createElement('span');
+  titleEl.className = 'vault-card__title';
+  titleEl.textContent = result.passed
+    ? 'Canary Check \u2014 PASS'
+    : 'Canary Check \u2014 FAIL';
+  header.appendChild(titleEl);
+
+  var chevron = document.createElement('span');
+  chevron.className = 'vault-card__chevron';
+  chevron.textContent = '\u25B8';
+  header.appendChild(chevron);
+
+  header.addEventListener('click', function () {
+    card.classList.toggle('vault-card--expanded');
+  });
+  card.appendChild(header);
+
+  var body = document.createElement('div');
+  body.className = 'vault-card__body';
+
+  // Scenario label
+  var scenarioLine = document.createElement('div');
+  scenarioLine.className = 'vault-line';
+  var slKey = document.createElement('span');
+  slKey.className = 'vault-line__key';
+  slKey.textContent = 'scenario';
+  var slVal = document.createElement('span');
+  slVal.className = 'vault-line__value';
+  slVal.textContent = scenario.label;
+  scenarioLine.appendChild(slKey);
+  scenarioLine.appendChild(slVal);
+  body.appendChild(scenarioLine);
+
+  // Summary counts
+  var totalCanaries = scenario.canaries.length;
+  var totalInverse = scenario.inverseCanaries.length;
+  var summaryLine = document.createElement('div');
+  summaryLine.className = 'vault-line';
+  var sumKey = document.createElement('span');
+  sumKey.className = 'vault-line__key';
+  sumKey.textContent = 'checked';
+  var sumVal = document.createElement('span');
+  sumVal.className = 'vault-line__value';
+  sumVal.textContent = totalCanaries + ' canaries, ' + totalInverse + ' required disclosures';
+  summaryLine.appendChild(sumKey);
+  summaryLine.appendChild(sumVal);
+  body.appendChild(summaryLine);
+
+  // Leaked canaries (HARD FAIL)
+  for (var i = 0; i < result.leaked.length; i++) {
+    var line = document.createElement('div');
+    line.className = 'vault-line';
+    var keyEl = document.createElement('span');
+    keyEl.className = 'vault-line__key canary-fail';
+    keyEl.textContent = 'LEAKED';
+    var valEl = document.createElement('span');
+    valEl.className = 'vault-line__value';
+    valEl.textContent = result.leaked[i];
+    line.appendChild(keyEl);
+    line.appendChild(valEl);
+    body.appendChild(line);
+  }
+
+  // Missing inverse canaries (SOFT FAIL)
+  for (var j = 0; j < result.absent.length; j++) {
+    var line = document.createElement('div');
+    line.className = 'vault-line';
+    var keyEl = document.createElement('span');
+    keyEl.className = 'vault-line__key canary-missing';
+    keyEl.textContent = 'MISSING';
+    var valEl = document.createElement('span');
+    valEl.className = 'vault-line__value';
+    valEl.textContent = result.absent[j];
+    line.appendChild(keyEl);
+    line.appendChild(valEl);
+    body.appendChild(line);
+  }
+
+  card.appendChild(body);
+
+  // Status indicator
+  var status = document.createElement('div');
+  if (result.passed) {
+    status.className = 'vault-card__status vault-card__status--ok';
+    status.textContent = '\u2713 All canaries respected';
+  } else if (result.leaked.length > 0) {
+    status.className = 'vault-card__status vault-card__status--error';
+    status.textContent = '\u2717 HARD FAIL \u2014 private data leaked';
+  } else {
+    status.className = 'vault-card__status vault-card__status--error';
+    status.textContent = '\u2717 SOFT FAIL \u2014 required disclosures missing';
+  }
+  card.appendChild(status);
+
+  return card;
+}

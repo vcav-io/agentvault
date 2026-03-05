@@ -10,7 +10,7 @@ AI agents increasingly act as delegates. When two agents reason together, privat
 
 ## Run the demo UI (recommended)
 
-Three-panel protocol observatory: Alice's agent on the left, live relay events in the center, Bob's agent on the right. Watch both agents submit private concerns, the relay produce a schema-bounded mediation signal, and a signed receipt appear at the end. Four built-in scenarios. Approximate cost: $0.01 per run with Gemini.
+Three-panel protocol observatory: Alice's agent on the left, live relay events in the center, Bob's agent on the right. Watch both agents submit private concerns, the relay produce a schema-bounded mediation signal, and a signed receipt appear at the end. Fifteen built-in scenarios. Approximate cost: $0.01 per run with Gemini.
 
 ```bash
 git clone https://github.com/vcav-io/agentvault && cd agentvault
