@@ -1,9 +1,10 @@
 use chrono::Utc;
 use entropy_core::calculate_schema_entropy_upper_bound;
 use receipt_core::{
-    AssuranceLevel, BudgetEnforcementMode, BudgetUsageRecord, Claims, Commitments, ExecutionLane,
-    HashAlgorithm, InputCommitment, Operator, PreflightBundle, Receipt, ReceiptStatus, ReceiptV2,
-    SignalClass, UnsignedReceiptV2, CANONICALIZATION_V2, SCHEMA_VERSION_V2,
+    AssuranceLevel, BudgetEnforcementMode, BudgetUsageRecord, BudgetUsageV2, Claims, Commitments,
+    ExecutionLane, ExecutionLaneV2, HashAlgorithm, InputCommitment, Operator, PreflightBundle,
+    Receipt, ReceiptStatus, ReceiptV2, SessionStatus, SignalClass, UnsignedReceiptV2,
+    CANONICALIZATION_V2, CHANNEL_CAPACITY_MEASUREMENT_VERSION, SCHEMA_VERSION_V2,
 };
 use sha2::{Digest, Sha256};
 use vault_family_types::{generate_pair_id, BudgetTier};
@@ -607,6 +608,8 @@ pub async fn relay_core(
         inference_end,
         v2_enforcement_mode,
         effective_max_tokens,
+        entropy_bits,
+        contract.entropy_budget_bits,
     )?;
 
     let timing = InferenceTiming {
@@ -646,6 +649,8 @@ fn build_receipt_v2(
     inference_end: chrono::DateTime<chrono::Utc>,
     budget_enforcement_mode: BudgetEnforcementMode,
     effective_max_tokens: u32,
+    entropy_bits: u32,
+    entropy_budget_bits: Option<u32>,
 ) -> Result<ReceiptV2, RelayError> {
     // Compute output hash
     let output_hash = {
@@ -733,6 +738,23 @@ fn build_receipt_v2(
             provider_latency_ms: Some(provider_latency_ms),
             token_usage: None,
             relay_software_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            // Session outcome (#189)
+            status: Some(SessionStatus::Success),
+            signal_class: Some("SESSION_COMPLETED".to_string()),
+            // Execution lane (#190)
+            execution_lane: Some(ExecutionLaneV2::Standard),
+            // Channel capacity (#188)
+            channel_capacity_bits_upper_bound: Some(entropy_bits),
+            channel_capacity_measurement_version: Some(
+                CHANNEL_CAPACITY_MEASUREMENT_VERSION.to_string(),
+            ),
+            entropy_budget_bits,
+            schema_entropy_ceiling_bits: Some(entropy_bits),
+            budget_usage: Some(BudgetUsageV2 {
+                bits_used_before: 0, // cross-session ledger not yet wired
+                bits_used_after: entropy_bits,
+                budget_limit: entropy_budget_bits.unwrap_or(128),
+            }),
         },
         provider_attestation: None,
         tee_attestation: None,

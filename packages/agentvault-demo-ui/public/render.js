@@ -475,18 +475,64 @@ var VaultCardManager = (function () {
                   tLine.appendChild(tVal);
                   claimsSection.appendChild(tLine);
                 }
-                if (claims.output_entropy_bits !== undefined) {
-                  var eLine = document.createElement('div');
-                  eLine.className = 'receipt-card__line';
-                  var eKey = document.createElement('span');
-                  eKey.className = 'receipt-card__key';
-                  eKey.textContent = 'entropy bits';
-                  var eVal = document.createElement('span');
-                  eVal.className = 'receipt-card__value';
-                  eVal.textContent = String(claims.output_entropy_bits);
-                  eLine.appendChild(eKey);
-                  eLine.appendChild(eVal);
-                  claimsSection.appendChild(eLine);
+                // Status and signal class (#189)
+                if (claims.status) {
+                  var stLine = document.createElement('div');
+                  stLine.className = 'receipt-card__line';
+                  var stKey = document.createElement('span');
+                  stKey.className = 'receipt-card__key';
+                  stKey.textContent = 'status';
+                  var stVal = document.createElement('span');
+                  stVal.className = 'receipt-card__value';
+                  stVal.textContent = claims.status + (claims.signal_class ? ' (' + claims.signal_class + ')' : '');
+                  stLine.appendChild(stKey);
+                  stLine.appendChild(stVal);
+                  claimsSection.appendChild(stLine);
+                }
+                // Execution lane (#190)
+                if (claims.execution_lane) {
+                  var elLine = document.createElement('div');
+                  elLine.className = 'receipt-card__line';
+                  var elKey = document.createElement('span');
+                  elKey.className = 'receipt-card__key';
+                  elKey.textContent = 'execution lane';
+                  var elVal = document.createElement('span');
+                  elVal.className = 'receipt-card__value';
+                  elVal.textContent = String(claims.execution_lane);
+                  elLine.appendChild(elKey);
+                  elLine.appendChild(elVal);
+                  claimsSection.appendChild(elLine);
+                }
+                // Channel capacity (#188)
+                if (claims.channel_capacity_bits_upper_bound !== undefined) {
+                  var ccLine = document.createElement('div');
+                  ccLine.className = 'receipt-card__line';
+                  var ccKey = document.createElement('span');
+                  ccKey.className = 'receipt-card__key';
+                  ccKey.textContent = 'channel capacity';
+                  var ccVal = document.createElement('span');
+                  ccVal.className = 'receipt-card__value';
+                  var ccText = claims.channel_capacity_bits_upper_bound + ' bits';
+                  if (claims.entropy_budget_bits !== undefined) {
+                    ccText += ' / ' + claims.entropy_budget_bits + ' budget';
+                  }
+                  ccVal.textContent = ccText;
+                  ccLine.appendChild(ccKey);
+                  ccLine.appendChild(ccVal);
+                  claimsSection.appendChild(ccLine);
+                }
+                if (claims.budget_usage && typeof claims.budget_usage === 'object') {
+                  var buLine = document.createElement('div');
+                  buLine.className = 'receipt-card__line';
+                  var buKey = document.createElement('span');
+                  buKey.className = 'receipt-card__key';
+                  buKey.textContent = 'budget usage';
+                  var buVal = document.createElement('span');
+                  buVal.className = 'receipt-card__value';
+                  buVal.textContent = claims.budget_usage.bits_used_before + ' \u2192 ' + claims.budget_usage.bits_used_after + ' / ' + claims.budget_usage.budget_limit + ' bits';
+                  buLine.appendChild(buKey);
+                  buLine.appendChild(buVal);
+                  claimsSection.appendChild(buLine);
                 }
                 rcSection.appendChild(claimsSection);
 
