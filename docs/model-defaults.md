@@ -6,27 +6,27 @@ Current model defaults per provider for the AgentVault demo UI.
 
 | Provider | Default model | Tier | Notes |
 |----------|--------------|------|-------|
-| Gemini | `gemini-2.5-flash` | mid | Good tool-use support, cost-effective |
-| OpenAI | `gpt-4.1-mini` | mid | Strong tool-calling, mid-price |
-| Anthropic | `claude-haiku-4-5-20251001` | budget | Fast, cheap, adequate for demo |
+| Gemini | `gemini-3.1-flash-lite-preview` | budget | Cheapest current-gen; slightly conservative signaling |
+| OpenAI | `gpt-5-nano` | budget | Cheapest GPT-5; now GA with valid structured output |
+| Anthropic | `claude-haiku-4-5-20251001` | budget | Only budget Anthropic with tool-call support |
 
 ## Heartbeat models (polling loops)
 
 | Provider | Default model | Tier | Notes |
 |----------|--------------|------|-------|
-| Gemini | `gemini-2.5-flash-lite` | budget | Cheapest Gemini with tool use |
-| OpenAI | `gpt-4.1-nano` | budget | Cheapest OpenAI with tool-calling support |
+| Gemini | `gemini-3.1-flash-lite-preview` | budget | Same as agent (cheapest current-gen) |
+| OpenAI | `gpt-5-nano` | budget | Same as agent (cheapest GPT-5) |
 | Anthropic | `claude-haiku-4-5-20251001` | budget | Same as agent (no cheaper option with tool use) |
 
 ## Available models in UI selector
 
 ### Gemini
-- `gemini-2.5-flash` (mid, default)
-- `gemini-2.5-flash-lite` (budget)
+- `gemini-3-flash-preview` (mid)
+- `gemini-3.1-flash-lite-preview` (budget, default)
 
 ### OpenAI
-- `gpt-4.1-mini` (mid, default)
-- `gpt-4.1-nano` (budget)
+- `gpt-5-mini` (mid)
+- `gpt-5-nano` (budget, default)
 
 ### Anthropic
 - `claude-haiku-4-5-20251001` (budget, default)
@@ -41,11 +41,14 @@ Cheapest model that:
 
 ## Removed models
 
-- `gpt-5-mini` — does not exist (removed in PR #180)
-- `gemini-3-flash-preview` — unverified, removed defensively
+- `gpt-4.1-nano` — previous-gen budget; produces degenerate output (INSUFFICIENT_SIGNAL)
+- `gpt-4.1-mini` — previous-gen mid; superseded by gpt-5-nano at budget tier
+- `gemini-2.5-flash` — previous-gen mid; superseded by gemini-3.1-flash-lite at budget tier
+- `gemini-2.5-flash-lite` — previous-gen budget; superseded by gemini-3.1-flash-lite
 
 ## Last sweep
 
-- **Date**: 2026-03-04
-- **Sweep method**: Manual audit of provider docs
-- **Follow-up**: Run `tests/live/sweep.sh` for live validation (see issue #179)
+- **Date**: 2026-03-05
+- **Sweep method**: Live `tests/live/sweep.sh` against all current-gen models
+- **Result**: All 6 models pass, including budget tier across all providers
+- **Details**: See [provider-notes.md](provider-notes.md)

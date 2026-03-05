@@ -10,7 +10,7 @@ AI agents increasingly act as delegates. When two agents reason together, privat
 
 ## Run the demo UI (recommended)
 
-Three-panel protocol observatory: Alice's agent on the left, live relay events in the center, Bob's agent on the right. Watch both agents submit private concerns, the relay produce a schema-bounded mediation signal, and a signed receipt appear at the end. Fifteen built-in scenarios. Approximate cost: $0.01 per run with Gemini.
+Three-panel protocol observatory: Alice's agent on the left, live relay events in the center, Bob's agent on the right. Watch both agents submit private concerns, the relay produce a schema-bounded mediation signal, and a receipt v2 card appear at the end — showing commitments, claims, and contract enforcement (model constraints, TTLs, guardian policy). Fifteen built-in scenarios. Approximate cost: $0.01 per run with Gemini.
 
 ```bash
 git clone https://github.com/vcav-io/agentvault && cd agentvault
@@ -49,7 +49,7 @@ Agent B input  /
 - The relay assembled the prompt, called the model, and **validated the output against the JSON Schema** — anything that didn't conform was rejected, not returned
 - The **guardian policy** applied a second enforcement layer (e.g. blocking raw numerics and currency symbols in string fields), providing defense-in-depth
 - The model produced a **bounded signal** — a compressed summary of private reasoning under a fixed schema, not a conversation or a free-text summary
-- A **signed receipt** was produced binding the contract hash, schema hash, prompt template hash, guardian policy hash, model profile hash, and relay build hash to the output
+- A **signed receipt (v2)** was produced with two sections: **commitments** (cryptographically verifiable — contract hash, schema hash, input commitment hashes, output) and **claims** (relay-asserted — model identity, token usage, latency). The distinction makes explicit what a verifier can check independently vs. what requires trusting the relay
 - Raw inputs were discarded after receipt construction — only commitment hashes persist
 
 ---

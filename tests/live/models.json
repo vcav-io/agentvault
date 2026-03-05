@@ -2,11 +2,7 @@
   { "provider": "anthropic", "model": "claude-haiku-4-5-20251001", "tier": "budget", "default": true },
   { "provider": "anthropic", "model": "claude-sonnet-4-6",         "tier": "reference" },
   { "provider": "openai",    "model": "gpt-5-nano",                "tier": "budget" },
-  { "provider": "openai",    "model": "gpt-5-mini",                "tier": "budget" },
-  { "provider": "openai",    "model": "gpt-4.1-nano",              "tier": "budget" },
-  { "provider": "openai",    "model": "gpt-4.1-mini",              "tier": "mid", "default": true },
+  { "provider": "openai",    "model": "gpt-5-mini",                "tier": "mid", "default": true },
   { "provider": "gemini",    "model": "gemini-3.1-flash-lite-preview", "tier": "budget" },
-  { "provider": "gemini",    "model": "gemini-3-flash-preview",    "tier": "budget" },
-  { "provider": "gemini",    "model": "gemini-2.5-flash-lite",     "tier": "budget" },
-  { "provider": "gemini",    "model": "gemini-2.5-flash",          "tier": "mid", "default": true }
+  { "provider": "gemini",    "model": "gemini-3-flash-preview",    "tier": "mid", "default": true }
 ]
