@@ -32,6 +32,7 @@ Requires Rust 1.88.0+ (pinned in `rust-toolchain.toml`).
 
 - **vault-family-core** (git dep) -- shared IFC vocabulary, receipt envelope, escalation interface
 - MCP server depends on `agentvault-client` via `file:` link
+- **av-tee/tee-verifier** — TEE receipt verification (Rust). The TS client surfaces TEE fields for introspection; full cryptographic verification requires tee-verifier. Intended path: published crate or VFC-hosted. Do not let this calcify as a git dep.
 
 ## Schemas
 

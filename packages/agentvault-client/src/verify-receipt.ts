@@ -29,6 +29,15 @@ export interface CommitmentCheck {
   match: boolean;
 }
 
+export interface TeeInfo {
+  tee_type: string;
+  measurement: string;
+  attestation_hash: string;
+  receipt_signing_pubkey_hex: string;
+  transcript_hash_hex: string;
+  note: string;
+}
+
 export interface VerifyResult {
   valid: boolean;
   schema_version: string;
@@ -37,6 +46,7 @@ export interface VerifyResult {
   errors: string[];
   warnings: string[];
   commitment_checks?: CommitmentCheck[];
+  tee_info?: TeeInfo;
 }
 
 // ---------------------------------------------------------------------------
@@ -299,6 +309,20 @@ export function verifyReceipt(
     }
   }
 
+  // Extract TEE attestation info if present (introspection, not verification)
+  let tee_info: TeeInfo | undefined;
+  if (isV2 && typeof receipt['tee_attestation'] === 'object' && receipt['tee_attestation'] !== null) {
+    const att = receipt['tee_attestation'] as Record<string, unknown>;
+    tee_info = {
+      tee_type: typeof att['tee_type'] === 'string' ? att['tee_type'] : 'unknown',
+      measurement: typeof att['measurement'] === 'string' ? att['measurement'] : '',
+      attestation_hash: typeof att['attestation_hash'] === 'string' ? att['attestation_hash'] : '',
+      receipt_signing_pubkey_hex: typeof att['receipt_signing_pubkey_hex'] === 'string' ? att['receipt_signing_pubkey_hex'] : '',
+      transcript_hash_hex: typeof att['transcript_hash_hex'] === 'string' ? att['transcript_hash_hex'] : '',
+      note: 'TEE fields present. Full verification requires tee-verifier (Rust).',
+    };
+  }
+
   return {
     valid,
     schema_version: detectedVersion,
@@ -316,6 +340,7 @@ export function verifyReceipt(
     errors,
     warnings,
     commitment_checks,
+    tee_info,
   };
 }
 

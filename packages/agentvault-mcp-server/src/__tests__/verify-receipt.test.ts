@@ -262,6 +262,44 @@ describe('handleVerifyReceipt — v2 receipts', () => {
   });
 });
 
+describe('handleVerifyReceipt — TEE attestation introspection', () => {
+  it('surfaces tee_info when tee_attestation is present in v2 receipt', async () => {
+    const { seedHex, publicKeyHex } = generateKeypair();
+    const base = buildMinimalV2Receipt();
+    base['tee_attestation'] = {
+      tee_type: 'Simulated',
+      measurement: 'a'.repeat(64),
+      attestation_hash: 'b'.repeat(64),
+      receipt_signing_pubkey_hex: publicKeyHex,
+      transcript_hash_hex: 'c'.repeat(128),
+    };
+    const signed = signV2Receipt(base, seedHex);
+
+    const result = await handleVerifyReceipt({
+      receipt: signed,
+      public_key_hex: publicKeyHex,
+    });
+
+    expect(result.data?.tee_info).toBeDefined();
+    expect(result.data?.tee_info?.tee_type).toBe('Simulated');
+    expect(result.data?.tee_info?.measurement).toBe('a'.repeat(64));
+    expect(result.data?.tee_info?.note).toContain('tee-verifier');
+  });
+
+  it('does not include tee_info when tee_attestation is absent', async () => {
+    const { seedHex, publicKeyHex } = generateKeypair();
+    const base = buildMinimalV2Receipt();
+    const signed = signV2Receipt(base, seedHex);
+
+    const result = await handleVerifyReceipt({
+      receipt: signed,
+      public_key_hex: publicKeyHex,
+    });
+
+    expect(result.data?.tee_info).toBeUndefined();
+  });
+});
+
 describe('handleVerifyReceipt — public key fetching', () => {
   it('returns error when relay is unreachable and no public key provided', async () => {
     const { seedHex } = generateKeypair();
