@@ -93,6 +93,7 @@ fn test_app_state(mock_base_url: &str, prompt_dir: &str) -> AppState {
         invite_ttl_secs: 604800,
         schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
+        health_expose_model: false,
     }
 }
 
@@ -477,8 +478,9 @@ async fn test_health_endpoint() {
 
     assert_eq!(json["status"], "ok");
     assert_eq!(json["execution_lane"], "API_MEDIATED");
-    assert_eq!(json["provider"], "anthropic");
-    assert_eq!(json["model_id"], "test-model");
+    // Default health_expose_model=false redacts provider/model
+    assert_eq!(json["provider"], "redacted");
+    assert_eq!(json["model_id"], "redacted");
 }
 
 #[tokio::test]
@@ -1061,6 +1063,7 @@ async fn test_submit_token_is_one_time_use() {
         invite_ttl_secs: 604800,
         schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
+        health_expose_model: false,
     }));
 
     let response = app
@@ -1247,6 +1250,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         invite_ttl_secs: 604800,
         schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
+        health_expose_model: false,
     }));
 
     let response = app
@@ -1301,6 +1305,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         invite_ttl_secs: 604800,
         schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
+        health_expose_model: false,
     }));
 
     let response = app
@@ -1369,6 +1374,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         invite_ttl_secs: 604800,
         schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
+        health_expose_model: false,
     }));
 
     let response = app
@@ -1456,6 +1462,7 @@ async fn test_submit_with_correct_contract_hash_succeeds() {
         invite_ttl_secs: 604800,
         schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
+        health_expose_model: false,
     }));
 
     let input_request = serde_json::json!({
@@ -1525,6 +1532,7 @@ async fn test_submit_with_wrong_contract_hash_rejected() {
         invite_ttl_secs: 604800,
         schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
+        health_expose_model: false,
     }));
 
     let input_request = serde_json::json!({
@@ -1595,6 +1603,7 @@ async fn test_submit_without_contract_hash_still_works() {
         invite_ttl_secs: 604800,
         schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
+        health_expose_model: false,
     }));
 
     // No expected_contract_hash field — backward compat
@@ -1664,6 +1673,7 @@ fn inbox_test_app_state() -> AppState {
         invite_ttl_secs: 604800,
         schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
+        health_expose_model: false,
     }
 }
 
@@ -2684,6 +2694,105 @@ async fn test_contract_schema_hash_not_in_registry_rejected() {
         error_msg.contains("not found in schema registry"),
         "Expected registry lookup error, got: {error_msg}"
     );
+
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}
+
+// ============================================================================
+// Health endpoint redaction tests (#150)
+// ============================================================================
+
+#[tokio::test]
+async fn test_health_redacts_provider_by_default() {
+    let (prompt_dir, _) = setup_prompt_program("health_redact");
+    let state = Arc::new(AppState {
+        signing_key: test_signing_key(),
+        anthropic_api_key: Some("test-key".to_string()),
+        anthropic_model_id: "claude-sonnet-4-6".to_string(),
+        anthropic_base_url: None,
+        openai_api_key: None,
+        openai_model_id: "gpt-4o".to_string(),
+        openai_base_url: None,
+        gemini_api_key: None,
+        gemini_model_id: "gemini-2.5-flash".to_string(),
+        gemini_base_url: None,
+        prompt_program_dir: prompt_dir.clone(),
+        session_store: SessionStore::new(Duration::from_secs(600)),
+        enforcement_policy: test_enforcement_policy(),
+        enforcement_policy_hash: "0".repeat(64),
+        agent_registry: AgentRegistry::empty(),
+        inbox_store: InboxStore::new(Duration::from_secs(600)),
+        max_completion_tokens: 4096,
+        session_ttl_secs: 600,
+        invite_ttl_secs: 604800,
+        schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
+        is_dev: false,
+        health_expose_model: false,
+    });
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 64)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["provider"], "redacted");
+    assert_eq!(json["model_id"], "redacted");
+    // verifying_key_hex and policy_summary should still be present
+    assert!(json["verifying_key_hex"].is_string());
+    assert!(json["policy_summary"].is_object());
+
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}
+
+#[tokio::test]
+async fn test_health_exposes_provider_when_enabled() {
+    let (prompt_dir, _) = setup_prompt_program("health_expose");
+    let state = Arc::new(AppState {
+        signing_key: test_signing_key(),
+        anthropic_api_key: Some("test-key".to_string()),
+        anthropic_model_id: "claude-sonnet-4-6".to_string(),
+        anthropic_base_url: None,
+        openai_api_key: None,
+        openai_model_id: "gpt-4o".to_string(),
+        openai_base_url: None,
+        gemini_api_key: None,
+        gemini_model_id: "gemini-2.5-flash".to_string(),
+        gemini_base_url: None,
+        prompt_program_dir: prompt_dir.clone(),
+        session_store: SessionStore::new(Duration::from_secs(600)),
+        enforcement_policy: test_enforcement_policy(),
+        enforcement_policy_hash: "0".repeat(64),
+        agent_registry: AgentRegistry::empty(),
+        inbox_store: InboxStore::new(Duration::from_secs(600)),
+        max_completion_tokens: 4096,
+        session_ttl_secs: 600,
+        invite_ttl_secs: 604800,
+        schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
+        is_dev: false,
+        health_expose_model: true,
+    });
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 64)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["provider"], "anthropic");
+    assert_eq!(json["model_id"], "claude-sonnet-4-6");
 
     std::fs::remove_dir_all(&prompt_dir).ok();
 }

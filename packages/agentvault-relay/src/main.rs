@@ -303,6 +303,10 @@ async fn main() {
         }
     };
 
+    let health_expose_model = std::env::var("AV_HEALTH_EXPOSE_MODEL")
+        .map(|v| matches!(v.to_lowercase().as_str(), "true" | "1" | "yes"))
+        .unwrap_or(false);
+
     if anthropic_api_key.is_none() && openai_api_key.is_none() && gemini_api_key.is_none() {
         tracing::error!(
             "No inference providers configured. Set at least one of ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY."
@@ -318,6 +322,24 @@ async fn main() {
     }
     if gemini_api_key.is_some() {
         tracing::info!(model_id = %gemini_model_id, "Gemini provider enabled");
+    }
+
+    // Log the active provider/model at startup so operators can confirm config
+    // even when /health redacts it.
+    {
+        let provider = if anthropic_api_key.is_some() {
+            "anthropic"
+        } else if openai_api_key.is_some() {
+            "openai"
+        } else {
+            "gemini"
+        };
+        let active_model = match provider {
+            "anthropic" => model_id.as_str(),
+            "openai" => openai_model_id.as_str(),
+            _ => gemini_model_id.as_str(),
+        };
+        tracing::info!(provider = %provider, model_id = %active_model, "startup: active provider/model");
     }
 
     let state = Arc::new(AppState {
@@ -342,6 +364,7 @@ async fn main() {
         invite_ttl_secs,
         schema_registry,
         is_dev,
+        health_expose_model,
     });
 
     let app = build_router(state);

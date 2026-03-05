@@ -73,6 +73,8 @@ pub struct AppState {
     pub schema_registry: SchemaRegistry,
     /// Whether AV_ENV=dev — enables diagnostic endpoints.
     pub is_dev: bool,
+    /// Whether to expose provider/model_id in /health (from VCAV_HEALTH_EXPOSE_MODEL).
+    pub health_expose_model: bool,
 }
 
 // ============================================================================
@@ -134,12 +136,17 @@ fn auto_select_provider(state: &AppState) -> Result<String, RelayError> {
 // ============================================================================
 
 async fn health_handler(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
-    let provider = auto_select_provider(&state).unwrap_or_else(|_| "none".to_string());
-    let model_id = match provider.as_str() {
-        "anthropic" => state.anthropic_model_id.clone(),
-        "openai" => state.openai_model_id.clone(),
-        "gemini" => state.gemini_model_id.clone(),
-        _ => "unknown".to_string(),
+    let (provider, model_id) = if state.health_expose_model {
+        let provider = auto_select_provider(&state).unwrap_or_else(|_| "none".to_string());
+        let model_id = match provider.as_str() {
+            "anthropic" => state.anthropic_model_id.clone(),
+            "openai" => state.openai_model_id.clone(),
+            "gemini" => state.gemini_model_id.clone(),
+            _ => "unknown".to_string(),
+        };
+        (provider, model_id)
+    } else {
+        ("redacted".to_string(), "redacted".to_string())
     };
     let verifying_key_hex = receipt_core::public_key_to_hex(&state.signing_key.verifying_key());
     let policy_summary = PolicySummary {
