@@ -21,27 +21,19 @@
 | Red Team | 7 adversarial scenarios, 20/20 pass rate, canary-guarded | Complete |
 | Demo UI | Three-panel protocol observatory with receipt v2 cards, contract enforcement display, policy transparency | Complete |
 | Model Sweep | e2e-sweep.sh for testing provider/model combos across demo | Complete |
-| Receipt v2 | Commitments/claims split, assurance levels, input commitment hashes, channel capacity, status, execution lane | Complete |
-| MCP verify_receipt | `agentvault.verify_receipt` tool — v1 + v2 dispatch, shared verifier | Complete |
+| Receipt v2 | Commitments/claims split, assurance levels, input commitment hashes, channel capacity, status, execution lane, failure receipts | Complete |
+| MCP verify_receipt | `agentvault.verify_receipt` tool — v1 + v2 dispatch, shared verifier, commitment recomputation | Complete |
+| Key Pinning | Contract-level relay verifying key pinning with contract validation | Complete |
+| Input Privacy | Raw inputs cleared from session state after inference (success and error paths) | Complete |
 
 ## Open Work
 
-### Active — receipt v2 completion
+### Active — pre-TEE stabilisation (Wave 3 remaining)
 
 | Issue | Description | Size | Status |
 |-------|-------------|------|--------|
-| [#189](https://github.com/vcav-io/agentvault/issues/189) | Failure receipts with status and signal_class | M | Next up |
-| [#188](https://github.com/vcav-io/agentvault/issues/188) | Channel capacity measurement in claims | M | Done (success path; claims fields populated in #191) |
-| [#190](https://github.com/vcav-io/agentvault/issues/190) | Execution lane claim | S | Done (#191) |
-
-### Protocol gaps (from closed-issue audit)
-
-| Issue | Description | Size | Status |
-|-------|-------------|------|--------|
-| [#183](https://github.com/vcav-io/agentvault/issues/183) | Verifier recomputation of receipt commitment hashes | M | Ready |
-| [#184](https://github.com/vcav-io/agentvault/issues/184) | Relay verifying key pinning in contract | M | Ready |
-| [#185](https://github.com/vcav-io/agentvault/issues/185) | Clear raw inputs from session state after inference | S | Ready |
 | [#186](https://github.com/vcav-io/agentvault/issues/186) | Create docs/provider-notes.md with model sweep results | S | Ready |
+| [#179](https://github.com/vcav-io/agentvault/issues/179) | Post-PR follow-ups: README review, receipt docs, STATUS.md | M | Ready |
 | [#187](https://github.com/vcav-io/agentvault/issues/187) | Red team template for schema boundary violation testing | S | Ready |
 
 ### Architecture / roadmap
@@ -51,10 +43,6 @@
 | [#181](https://github.com/vcav-io/agentvault/issues/181) | Output schema registry: extract inline schemas into content-addressed store | L | Ready |
 | [#182](https://github.com/vcav-io/agentvault/issues/182) | Multi-policy selection: let contracts choose from multiple loaded policies | M | Ready |
 | [#167](https://github.com/vcav-io/agentvault/issues/167) | Protocol stabilisation (meta) | L | Tracking |
-| [#154](https://github.com/vcav-io/agentvault/issues/154) | PKI / key pinning for relay verifying keys | L | Ready |
-| [#150](https://github.com/vcav-io/agentvault/issues/150) | Health endpoint exposes provider and model_id | S | Ready |
-| [#133](https://github.com/vcav-io/agentvault/issues/133) | Verify all three providers give good demo results | M | Needs sweep |
-| [#179](https://github.com/vcav-io/agentvault/issues/179) | Post-PR follow-ups: README review, website simulation alignment, model sweep | M | Ready |
 
 ### Website
 
@@ -79,6 +67,11 @@
 
 | Issue | Description | PR |
 |-------|-------------|-----|
+| [#189](https://github.com/vcav-io/agentvault/issues/189) | Failure receipts — signed v2 receipts for aborted sessions | #199 |
+| [#184](https://github.com/vcav-io/agentvault/issues/184) | Relay verifying key pinning in contract + VFC rev bump | #198 |
+| [#150](https://github.com/vcav-io/agentvault/issues/150) | Health endpoint redacts provider/model by default | #197 |
+| [#183](https://github.com/vcav-io/agentvault/issues/183) | Verifier recomputation of commitment hashes | #196 |
+| [#185](https://github.com/vcav-io/agentvault/issues/185) | Clear raw inputs after inference | #195 |
 | #188, #190 | v2 receipt claims: channel capacity, execution lane, session status (success path) | #191 |
 | — | Demo UI v2 alignment: receipt v2 cards, contract enforcement, policy transparency | #180 |
 | — | README rewrite as demo-UI-first on-ramp | #178 |
