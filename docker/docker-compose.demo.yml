@@ -12,6 +12,7 @@ services:
       - AV_GEMINI_MODEL_ID=${AV_GEMINI_MODEL_ID:-gemini-2.5-flash}
       - AV_ENV=dev
       - AV_INBOX_AUTH=off
+      - AV_HEALTH_EXPOSE_MODEL=true
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:3100/health"]
       interval: 10s
