@@ -5,7 +5,7 @@ version = 4
 [[package]]
 name = "afal-core"
 version = "0.1.0"
-source = "git+https://github.com/vcav-io/vault-family-core?rev=90bd20b#90bd20b16bff5d5bdc7e83f8211845640e97af3e"
+source = "git+https://github.com/vcav-io/vault-family-core?rev=83c732e#83c732e5bc06d20f26fab17f862a37f6d6b649eb"
 dependencies = [
  "chrono",
  "ed25519-dalek",
@@ -422,7 +422,7 @@ dependencies = [
 [[package]]
 name = "entropy-core"
 version = "0.1.0"
-source = "git+https://github.com/vcav-io/vault-family-core?rev=90bd20b#90bd20b16bff5d5bdc7e83f8211845640e97af3e"
+source = "git+https://github.com/vcav-io/vault-family-core?rev=83c732e#83c732e5bc06d20f26fab17f862a37f6d6b649eb"
 dependencies = [
  "chrono",
  "receipt-core",
@@ -1454,7 +1454,7 @@ dependencies = [
 [[package]]
 name = "receipt-core"
 version = "0.1.0"
-source = "git+https://github.com/vcav-io/vault-family-core?rev=90bd20b#90bd20b16bff5d5bdc7e83f8211845640e97af3e"
+source = "git+https://github.com/vcav-io/vault-family-core?rev=83c732e#83c732e5bc06d20f26fab17f862a37f6d6b649eb"
 dependencies = [
  "base64",
  "chrono",
@@ -2249,7 +2249,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 [[package]]
 name = "vault-family-types"
 version = "0.1.0"
-source = "git+https://github.com/vcav-io/vault-family-core?rev=90bd20b#90bd20b16bff5d5bdc7e83f8211845640e97af3e"
+source = "git+https://github.com/vcav-io/vault-family-core?rev=83c732e#83c732e5bc06d20f26fab17f862a37f6d6b649eb"
 dependencies = [
  "chrono",
  "serde",
@@ -2267,7 +2267,7 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 [[package]]
 name = "verifier-core"
 version = "0.1.0"
-source = "git+https://github.com/vcav-io/vault-family-core?rev=90bd20b#90bd20b16bff5d5bdc7e83f8211845640e97af3e"
+source = "git+https://github.com/vcav-io/vault-family-core?rev=83c732e#83c732e5bc06d20f26fab17f862a37f6d6b649eb"
 dependencies = [
  "base64",
  "ed25519-dalek",

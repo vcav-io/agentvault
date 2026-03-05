@@ -1847,6 +1847,7 @@ async fn test_inbox_cross_agent_isolation() {
             session_ttl_secs: None,
             invite_ttl_secs: None,
             entropy_enforcement: None,
+            relay_verifying_key_hex: None,
         },
         provider: "anthropic".to_string(),
         purpose_code: "COMPATIBILITY".to_string(),
@@ -1907,6 +1908,7 @@ async fn test_inbox_accept_creates_session() {
             session_ttl_secs: None,
             invite_ttl_secs: None,
             entropy_enforcement: None,
+            relay_verifying_key_hex: None,
         },
         provider: "anthropic".to_string(),
         purpose_code: "COMPATIBILITY".to_string(),
@@ -1966,6 +1968,7 @@ async fn create_test_invite(state: &AppState) -> String {
             session_ttl_secs: None,
             invite_ttl_secs: None,
             entropy_enforcement: None,
+            relay_verifying_key_hex: None,
         },
         provider: "anthropic".to_string(),
         purpose_code: "COMPATIBILITY".to_string(),
@@ -2732,7 +2735,12 @@ async fn test_health_redacts_provider_by_default() {
     let app = build_router(state);
 
     let response = app
-        .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
 
@@ -2781,7 +2789,12 @@ async fn test_health_exposes_provider_when_enabled() {
     let app = build_router(state);
 
     let response = app
-        .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
 
@@ -2793,6 +2806,102 @@ async fn test_health_exposes_provider_when_enabled() {
 
     assert_eq!(json["provider"], "anthropic");
     assert_eq!(json["model_id"], "claude-sonnet-4-6");
+
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}
+
+#[tokio::test]
+async fn test_contract_relay_key_pinning_wrong_key_rejected() {
+    let (prompt_dir, prompt_hash) = setup_prompt_program("key-pinning-wrong");
+
+    let state = test_app_state("http://unused", &prompt_dir);
+    let app = build_router(Arc::new(state));
+
+    let relay_request = serde_json::json!({
+        "contract": {
+            "purpose_code": "MEDIATION",
+            "output_schema_id": "vault_result_mediation",
+            "output_schema": mediation_schema(),
+            "participants": ["alice", "bob"],
+            "prompt_template_hash": prompt_hash,
+            "relay_verifying_key_hex": "ff".repeat(32)
+        },
+        "input_a": { "role": "alice", "context": {} },
+        "input_b": { "role": "bob", "context": {} },
+        "provider": "anthropic"
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/relay")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&relay_request).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let error_msg = json["error"].as_str().unwrap_or("");
+    assert!(
+        error_msg.contains("contract pins relay key"),
+        "Expected key pinning error, got: {error_msg}"
+    );
+
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}
+
+#[tokio::test]
+async fn test_contract_relay_key_pinning_correct_key_accepted() {
+    let (prompt_dir, prompt_hash) = setup_prompt_program("key-pinning-correct");
+
+    let state = test_app_state("http://unused", &prompt_dir);
+    let correct_key = receipt_core::public_key_to_hex(&test_signing_key().verifying_key());
+    let app = build_router(Arc::new(state));
+
+    let relay_request = serde_json::json!({
+        "contract": {
+            "purpose_code": "MEDIATION",
+            "output_schema_id": "vault_result_mediation",
+            "output_schema": mediation_schema(),
+            "participants": ["alice", "bob"],
+            "prompt_template_hash": prompt_hash,
+            "relay_verifying_key_hex": correct_key
+        },
+        "input_a": { "role": "alice", "context": {} },
+        "input_b": { "role": "bob", "context": {} },
+        "provider": "anthropic"
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/relay")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&relay_request).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    if response.status() != StatusCode::OK {
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let error_msg = json["error"].as_str().unwrap_or("");
+        assert!(
+            !error_msg.contains("contract pins relay key"),
+            "Should not fail on key pinning with correct key, got: {error_msg}"
+        );
+    }
 
     std::fs::remove_dir_all(&prompt_dir).ok();
 }

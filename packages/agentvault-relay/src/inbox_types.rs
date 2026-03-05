@@ -157,6 +157,7 @@ mod tests {
                 session_ttl_secs: None,
                 invite_ttl_secs: None,
                 entropy_enforcement: None,
+                relay_verifying_key_hex: None,
             },
             contract_hash: "c".repeat(64),
             provider: "anthropic".to_string(),

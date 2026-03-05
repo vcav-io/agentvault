@@ -192,6 +192,22 @@ fn unicode_category_contains(c: char, category: &str) -> bool {
     }
 }
 
+/// Pre-computed context for building failure receipts.
+/// Computed before relay_core so the data is available if relay_core fails.
+pub struct FailureReceiptContext {
+    pub contract_hash: String,
+    pub output_schema_hash: String,
+    pub input_commitments: Vec<InputCommitment>,
+    pub assembled_prompt_hash: String,
+    pub prompt_template_hash: String,
+    pub model_profile_hash: Option<String>,
+    pub runtime_hash: String,
+    pub effective_model_id: String,
+    pub effective_max_tokens: u32,
+    pub entropy_bits: u32,
+    pub entropy_budget_bits: Option<u32>,
+}
+
 /// Diagnostic timing from relay_core. Not part of the production result type.
 pub struct InferenceTiming {
     pub inference_start_at: chrono::DateTime<chrono::Utc>,
@@ -254,6 +270,18 @@ pub async fn relay_core(
             return Err(RelayError::ContractValidation(format!(
                 "contract enforcement_policy_hash '{}' does not match relay policy '{}'",
                 contract_policy_hash, state.enforcement_policy_hash,
+            )));
+        }
+    }
+
+    // 2b2. Validate relay verifying key pinning (#184)
+    if let Some(ref pinned_key) = contract.relay_verifying_key_hex {
+        let our_key = receipt_core::public_key_to_hex(&state.signing_key.verifying_key());
+        if *pinned_key != our_key {
+            return Err(RelayError::ContractValidation(format!(
+                "contract pins relay key '{}...' but this relay's key is '{}...'",
+                &pinned_key[..12.min(pinned_key.len())],
+                &our_key[..12],
             )));
         }
     }
@@ -719,6 +747,7 @@ fn build_receipt_v2(
             assembled_prompt_hash,
             prompt_assembly_version: "1.0.0".to_string(),
             output: Some(output.clone()),
+            rejected_output_hash: None,
             prompt_template_hash: Some(prompt_template_hash.to_string()),
             effective_config_hash,
             preflight_bundle: Some(preflight_bundle),
@@ -773,6 +802,154 @@ pub fn error_to_abort_reason(error: &RelayError) -> AbortReason {
     }
 }
 
+/// Map an AbortReason to a v2 receipt (SessionStatus, signal_class) pair.
+fn abort_reason_to_receipt_status(reason: AbortReason) -> (SessionStatus, &'static str) {
+    match reason {
+        AbortReason::SchemaValidation => (SessionStatus::Rejected, "schema_validation_failed"),
+        AbortReason::PolicyGate => (SessionStatus::Rejected, "policy_gate_violated"),
+        AbortReason::ProviderError => (SessionStatus::Error, "provider_error"),
+        AbortReason::Timeout => (SessionStatus::Error, "timeout"),
+        AbortReason::ContractMismatch => (SessionStatus::Error, "contract_validation_failed"),
+    }
+}
+
+/// Build and sign a v2 failure receipt.
+///
+/// Failure receipts record that an inference session did not produce accepted output.
+/// The `output_hash` is set to the SHA-256 of an empty string (no valid output).
+/// `rejected_output_hash` will be populated when the VFC rev pin is bumped (#184).
+#[allow(clippy::too_many_arguments)]
+pub fn build_failure_receipt_v2(
+    abort_reason: AbortReason,
+    session_id: &str,
+    contract_hash: &str,
+    schema_hash: &str,
+    input_commitments: Vec<InputCommitment>,
+    assembled_prompt_hash: String,
+    prompt_template_hash: &str,
+    model_profile_hash: Option<&str>,
+    model_id: &str,
+    provider_name: &str,
+    runtime_hash: &str,
+    state: &AppState,
+    inference_start: Option<chrono::DateTime<chrono::Utc>>,
+    inference_end: Option<chrono::DateTime<chrono::Utc>>,
+    effective_max_tokens: u32,
+    entropy_bits: u32,
+    entropy_budget_bits: Option<u32>,
+    rejected_output_bytes: Option<&[u8]>,
+) -> Result<ReceiptV2, RelayError> {
+    let (status, signal_class) = abort_reason_to_receipt_status(abort_reason);
+
+    // output_hash: SHA-256 of empty string — no valid output was produced/accepted
+    let output_hash = hex::encode(Sha256::digest(b""));
+
+    // rejected_output_hash: SHA-256 of rejected output bytes, if any (#184)
+    let rejected_output_hash =
+        rejected_output_bytes.map(|bytes| hex::encode(Sha256::digest(bytes)));
+
+    // Build preflight bundle (same as success path)
+    let enforcement_parameters = serde_json::json!({
+        "max_completion_tokens": effective_max_tokens,
+    });
+    let preflight_bundle = PreflightBundle {
+        policy_hash: state.enforcement_policy_hash.clone(),
+        prompt_template_hash: prompt_template_hash.to_string(),
+        model_profile_hash: model_profile_hash.unwrap_or("none").to_string(),
+        schema_hash: schema_hash.to_string(),
+        enforcement_parameters: enforcement_parameters.clone(),
+    };
+
+    let effective_config_hash = {
+        let canonical = receipt_core::canonicalize_serializable(&preflight_bundle)
+            .map_err(|e| RelayError::ReceiptSigning(format!("preflight canonicalization: {e}")))?;
+        let mut hasher = Sha256::new();
+        hasher.update(canonical.as_bytes());
+        Some(hex::encode(hasher.finalize()))
+    };
+
+    let verifying_key_hex = receipt_core::public_key_to_hex(&state.signing_key.verifying_key());
+    let operator_key_fingerprint = {
+        let key_bytes = hex::decode(&verifying_key_hex).unwrap_or_default();
+        let mut hasher = Sha256::new();
+        hasher.update(&key_bytes);
+        hex::encode(hasher.finalize())
+    };
+
+    let operator_id =
+        std::env::var("AV_OPERATOR_ID").unwrap_or_else(|_| "agentvault-relay-dev".to_string());
+
+    let provider_latency_ms = match (inference_start, inference_end) {
+        (Some(start), Some(end)) => {
+            Some((end - start).num_milliseconds().try_into().unwrap_or(0u64))
+        }
+        _ => None,
+    };
+
+    let receipt_id = uuid::Uuid::new_v4().to_string();
+    let budget_enforcement_mode = BudgetEnforcementMode::Advisory;
+
+    let unsigned = UnsignedReceiptV2 {
+        receipt_schema_version: SCHEMA_VERSION_V2.to_string(),
+        receipt_canonicalization: CANONICALIZATION_V2.to_string(),
+        receipt_id,
+        session_id: session_id.to_string(),
+        issued_at: Utc::now(),
+        assurance_level: AssuranceLevel::SelfAsserted,
+        operator: Operator {
+            operator_id,
+            operator_key_fingerprint,
+            operator_key_discovery: None,
+        },
+        commitments: Commitments {
+            contract_hash: contract_hash.to_string(),
+            schema_hash: schema_hash.to_string(),
+            output_hash,
+            input_commitments,
+            assembled_prompt_hash,
+            prompt_assembly_version: "1.0.0".to_string(),
+            output: None, // no valid output for failure receipts
+            rejected_output_hash: rejected_output_hash.clone(),
+            prompt_template_hash: Some(prompt_template_hash.to_string()),
+            effective_config_hash,
+            preflight_bundle: Some(preflight_bundle),
+            output_retrieval_uri: None,
+            output_media_type: None,
+            preflight_bundle_uri: None,
+        },
+        claims: Claims {
+            model_identity_asserted: Some(format!("{provider_name}/{model_id}")),
+            model_identity_attested: None,
+            model_profile_hash_asserted: model_profile_hash.map(str::to_string),
+            runtime_hash_asserted: Some(runtime_hash.to_string()),
+            runtime_hash_attested: None,
+            budget_enforcement_mode: Some(budget_enforcement_mode),
+            provider_latency_ms,
+            token_usage: None,
+            relay_software_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            status: Some(status),
+            signal_class: Some(signal_class.to_string()),
+            execution_lane: Some(ExecutionLaneV2::Standard),
+            channel_capacity_bits_upper_bound: Some(entropy_bits),
+            channel_capacity_measurement_version: Some(
+                CHANNEL_CAPACITY_MEASUREMENT_VERSION.to_string(),
+            ),
+            entropy_budget_bits,
+            schema_entropy_ceiling_bits: Some(entropy_bits),
+            budget_usage: Some(BudgetUsageV2 {
+                bits_used_before: 0,
+                bits_used_after: 0, // no capacity consumed on failure
+                budget_limit: entropy_budget_bits.unwrap_or(128),
+            }),
+        },
+        provider_attestation: None,
+        tee_attestation: None,
+    };
+
+    receipt_core::sign_and_assemble_receipt_v2(unsigned, &state.signing_key)
+        .map_err(|e| RelayError::ReceiptSigning(format!("v2 failure receipt signing failed: {e}")))
+}
+
 /// Single-shot relay endpoint handler (POST /relay).
 /// Delegates to `relay_core`.
 pub async fn relay(request: RelayRequest, state: &AppState) -> Result<RelayResponse, RelayError> {
@@ -817,6 +994,7 @@ mod tests {
             session_ttl_secs: None,
             invite_ttl_secs: None,
             entropy_enforcement: None,
+            relay_verifying_key_hex: None,
         };
 
         let h1 = compute_contract_hash(&contract).unwrap();
@@ -912,6 +1090,184 @@ mod tests {
             .expect("receipt builder should succeed");
 
         assert_eq!(unsigned.model_profile_hash, Some(profile_hash));
+    }
+
+    fn make_failure_test_state(seed: u8) -> crate::AppState {
+        use ed25519_dalek::SigningKey;
+        let signing_key = SigningKey::from_bytes(&[seed; 32]);
+        crate::AppState {
+            signing_key,
+            anthropic_api_key: None,
+            anthropic_model_id: "test-model".to_string(),
+            anthropic_base_url: None,
+            openai_api_key: None,
+            openai_model_id: String::new(),
+            openai_base_url: None,
+            gemini_api_key: None,
+            gemini_model_id: String::new(),
+            gemini_base_url: None,
+            prompt_program_dir: "/tmp/nonexistent".to_string(),
+            session_store: crate::session::SessionStore::new(std::time::Duration::from_secs(60)),
+            enforcement_policy: crate::enforcement_policy::RelayEnforcementPolicy {
+                policy_version: "1".to_string(),
+                policy_id: "test-policy".to_string(),
+                policy_scope: "RELAY_GLOBAL".to_string(),
+                model_profile_allowlist: vec![],
+                provider_allowlist: vec![],
+                max_output_tokens: None,
+                rules: vec![],
+                entropy_constraints: None,
+            },
+            enforcement_policy_hash: "a".repeat(64),
+            agent_registry: crate::agent_registry::AgentRegistry::empty(),
+            inbox_store: crate::inbox::InboxStore::new(std::time::Duration::from_secs(60)),
+            max_completion_tokens: 4096,
+            session_ttl_secs: 600,
+            invite_ttl_secs: 300,
+            schema_registry: crate::schema_registry::SchemaRegistry::empty(),
+            is_dev: false,
+            health_expose_model: false,
+        }
+    }
+
+    #[test]
+    fn test_abort_reason_to_receipt_status_mapping() {
+        use receipt_core::SessionStatus;
+        let cases = vec![
+            (
+                AbortReason::SchemaValidation,
+                SessionStatus::Rejected,
+                "schema_validation_failed",
+            ),
+            (
+                AbortReason::PolicyGate,
+                SessionStatus::Rejected,
+                "policy_gate_violated",
+            ),
+            (
+                AbortReason::ProviderError,
+                SessionStatus::Error,
+                "provider_error",
+            ),
+            (AbortReason::Timeout, SessionStatus::Error, "timeout"),
+            (
+                AbortReason::ContractMismatch,
+                SessionStatus::Error,
+                "contract_validation_failed",
+            ),
+        ];
+        for (reason, expected_status, expected_signal) in cases {
+            let (status, signal) = abort_reason_to_receipt_status(reason);
+            assert_eq!(status, expected_status, "wrong status for {:?}", reason);
+            assert_eq!(
+                signal, expected_signal,
+                "wrong signal_class for {:?}",
+                reason
+            );
+        }
+    }
+
+    #[test]
+    fn test_build_failure_receipt_v2_schema_validation() {
+        use receipt_core::{HashAlgorithm, InputCommitment, SessionStatus};
+        let state = make_failure_test_state(42);
+        let input_commitments = vec![
+            InputCommitment {
+                participant_id: "alice".to_string(),
+                input_hash: "a".repeat(64),
+                hash_alg: HashAlgorithm::Sha256,
+                canonicalization: "CANONICAL_JSON_V1".to_string(),
+            },
+            InputCommitment {
+                participant_id: "bob".to_string(),
+                input_hash: "b".repeat(64),
+                hash_alg: HashAlgorithm::Sha256,
+                canonicalization: "CANONICAL_JSON_V1".to_string(),
+            },
+        ];
+        let receipt = build_failure_receipt_v2(
+            AbortReason::SchemaValidation,
+            &"s".repeat(64),
+            &"c".repeat(64),
+            &"h".repeat(64),
+            input_commitments,
+            "p".repeat(64),
+            &"t".repeat(64),
+            None,
+            "test-model",
+            "anthropic",
+            &"r".repeat(64),
+            &state,
+            None,
+            None,
+            4096,
+            6,
+            Some(128),
+            None,
+        )
+        .expect("failure receipt should build");
+
+        assert_eq!(receipt.claims.status, Some(SessionStatus::Rejected));
+        assert_eq!(
+            receipt.claims.signal_class.as_deref(),
+            Some("schema_validation_failed")
+        );
+        let expected_empty_hash = hex::encode(sha2::Sha256::digest(b""));
+        assert_eq!(receipt.commitments.output_hash, expected_empty_hash);
+        assert!(receipt.commitments.output.is_none());
+        assert_eq!(
+            receipt
+                .claims
+                .budget_usage
+                .as_ref()
+                .unwrap()
+                .bits_used_after,
+            0
+        );
+        assert!(receipt.claims.provider_latency_ms.is_none());
+        let verifying_key = state.signing_key.verifying_key();
+        let (unsigned, sig) = receipt.split();
+        assert!(receipt_core::verify_receipt_v2(&unsigned, &sig, &verifying_key).is_ok());
+    }
+
+    #[test]
+    fn test_build_failure_receipt_v2_provider_error() {
+        use receipt_core::{HashAlgorithm, InputCommitment, SessionStatus};
+        let state = make_failure_test_state(99);
+        let input_commitments = vec![InputCommitment {
+            participant_id: "alice".to_string(),
+            input_hash: "a".repeat(64),
+            hash_alg: HashAlgorithm::Sha256,
+            canonicalization: "CANONICAL_JSON_V1".to_string(),
+        }];
+        let receipt = build_failure_receipt_v2(
+            AbortReason::ProviderError,
+            &"s".repeat(64),
+            &"c".repeat(64),
+            &"h".repeat(64),
+            input_commitments,
+            "p".repeat(64),
+            &"t".repeat(64),
+            None,
+            "test-model",
+            "openai",
+            &"r".repeat(64),
+            &state,
+            Some(chrono::Utc::now()),
+            Some(chrono::Utc::now()),
+            4096,
+            10,
+            None,
+            None,
+        )
+        .expect("failure receipt should build");
+
+        assert_eq!(receipt.claims.status, Some(SessionStatus::Error));
+        assert_eq!(
+            receipt.claims.signal_class.as_deref(),
+            Some("provider_error")
+        );
+        assert!(receipt.claims.provider_latency_ms.is_some());
     }
 
     #[test]
@@ -1297,6 +1653,7 @@ mod tests {
             session_ttl_secs: None,
             invite_ttl_secs: None,
             entropy_enforcement: None,
+            relay_verifying_key_hex: None,
         };
 
         let mut alt_contract = base_contract.clone();

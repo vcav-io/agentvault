@@ -302,6 +302,7 @@ mod tests {
             session_ttl_secs: None,
             invite_ttl_secs: None,
             entropy_enforcement: None,
+            relay_verifying_key_hex: None,
         };
         let input_a = RelayInput {
             role: "alice".to_string(),
