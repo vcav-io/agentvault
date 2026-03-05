@@ -1,0 +1,56 @@
+{
+  "receipt_schema_version": "2.1.0",
+  "receipt_canonicalization": "JCS",
+  "receipt_id": "failure-fixture-001",
+  "session_id": "ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss",
+  "issued_at": "2026-03-05T00:00:00Z",
+  "assurance_level": "SELF_ASSERTED",
+  "operator": {
+    "operator_id": "agentvault-relay-dev",
+    "operator_key_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "commitments": {
+    "contract_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "schema_hash": "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh",
+    "output_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "input_commitments": [
+      {
+        "participant_id": "alice",
+        "input_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "hash_alg": "SHA-256",
+        "canonicalization": "CANONICAL_JSON_V1"
+      },
+      {
+        "participant_id": "bob",
+        "input_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "hash_alg": "SHA-256",
+        "canonicalization": "CANONICAL_JSON_V1"
+      }
+    ],
+    "assembled_prompt_hash": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+    "prompt_assembly_version": "1.0.0",
+    "prompt_template_hash": "tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
+  },
+  "claims": {
+    "model_identity_asserted": "anthropic/test-model",
+    "runtime_hash_asserted": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+    "budget_enforcement_mode": "advisory",
+    "relay_software_version": "0.1.0",
+    "status": "rejected",
+    "signal_class": "schema_validation_failed",
+    "execution_lane": "standard",
+    "channel_capacity_bits_upper_bound": 6,
+    "channel_capacity_measurement_version": "enum_cardinality_v1",
+    "entropy_budget_bits": 128,
+    "schema_entropy_ceiling_bits": 6,
+    "budget_usage": {
+      "bits_used_before": 0,
+      "bits_used_after": 0,
+      "budget_limit": 128
+    }
+  },
+  "signature": {
+    "algorithm": "Ed25519",
+    "value": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+  }
+}

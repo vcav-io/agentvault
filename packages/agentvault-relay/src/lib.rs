@@ -41,6 +41,22 @@ use crate::types::{
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const GIT_SHA: &str = env!("AV_GIT_SHA");
 
+/// Pre-computed hashes needed to build a failure receipt when inference fails.
+/// Computed before `relay_core` so the data is available in the error arm.
+struct FailureReceiptContext {
+    contract_hash: String,
+    output_schema_hash: String,
+    input_commitments: Vec<receipt_core::InputCommitment>,
+    assembled_prompt_hash: String,
+    prompt_template_hash: String,
+    model_profile_hash: Option<String>,
+    runtime_hash: String,
+    effective_model_id: String,
+    effective_max_tokens: u32,
+    entropy_bits: u16,
+    entropy_budget_bits: Option<u32>,
+}
+
 pub struct AppState {
     pub signing_key: SigningKey,
     pub anthropic_api_key: Option<String>,
@@ -404,6 +420,96 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
         return;
     };
 
+    // Pre-compute failure receipt context before relay_core — this data is
+    // needed in the error arm to build a signed failure receipt, but some of
+    // it (contract, inputs) will have been consumed by relay_core.
+    let failure_ctx = (|| -> Option<FailureReceiptContext> {
+        use crate::relay::{compute_contract_hash, compute_output_schema_hash};
+        use sha2::{Digest as _, Sha256};
+
+        let contract_hash = compute_contract_hash(&contract).ok()?;
+        let output_schema_hash = compute_output_schema_hash(&contract.output_schema).ok()?;
+
+        // Input commitments — same logic as relay_core
+        let input_commitments: Vec<receipt_core::InputCommitment> = [
+            (&contract.participants[0], &input_a),
+            (&contract.participants[1], &input_b),
+        ]
+        .iter()
+        .map(|(pid, input)| {
+            let canonical =
+                receipt_core::canonicalize_serializable(&input.context).unwrap_or_default();
+            let hash = hex::encode(Sha256::digest(canonical.as_bytes()));
+            receipt_core::InputCommitment {
+                participant_id: pid.to_string(),
+                input_hash: hash,
+                hash_alg: receipt_core::HashAlgorithm::Sha256,
+                canonicalization: "CANONICAL_JSON_V1".to_string(),
+            }
+        })
+        .collect();
+
+        // Prompt template + assembled prompt hashes
+        let prompt_program = crate::prompt_program::load_prompt_program(
+            &state.prompt_program_dir,
+            &contract.purpose_code.to_string(),
+        )
+        .ok()?;
+        let prompt_template_hash = prompt_program.content_hash().ok()?;
+        let assembled = prompt_program
+            .assemble(&contract, &input_a, &input_b)
+            .ok()?;
+        let prompt_json = serde_json::json!({
+            "system": assembled.system,
+            "user_message": assembled.user_message,
+        });
+        let canonical = receipt_core::canonicalize_serializable(&prompt_json).ok()?;
+        let assembled_prompt_hash = hex::encode(Sha256::digest(canonical.as_bytes()));
+
+        // Model profile hash
+        let model_profile_hash = contract
+            .model_profile_id
+            .as_deref()
+            .and_then(|id| {
+                crate::prompt_program::load_model_profile(&state.prompt_program_dir, id).ok()
+            })
+            .and_then(|mp| mp.content_hash().ok());
+
+        // Runtime hash
+        let git_sha = env!("AV_GIT_SHA");
+        let runtime_hash = hex::encode(Sha256::digest(git_sha.as_bytes()));
+
+        // Entropy bits
+        let entropy_bits =
+            entropy_core::calculate_schema_entropy_upper_bound(&contract.output_schema)
+                .unwrap_or(0);
+
+        // Effective model ID and max tokens
+        let effective_model_id = match provider.as_str() {
+            "anthropic" => state.anthropic_model_id.clone(),
+            "openai" => state.openai_model_id.clone(),
+            "gemini" => state.gemini_model_id.clone(),
+            _ => "unknown".to_string(),
+        };
+        let effective_max_tokens = contract
+            .max_completion_tokens
+            .unwrap_or(state.max_completion_tokens);
+
+        Some(FailureReceiptContext {
+            contract_hash,
+            output_schema_hash,
+            input_commitments,
+            assembled_prompt_hash,
+            prompt_template_hash,
+            model_profile_hash,
+            runtime_hash,
+            effective_model_id,
+            effective_max_tokens,
+            entropy_bits,
+            entropy_budget_bits: contract.entropy_budget_bits,
+        })
+    })();
+
     let is_dev = state.is_dev;
     let store = state.session_store.clone();
     tokio::spawn(async move {
@@ -455,10 +561,52 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
                     error = %e,
                     "session inference failed"
                 );
+
+                // Build failure receipt if context was pre-computed
+                let failure_receipt_v2 = if let Some(ref ctx) = failure_ctx {
+                    match relay::build_failure_receipt_v2(
+                        abort_reason,
+                        &session_id,
+                        &ctx.contract_hash,
+                        &ctx.output_schema_hash,
+                        ctx.input_commitments.clone(),
+                        ctx.assembled_prompt_hash.clone(),
+                        &ctx.prompt_template_hash,
+                        ctx.model_profile_hash.as_deref(),
+                        &ctx.effective_model_id,
+                        &provider,
+                        &ctx.runtime_hash,
+                        &state,
+                        None, // inference_start not captured yet
+                        None, // inference_end not captured yet
+                        ctx.effective_max_tokens,
+                        ctx.entropy_bits as u32,
+                        ctx.entropy_budget_bits,
+                        None, // rejected_output_bytes
+                    ) {
+                        Ok(receipt) => Some(receipt),
+                        Err(re) => {
+                            tracing::warn!(
+                                session_id = %session_id,
+                                error = %re,
+                                "failed to build failure receipt"
+                            );
+                            None
+                        }
+                    }
+                } else {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        "failure receipt context not available; skipping failure receipt"
+                    );
+                    None
+                };
+
                 store
                     .with_session(&session_id, |session| {
                         session.state = SessionState::Aborted;
                         session.abort_reason = Some(abort_reason);
+                        session.receipt_v2 = failure_receipt_v2;
 
                         // Clear raw inputs on error too.
                         session.initiator_input = None;

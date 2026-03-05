@@ -336,9 +336,18 @@ var VaultCardManager = (function () {
 
               if (receiptV2) {
                 // ── v2 receipt: commitments/claims split ──
+                // Detect failure receipts by status claim
+                var receiptStatus = (receiptV2.claims || {}).status || '';
+                var isFailureReceipt = receiptStatus === 'rejected' || receiptStatus === 'error' || receiptStatus === 'aborted';
+                if (isFailureReceipt) {
+                  rcSection.classList.add('receipt-card--failure');
+                }
+
                 var rcLabel = document.createElement('div');
                 rcLabel.className = 'receipt-card__label';
-                rcLabel.textContent = 'CRYPTOGRAPHIC RECEIPT (v2)';
+                rcLabel.textContent = isFailureReceipt
+                  ? 'FAILURE RECEIPT (v2) \u2014 ' + receiptStatus.toUpperCase()
+                  : 'CRYPTOGRAPHIC RECEIPT (v2)';
                 rcSection.appendChild(rcLabel);
 
                 // Assurance level — mandatory context
@@ -483,7 +492,7 @@ var VaultCardManager = (function () {
                   stKey.className = 'receipt-card__key';
                   stKey.textContent = 'status';
                   var stVal = document.createElement('span');
-                  stVal.className = 'receipt-card__value';
+                  stVal.className = 'receipt-card__value' + (isFailureReceipt ? ' receipt-card__value--failure' : '');
                   stVal.textContent = claims.status + (claims.signal_class ? ' (' + claims.signal_class + ')' : '');
                   stLine.appendChild(stKey);
                   stLine.appendChild(stVal);
