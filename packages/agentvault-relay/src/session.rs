@@ -236,6 +236,7 @@ mod tests {
             session_ttl_secs: None,
             invite_ttl_secs: None,
             entropy_enforcement: None,
+            relay_verifying_key_hex: None,
         }
     }
 
@@ -383,12 +384,21 @@ mod tests {
         // Assert inputs are cleared
         let (initiator_cleared, responder_cleared) = store
             .with_session(&session_id, |session| {
-                (session.initiator_input.is_none(), session.responder_input.is_none())
+                (
+                    session.initiator_input.is_none(),
+                    session.responder_input.is_none(),
+                )
             })
             .await
             .unwrap();
-        assert!(initiator_cleared, "initiator_input should be None after inference");
-        assert!(responder_cleared, "responder_input should be None after inference");
+        assert!(
+            initiator_cleared,
+            "initiator_input should be None after inference"
+        );
+        assert!(
+            responder_cleared,
+            "responder_input should be None after inference"
+        );
     }
 
     #[tokio::test]
@@ -426,11 +436,20 @@ mod tests {
         // Assert inputs are cleared even on error
         let (initiator_cleared, responder_cleared) = store
             .with_session(&session_id, |session| {
-                (session.initiator_input.is_none(), session.responder_input.is_none())
+                (
+                    session.initiator_input.is_none(),
+                    session.responder_input.is_none(),
+                )
             })
             .await
             .unwrap();
-        assert!(initiator_cleared, "initiator_input should be None after error");
-        assert!(responder_cleared, "responder_input should be None after error");
+        assert!(
+            initiator_cleared,
+            "initiator_input should be None after error"
+        );
+        assert!(
+            responder_cleared,
+            "responder_input should be None after error"
+        );
     }
 }
