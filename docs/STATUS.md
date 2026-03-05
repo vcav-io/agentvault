@@ -2,7 +2,7 @@
 
 # AgentVault Status
 
-**Last Updated:** 2026-03-05
+**Last Updated:** 2026-03-06
 
 ## Current Capabilities
 
@@ -26,13 +26,11 @@
 
 ## Open Work
 
-### Active — receipt v2 completion
+### Active
 
 | Issue | Description | Size | Status |
 |-------|-------------|------|--------|
 | [#189](https://github.com/vcav-io/agentvault/issues/189) | Failure receipts with status and signal_class | M | Next up |
-| [#188](https://github.com/vcav-io/agentvault/issues/188) | Channel capacity measurement in claims | M | Done (success path; claims fields populated in #191) |
-| [#190](https://github.com/vcav-io/agentvault/issues/190) | Execution lane claim | S | Done (#191) |
 
 ### Protocol gaps (from closed-issue audit)
 
@@ -53,8 +51,7 @@
 | [#167](https://github.com/vcav-io/agentvault/issues/167) | Protocol stabilisation (meta) | L | Tracking |
 | [#154](https://github.com/vcav-io/agentvault/issues/154) | PKI / key pinning for relay verifying keys | L | Ready |
 | [#150](https://github.com/vcav-io/agentvault/issues/150) | Health endpoint exposes provider and model_id | S | Ready |
-| [#133](https://github.com/vcav-io/agentvault/issues/133) | Verify all three providers give good demo results | M | Needs sweep |
-| [#179](https://github.com/vcav-io/agentvault/issues/179) | Post-PR follow-ups: README review, website simulation alignment, model sweep | M | Ready |
+| [#179](https://github.com/vcav-io/agentvault/issues/179) | Post-PR follow-ups: README review, website simulation alignment, model sweep (includes #133) | M | Ready |
 
 ### Website
 
@@ -73,7 +70,6 @@
 | [#163](https://github.com/vcav-io/agentvault/issues/163) | Extract inbox protocol types to VFC | S |
 | [#162](https://github.com/vcav-io/agentvault/issues/162) | Inbox hardening: timeouts, validation, persistence | M |
 | [#161](https://github.com/vcav-io/agentvault/issues/161) | First live async invite session | M |
-| [#79](https://github.com/vcav-io/agentvault/issues/79) | Wave 8 follow-up: live verification of testing tooling | M |
 
 ## Recently Completed
 
@@ -81,17 +77,8 @@
 |-------|-------------|-----|
 | [#192](https://github.com/vcav-io/agentvault/issues/192) | Expand demo UI to 15 scenarios with opt-in canary checking | #193 |
 | #188, #190 | v2 receipt claims: channel capacity, execution lane, session status (success path) | #191 |
-| — | Demo UI v2 alignment: receipt v2 cards, contract enforcement, policy transparency | #180 |
-| — | README rewrite as demo-UI-first on-ramp | #178 |
-| [#118](https://github.com/vcav-io/agentvault/issues/118) | Rename VCAV_ env var prefix to AV_ | #177 |
-| [#144](https://github.com/vcav-io/agentvault/issues/144) | Receipt verification guide | #176 |
-| [#156](https://github.com/vcav-io/agentvault/issues/156) | Threat model, docs alignment, trust model updates | #175 |
-| [#147](https://github.com/vcav-io/agentvault/issues/147), [#149](https://github.com/vcav-io/agentvault/issues/149), [#151](https://github.com/vcav-io/agentvault/issues/151) | Contract v2 enforcement — policy, model constraints, TTLs, entropy | #174 |
-| [#155](https://github.com/vcav-io/agentvault/issues/155), [#143](https://github.com/vcav-io/agentvault/issues/143) | Receipt v2 + MCP verify_receipt | #174 |
-| [#138](https://github.com/vcav-io/agentvault/issues/138) | README audit | #175 |
 
 ## Completed Feature Archive
 
-Detailed descriptions of all completed features (live test suite, red team, multi-provider,
-schema v2, enforcement policy, inbox, heartbeat integration, schema content-addressing)
-are in [archive/2026-03-01-status-archive.md](archive/2026-03-01-status-archive.md).
+- [archive/2026-03-01-status-archive.md](archive/2026-03-01-status-archive.md) — live test suite, red team, multi-provider, schema v2, enforcement policy, inbox, heartbeat, schema content-addressing
+- [archive/2026-03-05-status-archive.md](archive/2026-03-05-status-archive.md) — receipt v2, contract enforcement, demo UI v2, env rename, docs
