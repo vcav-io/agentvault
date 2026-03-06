@@ -261,10 +261,7 @@ pub async fn relay_core(
     // 2a. Enforce model profile allowlist
     if !resolved_policy.model_profile_allowlist.is_empty() {
         match &contract.model_profile_id {
-            Some(profile_id)
-                if resolved_policy
-                    .model_profile_allowlist
-                    .contains(profile_id) => {}
+            Some(profile_id) if resolved_policy.model_profile_allowlist.contains(profile_id) => {}
             Some(profile_id) => {
                 return Err(RelayError::ContractValidation(format!(
                     "model_profile_id '{profile_id}' not in enforcement allowlist"
@@ -1885,8 +1882,7 @@ mod tests {
             serde_json::to_string_pretty(&real_schema).unwrap(),
         )
         .unwrap();
-        let registry =
-            crate::schema_registry::SchemaRegistry::load_from_dir(&dir).unwrap();
+        let registry = crate::schema_registry::SchemaRegistry::load_from_dir(&dir).unwrap();
 
         // Lookup by hash should succeed
         let looked_up = registry.get(&hash);

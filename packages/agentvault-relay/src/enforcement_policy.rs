@@ -567,7 +567,10 @@ impl PolicyRegistry {
     ///
     /// The `tracing::warn!` for omitted hash on multi-policy should be emitted
     /// by the caller (which has session context), not here.
-    pub fn resolve<'a>(&'a self, requested_hash: Option<&'a str>) -> Result<ResolvedPolicy<'a>, RelayError> {
+    pub fn resolve<'a>(
+        &'a self,
+        requested_hash: Option<&'a str>,
+    ) -> Result<ResolvedPolicy<'a>, RelayError> {
         match requested_hash {
             Some(hash) => self
                 .policies
@@ -1431,7 +1434,10 @@ mod tests {
         lockfile_entries.insert("policy_b".to_string(), hash_b.clone());
 
         let result = load_all_policies(dir.to_str().unwrap(), &lockfile_entries);
-        assert!(result.is_ok(), "load_all_policies should succeed: {result:?}");
+        assert!(
+            result.is_ok(),
+            "load_all_policies should succeed: {result:?}"
+        );
         let policies = result.unwrap();
         assert_eq!(policies.len(), 2);
         assert!(policies.contains_key(&hash_a));

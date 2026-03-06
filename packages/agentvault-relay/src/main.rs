@@ -101,14 +101,16 @@ async fn main() {
             }
         };
 
-        let policies =
-            match enforcement_policy::load_all_policies(&relay_policies_dir, &lockfile_entries) {
-                Ok(p) => p,
-                Err(e) => {
-                    tracing::error!(error = %e, "failed to load enforcement policies — refusing to start");
-                    std::process::exit(1);
-                }
-            };
+        let policies = match enforcement_policy::load_all_policies(
+            &relay_policies_dir,
+            &lockfile_entries,
+        ) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!(error = %e, "failed to load enforcement policies — refusing to start");
+                std::process::exit(1);
+            }
+        };
 
         // Determine default hash
         let default_hash = match std::env::var("AV_DEFAULT_POLICY_HASH") {
@@ -123,9 +125,7 @@ async fn main() {
                 }
                 configured_hash
             }
-            Err(_) if policies.len() == 1 => {
-                policies.keys().next().unwrap().clone()
-            }
+            Err(_) if policies.len() == 1 => policies.keys().next().unwrap().clone(),
             Err(_) => {
                 tracing::error!(
                     count = policies.len(),
