@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -503,6 +503,173 @@ pub fn dev_skip_policy() -> RelayEnforcementPolicy {
         rules: vec![],
         entropy_constraints: None,
     }
+}
+
+// ============================================================================
+// PolicyRegistry — multi-policy selection
+// ============================================================================
+
+/// Metadata wrapper for a resolved policy.
+#[derive(Debug)]
+pub struct ResolvedPolicy<'a> {
+    pub hash: &'a str,
+    pub policy: &'a RelayEnforcementPolicy,
+}
+
+/// Registry of loaded enforcement policies, indexed by content hash.
+///
+/// Supports multi-policy selection: contracts declare which policy governs
+/// them via `enforcement_policy_hash`. A default policy handles contracts
+/// that omit the hash.
+#[derive(Debug)]
+pub struct PolicyRegistry {
+    policies: HashMap<String, RelayEnforcementPolicy>,
+    default_hash: String,
+}
+
+impl PolicyRegistry {
+    /// Create a registry from a set of policies and a default hash.
+    ///
+    /// Returns `Err` if `default_hash` is not present in `policies`.
+    pub fn new(
+        policies: HashMap<String, RelayEnforcementPolicy>,
+        default_hash: String,
+    ) -> Result<Self, RelayError> {
+        if !policies.contains_key(&default_hash) {
+            return Err(RelayError::NoPolicyResolvable(format!(
+                "default policy hash '{}' not found in loaded policies; available: {:?}",
+                default_hash,
+                policies.keys().collect::<Vec<_>>(),
+            )));
+        }
+        Ok(Self {
+            policies,
+            default_hash,
+        })
+    }
+
+    /// Convenience constructor for a single-policy registry (and tests).
+    pub fn single(policy: RelayEnforcementPolicy, hash: String) -> Self {
+        let mut policies = HashMap::new();
+        let default_hash = hash.clone();
+        policies.insert(hash, policy);
+        Self {
+            policies,
+            default_hash,
+        }
+    }
+
+    /// Resolve a policy by optional hash.
+    ///
+    /// - `Some(hash)` → look up by hash, `Err(PolicyNotAvailable)` if missing
+    /// - `None` + single policy → return it
+    /// - `None` + multi-policy → return default
+    ///
+    /// The `tracing::warn!` for omitted hash on multi-policy should be emitted
+    /// by the caller (which has session context), not here.
+    pub fn resolve<'a>(&'a self, requested_hash: Option<&'a str>) -> Result<ResolvedPolicy<'a>, RelayError> {
+        match requested_hash {
+            Some(hash) => self
+                .policies
+                .get(hash)
+                .map(|policy| ResolvedPolicy { hash, policy })
+                .ok_or_else(|| RelayError::PolicyNotAvailable {
+                    requested_hash: hash.to_string(),
+                }),
+            None => Ok(self.default_policy()),
+        }
+    }
+
+    /// Return the default policy.
+    pub fn default_policy(&self) -> ResolvedPolicy<'_> {
+        ResolvedPolicy {
+            hash: &self.default_hash,
+            policy: self
+                .policies
+                .get(&self.default_hash)
+                .expect("default_hash validated in new()"),
+        }
+    }
+
+    /// All loaded policy hashes, sorted.
+    pub fn hashes(&self) -> Vec<&str> {
+        let mut hashes: Vec<&str> = self.policies.keys().map(|s| s.as_str()).collect();
+        hashes.sort();
+        hashes
+    }
+
+    /// Number of loaded policies.
+    pub fn len(&self) -> usize {
+        self.policies.len()
+    }
+
+    /// Whether the registry is empty.
+    pub fn is_empty(&self) -> bool {
+        self.policies.is_empty()
+    }
+
+    /// Wrap `dev_skip_policy()` in a single-entry registry.
+    pub fn dev_skip() -> Self {
+        let policy = dev_skip_policy();
+        let hash = content_hash(&policy).unwrap_or_default();
+        Self::single(policy, hash)
+    }
+
+    /// Raw lookup without resolve semantics.
+    pub fn get(&self, hash: &str) -> Option<&RelayEnforcementPolicy> {
+        self.policies.get(hash)
+    }
+}
+
+/// Load all policies from a directory, validating each against the lockfile.
+///
+/// Loops over lockfile entries, loads `{policy_id}.json`, validates scope,
+/// categories, and capabilities, computes content hash, verifies against
+/// lockfile hash. Returns `HashMap<hash, policy>`.
+pub fn load_all_policies(
+    dir: &str,
+    lockfile_entries: &HashMap<String, String>,
+) -> Result<HashMap<String, RelayEnforcementPolicy>, RelayError> {
+    let mut policies = HashMap::new();
+
+    for (policy_id, expected_hash) in lockfile_entries {
+        // Sanitize policy_id (lockfile validation already does this, but defense-in-depth)
+        if policy_id.contains("..") || policy_id.contains('/') || policy_id.contains('\\') {
+            return Err(RelayError::EnforcementPolicy(
+                "policy_id contains invalid characters".to_string(),
+            ));
+        }
+
+        let policy_path = std::path::Path::new(dir)
+            .join(format!("{policy_id}.json"))
+            .to_string_lossy()
+            .into_owned();
+
+        let policy = load_enforcement_policy(&policy_path)?;
+
+        // Validate
+        validate_policy_scope(&policy)?;
+        validate_rule_categories(&policy)?;
+        validate_capabilities(&policy)?;
+
+        // Verify content hash matches lockfile
+        let actual_hash = content_hash(&policy)?;
+        if actual_hash != *expected_hash {
+            return Err(RelayError::EnforcementPolicy(format!(
+                "enforcement policy hash mismatch for '{policy_id}': expected {expected_hash}, got {actual_hash}"
+            )));
+        }
+
+        tracing::info!(
+            policy_id = %policy.policy_id,
+            hash = %actual_hash,
+            "enforcement policy loaded and verified"
+        );
+
+        policies.insert(actual_hash, policy);
+    }
+
+    Ok(policies)
 }
 
 // ============================================================================
@@ -1142,5 +1309,154 @@ mod tests {
             err.to_string().contains("unsupported capability"),
             "missing capability should fail: {err}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // PolicyRegistry
+    // -----------------------------------------------------------------------
+
+    fn make_policy(id: &str) -> RelayEnforcementPolicy {
+        RelayEnforcementPolicy {
+            policy_version: "1".to_string(),
+            policy_id: id.to_string(),
+            policy_scope: "RELAY_GLOBAL".to_string(),
+            model_profile_allowlist: vec![],
+            provider_allowlist: vec![],
+            max_output_tokens: None,
+            rules: vec![],
+            entropy_constraints: None,
+        }
+    }
+
+    #[test]
+    fn test_registry_resolve_known_hash() {
+        let policy = make_policy("test_a");
+        let hash = content_hash(&policy).unwrap();
+        let registry = PolicyRegistry::single(policy, hash.clone());
+
+        let resolved = registry.resolve(Some(&hash)).unwrap();
+        assert_eq!(resolved.hash, hash);
+        assert_eq!(resolved.policy.policy_id, "test_a");
+    }
+
+    #[test]
+    fn test_registry_resolve_unknown_hash() {
+        let policy = make_policy("test_b");
+        let hash = content_hash(&policy).unwrap();
+        let registry = PolicyRegistry::single(policy, hash);
+
+        let err = registry.resolve(Some("nonexistent")).unwrap_err();
+        assert!(
+            err.to_string().contains("nonexistent"),
+            "error should contain requested hash: {err}"
+        );
+    }
+
+    #[test]
+    fn test_registry_resolve_none_single_policy() {
+        let policy = make_policy("solo");
+        let hash = content_hash(&policy).unwrap();
+        let registry = PolicyRegistry::single(policy, hash.clone());
+
+        let resolved = registry.resolve(None).unwrap();
+        assert_eq!(resolved.hash, hash);
+        assert_eq!(resolved.policy.policy_id, "solo");
+    }
+
+    #[test]
+    fn test_registry_resolve_none_multi_policy_returns_default() {
+        let policy_a = make_policy("alpha");
+        let hash_a = content_hash(&policy_a).unwrap();
+        let policy_b = make_policy("beta");
+        let hash_b = content_hash(&policy_b).unwrap();
+
+        let mut policies = HashMap::new();
+        policies.insert(hash_a.clone(), policy_a);
+        policies.insert(hash_b.clone(), policy_b);
+
+        let registry = PolicyRegistry::new(policies, hash_b.clone()).unwrap();
+        let resolved = registry.resolve(None).unwrap();
+        assert_eq!(resolved.hash, hash_b);
+        assert_eq!(resolved.policy.policy_id, "beta");
+    }
+
+    #[test]
+    fn test_registry_single_constructor() {
+        let policy = make_policy("single_test");
+        let hash = content_hash(&policy).unwrap();
+        let registry = PolicyRegistry::single(policy, hash.clone());
+
+        assert_eq!(registry.len(), 1);
+        assert_eq!(registry.hashes(), vec![hash.as_str()]);
+    }
+
+    #[test]
+    fn test_registry_dev_skip() {
+        let registry = PolicyRegistry::dev_skip();
+        assert_eq!(registry.len(), 1);
+        let resolved = registry.resolve(None).unwrap();
+        assert_eq!(resolved.policy.policy_id, "dev-skip");
+    }
+
+    #[test]
+    fn test_registry_new_rejects_missing_default() {
+        let policy = make_policy("exists");
+        let hash = content_hash(&policy).unwrap();
+        let mut policies = HashMap::new();
+        policies.insert(hash, policy);
+
+        let err = PolicyRegistry::new(policies, "does_not_exist".to_string()).unwrap_err();
+        assert!(
+            err.to_string().contains("does_not_exist"),
+            "error should mention missing default hash: {err}"
+        );
+    }
+
+    #[test]
+    fn test_load_all_policies_with_temp_dir() {
+        let dir = std::env::temp_dir().join("vcav-load-all-policies-test");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let policy_a = sample_policy();
+        let hash_a = content_hash(&policy_a).unwrap();
+        write_policy_file(&dir, &policy_a);
+
+        let mut policy_b = make_policy("policy_b");
+        policy_b.policy_scope = "RELAY_GLOBAL".to_string();
+        let hash_b = content_hash(&policy_b).unwrap();
+        write_policy_file(&dir, &policy_b);
+
+        let mut lockfile_entries = HashMap::new();
+        lockfile_entries.insert("compatibility_safe_v1".to_string(), hash_a.clone());
+        lockfile_entries.insert("policy_b".to_string(), hash_b.clone());
+
+        let result = load_all_policies(dir.to_str().unwrap(), &lockfile_entries);
+        assert!(result.is_ok(), "load_all_policies should succeed: {result:?}");
+        let policies = result.unwrap();
+        assert_eq!(policies.len(), 2);
+        assert!(policies.contains_key(&hash_a));
+        assert!(policies.contains_key(&hash_b));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_registry_hashes_sorted() {
+        let policy_a = make_policy("aaa");
+        let hash_a = content_hash(&policy_a).unwrap();
+        let policy_b = make_policy("bbb");
+        let hash_b = content_hash(&policy_b).unwrap();
+
+        let mut policies = HashMap::new();
+        policies.insert(hash_a.clone(), policy_a);
+        policies.insert(hash_b.clone(), policy_b);
+
+        let default_hash = hash_a.clone();
+        let registry = PolicyRegistry::new(policies, default_hash).unwrap();
+
+        let hashes = registry.hashes();
+        let mut sorted = hashes.clone();
+        sorted.sort();
+        assert_eq!(hashes, sorted, "hashes() should return sorted");
     }
 }

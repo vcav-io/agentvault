@@ -242,12 +242,27 @@ pub async fn relay_core(
         ));
     }
 
-    // 2. Enforce model profile allowlist
-    if !state.enforcement_policy.model_profile_allowlist.is_empty() {
+    // 2. Resolve enforcement policy from registry
+    let resolved = state
+        .policy_registry
+        .resolve(contract.enforcement_policy_hash.as_deref())?;
+    let resolved_hash = resolved.hash.to_string();
+    let resolved_policy = resolved.policy;
+
+    // Warn if contract omits policy hash on a multi-policy relay
+    if contract.enforcement_policy_hash.is_none() && state.policy_registry.len() > 1 {
+        tracing::warn!(
+            default_policy = %resolved_hash,
+            "contract lacks enforcement_policy_hash — using default policy; \
+             future versions may reject contracts without explicit policy declaration"
+        );
+    }
+
+    // 2a. Enforce model profile allowlist
+    if !resolved_policy.model_profile_allowlist.is_empty() {
         match &contract.model_profile_id {
             Some(profile_id)
-                if state
-                    .enforcement_policy
+                if resolved_policy
                     .model_profile_allowlist
                     .contains(profile_id) => {}
             Some(profile_id) => {
@@ -261,16 +276,6 @@ pub async fn relay_core(
                         .to_string(),
                 ));
             }
-        }
-    }
-
-    // 2b. Validate contract enforcement_policy_hash matches relay's loaded policy (#147)
-    if let Some(ref contract_policy_hash) = contract.enforcement_policy_hash {
-        if *contract_policy_hash != state.enforcement_policy_hash {
-            return Err(RelayError::ContractValidation(format!(
-                "contract enforcement_policy_hash '{}' does not match relay policy '{}'",
-                contract_policy_hash, state.enforcement_policy_hash,
-            )));
         }
     }
 
@@ -490,7 +495,7 @@ pub async fn relay_core(
     validate_output_schema(&output, &effective_schema)?;
 
     // 8b. Enforcement rules: reject forbidden characters in string values
-    validate_output_enforcement_rules(&output, &state.enforcement_policy.rules)?;
+    validate_output_enforcement_rules(&output, &resolved_policy.rules)?;
 
     // 9. Compute entropy and enforce per contract mode (#151 gap 6)
     let entropy_bits = calculate_schema_entropy_upper_bound(&effective_schema)
@@ -558,7 +563,7 @@ pub async fn relay_core(
     let model_weights_hash = hex::encode(Sha256::digest(b"api-mediated-no-local-weights"));
     // inference_config_hash: honest "n/a" — relay is API-mediated; no local inference
     let inference_config_hash = hex::encode(Sha256::digest(b"api-mediated-no-local-inference"));
-    let guardian_policy_hash = state.enforcement_policy_hash.clone();
+    let guardian_policy_hash = resolved_hash.clone();
 
     // Load model profile hash if contract specifies one
     let model_profile_hash = match &contract.model_profile_id {
@@ -629,6 +634,7 @@ pub async fn relay_core(
         &provider_response.model_id,
         provider_name,
         &runtime_hash,
+        &resolved_hash,
         state,
         inference_start,
         inference_end,
@@ -670,6 +676,7 @@ fn build_receipt_v2(
     model_id: &str,
     provider_name: &str,
     runtime_hash: &str,
+    policy_hash: &str,
     state: &AppState,
     inference_start: chrono::DateTime<chrono::Utc>,
     inference_end: chrono::DateTime<chrono::Utc>,
@@ -692,7 +699,7 @@ fn build_receipt_v2(
         "max_completion_tokens": effective_max_tokens,
     });
     let preflight_bundle = PreflightBundle {
-        policy_hash: state.enforcement_policy_hash.clone(),
+        policy_hash: policy_hash.to_string(),
         prompt_template_hash: prompt_template_hash.to_string(),
         model_profile_hash: model_profile_hash.unwrap_or("none").to_string(),
         schema_hash: schema_hash.to_string(),
@@ -831,6 +838,7 @@ pub fn build_failure_receipt_v2(
     model_id: &str,
     provider_name: &str,
     runtime_hash: &str,
+    policy_hash: &str,
     state: &AppState,
     inference_start: Option<chrono::DateTime<chrono::Utc>>,
     inference_end: Option<chrono::DateTime<chrono::Utc>>,
@@ -853,7 +861,7 @@ pub fn build_failure_receipt_v2(
         "max_completion_tokens": effective_max_tokens,
     });
     let preflight_bundle = PreflightBundle {
-        policy_hash: state.enforcement_policy_hash.clone(),
+        policy_hash: policy_hash.to_string(),
         prompt_template_hash: prompt_template_hash.to_string(),
         model_profile_hash: model_profile_hash.unwrap_or("none").to_string(),
         schema_hash: schema_hash.to_string(),
@@ -1108,17 +1116,19 @@ mod tests {
             gemini_base_url: None,
             prompt_program_dir: "/tmp/nonexistent".to_string(),
             session_store: crate::session::SessionStore::new(std::time::Duration::from_secs(60)),
-            enforcement_policy: crate::enforcement_policy::RelayEnforcementPolicy {
-                policy_version: "1".to_string(),
-                policy_id: "test-policy".to_string(),
-                policy_scope: "RELAY_GLOBAL".to_string(),
-                model_profile_allowlist: vec![],
-                provider_allowlist: vec![],
-                max_output_tokens: None,
-                rules: vec![],
-                entropy_constraints: None,
-            },
-            enforcement_policy_hash: "a".repeat(64),
+            policy_registry: crate::enforcement_policy::PolicyRegistry::single(
+                crate::enforcement_policy::RelayEnforcementPolicy {
+                    policy_version: "1".to_string(),
+                    policy_id: "test-policy".to_string(),
+                    policy_scope: "RELAY_GLOBAL".to_string(),
+                    model_profile_allowlist: vec![],
+                    provider_allowlist: vec![],
+                    max_output_tokens: None,
+                    rules: vec![],
+                    entropy_constraints: None,
+                },
+                "a".repeat(64),
+            ),
             agent_registry: crate::agent_registry::AgentRegistry::empty(),
             inbox_store: crate::inbox::InboxStore::new(std::time::Duration::from_secs(60)),
             max_completion_tokens: 4096,
@@ -1197,6 +1207,7 @@ mod tests {
             "test-model",
             "anthropic",
             &"r".repeat(64),
+            &"a".repeat(64),
             &state,
             None,
             None,
@@ -1252,6 +1263,7 @@ mod tests {
             "test-model",
             "openai",
             &"r".repeat(64),
+            &"a".repeat(64),
             &state,
             Some(chrono::Utc::now()),
             Some(chrono::Utc::now()),

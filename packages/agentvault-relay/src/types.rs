@@ -132,7 +132,10 @@ pub struct HealthResponse {
     pub provider: String,
     pub model_id: String,
     pub verifying_key_hex: String,
+    /// Summary of the **default** enforcement policy (for backward compat).
     pub policy_summary: PolicySummary,
+    /// All loaded policy hashes (operator-facing, monitoring).
+    pub loaded_policy_hashes: Vec<String>,
 }
 
 /// Capabilities response.

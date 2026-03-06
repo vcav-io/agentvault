@@ -26,7 +26,7 @@ use axum::{
 use ed25519_dalek::SigningKey;
 
 use crate::agent_registry::AgentRegistry;
-use crate::enforcement_policy::RelayEnforcementPolicy;
+use crate::enforcement_policy::PolicyRegistry;
 use crate::error::RelayError;
 use crate::inbox::InboxStore;
 use crate::relay::compute_contract_hash;
@@ -55,6 +55,7 @@ struct FailureReceiptContext {
     effective_max_tokens: u32,
     entropy_bits: u16,
     entropy_budget_bits: Option<u32>,
+    policy_hash: String,
 }
 
 pub struct AppState {
@@ -70,10 +71,8 @@ pub struct AppState {
     pub gemini_base_url: Option<String>,
     pub prompt_program_dir: String,
     pub session_store: SessionStore,
-    /// Loaded enforcement policy — rules read at runtime by the output guard.
-    pub enforcement_policy: RelayEnforcementPolicy,
-    /// Content hash of the loaded enforcement policy (bound into receipts).
-    pub enforcement_policy_hash: String,
+    /// Registry of loaded enforcement policies — supports multi-policy selection.
+    pub policy_registry: PolicyRegistry,
     /// Agent registry for inbox authentication.
     pub agent_registry: AgentRegistry,
     /// In-memory inbox store for async invites.
@@ -165,17 +164,24 @@ async fn health_handler(State(state): State<Arc<AppState>>) -> Json<HealthRespon
         ("redacted".to_string(), "redacted".to_string())
     };
     let verifying_key_hex = receipt_core::public_key_to_hex(&state.signing_key.verifying_key());
+    let default = state.policy_registry.default_policy();
     let policy_summary = PolicySummary {
-        policy_id: state.enforcement_policy.policy_id.clone(),
-        policy_hash: state.enforcement_policy_hash.clone(),
-        model_profile_allowlist: state.enforcement_policy.model_profile_allowlist.clone(),
-        enforcement_rules: state
-            .enforcement_policy
+        policy_id: default.policy.policy_id.clone(),
+        policy_hash: default.hash.to_string(),
+        model_profile_allowlist: default.policy.model_profile_allowlist.clone(),
+        enforcement_rules: default
+            .policy
             .rules
             .iter()
             .map(|r| r.rule_id.clone())
             .collect(),
     };
+    let loaded_policy_hashes: Vec<String> = state
+        .policy_registry
+        .hashes()
+        .iter()
+        .map(|h| h.to_string())
+        .collect();
     Json(HealthResponse {
         status: "ok",
         version: VERSION,
@@ -185,6 +191,7 @@ async fn health_handler(State(state): State<Arc<AppState>>) -> Json<HealthRespon
         model_id,
         verifying_key_hex,
         policy_summary,
+        loaded_policy_hashes,
     })
 }
 
@@ -495,6 +502,13 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
             .max_completion_tokens
             .unwrap_or(state.max_completion_tokens);
 
+        // Resolve policy hash for the failure receipt
+        let resolved = state
+            .policy_registry
+            .resolve(contract.enforcement_policy_hash.as_deref())
+            .ok()?;
+        let policy_hash = resolved.hash.to_string();
+
         Some(FailureReceiptContext {
             contract_hash,
             output_schema_hash,
@@ -507,6 +521,7 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
             effective_max_tokens,
             entropy_bits,
             entropy_budget_bits: contract.entropy_budget_bits,
+            policy_hash,
         })
     })();
 
@@ -576,6 +591,7 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
                         &ctx.effective_model_id,
                         &provider,
                         &ctx.runtime_hash,
+                        &ctx.policy_hash,
                         &state,
                         None, // inference_start not captured yet
                         None, // inference_end not captured yet
