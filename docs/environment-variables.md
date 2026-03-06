@@ -35,6 +35,18 @@ These require `AV_ENV=dev` to have any effect. Production deployments must alway
 | `AV_MODEL_LOCKFILE_SKIP` | Set to `1` (with `AV_ENV=dev`) to skip model profile lockfile validation |
 | `AV_ENFORCEMENT_LOCKFILE_SKIP` | Set to `1` (with `AV_ENV=dev`) to skip enforcement policy lockfile validation |
 
+### Inbox Persistence (feature-gated)
+
+The relay's inbox can persist invites to SQLite. This requires building with the `persistence` feature:
+
+```bash
+cargo build --features persistence
+```
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AV_INBOX_DB_PATH` | — | Path to the SQLite database file for inbox persistence. Required when running with `--features persistence`. If unset, the relay falls back to in-memory storage |
+
 ## MCP Server (`agentvault-mcp-server`)
 
 ### Core
