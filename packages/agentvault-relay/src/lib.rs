@@ -206,13 +206,12 @@ async fn capabilities_handler(State(state): State<Arc<AppState>>) -> Json<Capabi
     if state.gemini_api_key.is_some() {
         providers.push("gemini");
     }
-    let mut available_schema_hashes: Vec<String> = state
+    let available_schema_hashes: Vec<String> = state
         .schema_registry
         .hashes()
         .iter()
         .map(|s| s.to_string())
         .collect();
-    available_schema_hashes.sort();
     let available_policy_hashes: Vec<String> = state
         .policy_registry
         .hashes()
