@@ -47,6 +47,8 @@ function requireString(record: Record<string, unknown>, field: string, typeName:
   return value;
 }
 
+// Date.parse() (not strict toISOString() round-trip) because Rust chrono
+// serializes UTC as "+00:00" which doesn't round-trip through JS Date.
 function requireTimestamp(record: Record<string, unknown>, field: string, typeName: string): string {
   const value = requireString(record, field, typeName);
   if (isNaN(Date.parse(value))) {
