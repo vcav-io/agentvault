@@ -2,7 +2,7 @@
 
 # AgentVault Status
 
-**Last Updated:** 2026-03-05
+**Last Updated:** 2026-03-06
 
 ## Current Capabilities
 
@@ -28,39 +28,56 @@
 | TEE Receipt Introspection | `verify_receipt` surfaces `tee_info` from v2 TEE receipts (tee_type, measurement, attestation_hash, transcript_hash) | Complete |
 | Execution Environments | Two-lane framing (standard vs confidential), trust model table, limitations docs | Complete |
 
-## Open Work
+## Open Work — Prioritised Cross-Repo Backlog
 
-### Architecture / roadmap
+### Tier 1 — High-value, next up
 
-| Issue | Description | Size | Status |
-|-------|-------------|------|--------|
-| [#181](https://github.com/vcav-io/agentvault/issues/181) | Output schema registry: extract inline schemas into content-addressed store | L | Ready |
-| [#182](https://github.com/vcav-io/agentvault/issues/182) | Multi-policy selection: let contracts choose from multiple loaded policies | M | Ready |
-| [#167](https://github.com/vcav-io/agentvault/issues/167) | Protocol stabilisation (meta) | L | Tracking |
+| Repo | Issue | Description | Size | Notes |
+|------|-------|-------------|------|-------|
+| av-tee | [#5](https://github.com/vcav-io/av-tee/issues/5) | `tee_type` serialization round-trip silently downgrades to None | S | Correctness bug — silent data loss in trust-critical field |
+| av-tee | [#6](https://github.com/vcav-io/av-tee/issues/6) | Schema canonicalization falls back to sha256 of empty string | S | Correctness bug — failure receipts get bogus hash |
+| av-tee | [#7](https://github.com/vcav-io/av-tee/issues/7) | Poisoned mutex continues with corrupted session state | S | Safety bug — session integrity risk |
+| agentvault | [#205](https://github.com/vcav-io/agentvault/issues/205) | Update README to reflect TEE lane | S | Blocked on av-tee Phase 2 |
+| website | [#41](https://github.com/vcav-io/website/issues/41) | SEO Phase 4: technical authority content | L | Phases 1-3 complete; unblocked |
+| website | [#32](https://github.com/vcav-io/website/issues/32) | Update copy for software/confidential lane framing | M | May overlap with Phase 4 |
 
-### Website
+### Tier 2 — Important, medium-term
 
-| Issue | Description | Size | Status |
-|-------|-------------|------|--------|
-| [#157](https://github.com/vcav-io/agentvault/issues/157) | Website: link demo UI onboarding docs under simulation | S | Ready |
-| [#158](https://github.com/vcav-io/agentvault/issues/158) | Website: fix double logo on mobile | S | Ready |
+| Repo | Issue | Description | Size |
+|------|-------|-------------|------|
+| agentvault | [#181](https://github.com/vcav-io/agentvault/issues/181) | Output schema registry: content-addressed store | L |
+| agentvault | [#182](https://github.com/vcav-io/agentvault/issues/182) | Multi-policy selection in contracts | M |
+| av-tee | [#8](https://github.com/vcav-io/av-tee/issues/8) | Env var parse failures silently use defaults | S |
+| av-tee | [#9](https://github.com/vcav-io/av-tee/issues/9) | API key absence only detected at inference time | S |
+| av-tee | [#10](https://github.com/vcav-io/av-tee/issues/10) | Echo mode collapses all errors to `()` | S |
+| av-tee | [#14](https://github.com/vcav-io/av-tee/issues/14) | Implement quote verification in tee-verifier | M |
+| agentvault | [#154](https://github.com/vcav-io/agentvault/issues/154) | PKI / key pinning for relay verifying keys | M |
+| VFC | [#15](https://github.com/vcav-io/vault-family-core/issues/15) | AFAL Agent Discovery: DNS-like resolution | L |
+| agentvault | [#167](https://github.com/vcav-io/agentvault/issues/167) | Protocol stabilisation (meta) | L |
 
-### Backlog (lower priority)
+### Tier 3 — Backlog
 
-| Issue | Description | Size |
-|-------|-------------|------|
-| [#166](https://github.com/vcav-io/agentvault/issues/166) | Custom contract builder + SAFE/RICH variants | L |
-| [#165](https://github.com/vcav-io/agentvault/issues/165) | Extended accumulation experiment N=20-100 | M |
-| [#164](https://github.com/vcav-io/agentvault/issues/164) | Formal registries for schemas, policies, profiles, programs | L |
-| [#163](https://github.com/vcav-io/agentvault/issues/163) | Extract inbox protocol types to VFC | S |
-| [#162](https://github.com/vcav-io/agentvault/issues/162) | Inbox hardening: timeouts, validation, persistence | M |
-| [#161](https://github.com/vcav-io/agentvault/issues/161) | First live async invite session | M |
-| [#79](https://github.com/vcav-io/agentvault/issues/79) | Wave 8 follow-up: live verification of testing tooling | M |
+| Repo | Issue | Description | Size |
+|------|-------|-------------|------|
+| av-tee | [#13](https://github.com/vcav-io/av-tee/issues/13) | Implement SEV-SNP CvmRuntime (real hardware) | L |
+| av-tee | [#11](https://github.com/vcav-io/av-tee/issues/11) | Document transcript_binding field | S |
+| av-tee | [#15](https://github.com/vcav-io/av-tee/issues/15) | Live transparency log for enclave measurements | L |
+| av-tee | [#16](https://github.com/vcav-io/av-tee/issues/16) | TypeScript tee-verifier | M |
+| agentvault | [#164](https://github.com/vcav-io/agentvault/issues/164) | Formal registries for schemas, policies, profiles, programs | L |
+| agentvault | [#166](https://github.com/vcav-io/agentvault/issues/166) | Custom contract builder + SAFE/RICH variants | L |
+| agentvault | [#165](https://github.com/vcav-io/agentvault/issues/165) | Extended accumulation experiment N=20-100 | M |
+| agentvault | [#162](https://github.com/vcav-io/agentvault/issues/162) | Inbox hardening: timeouts, validation, persistence | M |
+| agentvault | [#163](https://github.com/vcav-io/agentvault/issues/163) | Extract inbox protocol types to VFC | S |
+| agentvault | [#161](https://github.com/vcav-io/agentvault/issues/161) | First live async invite session | M |
+| website | [#42](https://github.com/vcav-io/website/issues/42) | SEO Phase 5: IA and authority signals | L |
+| website | [#29](https://github.com/vcav-io/website/issues/29) | Align simulation visual style with demo UI | S |
+| vcav | [#770](https://github.com/vcav-io/vcav/issues/770) | Move session.run() to spawn_blocking | S |
 
 ## Recently Completed
 
 | Issue | Description | PR |
 |-------|-------------|-----|
+| website [#40](https://github.com/vcav-io/website/issues/40) | SEO Phase 3: comparison and problem-framing articles (5 essays + delegation framing pass) | website #51 |
 | — | TEE receipt introspection + execution environments docs | #203 |
 | [#186](https://github.com/vcav-io/agentvault/issues/186) | Provider notes with current-gen model sweep results | — |
 | [#187](https://github.com/vcav-io/agentvault/issues/187) | Red team template for schema boundary violation testing | — |
