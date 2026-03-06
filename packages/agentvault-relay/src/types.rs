@@ -147,6 +147,10 @@ pub struct CapabilitiesResponse {
     pub entropy_enforcement: &'static str,
     pub receipt_schema_version: &'static str,
     pub enforcement_capabilities: Vec<String>,
+    /// All available output schema hashes (client-facing discovery).
+    pub available_schema_hashes: Vec<String>,
+    /// All available enforcement policy hashes (client-facing discovery).
+    pub available_policy_hashes: Vec<String>,
 }
 
 // ============================================================================

@@ -74,9 +74,11 @@ impl SchemaRegistry {
         self.schemas.is_empty()
     }
 
-    /// List all registered schema hashes.
+    /// List all registered schema hashes, sorted.
     pub fn hashes(&self) -> Vec<&str> {
-        self.schemas.keys().map(|s| s.as_str()).collect()
+        let mut hashes: Vec<&str> = self.schemas.keys().map(|s| s.as_str()).collect();
+        hashes.sort();
+        hashes
     }
 }
 

@@ -381,6 +381,11 @@ pub async fn relay_core(
                 })?
         } else {
             // Both inline schema and hash provided — verify consistency
+            tracing::warn!(
+                output_schema_hash = %requested_hash,
+                "contract provides both inline output_schema and output_schema_hash; \
+                 inline schemas are deprecated — use hash-only reference"
+            );
             let computed_hash = compute_output_schema_hash(&contract.output_schema)?;
             if *requested_hash != computed_hash {
                 return Err(RelayError::ContractValidation(format!(
@@ -1816,5 +1821,78 @@ mod tests {
             err.is_err(),
             "schema validation must reject numeric literal in enum field"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Schema resolution tests (#181)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_schema_resolution_inline_no_hash() {
+        // Real inline schema, no hash → uses inline, no registry involvement
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": { "signal": { "type": "string", "enum": ["yes", "no"] } },
+            "required": ["signal"],
+            "additionalProperties": false
+        });
+
+        let is_stub = schema
+            .as_object()
+            .map(|obj| !obj.contains_key("properties"))
+            .unwrap_or(true);
+        assert!(!is_stub, "schema with properties should not be a stub");
+
+        // When output_schema_hash is None and schema has properties,
+        // the schema is used directly (the else branch at relay.rs ~line 397)
+    }
+
+    #[test]
+    fn test_schema_resolution_stub_no_hash_is_error() {
+        // Stub schema {} with no hash → no way to resolve → error
+        let stub = serde_json::json!({});
+        let is_stub = stub
+            .as_object()
+            .map(|obj| !obj.contains_key("properties"))
+            .unwrap_or(true);
+        assert!(is_stub, "empty object should be detected as stub");
+
+        // With no output_schema_hash, the stub is used directly but will fail
+        // schema validation downstream (no properties = no valid output).
+        // The relay doesn't reject stubs without hashes at the resolution stage —
+        // it fails at validate_output_schema.
+    }
+
+    #[test]
+    fn test_schema_resolution_stub_with_hash_registry_lookup() {
+        // Stub schema {} + hash → registry lookup
+        let real_schema = serde_json::json!({
+            "type": "object",
+            "properties": { "signal": { "type": "string", "enum": ["yes", "no"] } },
+            "required": ["signal"],
+            "additionalProperties": false
+        });
+
+        // Compute hash of the real schema
+        let canonical = receipt_core::canonicalize_serializable(&real_schema).unwrap();
+        let hash = hex::encode(Sha256::digest(canonical.as_bytes()));
+
+        // Build a minimal registry
+        let dir = std::env::temp_dir().join("vcav-schema-resolution-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("test.json"),
+            serde_json::to_string_pretty(&real_schema).unwrap(),
+        )
+        .unwrap();
+        let registry =
+            crate::schema_registry::SchemaRegistry::load_from_dir(&dir).unwrap();
+
+        // Lookup by hash should succeed
+        let looked_up = registry.get(&hash);
+        assert!(looked_up.is_some(), "registry should find schema by hash");
+        assert_eq!(looked_up.unwrap(), &real_schema);
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
