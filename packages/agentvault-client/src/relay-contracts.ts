@@ -241,6 +241,43 @@ export function listRelayPurposes(): string[] {
 }
 
 /**
+ * Build a contract that references a schema by hash rather than embedding it inline.
+ * Uses a stub `output_schema: {}` for VFC wire-format compatibility (the VFC Contract
+ * type requires `output_schema` as a non-optional field). The relay detects the stub
+ * via the "no properties key" heuristic and performs a registry lookup by hash.
+ *
+ * Assumption: all current output schemas are objects with a `properties` key.
+ * The relay's `is_stub_schema` check uses this heuristic. Clean path is making
+ * `output_schema` optional in VFC (separate PR).
+ */
+export function buildRelayContractWithSchemaRef(
+  purpose: string,
+  participants: string[],
+  opts?: { schemaHash?: string; policyHash?: string },
+): RelayContract | undefined {
+  const template = TEMPLATES[purpose];
+  if (!template) return undefined;
+
+  for (const p of participants) {
+    const err = validateParticipantId(p);
+    if (err) throw new Error(err);
+  }
+
+  // Compute schema hash from the template's full schema
+  const schemaHash = opts?.schemaHash ?? computeOutputSchemaHash(template.output_schema);
+
+  return {
+    ...template,
+    participants,
+    output_schema: {} as object, // stub — triggers registry lookup on relay
+    output_schema_hash: schemaHash,
+    ...(opts?.policyHash !== undefined
+      ? { enforcement_policy_hash: opts.policyHash }
+      : {}),
+  };
+}
+
+/**
  * Compute SHA-256 hash of a relay contract using RFC 8785 (JCS)
  * canonicalization. Matches the Rust relay's `compute_contract_hash`.
  */
