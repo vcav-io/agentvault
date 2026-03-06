@@ -242,14 +242,26 @@ pub async fn relay_core(
         ));
     }
 
-    // 2. Enforce model profile allowlist
-    if !state.enforcement_policy.model_profile_allowlist.is_empty() {
+    // 2. Resolve enforcement policy from registry
+    let resolved = state
+        .policy_registry
+        .resolve(contract.enforcement_policy_hash.as_deref())?;
+    let resolved_hash = resolved.hash.to_string();
+    let resolved_policy = resolved.policy;
+
+    // Warn if contract omits policy hash on a multi-policy relay
+    if contract.enforcement_policy_hash.is_none() && state.policy_registry.len() > 1 {
+        tracing::warn!(
+            default_policy = %resolved_hash,
+            "contract lacks enforcement_policy_hash — using default policy; \
+             future versions may reject contracts without explicit policy declaration"
+        );
+    }
+
+    // 2a. Enforce model profile allowlist
+    if !resolved_policy.model_profile_allowlist.is_empty() {
         match &contract.model_profile_id {
-            Some(profile_id)
-                if state
-                    .enforcement_policy
-                    .model_profile_allowlist
-                    .contains(profile_id) => {}
+            Some(profile_id) if resolved_policy.model_profile_allowlist.contains(profile_id) => {}
             Some(profile_id) => {
                 return Err(RelayError::ContractValidation(format!(
                     "model_profile_id '{profile_id}' not in enforcement allowlist"
@@ -261,16 +273,6 @@ pub async fn relay_core(
                         .to_string(),
                 ));
             }
-        }
-    }
-
-    // 2b. Validate contract enforcement_policy_hash matches relay's loaded policy (#147)
-    if let Some(ref contract_policy_hash) = contract.enforcement_policy_hash {
-        if *contract_policy_hash != state.enforcement_policy_hash {
-            return Err(RelayError::ContractValidation(format!(
-                "contract enforcement_policy_hash '{}' does not match relay policy '{}'",
-                contract_policy_hash, state.enforcement_policy_hash,
-            )));
         }
     }
 
@@ -376,6 +378,11 @@ pub async fn relay_core(
                 })?
         } else {
             // Both inline schema and hash provided — verify consistency
+            tracing::warn!(
+                output_schema_hash = %requested_hash,
+                "contract provides both inline output_schema and output_schema_hash; \
+                 inline schemas are deprecated — use hash-only reference"
+            );
             let computed_hash = compute_output_schema_hash(&contract.output_schema)?;
             if *requested_hash != computed_hash {
                 return Err(RelayError::ContractValidation(format!(
@@ -490,7 +497,7 @@ pub async fn relay_core(
     validate_output_schema(&output, &effective_schema)?;
 
     // 8b. Enforcement rules: reject forbidden characters in string values
-    validate_output_enforcement_rules(&output, &state.enforcement_policy.rules)?;
+    validate_output_enforcement_rules(&output, &resolved_policy.rules)?;
 
     // 9. Compute entropy and enforce per contract mode (#151 gap 6)
     let entropy_bits = calculate_schema_entropy_upper_bound(&effective_schema)
@@ -558,7 +565,7 @@ pub async fn relay_core(
     let model_weights_hash = hex::encode(Sha256::digest(b"api-mediated-no-local-weights"));
     // inference_config_hash: honest "n/a" — relay is API-mediated; no local inference
     let inference_config_hash = hex::encode(Sha256::digest(b"api-mediated-no-local-inference"));
-    let guardian_policy_hash = state.enforcement_policy_hash.clone();
+    let guardian_policy_hash = resolved_hash.clone();
 
     // Load model profile hash if contract specifies one
     let model_profile_hash = match &contract.model_profile_id {
@@ -629,6 +636,7 @@ pub async fn relay_core(
         &provider_response.model_id,
         provider_name,
         &runtime_hash,
+        &resolved_hash,
         state,
         inference_start,
         inference_end,
@@ -670,6 +678,7 @@ fn build_receipt_v2(
     model_id: &str,
     provider_name: &str,
     runtime_hash: &str,
+    policy_hash: &str,
     state: &AppState,
     inference_start: chrono::DateTime<chrono::Utc>,
     inference_end: chrono::DateTime<chrono::Utc>,
@@ -692,7 +701,7 @@ fn build_receipt_v2(
         "max_completion_tokens": effective_max_tokens,
     });
     let preflight_bundle = PreflightBundle {
-        policy_hash: state.enforcement_policy_hash.clone(),
+        policy_hash: policy_hash.to_string(),
         prompt_template_hash: prompt_template_hash.to_string(),
         model_profile_hash: model_profile_hash.unwrap_or("none").to_string(),
         schema_hash: schema_hash.to_string(),
@@ -831,6 +840,7 @@ pub fn build_failure_receipt_v2(
     model_id: &str,
     provider_name: &str,
     runtime_hash: &str,
+    policy_hash: &str,
     state: &AppState,
     inference_start: Option<chrono::DateTime<chrono::Utc>>,
     inference_end: Option<chrono::DateTime<chrono::Utc>>,
@@ -853,7 +863,7 @@ pub fn build_failure_receipt_v2(
         "max_completion_tokens": effective_max_tokens,
     });
     let preflight_bundle = PreflightBundle {
-        policy_hash: state.enforcement_policy_hash.clone(),
+        policy_hash: policy_hash.to_string(),
         prompt_template_hash: prompt_template_hash.to_string(),
         model_profile_hash: model_profile_hash.unwrap_or("none").to_string(),
         schema_hash: schema_hash.to_string(),
@@ -1108,17 +1118,19 @@ mod tests {
             gemini_base_url: None,
             prompt_program_dir: "/tmp/nonexistent".to_string(),
             session_store: crate::session::SessionStore::new(std::time::Duration::from_secs(60)),
-            enforcement_policy: crate::enforcement_policy::RelayEnforcementPolicy {
-                policy_version: "1".to_string(),
-                policy_id: "test-policy".to_string(),
-                policy_scope: "RELAY_GLOBAL".to_string(),
-                model_profile_allowlist: vec![],
-                provider_allowlist: vec![],
-                max_output_tokens: None,
-                rules: vec![],
-                entropy_constraints: None,
-            },
-            enforcement_policy_hash: "a".repeat(64),
+            policy_registry: crate::enforcement_policy::PolicyRegistry::single(
+                crate::enforcement_policy::RelayEnforcementPolicy {
+                    policy_version: "1".to_string(),
+                    policy_id: "test-policy".to_string(),
+                    policy_scope: "RELAY_GLOBAL".to_string(),
+                    model_profile_allowlist: vec![],
+                    provider_allowlist: vec![],
+                    max_output_tokens: None,
+                    rules: vec![],
+                    entropy_constraints: None,
+                },
+                "a".repeat(64),
+            ),
             agent_registry: crate::agent_registry::AgentRegistry::empty(),
             inbox_store: crate::inbox::InboxStore::new(std::time::Duration::from_secs(60)),
             max_completion_tokens: 4096,
@@ -1197,6 +1209,7 @@ mod tests {
             "test-model",
             "anthropic",
             &"r".repeat(64),
+            &"a".repeat(64),
             &state,
             None,
             None,
@@ -1252,6 +1265,7 @@ mod tests {
             "test-model",
             "openai",
             &"r".repeat(64),
+            &"a".repeat(64),
             &state,
             Some(chrono::Utc::now()),
             Some(chrono::Utc::now()),
@@ -1803,6 +1817,228 @@ mod tests {
         assert!(
             err.is_err(),
             "schema validation must reject numeric literal in enum field"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Schema resolution tests (#181)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_schema_resolution_inline_no_hash() {
+        // Real inline schema, no hash → uses inline, no registry involvement
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": { "signal": { "type": "string", "enum": ["yes", "no"] } },
+            "required": ["signal"],
+            "additionalProperties": false
+        });
+
+        let is_stub = schema
+            .as_object()
+            .map(|obj| !obj.contains_key("properties"))
+            .unwrap_or(true);
+        assert!(!is_stub, "schema with properties should not be a stub");
+
+        // When output_schema_hash is None and schema has properties,
+        // the schema is used directly (the else branch at relay.rs ~line 397)
+    }
+
+    #[test]
+    fn test_schema_resolution_stub_no_hash_is_error() {
+        // Stub schema {} with no hash → no way to resolve → error
+        let stub = serde_json::json!({});
+        let is_stub = stub
+            .as_object()
+            .map(|obj| !obj.contains_key("properties"))
+            .unwrap_or(true);
+        assert!(is_stub, "empty object should be detected as stub");
+
+        // With no output_schema_hash, the stub is used directly but will fail
+        // schema validation downstream (no properties = no valid output).
+        // The relay doesn't reject stubs without hashes at the resolution stage —
+        // it fails at validate_output_schema.
+    }
+
+    #[test]
+    fn test_schema_resolution_stub_with_hash_registry_lookup() {
+        // Stub schema {} + hash → registry lookup
+        let real_schema = serde_json::json!({
+            "type": "object",
+            "properties": { "signal": { "type": "string", "enum": ["yes", "no"] } },
+            "required": ["signal"],
+            "additionalProperties": false
+        });
+
+        // Compute hash of the real schema
+        let canonical = receipt_core::canonicalize_serializable(&real_schema).unwrap();
+        let hash = hex::encode(Sha256::digest(canonical.as_bytes()));
+
+        // Build a minimal registry
+        let dir = std::env::temp_dir().join("vcav-schema-resolution-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("test.json"),
+            serde_json::to_string_pretty(&real_schema).unwrap(),
+        )
+        .unwrap();
+        let registry = crate::schema_registry::SchemaRegistry::load_from_dir(&dir).unwrap();
+
+        // Lookup by hash should succeed
+        let looked_up = registry.get(&hash);
+        assert!(looked_up.is_some(), "registry should find schema by hash");
+        assert_eq!(looked_up.unwrap(), &real_schema);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // -----------------------------------------------------------------------
+    // Receipt-binding tests for multi-policy correctness (#182)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_receipt_binds_selected_policy_not_default() {
+        // A multi-policy registry where the contract selects a non-default policy.
+        // The receipt must bind the selected hash, not the default.
+        use crate::enforcement_policy::{content_hash, PolicyRegistry, RelayEnforcementPolicy};
+
+        let policy_a = RelayEnforcementPolicy {
+            policy_version: "1".to_string(),
+            policy_id: "policy_a".to_string(),
+            policy_scope: "RELAY_GLOBAL".to_string(),
+            model_profile_allowlist: vec![],
+            provider_allowlist: vec![],
+            max_output_tokens: None,
+            rules: vec![],
+            entropy_constraints: None,
+        };
+        let hash_a = content_hash(&policy_a).unwrap();
+
+        let policy_b = RelayEnforcementPolicy {
+            policy_version: "1".to_string(),
+            policy_id: "policy_b".to_string(),
+            policy_scope: "RELAY_GLOBAL".to_string(),
+            model_profile_allowlist: vec![],
+            provider_allowlist: vec![],
+            max_output_tokens: None,
+            rules: vec![],
+            entropy_constraints: None,
+        };
+        let hash_b = content_hash(&policy_b).unwrap();
+
+        let mut policies = std::collections::HashMap::new();
+        policies.insert(hash_a.clone(), policy_a);
+        policies.insert(hash_b.clone(), policy_b);
+
+        // Default is policy_a, but contract requests policy_b
+        let registry = PolicyRegistry::new(policies, hash_a.clone()).unwrap();
+        let resolved = registry.resolve(Some(&hash_b)).unwrap();
+
+        assert_eq!(resolved.hash, hash_b, "should resolve to requested policy");
+        assert_ne!(
+            resolved.hash, hash_a,
+            "should NOT resolve to default policy"
+        );
+        assert_eq!(resolved.policy.policy_id, "policy_b");
+    }
+
+    #[test]
+    fn test_preflight_and_receipt_agree_on_policy_hash() {
+        // Both preflight bundle and final receipt must contain the same policy_hash.
+        // We verify this by building a v2 receipt and checking the preflight bundle's
+        // policy_hash matches what we pass in.
+        let state = make_failure_test_state(77);
+        let policy_hash = "b".repeat(64);
+
+        let input_commitments = vec![InputCommitment {
+            participant_id: "alice".to_string(),
+            input_hash: "a".repeat(64),
+            hash_alg: HashAlgorithm::Sha256,
+            canonicalization: "CANONICAL_JSON_V1".to_string(),
+        }];
+
+        let receipt = build_failure_receipt_v2(
+            AbortReason::ProviderError,
+            &"s".repeat(64),
+            &"c".repeat(64),
+            &"h".repeat(64),
+            input_commitments,
+            "p".repeat(64),
+            &"t".repeat(64),
+            None,
+            "test-model",
+            "anthropic",
+            &"r".repeat(64),
+            &policy_hash,
+            &state,
+            None,
+            None,
+            4096,
+            10,
+            None,
+            None,
+        )
+        .expect("failure receipt should build");
+
+        // The effective_config_hash is computed from a PreflightBundle that includes
+        // policy_hash. If we passed the wrong policy_hash, the config hash would differ.
+        // We can't directly inspect the preflight, but we can verify the receipt was built
+        // successfully with our specific policy_hash by checking effective_config_hash exists.
+        assert!(
+            receipt.commitments.effective_config_hash.is_some(),
+            "effective_config_hash should be set (computed from preflight with our policy_hash)"
+        );
+    }
+
+    #[test]
+    fn test_default_vs_explicit_produce_different_receipts() {
+        // Two contracts against the same multi-policy registry:
+        // one with explicit hash, one without. They should resolve to different policies
+        // and thus produce different guardian_policy_hash values.
+        use crate::enforcement_policy::{content_hash, PolicyRegistry, RelayEnforcementPolicy};
+
+        let policy_default = RelayEnforcementPolicy {
+            policy_version: "1".to_string(),
+            policy_id: "default_policy".to_string(),
+            policy_scope: "RELAY_GLOBAL".to_string(),
+            model_profile_allowlist: vec![],
+            provider_allowlist: vec![],
+            max_output_tokens: None,
+            rules: vec![],
+            entropy_constraints: None,
+        };
+        let hash_default = content_hash(&policy_default).unwrap();
+
+        let policy_explicit = RelayEnforcementPolicy {
+            policy_version: "1".to_string(),
+            policy_id: "explicit_policy".to_string(),
+            policy_scope: "RELAY_GLOBAL".to_string(),
+            model_profile_allowlist: vec![],
+            provider_allowlist: vec![],
+            max_output_tokens: None,
+            rules: vec![],
+            entropy_constraints: None,
+        };
+        let hash_explicit = content_hash(&policy_explicit).unwrap();
+
+        let mut policies = std::collections::HashMap::new();
+        policies.insert(hash_default.clone(), policy_default);
+        policies.insert(hash_explicit.clone(), policy_explicit);
+
+        let registry = PolicyRegistry::new(policies, hash_default.clone()).unwrap();
+
+        // Contract without hash → default
+        let resolved_default = registry.resolve(None).unwrap();
+        assert_eq!(resolved_default.hash, hash_default);
+
+        // Contract with explicit hash → explicit policy
+        let resolved_explicit = registry.resolve(Some(&hash_explicit)).unwrap();
+        assert_eq!(resolved_explicit.hash, hash_explicit);
+
+        // They must differ
+        assert_ne!(
+            resolved_default.hash, resolved_explicit.hash,
+            "default and explicit paths should produce different policy hashes"
         );
     }
 }

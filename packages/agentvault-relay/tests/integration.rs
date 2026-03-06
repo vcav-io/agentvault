@@ -64,6 +64,13 @@ fn test_enforcement_policy() -> RelayEnforcementPolicy {
     }
 }
 
+/// Build a test policy registry for tests.
+fn test_policy_registry() -> agentvault_relay::enforcement_policy::PolicyRegistry {
+    let policy = test_enforcement_policy();
+    let hash = agentvault_relay::enforcement_policy::content_hash(&policy).unwrap();
+    agentvault_relay::enforcement_policy::PolicyRegistry::single(policy, hash)
+}
+
 /// Build a test signing key (deterministic).
 fn test_signing_key() -> SigningKey {
     SigningKey::from_bytes(&[0x42u8; 32])
@@ -84,8 +91,7 @@ fn test_app_state(mock_base_url: &str, prompt_dir: &str) -> AppState {
         gemini_base_url: None,
         prompt_program_dir: prompt_dir.to_string(),
         session_store: SessionStore::new(Duration::from_secs(600)),
-        enforcement_policy: test_enforcement_policy(),
-        enforcement_policy_hash: "0".repeat(64),
+        policy_registry: test_policy_registry(),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
         max_completion_tokens: 4096,
@@ -689,7 +695,11 @@ async fn test_relay_rejects_missing_model_profile_when_allowlist_set() {
     let (prompt_dir, prompt_hash) = setup_prompt_program("e2e-allowlist-none");
 
     let mut state = test_app_state("http://unused", &prompt_dir);
-    state.enforcement_policy.model_profile_allowlist = vec!["api-claude-sonnet-v1".to_string()];
+    let mut allowlist_policy = test_enforcement_policy();
+    allowlist_policy.model_profile_allowlist = vec!["api-claude-sonnet-v1".to_string()];
+    let hash = agentvault_relay::enforcement_policy::content_hash(&allowlist_policy).unwrap();
+    state.policy_registry =
+        agentvault_relay::enforcement_policy::PolicyRegistry::single(allowlist_policy, hash);
     let app = build_router(Arc::new(state));
 
     // Contract without model_profile_id should be rejected
@@ -737,7 +747,11 @@ async fn test_relay_rejects_wrong_model_profile() {
     let (prompt_dir, prompt_hash) = setup_prompt_program("e2e-allowlist-wrong");
 
     let mut state = test_app_state("http://unused", &prompt_dir);
-    state.enforcement_policy.model_profile_allowlist = vec!["api-claude-sonnet-v1".to_string()];
+    let mut allowlist_policy = test_enforcement_policy();
+    allowlist_policy.model_profile_allowlist = vec!["api-claude-sonnet-v1".to_string()];
+    let hash = agentvault_relay::enforcement_policy::content_hash(&allowlist_policy).unwrap();
+    state.policy_registry =
+        agentvault_relay::enforcement_policy::PolicyRegistry::single(allowlist_policy, hash);
     let app = build_router(Arc::new(state));
 
     // Contract with wrong model_profile_id should be rejected
@@ -1054,8 +1068,7 @@ async fn test_submit_token_is_one_time_use() {
         gemini_base_url: None,
         prompt_program_dir: "/tmp".to_string(),
         session_store: state.session_store.clone(),
-        enforcement_policy: test_enforcement_policy(),
-        enforcement_policy_hash: "0".repeat(64),
+        policy_registry: test_policy_registry(),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
         max_completion_tokens: 4096,
@@ -1241,8 +1254,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         gemini_base_url: None,
         prompt_program_dir: prompt_dir.clone(),
         session_store: state.session_store.clone(),
-        enforcement_policy: test_enforcement_policy(),
-        enforcement_policy_hash: "0".repeat(64),
+        policy_registry: test_policy_registry(),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
         max_completion_tokens: 4096,
@@ -1296,8 +1308,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         gemini_base_url: None,
         prompt_program_dir: prompt_dir.clone(),
         session_store: state.session_store.clone(),
-        enforcement_policy: test_enforcement_policy(),
-        enforcement_policy_hash: "0".repeat(64),
+        policy_registry: test_policy_registry(),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
         max_completion_tokens: 4096,
@@ -1365,8 +1376,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         gemini_base_url: None,
         prompt_program_dir: prompt_dir.clone(),
         session_store: state.session_store.clone(),
-        enforcement_policy: test_enforcement_policy(),
-        enforcement_policy_hash: "0".repeat(64),
+        policy_registry: test_policy_registry(),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
         max_completion_tokens: 4096,
@@ -1453,8 +1463,7 @@ async fn test_submit_with_correct_contract_hash_succeeds() {
         gemini_base_url: None,
         prompt_program_dir: "/tmp".to_string(),
         session_store: state.session_store.clone(),
-        enforcement_policy: test_enforcement_policy(),
-        enforcement_policy_hash: "0".repeat(64),
+        policy_registry: test_policy_registry(),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
         max_completion_tokens: 4096,
@@ -1523,8 +1532,7 @@ async fn test_submit_with_wrong_contract_hash_rejected() {
         gemini_base_url: None,
         prompt_program_dir: "/tmp".to_string(),
         session_store: state.session_store.clone(),
-        enforcement_policy: test_enforcement_policy(),
-        enforcement_policy_hash: "0".repeat(64),
+        policy_registry: test_policy_registry(),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
         max_completion_tokens: 4096,
@@ -1594,8 +1602,7 @@ async fn test_submit_without_contract_hash_still_works() {
         gemini_base_url: None,
         prompt_program_dir: "/tmp".to_string(),
         session_store: state.session_store.clone(),
-        enforcement_policy: test_enforcement_policy(),
-        enforcement_policy_hash: "0".repeat(64),
+        policy_registry: test_policy_registry(),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
         max_completion_tokens: 4096,
@@ -1664,8 +1671,7 @@ fn inbox_test_app_state() -> AppState {
         gemini_base_url: None,
         prompt_program_dir: prompt_dir,
         session_store: SessionStore::new(Duration::from_secs(600)),
-        enforcement_policy: test_enforcement_policy(),
-        enforcement_policy_hash: "0".repeat(64),
+        policy_registry: test_policy_registry(),
         agent_registry: registry,
         inbox_store: InboxStore::new(Duration::from_secs(600)),
         max_completion_tokens: 4096,
@@ -2451,8 +2457,8 @@ async fn test_contract_enforcement_policy_hash_mismatch_rejected() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let error_msg = json["error"].as_str().unwrap_or("");
     assert!(
-        error_msg.contains("does not match relay policy"),
-        "Expected policy hash mismatch error, got: {error_msg}"
+        error_msg.contains("Policy not available"),
+        "Expected policy not available error, got: {error_msg}"
     );
 
     std::fs::remove_dir_all(&prompt_dir).ok();
@@ -2721,8 +2727,7 @@ async fn test_health_redacts_provider_by_default() {
         gemini_base_url: None,
         prompt_program_dir: prompt_dir.clone(),
         session_store: SessionStore::new(Duration::from_secs(600)),
-        enforcement_policy: test_enforcement_policy(),
-        enforcement_policy_hash: "0".repeat(64),
+        policy_registry: test_policy_registry(),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
         max_completion_tokens: 4096,
@@ -2775,8 +2780,7 @@ async fn test_health_exposes_provider_when_enabled() {
         gemini_base_url: None,
         prompt_program_dir: prompt_dir.clone(),
         session_store: SessionStore::new(Duration::from_secs(600)),
-        enforcement_policy: test_enforcement_policy(),
-        enforcement_policy_hash: "0".repeat(64),
+        policy_registry: test_policy_registry(),
         agent_registry: AgentRegistry::empty(),
         inbox_store: InboxStore::new(Duration::from_secs(600)),
         max_completion_tokens: 4096,

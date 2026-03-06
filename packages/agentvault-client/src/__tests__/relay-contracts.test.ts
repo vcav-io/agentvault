@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildRelayContract,
+  buildRelayContractWithSchemaRef,
   listRelayPurposes,
   computeRelayContractHash,
   computeOutputSchemaHash,
@@ -169,5 +170,54 @@ describe('golden hash vectors (cross-language parity)', () => {
     const contract = buildRelayContract('COMPATIBILITY', ['alice-demo', 'bob-demo'])!;
     const hash = computeRelayContractHash(contract);
     expect(hash).toBe('8efa3d99bc44dd8f3ae2c977751895acdc2b6d7ee6c8f529cc513d00d85ec069');
+  });
+});
+
+describe('buildRelayContractWithSchemaRef', () => {
+  it('produces contract with output_schema_hash set', () => {
+    const contract = buildRelayContractWithSchemaRef('MEDIATION', ['alice', 'bob']);
+    expect(contract).toBeDefined();
+    expect(contract!.output_schema_hash).toBeDefined();
+    expect(contract!.output_schema_hash!.length).toBe(64);
+  });
+
+  it('output_schema has no properties key (stub)', () => {
+    const contract = buildRelayContractWithSchemaRef('MEDIATION', ['alice', 'bob']);
+    expect(contract).toBeDefined();
+    expect(contract!.output_schema).toEqual({});
+    expect(contract!.output_schema).not.toHaveProperty('properties');
+  });
+
+  it('hash matches the full schema content hash', () => {
+    const fullContract = buildRelayContract('MEDIATION', ['alice', 'bob'])!;
+    const refContract = buildRelayContractWithSchemaRef('MEDIATION', ['alice', 'bob'])!;
+    const fullSchemaHash = computeOutputSchemaHash(fullContract.output_schema);
+    expect(refContract.output_schema_hash).toBe(fullSchemaHash);
+  });
+
+  it('returns undefined for unknown purpose', () => {
+    expect(buildRelayContractWithSchemaRef('UNKNOWN', ['a', 'b'])).toBeUndefined();
+  });
+
+  it('accepts custom schemaHash override', () => {
+    const customHash = 'f'.repeat(64);
+    const contract = buildRelayContractWithSchemaRef('MEDIATION', ['a', 'b'], {
+      schemaHash: customHash,
+    });
+    expect(contract!.output_schema_hash).toBe(customHash);
+  });
+
+  it('accepts custom policyHash override', () => {
+    const customPolicy = 'e'.repeat(64);
+    const contract = buildRelayContractWithSchemaRef('MEDIATION', ['a', 'b'], {
+      policyHash: customPolicy,
+    });
+    expect(contract!.enforcement_policy_hash).toBe(customPolicy);
+  });
+
+  it('preserves template enforcement_policy_hash when no policyHash override', () => {
+    const fullContract = buildRelayContract('MEDIATION', ['a', 'b'])!;
+    const refContract = buildRelayContractWithSchemaRef('MEDIATION', ['a', 'b'])!;
+    expect(refContract.enforcement_policy_hash).toBe(fullContract.enforcement_policy_hash);
   });
 });

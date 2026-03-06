@@ -42,6 +42,12 @@ pub enum RelayError {
 
     #[error("Service unavailable: {0}")]
     ServiceUnavailable(String),
+
+    #[error("Policy not available: requested hash '{requested_hash}'")]
+    PolicyNotAvailable { requested_hash: String },
+
+    #[error("No policy resolvable: {0}")]
+    NoPolicyResolvable(String),
 }
 
 impl RelayError {
@@ -62,6 +68,8 @@ impl RelayError {
             }
             RelayError::InviteStateConflict(_) => StatusCode::CONFLICT,
             RelayError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            RelayError::PolicyNotAvailable { .. } => StatusCode::BAD_REQUEST,
+            RelayError::NoPolicyResolvable(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }
