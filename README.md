@@ -4,7 +4,7 @@
   <img alt="AgentVault" src=".github/logo-light.svg" height="48">
 </picture>
 
-AgentVault is an open protocol and reference implementation for bounded, verifiable coordination between AI agents. The protocol design is still evolving.
+AgentVault is an open protocol for bounded, verifiable coordination between AI agents. It is the **software execution lane** in a two-lane architecture: the same protocol can run as a conventional relay (this repo) or inside a hardware-isolated TEE ([av-tee](https://github.com/vcav-io/av-tee)). The protocol design is still evolving.
 
 AI agents increasingly act as delegates. When two agents reason together, private context becomes shared state. AgentVault bounds what one agent can disclose to another. Agents submit inputs to a relay, which enforces a schema-bound output and produces a signed receipt. The relay returns a bounded signal, not free text.
 
@@ -46,7 +46,7 @@ Agent A input  \
 Agent B input  /
 ```
 
-> **The relay sees both inputs in plaintext.** Counterparty confidentiality is enforced, neither agent sees the other's raw context. Relay confidentiality is not. The bounded output is the point. The relay enforces a JSON Schema that structurally limits what can leave, independent of model behavior. The receipt proves the output satisfied the contract and schema. It does **not** prove the relay did not inspect or log the inputs, or fabricate the output. See [docs/threat-model.md](docs/threat-model.md).
+> **The relay sees both inputs in plaintext.** Counterparty confidentiality is enforced, neither agent sees the other's raw context. Relay confidentiality is not. The bounded output is the point. The relay enforces a JSON Schema that structurally limits what can leave, independent of model behavior. The receipt proves the output satisfied the contract and schema. It does **not** prove the relay did not inspect or log the inputs, or fabricate the output. The [TEE lane](https://github.com/vcav-io/av-tee) removes this assumption by running the same protocol inside an AMD SEV-SNP confidential VM, where hardware attestation binds the receipt to a measured execution environment. See [docs/threat-model.md](docs/threat-model.md).
 
 ---
 
@@ -82,7 +82,7 @@ After the run completes, click **Verify Receipt** on any result card.
 - That the relay actually executed the model it claims to have run
 - That the relay did not inspect or log your input
 
-Current assurance level: `SELF_ASSERTED`. The relay asserts its own honesty. No hardware attestation backs the claim.
+Current assurance level: `SELF_ASSERTED`. The relay asserts its own honesty. No hardware attestation backs the claim. TEE receipts extend the same envelope with attestation binding and transcript hashes, raising assurance to `HARDWARE_ATTESTED` — see [av-tee](https://github.com/vcav-io/av-tee) for details.
 
 See [docs/receipt-verification-guide.md](docs/receipt-verification-guide.md) for the full verification algorithm, field reference, and TypeScript/Python examples.
 
@@ -109,7 +109,7 @@ AI assistants increasingly act as delegates for their users.
 
 When those agents begin coordinating directly with each other, the private context they carry becomes part of the interaction surface.
 
-AgentVault explores a different approach. Instead of relying on model discretion, it constrains what can be disclosed through coordination contracts, schema-bound outputs, and verifiable receipts.
+AgentVault explores a different approach. Instead of relying on model discretion, it constrains what can be disclosed through coordination contracts, schema-bound outputs, and verifiable receipts. The same protocol runs in two lanes: a software lane (this repo) where the relay operator is trusted, and a sealed execution lane ([av-tee](https://github.com/vcav-io/av-tee)) where hardware attestation replaces that trust.
 
 ---
 
