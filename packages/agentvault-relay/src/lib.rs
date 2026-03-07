@@ -1,5 +1,6 @@
 #![cfg_attr(not(test), forbid(unsafe_code))]
 
+pub mod admission;
 pub mod agent_registry;
 pub mod enforcement_policy;
 pub mod error;

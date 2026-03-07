@@ -14,6 +14,7 @@ vault-family-types = { git = "https://github.com/vcav-io/vault-family-core", rev
 
 serde.workspace = true
 serde_json.workspace = true
+toml.workspace = true
 axum.workspace = true
 tokio.workspace = true
 tower-http.workspace = true
