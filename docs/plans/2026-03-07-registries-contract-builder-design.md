@@ -142,7 +142,7 @@ agentvault-registry/
       "version": "2.0.0",
       "description": "Mediation signal with enum-bounded output",
       "status": "active",
-      "added": "2026-03-07",
+      "published_at": "2026-03-07",
       "compatibility": {
         "safety_class": "SAFE"
       }
@@ -174,6 +174,9 @@ agentvault-registry/
 - Explicitly mutable pointers like `name@latest` or `name@recommended`.
 - The `@` separator signals instability — channels may be retargeted.
 - Contracts store the resolved digest, not the channel name.
+- **Production note**: channels are mutable discovery pointers. Reproducibility-
+  sensitive production deployments should prefer immutable aliases or raw digests
+  in contracts to guarantee deterministic artefact resolution.
 
 **Append-only**: artefact entries are never removed. Status changes to
 `"deprecated"` signal that an artefact should not be used in new contracts.
@@ -328,8 +331,11 @@ const contract = buildContract(registry, {
    - `output_schema_hash` ← schema digest
    - `enforcement_policy_hash` ← policy digest
    - `prompt_template_hash` ← program digest
-   - `model_profile_id` ← profile's human ID (compatibility compromise; relays
-     currently resolve by ID, not digest. Future: `model_profile_hash`)
+   - `model_profile_id` ← profile's human ID (**known temporary inconsistency**:
+     this is the only contract field that references by ID rather than content
+     hash. Relays currently resolve profiles by ID, so switching to
+     `model_profile_hash` requires a relay-side migration. This should be
+     resolved before the registry design is considered stable.)
    - `output_schema` ← `{}` (legacy compatibility stub for relays expecting an
      inline schema field; ignored when `output_schema_hash` is present and the
      relay supports registry resolution)
@@ -363,7 +369,15 @@ Registry metadata + builder validation logic. Not a separate enforcement mechani
   must include deterministic reject patterns, must clearly declare reduced privacy
   guarantees.
 
-Builder check: `policy.safety_class >= schema.safety_class` (RICH > SAFE).
+Builder compatibility matrix:
+
+| Schema class | Policy class | Result |
+|-------------|-------------|--------|
+| `SAFE` | `SAFE` | OK |
+| `SAFE` | `RICH` | OK (RICH policy can govern a SAFE schema) |
+| `RICH` | `RICH` | OK |
+| `RICH` | `SAFE` | **ERROR** — a SAFE policy cannot govern a RICH schema (insufficient entropy controls) |
+
 Mismatch → error with actionable message.
 
 ### 4.6 Replacing hardcoded templates
@@ -452,4 +466,4 @@ admission model, and builder API.
 | v1 artefact kinds | Four primitives only | Contract templates are composition, not foundation |
 | Alias model | Immutable aliases + mutable channels | Clear stability guarantees; `@` separator signals mutability |
 | Digest filenames | Algorithm-qualified | Hash agility for future |
-| Profile reference | By ID (compat compromise) | Relays resolve by ID today; migrate to digest later |
+| Profile reference | By ID (temporary inconsistency) | Relays resolve by ID today; only non-content-addressed contract field. Must migrate to digest before registry stabilisation. |
