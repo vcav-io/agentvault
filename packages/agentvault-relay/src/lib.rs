@@ -16,6 +16,7 @@ pub mod schema_registry;
 pub mod session;
 pub mod types;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
@@ -91,6 +92,11 @@ pub struct AppState {
     pub is_dev: bool,
     /// Whether to expose provider/model_id in /health (from VCAV_HEALTH_EXPOSE_MODEL).
     pub health_expose_model: bool,
+    /// Pre-loaded programs from registry admission (keyed by bare hex hash).
+    /// When Some, bypasses filesystem-based program loading.
+    pub admitted_programs: Option<HashMap<String, crate::prompt_program::PromptProgram>>,
+    /// Pre-loaded profiles from registry admission (keyed by bare hex hash).
+    pub admitted_profiles: Option<HashMap<String, crate::types::ModelProfile>>,
 }
 
 // ============================================================================
@@ -472,11 +478,16 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
         .collect();
 
         // Prompt template + assembled prompt hashes
-        let prompt_program = crate::prompt_program::load_prompt_program(
-            &state.prompt_program_dir,
-            &contract.purpose_code.to_string(),
-        )
-        .ok()?;
+        let prompt_program = match &state.admitted_programs {
+            Some(programs) => programs
+                .get(&contract.purpose_code.to_string())
+                .cloned()?,
+            None => crate::prompt_program::load_prompt_program(
+                &state.prompt_program_dir,
+                &contract.purpose_code.to_string(),
+            )
+            .ok()?,
+        };
         let prompt_template_hash = prompt_program.content_hash().ok()?;
         let assembled = prompt_program
             .assemble(&contract, &input_a, &input_b)
@@ -492,8 +503,14 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
         let model_profile_hash = contract
             .model_profile_id
             .as_deref()
-            .and_then(|id| {
-                crate::prompt_program::load_model_profile(&state.prompt_program_dir, id).ok()
+            .and_then(|id| match &state.admitted_profiles {
+                Some(profiles) => profiles
+                    .values()
+                    .find(|p| p.profile_id == id)
+                    .cloned(),
+                None => {
+                    crate::prompt_program::load_model_profile(&state.prompt_program_dir, id).ok()
+                }
             })
             .and_then(|mp| mp.content_hash().ok());
 

@@ -100,6 +100,8 @@ fn test_app_state(mock_base_url: &str, prompt_dir: &str) -> AppState {
         schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
         health_expose_model: false,
+        admitted_programs: None,
+        admitted_profiles: None,
     }
 }
 
@@ -1077,6 +1079,8 @@ async fn test_submit_token_is_one_time_use() {
         schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
         health_expose_model: false,
+        admitted_programs: None,
+        admitted_profiles: None,
     }));
 
     let response = app
@@ -1263,6 +1267,8 @@ async fn test_bilateral_session_e2e_with_mock() {
         schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
         health_expose_model: false,
+        admitted_programs: None,
+        admitted_profiles: None,
     }));
 
     let response = app
@@ -1317,6 +1323,8 @@ async fn test_bilateral_session_e2e_with_mock() {
         schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
         health_expose_model: false,
+        admitted_programs: None,
+        admitted_profiles: None,
     }));
 
     let response = app
@@ -1385,6 +1393,8 @@ async fn test_bilateral_session_e2e_with_mock() {
         schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
         health_expose_model: false,
+        admitted_programs: None,
+        admitted_profiles: None,
     }));
 
     let response = app
@@ -1472,6 +1482,8 @@ async fn test_submit_with_correct_contract_hash_succeeds() {
         schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
         health_expose_model: false,
+        admitted_programs: None,
+        admitted_profiles: None,
     }));
 
     let input_request = serde_json::json!({
@@ -1541,6 +1553,8 @@ async fn test_submit_with_wrong_contract_hash_rejected() {
         schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
         health_expose_model: false,
+        admitted_programs: None,
+        admitted_profiles: None,
     }));
 
     let input_request = serde_json::json!({
@@ -1611,6 +1625,8 @@ async fn test_submit_without_contract_hash_still_works() {
         schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
         health_expose_model: false,
+        admitted_programs: None,
+        admitted_profiles: None,
     }));
 
     // No expected_contract_hash field — backward compat
@@ -1680,6 +1696,8 @@ fn inbox_test_app_state() -> AppState {
         schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
         health_expose_model: false,
+        admitted_programs: None,
+        admitted_profiles: None,
     }
 }
 
@@ -2736,6 +2754,8 @@ async fn test_health_redacts_provider_by_default() {
         schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
         health_expose_model: false,
+        admitted_programs: None,
+        admitted_profiles: None,
     });
     let app = build_router(state);
 
@@ -2789,6 +2809,8 @@ async fn test_health_exposes_provider_when_enabled() {
         schema_registry: agentvault_relay::schema_registry::SchemaRegistry::empty(),
         is_dev: false,
         health_expose_model: true,
+        admitted_programs: None,
+        admitted_profiles: None,
     });
     let app = build_router(state);
 

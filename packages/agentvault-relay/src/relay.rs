@@ -397,7 +397,18 @@ pub async fn relay_core(
     let output_schema_hash = compute_output_schema_hash(&effective_schema)?;
 
     // 4. Load and validate prompt program
-    let program = load_prompt_program(&state.prompt_program_dir, &contract.prompt_template_hash)?;
+    let program = match &state.admitted_programs {
+        Some(programs) => programs
+            .get(&contract.prompt_template_hash)
+            .cloned()
+            .ok_or_else(|| {
+                RelayError::PromptProgram(format!(
+                    "prompt program not found in admitted set for hash: {}",
+                    contract.prompt_template_hash
+                ))
+            })?,
+        None => load_prompt_program(&state.prompt_program_dir, &contract.prompt_template_hash)?,
+    };
 
     // 5. Assemble provider request
     let assembled = program.assemble(contract, input_a, input_b)?;
@@ -570,7 +581,18 @@ pub async fn relay_core(
     // Load model profile hash if contract specifies one
     let model_profile_hash = match &contract.model_profile_id {
         Some(profile_id) => {
-            let profile = load_model_profile(&state.prompt_program_dir, profile_id)?;
+            let profile = match &state.admitted_profiles {
+                Some(profiles) => profiles
+                    .values()
+                    .find(|p| p.profile_id == *profile_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        RelayError::PromptProgram(format!(
+                            "model profile not found in admitted set for id: {profile_id}"
+                        ))
+                    })?,
+                None => load_model_profile(&state.prompt_program_dir, profile_id)?,
+            };
             Some(profile.content_hash()?)
         }
         None => None,
@@ -1139,6 +1161,8 @@ mod tests {
             schema_registry: crate::schema_registry::SchemaRegistry::empty(),
             is_dev: false,
             health_expose_model: false,
+            admitted_programs: None,
+            admitted_profiles: None,
         }
     }
 

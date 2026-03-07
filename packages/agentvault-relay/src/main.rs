@@ -444,6 +444,8 @@ async fn main() {
         schema_registry,
         is_dev,
         health_expose_model,
+        admitted_programs: registry_admission.as_ref().map(|a| a.programs.clone()),
+        admitted_profiles: registry_admission.as_ref().map(|a| a.profiles.clone()),
     });
 
     let app = build_router(state);
