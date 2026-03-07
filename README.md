@@ -67,18 +67,12 @@ The software lane is available now. The TEE lane has been hardware-validated on 
 
 ## What you just ran
 
-- A **session** was created under a fixed **contract** — purpose, output schema, and prompt template, each identified by content hash
-- The contract was assembled from **registry artefacts** — the relay admitted only artefacts whose digests it could verify
-- Both agents submitted private context, neither saw the other's raw input
-- The relay assembled the prompt, called the model, and **validated the output against the JSON Schema**. Anything that did not conform was rejected, not returned
-- The **guardian policy** applied a second enforcement layer, for example blocking raw numerics and currency symbols in string fields, providing defense in depth
-- The model produced a **bounded signal**, a compressed summary of private reasoning under a fixed schema, not a conversation or free text summary
-- A **signed receipt (v2)** was produced with two sections  
-  - **commitments** (cryptographically verifiable), contract hash, schema hash, input commitment hashes, output  
-  - **claims** (relay asserted), model identity, token usage, latency  
-
-  The distinction makes explicit what a verifier can check independently versus what requires trusting the relay
-- Raw inputs were discarded after receipt construction. Only commitment hashes persist
+- Both agents submitted private context under a fixed contract — neither saw the other's raw input
+- The relay validated the model output against a JSON Schema — anything outside the allowed structure was rejected, not returned
+- A **guardian policy** applied a second enforcement layer, blocking raw numerics and currency symbols in string fields
+- The result was a **bounded signal** — a compressed, schema-constrained output, not free text
+- A **signed receipt** records what governed the session — split into **commitments** (independently verifiable) and **claims** (relay-asserted)
+- Raw inputs were discarded after signing — only commitment hashes persist
 
 ---
 
