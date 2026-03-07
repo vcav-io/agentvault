@@ -4,9 +4,13 @@
   <img alt="AgentVault" src=".github/logo-light.svg" height="48">
 </picture>
 
-AgentVault is an open protocol for bounded, verifiable coordination between AI agents. Agents agree to a coordination contract before sharing context. The relay enforces the contract's schema, produces a bounded signal, and signs a cryptographic receipt. The same protocol runs as a conventional relay (this repo) or inside a hardware-isolated TEE ([av-tee](https://github.com/vcav-io/av-tee)), where AMD SEV-SNP attestation binds the receipt to a measured execution environment.
+People already share deeply personal context with AI — health concerns, financial anxieties, private doubts. AI agents that carry that context are beginning to coordinate directly with each other.
 
-AI agents increasingly act as delegates — valuable because they reason over real constraints on a user's behalf. When those agents coordinate, private context becomes shared state. AgentVault bounds what one agent can disclose to another through coordination contracts, schema-bound outputs, and verifiable receipts.
+That creates huge potential utility, but also serious disclosure risk.
+
+The obvious mitigation is to strip agents of context before they coordinate. But context-free agents can only do shallow work. The real opportunity is the opposite: agents reasoning together with full context on things that are genuinely hard to do alone — negotiation, mediation, compatibility, dispute resolution.
+
+AgentVault is built for those cases. It constrains what can be revealed during coordination through fixed contracts, schema-bound outputs, and verifiable receipts. The same protocol runs as a conventional relay (this repo) or inside a hardware-isolated TEE ([av-tee](https://github.com/vcav-io/av-tee)), where AMD SEV-SNP attestation binds the receipt to a measured execution environment.
 
 ---
 
@@ -48,10 +52,23 @@ agents → contract → relay enforcement → bounded signal → receipt
 
 ---
 
+### Current trust model (today)
+
+| | Software lane | TEE lane |
+|---|---|---|
+| **Counterparty disclosure** | Bounded by schema | Bounded by schema |
+| **Relay operator** | Trusted (sees plaintext) | Excluded (hardware-encrypted) |
+| **Model provider** | Trusted (sees prompt) | Trusted (sees prompt) |
+| **Receipt assurance** | `SELF_ASSERTED` | `HARDWARE_ATTESTED` |
+
+The software lane is available now. The TEE lane has been hardware-validated on GCP N2D (AMD SEV-SNP). See [docs/threat-model.md](docs/threat-model.md) for the full adversary analysis and assurance tier definitions.
+
+---
+
 ## What you just ran
 
-- A **session** was created under a content-addressed **contract**, purpose code, output schema, and prompt template, all identified by SHA-256 hash
-- The contract was assembled from **content-addressed registry artefacts** — each schema, policy, and prompt program independently verifiable by its SHA-256 digest. The relay admitted only artefacts whose digests matched the registry index
+- A **session** was created under a fixed **contract** — purpose, output schema, and prompt template, each identified by content hash
+- The contract was assembled from **registry artefacts** — the relay admitted only artefacts whose digests it could verify
 - Both agents submitted private context, neither saw the other's raw input
 - The relay assembled the prompt, called the model, and **validated the output against the JSON Schema**. Anything that did not conform was rejected, not returned
 - The **guardian policy** applied a second enforcement layer, for example blocking raw numerics and currency symbols in string fields, providing defense in depth
@@ -107,7 +124,7 @@ curl -X POST http://localhost:8080/api/sessions \
   -d @contract.json
 ```
 
-The contract builder resolves artefacts by digest, alias, or channel reference, validates SAFE/RICH compatibility between schemas and policies, and computes the contract hash. See [docs/registry.md](docs/registry.md) for the full registry reference.
+The contract builder resolves artefacts, validates compatibility between schemas and policies, and computes the contract hash. See [docs/registry.md](docs/registry.md) for the full registry reference.
 
 ---
 
@@ -128,13 +145,9 @@ Shared protocol types and AFAL handshake implementation live in [vault-family-co
 
 ---
 
-## Why AgentVault exists
+## Two execution lanes
 
-AI assistants increasingly act as delegates for their users.
-
-When those agents begin coordinating directly with each other, the private context they carry becomes part of the interaction surface.
-
-AgentVault constrains what can be disclosed through coordination contracts, schema-bound outputs, and verifiable receipts. The same protocol runs in two lanes: a software lane (this repo) where the relay operator is trusted, and a sealed execution lane ([av-tee](https://github.com/vcav-io/av-tee)) where hardware attestation replaces that trust.
+The same protocol runs in two lanes: a software lane (this repo) where the relay operator is trusted, and a sealed execution lane ([av-tee](https://github.com/vcav-io/av-tee)) where hardware attestation replaces that trust.
 
 ---
 
