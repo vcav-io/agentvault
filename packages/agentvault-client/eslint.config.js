@@ -28,4 +28,11 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    files: ['src/**/__tests__/**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-non-null-assertion': 'off',
+      '@typescript-eslint/no-unused-vars': 'off',
+    },
+  },
 );

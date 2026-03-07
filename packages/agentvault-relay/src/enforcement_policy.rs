@@ -525,6 +525,9 @@ pub struct ResolvedPolicy<'a> {
 pub struct PolicyRegistry {
     policies: HashMap<String, RelayEnforcementPolicy>,
     default_hash: String,
+    /// When true, `resolve()` falls back to the default policy on hash miss
+    /// instead of returning `PolicyNotAvailable`. Only set for dev-skip mode.
+    dev_fallback: bool,
 }
 
 impl PolicyRegistry {
@@ -545,6 +548,7 @@ impl PolicyRegistry {
         Ok(Self {
             policies,
             default_hash,
+            dev_fallback: false,
         })
     }
 
@@ -556,6 +560,7 @@ impl PolicyRegistry {
         Self {
             policies,
             default_hash,
+            dev_fallback: false,
         }
     }
 
@@ -572,13 +577,20 @@ impl PolicyRegistry {
         requested_hash: Option<&'a str>,
     ) -> Result<ResolvedPolicy<'a>, RelayError> {
         match requested_hash {
-            Some(hash) => self
-                .policies
-                .get(hash)
-                .map(|policy| ResolvedPolicy { hash, policy })
-                .ok_or_else(|| RelayError::PolicyNotAvailable {
+            Some(hash) => match self.policies.get(hash) {
+                Some(policy) => Ok(ResolvedPolicy { hash, policy }),
+                None if self.dev_fallback => {
+                    tracing::warn!(
+                        requested_hash = hash,
+                        fallback_hash = %self.default_hash,
+                        "policy hash not found — dev fallback to default policy"
+                    );
+                    Ok(self.default_policy())
+                }
+                None => Err(RelayError::PolicyNotAvailable {
                     requested_hash: hash.to_string(),
                 }),
+            },
             None => Ok(self.default_policy()),
         }
     }
@@ -611,11 +623,13 @@ impl PolicyRegistry {
         self.policies.is_empty()
     }
 
-    /// Wrap `dev_skip_policy()` in a single-entry registry.
+    /// Wrap `dev_skip_policy()` in a single-entry registry with dev fallback enabled.
     pub fn dev_skip() -> Self {
         let policy = dev_skip_policy();
         let hash = content_hash(&policy).unwrap_or_default();
-        Self::single(policy, hash)
+        let mut registry = Self::single(policy, hash);
+        registry.dev_fallback = true;
+        registry
     }
 
     /// Raw lookup without resolve semantics.
@@ -1398,6 +1412,17 @@ mod tests {
         let registry = PolicyRegistry::dev_skip();
         assert_eq!(registry.len(), 1);
         let resolved = registry.resolve(None).unwrap();
+        assert_eq!(resolved.policy.policy_id, "dev-skip");
+    }
+
+    #[test]
+    fn test_registry_dev_skip_falls_back_on_unknown_hash() {
+        let registry = PolicyRegistry::dev_skip();
+        // In dev-skip mode, an unknown hash should fall back to the default
+        // policy instead of returning PolicyNotAvailable (issue #234).
+        let resolved = registry
+            .resolve(Some("nonexistent_hash_from_demo_ui"))
+            .unwrap();
         assert_eq!(resolved.policy.policy_id, "dev-skip");
     }
 

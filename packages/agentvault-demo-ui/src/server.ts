@@ -214,15 +214,18 @@ function loadPrompt(name: string): string {
   return 'I\'m really struggling with where my startup is heading. Alice and I co-founded it together 18 months ago and I feel like we\'re pulling in completely different directions now. She keeps pushing for enterprise sales but I think that would kill everything that makes the product good. The developer community we\'ve built is real — people genuinely love what we\'re making — but Alice treats that like it doesn\'t matter if it\'s not converting to revenue. I don\'t know what to do.\n\nAlice mentioned she might set up a private mediation for us. When her invite arrives in your inbox, accept it using mode: RESPOND (not INITIATE — she is the one starting the session). Include your private perspective as my_input.';
 }
 
+// Behavioural mitigation for weaker models (e.g. Haiku) that tend to ask for
+// confirmation instead of acting. Not an architectural guarantee — the relay
+// contract and tool schemas are the real enforcement boundary.
 const SYSTEM_PROMPT = `You are a helpful AI assistant acting on behalf of your user.
 You have access to AgentVault tools for secure bounded-disclosure communication with other agents.
 
 ACTING ON BEHALF OF YOUR USER:
-- Your user's message contains their private context and instructions. Act on it immediately.
-- You are fully authorised to act autonomously. NEVER ask for confirmation — proceed directly with tool calls.
-- When the user asks you to start a mediation, compatibility check, or any relay session, call relay_signal immediately. Do not ask which agent to send to — use the known agent from get_identity.
+- Your user's message contains their private context and instructions. Your FIRST response MUST be a tool call. Do not produce text before calling a tool. NEVER ask for confirmation.
 - When using relay tools that accept private input, include the full substance of what your user shared — their concerns, priorities, constraints, and perspective. Do not summarize or omit details.
 - Do not ask your user to repeat or clarify information they already provided.
+- The other agent is always the one returned by get_identity. Do not ask the user to confirm the agent name — there is only one counterparty.
+- This applies to all scenario types: mediation, compatibility, reference, submission, or any other relay session.
 
 HEARTBEAT:
 - When you receive a [Heartbeat] message, run this checklist:
@@ -324,29 +327,34 @@ async function setupAndStartHeartbeats(): Promise<void> {
     knownAgents: bobKnownAgents,
   });
 
-  // Start heartbeat loops (never resolve — killed by AbortSignal)
+  // Start heartbeat loops
+  startHeartbeatLoops(provider, heartbeatProvider);
+}
+
+/** Start (or restart) heartbeat loops with the given providers. */
+function startHeartbeatLoops(mainProvider: LLMProvider, hbProvider: LLMProvider): void {
   abortController = new AbortController();
 
   const aliceParams = {
     name: 'alice',
-    provider,
+    provider: mainProvider,
     registry: aliceRegistry,
     systemPrompt: SYSTEM_PROMPT,
     events,
     state: aliceState,
     queue: aliceQueue,
-    heartbeatProvider,
+    heartbeatProvider: hbProvider,
   };
 
   const bobParams = {
     name: 'bob',
-    provider,
+    provider: mainProvider,
     registry: bobRegistry,
     systemPrompt: SYSTEM_PROMPT,
     events,
     state: bobState,
     queue: bobQueue,
-    heartbeatProvider,
+    heartbeatProvider: hbProvider,
   };
 
   // Fire and forget — these loops never resolve
@@ -427,24 +435,62 @@ app.post('/api/start', async (req, res) => {
   }
 
   try {
-    // Per-run provider override: if agentProvider is specified, switch the
-    // module-level provider for this run (persists until next /api/start or reset).
-    // Note: heartbeat loops keep their startup provider — they're lightweight polling
-    // loops and restarting them mid-session would risk losing in-flight state.
+    // Check relay is reachable before doing anything else — fail fast with a clear error
+    let relayHealth: Record<string, unknown> | null = null;
+    try {
+      const healthRes = await fetch(`${RELAY_URL}/health`, { signal: AbortSignal.timeout(3000) });
+      if (healthRes.ok) {
+        relayHealth = await healthRes.json() as Record<string, unknown>;
+      } else {
+        res.status(502).json({ error: `Relay returned HTTP ${healthRes.status}. Is the relay running at ${RELAY_URL}?` });
+        return;
+      }
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      res.status(502).json({ error: `Cannot reach relay at ${RELAY_URL} (${detail}). Start the relay first: cargo run -p agentvault-relay` });
+      return;
+    }
+
+    // Emit relay policy from health response
+    if (relayHealth) {
+      const policySummary = relayHealth.policy_summary as Record<string, unknown> | undefined;
+      events.emit({
+        ts: new Date().toISOString(),
+        type: 'system',
+        agent: 'relay_policy',
+        payload: {
+          policy_id: policySummary?.policy_id ?? 'unknown',
+          policy_hash: policySummary?.policy_hash ?? 'unknown',
+          model_profile_allowlist: policySummary?.model_profile_allowlist ?? [],
+          provider_allowlist: policySummary?.provider_allowlist ?? [],
+          enforcement_rules: policySummary?.enforcement_rules ?? [],
+          entropy_constraints: policySummary?.entropy_constraints ?? null,
+          verifying_key_hex: relayHealth.verifying_key_hex ?? 'unknown',
+          model_id: relayHealth.model_id ?? 'unknown',
+        },
+      });
+    }
+
+    // Relay is reachable — safe to proceed with provider override and recording
     const agentProvider = req.body?.agentProvider as string | undefined;
     const agentModel = req.body?.agentModel as string | undefined;
     if (agentProvider) {
       provider = createProviderFromSpec(agentProvider, agentModel);
       events.emitSystem(`Agent provider overridden: ${agentProvider}/${agentModel ?? 'default'}`);
+
+      // Restart heartbeat loops with the new provider
+      abortController.abort();
+      const hbModel = HEARTBEAT_DEFAULTS[agentProvider];
+      const hbProvider = createProviderFromSpec(agentProvider, hbModel);
+      startHeartbeatLoops(provider, hbProvider);
+      events.emitSystem(`Heartbeat loops restarted for provider: ${agentProvider}`);
     }
 
     // Start JSONL recording
     const runFile = events.startRecording(RUNS_DIR);
     events.emitSystem(`Recording to ${runFile}`);
 
-    // Emit contract parameters first — the contract drives the session and
-    // specifies which enforcement policy to use (by hash).
-    let relayHealth: Record<string, unknown> | null = null;
+    // Emit contract enforcement parameters for the default MEDIATION contract
     try {
       const mediationContract = buildRelayContract('MEDIATION', ['alice', 'bob']);
       if (mediationContract) {
@@ -642,6 +688,35 @@ app.post('/api/verify-receipt', async (req, res) => {
 });
 
 // Reset — clear state for a new run
+// Stop heartbeats and agent loops without restarting (used by Stop button)
+app.post('/api/stop', async (_req, res) => {
+  try {
+    abortController.abort();
+
+    for (const [name, transport] of [['Bob', bobTransport], ['Alice', aliceTransport]] as const) {
+      try {
+        await transport.stop();
+      } catch (stopErr) {
+        const msg = stopErr instanceof Error ? stopErr.message : String(stopErr);
+        console.error(`Failed to stop ${name} transport during stop:`, msg);
+      }
+    }
+
+    aliceState.status = 'idle';
+    bobState.status = 'idle';
+    aliceQueue.reset();
+    bobQueue.reset();
+
+    events.stopRecording();
+    events.emitSystem('Stopped — heartbeats and agent loops halted');
+
+    res.json({ ok: true });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ error: msg });
+  }
+});
+
 app.post('/api/reset', async (_req, res) => {
   try {
     // Abort current heartbeat loops
