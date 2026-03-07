@@ -457,9 +457,43 @@ app.post('/api/start', async (req, res) => {
     const runFile = events.startRecording(RUNS_DIR);
     events.emitSystem(`Recording to ${runFile}`);
 
-    // Emit contract parameters first — the contract drives the session and
-    // specifies which enforcement policy to use (by hash).
+    // Check relay is reachable before starting — fail fast with a clear error
     let relayHealth: Record<string, unknown> | null = null;
+    try {
+      const healthRes = await fetch(`${RELAY_URL}/health`, { signal: AbortSignal.timeout(3000) });
+      if (healthRes.ok) {
+        relayHealth = await healthRes.json() as Record<string, unknown>;
+      } else {
+        res.status(502).json({ error: `Relay returned HTTP ${healthRes.status}. Is the relay running at ${RELAY_URL}?` });
+        return;
+      }
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      res.status(502).json({ error: `Cannot reach relay at ${RELAY_URL} (${detail}). Start the relay first: cargo run -p agentvault-relay` });
+      return;
+    }
+
+    // Emit relay policy from health response
+    if (relayHealth) {
+      const policySummary = relayHealth.policy_summary as Record<string, unknown> | undefined;
+      events.emit({
+        ts: new Date().toISOString(),
+        type: 'system',
+        agent: 'relay_policy',
+        payload: {
+          policy_id: policySummary?.policy_id ?? 'unknown',
+          policy_hash: policySummary?.policy_hash ?? 'unknown',
+          model_profile_allowlist: policySummary?.model_profile_allowlist ?? [],
+          provider_allowlist: policySummary?.provider_allowlist ?? [],
+          enforcement_rules: policySummary?.enforcement_rules ?? [],
+          entropy_constraints: policySummary?.entropy_constraints ?? null,
+          verifying_key_hex: relayHealth.verifying_key_hex ?? 'unknown',
+          model_id: relayHealth.model_id ?? 'unknown',
+        },
+      });
+    }
+
+    // Emit contract enforcement parameters for the default MEDIATION contract
     try {
       const mediationContract = buildRelayContract('MEDIATION', ['alice', 'bob']);
       if (mediationContract) {
@@ -657,6 +691,35 @@ app.post('/api/verify-receipt', async (req, res) => {
 });
 
 // Reset — clear state for a new run
+// Stop heartbeats and agent loops without restarting (used by Stop button)
+app.post('/api/stop', async (_req, res) => {
+  try {
+    abortController.abort();
+
+    for (const [name, transport] of [['Bob', bobTransport], ['Alice', aliceTransport]] as const) {
+      try {
+        await transport.stop();
+      } catch (stopErr) {
+        const msg = stopErr instanceof Error ? stopErr.message : String(stopErr);
+        console.error(`Failed to stop ${name} transport during stop:`, msg);
+      }
+    }
+
+    aliceState.status = 'idle';
+    bobState.status = 'idle';
+    aliceQueue.reset();
+    bobQueue.reset();
+
+    events.stopRecording();
+    events.emitSystem('Stopped — heartbeats and agent loops halted');
+
+    res.json({ ok: true });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ error: msg });
+  }
+});
+
 app.post('/api/reset', async (_req, res) => {
   try {
     // Abort current heartbeat loops

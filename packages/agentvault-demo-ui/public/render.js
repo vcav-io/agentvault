@@ -821,10 +821,32 @@ var VaultCardManager = (function () {
     }
   }
 
+  function renderError(title, detail) {
+    if (!container) return;
+    stepCount++;
+    var card = document.createElement('div');
+    card.className = 'vault-card vault-card--error';
+    var header = document.createElement('div');
+    header.className = 'vault-card__header';
+    var step = document.createElement('span');
+    step.className = 'vault-card__step vault-card__step--error';
+    step.textContent = '!';
+    var titleEl = document.createElement('span');
+    titleEl.className = 'vault-card__title';
+    titleEl.textContent = title;
+    header.appendChild(step);
+    header.appendChild(titleEl);
+    card.appendChild(header);
+    addLine(card, 'detail', detail);
+    container.appendChild(card);
+    card.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }
+
   return {
     init: init,
     reset: reset,
     routeEvent: routeEvent,
+    renderError: renderError,
     setOutputSignalCallback: setOutputSignalCallback,
   };
 })();

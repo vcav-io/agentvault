@@ -395,10 +395,18 @@
       if (data.error) {
         els.statusText.textContent = 'Error';
         els.statusChip.className = 'status-chip error';
+        VaultCardManager.renderError('Start failed', data.error);
+        els.stopBtn.style.display = 'none';
+        els.newRunBtn.style.display = '';
+        els.startBtn.disabled = false;
       }
     } catch (err) {
       els.statusText.textContent = 'Error';
       els.statusChip.className = 'status-chip error';
+      VaultCardManager.renderError('Start failed', 'Could not reach demo server');
+      els.stopBtn.style.display = 'none';
+      els.newRunBtn.style.display = '';
+      els.startBtn.disabled = false;
     }
   });
 
@@ -406,7 +414,7 @@
   els.stopBtn.addEventListener('click', async function () {
     els.stopBtn.disabled = true;
     try {
-      await fetch('/api/reset', { method: 'POST' });
+      await fetch('/api/stop', { method: 'POST' });
     } catch (err) {
       console.error('Stop error:', err);
     }
