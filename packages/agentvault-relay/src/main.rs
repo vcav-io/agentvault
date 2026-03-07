@@ -82,7 +82,7 @@ async fn main() {
                 config = %config_path.display(),
                 "Loading artefacts via registry admission"
             );
-            match agentvault_relay::admission::load_admission(&config_path) {
+            match agentvault_relay::admission::load_admission(&config_path, Some(&registry_path)) {
                 Ok(artefacts) => {
                     tracing::info!(
                         schemas = artefacts.schemas.len(),

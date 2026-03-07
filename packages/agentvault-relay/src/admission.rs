@@ -76,11 +76,20 @@ pub struct AdmittedArtefacts {
 
 /// Parse `relay-admission.toml` from the given path, load all admitted
 /// artefacts, verify every digest. Returns an error on any failure (fail-closed).
-pub fn load_admission(config_path: &Path) -> Result<AdmittedArtefacts, RelayError> {
+///
+/// `registry_path_override`: if `Some`, overrides `[registry].path` from the
+/// TOML config. This implements the `AV_REGISTRY_PATH` env var override
+/// described in the design doc.
+pub fn load_admission(
+    config_path: &Path,
+    registry_path_override: Option<&str>,
+) -> Result<AdmittedArtefacts, RelayError> {
     let config = parse_config(config_path)?;
     validate_defaults(&config)?;
 
-    let registry_root = resolve_registry_root(config_path, &config.registry.path)?;
+    let registry_path_str = registry_path_override
+        .unwrap_or(&config.registry.path);
+    let registry_root = resolve_registry_root(config_path, registry_path_str)?;
 
     let schemas = load_kind::<serde_json::Value>(&registry_root, "schemas", &config.schemas)?;
     let policies =
@@ -275,6 +284,17 @@ mod tests {
     use super::*;
     use std::fs;
 
+    /// Create a unique temp dir for this test to avoid parallel test collisions.
+    fn test_tmp(name: &str) -> PathBuf {
+        let id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("vcav-admission-{name}-{id}"));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
     /// Helper: write a JSON artefact to `<dir>/<kind>/sha256-<hex>.json` and
     /// return its qualified digest.
     fn write_artefact(registry_root: &Path, kind: &str, value: &serde_json::Value) -> String {
@@ -373,8 +393,7 @@ allow = ["{program_digest}"]
 
     #[test]
     fn test_parse_config_success() {
-        let tmp = std::env::temp_dir().join("vcav-admission-parse");
-        fs::create_dir_all(&tmp).unwrap();
+        let tmp = test_tmp("parse");
 
         let (config_path, ..) = setup_admission(&tmp);
         let config = parse_config(&config_path).unwrap();
@@ -390,12 +409,11 @@ allow = ["{program_digest}"]
 
     #[test]
     fn test_load_admission_success() {
-        let tmp = std::env::temp_dir().join("vcav-admission-full");
-        fs::create_dir_all(&tmp).unwrap();
+        let tmp = test_tmp("full");
 
         let (config_path, schema_digest, policy_digest, profile_digest, program_digest) =
             setup_admission(&tmp);
-        let artefacts = load_admission(&config_path).unwrap();
+        let artefacts = load_admission(&config_path, None).unwrap();
 
         assert_eq!(artefacts.schemas.len(), 1);
         assert!(artefacts
@@ -426,8 +444,7 @@ allow = ["{program_digest}"]
 
     #[test]
     fn test_digest_verification_failure() {
-        let tmp = std::env::temp_dir().join("vcav-admission-bad-digest");
-        fs::create_dir_all(&tmp).unwrap();
+        let tmp = test_tmp("bad-digest");
 
         let registry = tmp.join("registry");
         let schemas_dir = registry.join("schemas");
@@ -455,7 +472,7 @@ allow = ["sha256:{fake_hex}"]
         let config_path = tmp.join("relay-admission.toml");
         fs::write(&config_path, &config_toml).unwrap();
 
-        let result = load_admission(&config_path);
+        let result = load_admission(&config_path, None);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -468,8 +485,7 @@ allow = ["sha256:{fake_hex}"]
 
     #[test]
     fn test_missing_artefact_file() {
-        let tmp = std::env::temp_dir().join("vcav-admission-missing");
-        fs::create_dir_all(&tmp).unwrap();
+        let tmp = test_tmp("missing");
 
         let registry = tmp.join("registry");
         let schemas_dir = registry.join("schemas");
@@ -488,7 +504,7 @@ allow = ["sha256:{fake_hex}"]
         let config_path = tmp.join("relay-admission.toml");
         fs::write(&config_path, &config_toml).unwrap();
 
-        let result = load_admission(&config_path);
+        let result = load_admission(&config_path, None);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -501,8 +517,7 @@ allow = ["sha256:{fake_hex}"]
 
     #[test]
     fn test_default_not_in_allow() {
-        let tmp = std::env::temp_dir().join("vcav-admission-default-notinallow");
-        fs::create_dir_all(&tmp).unwrap();
+        let tmp = test_tmp("default-notinallow");
 
         let registry = tmp.join("registry");
         fs::create_dir_all(&registry).unwrap();
@@ -522,7 +537,7 @@ default = "sha256:{bad_hex}"
         let config_path = tmp.join("relay-admission.toml");
         fs::write(&config_path, &config_toml).unwrap();
 
-        let result = load_admission(&config_path);
+        let result = load_admission(&config_path, None);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("not in"), "unexpected error: {err}");
@@ -565,8 +580,7 @@ default = "sha256:{bad_hex}"
 
     #[test]
     fn test_type_validation_failure() {
-        let tmp = std::env::temp_dir().join("vcav-admission-type-fail");
-        fs::create_dir_all(&tmp).unwrap();
+        let tmp = test_tmp("type-fail");
 
         let registry = tmp.join("registry");
         let policies_dir = registry.join("policies");
@@ -598,7 +612,7 @@ default = "sha256:{hash}"
         let config_path = tmp.join("relay-admission.toml");
         fs::write(&config_path, &config_toml).unwrap();
 
-        let result = load_admission(&config_path);
+        let result = load_admission(&config_path, None);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -611,8 +625,7 @@ default = "sha256:{hash}"
 
     #[test]
     fn test_empty_allow_lists() {
-        let tmp = std::env::temp_dir().join("vcav-admission-empty");
-        fs::create_dir_all(&tmp).unwrap();
+        let tmp = test_tmp("empty");
 
         let registry = tmp.join("registry");
         fs::create_dir_all(&registry).unwrap();
@@ -626,7 +639,7 @@ path = "{}"
         let config_path = tmp.join("relay-admission.toml");
         fs::write(&config_path, &config_toml).unwrap();
 
-        let artefacts = load_admission(&config_path).unwrap();
+        let artefacts = load_admission(&config_path, None).unwrap();
         assert!(artefacts.schemas.is_empty());
         assert!(artefacts.policies.is_empty());
         assert!(artefacts.profiles.is_empty());
