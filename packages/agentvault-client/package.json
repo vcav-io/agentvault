@@ -33,6 +33,10 @@
     "./tee": {
       "import": "./dist/tee-verify.js",
       "types": "./dist/tee-verify.d.ts"
+    },
+    "./contract-builder": {
+      "import": "./dist/contract-builder.js",
+      "types": "./dist/contract-builder.d.ts"
     }
   },
   "license": "MIT OR Apache-2.0",

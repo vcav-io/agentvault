@@ -16,6 +16,20 @@ import type { RelayClientConfig, CreateSessionResponse, SessionOutputResponse } 
 export type { RelayClientConfig, SessionOutputResponse } from './types.js';
 export type { CreateSessionResponse } from './types.js';
 
+export {
+  loadRegistryIndex,
+  createRegistryIndex,
+  buildContract,
+} from './contract-builder.js';
+export type {
+  ArtefactKind,
+  ArtefactEntry,
+  ResolvedArtefact,
+  CompatibilityResult,
+  RegistryIndex,
+  ContractOptions,
+} from './contract-builder.js';
+
 const POLL_TIMEOUT_MS = 60_000;
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
 
