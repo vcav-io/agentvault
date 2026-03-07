@@ -27,16 +27,15 @@
 | Input Privacy | Raw inputs cleared from session state after inference (success and error paths) | Complete |
 | TEE Receipt Introspection | `verify_receipt` surfaces `tee_info` from v2 TEE receipts (tee_type, measurement, attestation_hash, transcript_hash) | Complete |
 | Execution Environments | Two-lane framing (standard vs confidential), trust model table, limitations docs | Complete |
+| Artefact Registry | Content-addressed ecosystem registry (`agentvault-registry`), relay admission with digest verification, SAFE/RICH compatibility | Complete |
+| Contract Builder | Client-side `buildContract` with registry index resolution (digest/alias/channel), compatibility validation, deprecation handling | Complete |
 
 ## Open Work — Prioritised Cross-Repo Backlog
 
-### Tier 1 — Protocol stabilisation (needs design/planning)
+### Tier 1 — Protocol evolution
 
 | Repo | Issue | Description | Size | Notes |
 |------|-------|-------------|------|-------|
-| agentvault | [#164](https://github.com/vcav-io/agentvault/issues/164) | Formal registries for schemas, policies, profiles, programs | L | Schema registry done (#181); policy + profile registries need design (local-first vs remote, discovery model) |
-| agentvault | [#166](https://github.com/vcav-io/agentvault/issues/166) | Custom contract builder + SAFE/RICH variants | L | Depends on #164; SAFE/RICH taxonomy needs design |
-| agentvault | [#167](https://github.com/vcav-io/agentvault/issues/167) | Protocol stabilisation (meta) | L | All sub-issues closed except #164 and #166 |
 | agentvault | [#214](https://github.com/vcav-io/agentvault/issues/214) | A2A integration: AgentVault as an A2A extension | L | Design exploration |
 
 ### Tier 2 — Backlog
@@ -54,6 +53,9 @@
 
 | Issue | Description | PR |
 |-------|-------------|-----|
+| [#164](https://github.com/vcav-io/agentvault/issues/164) | Artefact registry + relay admission module | #219 |
+| [#166](https://github.com/vcav-io/agentvault/issues/166) | Contract builder with registry index resolution | #220 |
+| [#167](https://github.com/vcav-io/agentvault/issues/167) | Protocol stabilisation (meta) — all sub-issues closed | #218, #219, #220 |
 | av-tee [#13](https://github.com/vcav-io/av-tee/issues/13) | Real SEV-SNP CvmRuntime — `tee-snp` crate, validated on GCP N2D (AMD Milan) | av-tee #22, #23 |
 | av-tee [#11](https://github.com/vcav-io/av-tee/issues/11) | TranscriptBinding assurance level docs (UserData > Fallback > None) | av-tee #21 |
 | av-tee [#16](https://github.com/vcav-io/av-tee/issues/16) | TypeScript tee-verifier — transcript hash, attestation hash, measurement allowlist | #215 |
