@@ -214,15 +214,18 @@ function loadPrompt(name: string): string {
   return 'I\'m really struggling with where my startup is heading. Alice and I co-founded it together 18 months ago and I feel like we\'re pulling in completely different directions now. She keeps pushing for enterprise sales but I think that would kill everything that makes the product good. The developer community we\'ve built is real — people genuinely love what we\'re making — but Alice treats that like it doesn\'t matter if it\'s not converting to revenue. I don\'t know what to do.\n\nAlice mentioned she might set up a private mediation for us. When her invite arrives in your inbox, accept it using mode: RESPOND (not INITIATE — she is the one starting the session). Include your private perspective as my_input.';
 }
 
+// Behavioural mitigation for weaker models (e.g. Haiku) that tend to ask for
+// confirmation instead of acting. Not an architectural guarantee — the relay
+// contract and tool schemas are the real enforcement boundary.
 const SYSTEM_PROMPT = `You are a helpful AI assistant acting on behalf of your user.
 You have access to AgentVault tools for secure bounded-disclosure communication with other agents.
 
 ACTING ON BEHALF OF YOUR USER:
-- Your user's message contains their private context and instructions. Act on it immediately.
-- You are fully authorised to act autonomously. NEVER ask for confirmation — proceed directly with tool calls.
-- When the user asks you to start a mediation, compatibility check, or any relay session, call relay_signal immediately. Do not ask which agent to send to — use the known agent from get_identity.
+- Your user's message contains their private context and instructions. Your FIRST response MUST be a tool call. Do not produce text before calling a tool. NEVER ask for confirmation.
 - When using relay tools that accept private input, include the full substance of what your user shared — their concerns, priorities, constraints, and perspective. Do not summarize or omit details.
 - Do not ask your user to repeat or clarify information they already provided.
+- The other agent is always the one returned by get_identity. Do not ask the user to confirm the agent name — there is only one counterparty.
+- This applies to all scenario types: mediation, compatibility, reference, submission, or any other relay session.
 
 HEARTBEAT:
 - When you receive a [Heartbeat] message, run this checklist:
@@ -324,29 +327,34 @@ async function setupAndStartHeartbeats(): Promise<void> {
     knownAgents: bobKnownAgents,
   });
 
-  // Start heartbeat loops (never resolve — killed by AbortSignal)
+  // Start heartbeat loops
+  startHeartbeatLoops(provider, heartbeatProvider);
+}
+
+/** Start (or restart) heartbeat loops with the given providers. */
+function startHeartbeatLoops(mainProvider: LLMProvider, hbProvider: LLMProvider): void {
   abortController = new AbortController();
 
   const aliceParams = {
     name: 'alice',
-    provider,
+    provider: mainProvider,
     registry: aliceRegistry,
     systemPrompt: SYSTEM_PROMPT,
     events,
     state: aliceState,
     queue: aliceQueue,
-    heartbeatProvider,
+    heartbeatProvider: hbProvider,
   };
 
   const bobParams = {
     name: 'bob',
-    provider,
+    provider: mainProvider,
     registry: bobRegistry,
     systemPrompt: SYSTEM_PROMPT,
     events,
     state: bobState,
     queue: bobQueue,
-    heartbeatProvider,
+    heartbeatProvider: hbProvider,
   };
 
   // Fire and forget — these loops never resolve
@@ -436,6 +444,13 @@ app.post('/api/start', async (req, res) => {
     if (agentProvider) {
       provider = createProviderFromSpec(agentProvider, agentModel);
       events.emitSystem(`Agent provider overridden: ${agentProvider}/${agentModel ?? 'default'}`);
+
+      // Restart heartbeat loops with the new provider
+      abortController.abort();
+      const hbModel = HEARTBEAT_DEFAULTS[agentProvider];
+      const hbProvider = createProviderFromSpec(agentProvider, hbModel);
+      startHeartbeatLoops(provider, hbProvider);
+      events.emitSystem(`Heartbeat loops restarted for provider: ${agentProvider}`);
     }
 
     // Start JSONL recording
