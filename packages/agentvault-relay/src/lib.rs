@@ -479,9 +479,7 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
 
         // Prompt template + assembled prompt hashes
         let prompt_program = match &state.admitted_programs {
-            Some(programs) => programs
-                .get(&contract.prompt_template_hash)
-                .cloned()?,
+            Some(programs) => programs.get(&contract.prompt_template_hash).cloned()?,
             None => crate::prompt_program::load_prompt_program(
                 &state.prompt_program_dir,
                 &contract.prompt_template_hash,
@@ -504,10 +502,7 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
             .model_profile_id
             .as_deref()
             .and_then(|id| match &state.admitted_profiles {
-                Some(profiles) => profiles
-                    .values()
-                    .find(|p| p.profile_id == id)
-                    .cloned(),
+                Some(profiles) => profiles.values().find(|p| p.profile_id == id).cloned(),
                 None => {
                     crate::prompt_program::load_model_profile(&state.prompt_program_dir, id).ok()
                 }

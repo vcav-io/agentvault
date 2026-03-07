@@ -282,7 +282,7 @@ describe('RegistryIndex.checkCompatibility', () => {
 describe('buildContract', () => {
   it('produces a contract with correct fields', () => {
     const { registry, schemaDigest, policyDigest, programDigest } = buildTestRegistry();
-    const contract = buildContract(registry, defaultOptions()) as Record<string, unknown>;
+    const contract = buildContract(registry, defaultOptions()) as unknown as Record<string, unknown>;
 
     expect(contract['purpose_code']).toBe('MEDIATION');
     expect(contract['output_schema_id']).toBe('vcav_e_mediation_signal_v2');
@@ -300,8 +300,8 @@ describe('buildContract', () => {
 
   it('computes a deterministic contract_hash', () => {
     const { registry } = buildTestRegistry();
-    const c1 = buildContract(registry, defaultOptions()) as Record<string, unknown>;
-    const c2 = buildContract(registry, defaultOptions()) as Record<string, unknown>;
+    const c1 = buildContract(registry, defaultOptions()) as unknown as Record<string, unknown>;
+    const c2 = buildContract(registry, defaultOptions()) as unknown as Record<string, unknown>;
     expect(c1['contract_hash']).toBe(c2['contract_hash']);
     expect(typeof c1['contract_hash']).toBe('string');
     expect((c1['contract_hash'] as string).length).toBe(64);
@@ -312,18 +312,18 @@ describe('buildContract', () => {
     const { registry } = buildTestRegistry();
     const c1 = buildContract(registry, defaultOptions({ participants: ['alice', 'bob'] }));
     const c2 = buildContract(registry, defaultOptions({ participants: ['bob', 'alice'] }));
-    expect((c1 as Record<string, unknown>)['contract_hash']).not.toBe(
-      (c2 as Record<string, unknown>)['contract_hash'],
+    expect((c1 as unknown as Record<string, unknown>)['contract_hash']).not.toBe(
+      (c2 as unknown as Record<string, unknown>)['contract_hash'],
     );
   });
 
   it('contract_hash is computed excluding contract_hash field', () => {
     const { registry } = buildTestRegistry();
-    const contract = buildContract(registry, defaultOptions()) as Record<string, unknown>;
+    const contract = buildContract(registry, defaultOptions()) as unknown as Record<string, unknown>;
     const hash = contract['contract_hash'] as string;
 
     // Manually verify: remove contract_hash, JCS, SHA-256
-    const { contract_hash: _, ...rest } = contract as Record<string, unknown>;
+    const { contract_hash: _, ...rest } = contract;
     const manualHash = computeRelayContractHash(rest);
     expect(hash).toBe(manualHash);
   });
@@ -339,7 +339,7 @@ describe('buildContract', () => {
     const contract = buildContract(
       registry,
       defaultOptions({ entropy_enforcement: undefined }),
-    ) as Record<string, unknown>;
+    ) as unknown as Record<string, unknown>;
     expect(contract).not.toHaveProperty('entropy_enforcement');
   });
 
@@ -348,7 +348,7 @@ describe('buildContract', () => {
     const contract = buildContract(
       registry,
       defaultOptions({ entropy_budget_bits: undefined }),
-    ) as Record<string, unknown>;
+    ) as unknown as Record<string, unknown>;
     expect(contract['entropy_budget_bits']).toBeNull();
   });
 });

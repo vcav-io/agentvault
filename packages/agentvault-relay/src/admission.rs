@@ -87,8 +87,7 @@ pub fn load_admission(
     let config = parse_config(config_path)?;
     validate_defaults(&config)?;
 
-    let registry_path_str = registry_path_override
-        .unwrap_or(&config.registry.path);
+    let registry_path_str = registry_path_override.unwrap_or(&config.registry.path);
     let registry_root = resolve_registry_root(config_path, registry_path_str)?;
 
     let schemas = load_kind::<serde_json::Value>(&registry_root, "schemas", &config.schemas)?;
