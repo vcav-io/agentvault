@@ -319,7 +319,7 @@ export function verifyReceipt(
       attestation_hash: typeof att['attestation_hash'] === 'string' ? att['attestation_hash'] : '',
       receipt_signing_pubkey_hex: typeof att['receipt_signing_pubkey_hex'] === 'string' ? att['receipt_signing_pubkey_hex'] : '',
       transcript_hash_hex: typeof att['transcript_hash_hex'] === 'string' ? att['transcript_hash_hex'] : '',
-      note: 'TEE fields present. Full verification requires tee-verifier (Rust).',
+      note: 'TEE fields present. Use verifyTeeReceipt() from agentvault-client/tee for transcript + attestation hash verification.',
     };
   }
 

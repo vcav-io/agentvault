@@ -29,6 +29,10 @@
     "./verify": {
       "import": "./dist/verify-receipt.js",
       "types": "./dist/verify-receipt.d.ts"
+    },
+    "./tee": {
+      "import": "./dist/tee-verify.js",
+      "types": "./dist/tee-verify.d.ts"
     }
   },
   "license": "MIT OR Apache-2.0",
