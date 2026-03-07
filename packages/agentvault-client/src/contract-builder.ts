@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { canonicalize } from 'json-canonicalize';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex } from '@noble/hashes/utils';
+import type { RelayContract } from './relay-contracts.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -41,7 +42,7 @@ export interface CompatibilityResult {
 }
 
 export interface RegistryIndex {
-  resolve(kind: ArtefactKind, ref: string): ResolvedArtefact;
+  resolve(kind: ArtefactKind, artefactRef: string): ResolvedArtefact;
   listByKind(kind: ArtefactKind): ArtefactEntry[];
   checkCompatibility(schema: string, policy: string): CompatibilityResult;
 }
@@ -87,45 +88,44 @@ class RegistryIndexImpl implements RegistryIndex {
     this.indexes = indexes;
   }
 
-  resolve(kind: ArtefactKind, ref: string): ResolvedArtefact {
+  resolve(kind: ArtefactKind, artefactRef: string): ResolvedArtefact {
     const index = this.indexes.get(kind);
     if (!index) {
       throw new Error(`Unknown artefact kind: ${kind}`);
     }
 
     // 1. Direct digest match
-    if (ref.startsWith('sha256:')) {
-      const entry = index.artefacts[ref];
+    if (artefactRef.startsWith('sha256:')) {
+      const entry = index.artefacts[artefactRef];
       if (entry) {
-        return { digest: ref, entry };
+        return { digest: artefactRef, entry };
       }
-      throw new Error(`Digest not found in ${kind} index: ${ref}`);
+      throw new Error(`Digest not found in ${kind} index: ${artefactRef}`);
     }
 
     // 2. Alias lookup
-    const aliasDigest = index.aliases[ref];
+    const aliasDigest = index.aliases[artefactRef];
     if (aliasDigest) {
       const entry = index.artefacts[aliasDigest];
       if (entry) {
         return { digest: aliasDigest, entry };
       }
-      // Alias points to missing entry — broken index
-      throw new Error(`Alias "${ref}" resolves to ${aliasDigest} which is missing from ${kind} index`);
+      throw new Error(`Alias "${artefactRef}" resolves to ${aliasDigest} which is missing from ${kind} index`);
     }
 
     // 3. Channel lookup
-    const channelDigest = index.channels[ref];
+    const channelDigest = index.channels[artefactRef];
     if (channelDigest) {
       const entry = index.artefacts[channelDigest];
       if (entry) {
         return { digest: channelDigest, entry };
       }
       throw new Error(
-        `Channel "${ref}" resolves to ${channelDigest} which is missing from ${kind} index`,
+        `Channel "${artefactRef}" resolves to ${channelDigest} which is missing from ${kind} index`,
       );
     }
 
-    throw new Error(`Reference "${ref}" not found in ${kind} index (tried digest, alias, channel)`);
+    throw new Error(`Reference "${artefactRef}" not found in ${kind} index (tried digest, alias, channel)`);
   }
 
   listByKind(kind: ArtefactKind): ArtefactEntry[] {
@@ -230,7 +230,7 @@ function bareDigest(qualifiedDigest: string): string {
 export function buildContract(
   registry: RegistryIndex,
   options: ContractOptions,
-): object {
+): RelayContract {
   // Resolve all artefact references
   const schema = registry.resolve('schema', options.schema);
   const policy = registry.resolve('policy', options.policy);
@@ -304,5 +304,5 @@ export function buildContract(
   const contractHash = bytesToHex(sha256(canonical));
   contract['contract_hash'] = contractHash;
 
-  return Object.freeze(contract);
+  return Object.freeze(contract) as unknown as RelayContract;
 }
