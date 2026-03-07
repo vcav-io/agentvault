@@ -41,12 +41,12 @@ echo "GEMINI_API_KEY=AIza..." > .env
 # or: echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
 
 # 2. Start the relay and demo UI
-docker compose -f docker/docker-compose.demo.yml up
+docker compose -f docker/docker-compose.demo.yml --env-file .env up
 
 # 3. Open http://localhost:3200 and click "Start Protocol"
 ```
 
-To stop: press `Ctrl-C` or `docker compose -f docker/docker-compose.demo.yml down`.
+To stop: press `Ctrl-C` or `docker compose -f docker/docker-compose.demo.yml --env-file .env down`.
 
 ### Option B: Build from source
 
@@ -68,11 +68,15 @@ The script builds the relay from source, starts it, builds the demo UI server, a
 
 ### What to expect
 
-1. Alice's agent creates a vault session and submits her private concerns
-2. Bob's agent discovers the pending session and submits his private concerns
-3. The relay runs inference — both inputs go to the LLM together, but the output contains only the mediation signal (no raw concerns)
-4. Both agents retrieve the same structured output — a bounded mediation signal identifying common ground and friction points without exposing either party's private reasoning
-5. A signed receipt is produced proving what was computed and when
+The demo UI opens with a **scenario picker** (15 built-in scenarios covering mediation, compatibility, scheduling, and more), **provider and model selectors** so you can switch between Gemini/OpenAI/Anthropic mid-session, and a **canary checking toggle** that tests whether private input leaked into the output.
+
+1. Pick a scenario (or keep the default mediation). Select a provider and model.
+2. Click **Start Protocol** — Alice's agent creates a vault session and submits her private concerns
+3. Bob's agent discovers the pending session and submits his private concerns
+4. The relay runs inference — both inputs go to the LLM together, but the output contains only the mediation signal (no raw concerns)
+5. Both agents retrieve the same structured output. The **signal overlay** highlights key fields in the bounded output.
+6. A signed receipt is produced proving what was computed and when
+7. If canary checking is enabled, the UI scans the output for **canary phrases** — fragments of each agent's private input that should never appear in the bounded signal. A pass means the schema and guardian policy successfully contained disclosure.
 
 ### Provider notes
 
@@ -97,14 +101,27 @@ echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env
 
 ## What just happened
 
-- A **session** was created under a specific **contract** — purpose code, output schema, and prompt template, all content-addressed
-- Both agents submitted private context; neither saw the other's raw input
-- The relay assembled the prompt, called the model, and **validated the output against the JSON Schema** — anything that didn't conform was rejected, not returned
-- The **guardian policy** enforced additional constraints (e.g., no PII leakage, no raw financials in output)
-- A **signed receipt** was produced binding the exact contract hash, guardian policy hash, prompt template hash, model profile hash, and relay build hash to the output. The receipt cryptographically proves which rules governed the session; it does not prove relay honesty or input confidentiality from the relay.
-- **No transcript was stored** — the relay discards raw inputs after receipt construction; only commitment hashes persist. Session data does not outlast execution.
+At a high level: both agents submitted private input, the relay produced a bounded signal, and a signed receipt proves which rules governed the session. Here is what happened at each layer.
 
-The output is a bounded mediation signal — not a conversation, not a summary, not free text. The schema structurally limits what can leave the session. The relay sees both inputs in plaintext — counterparty confidentiality is enforced, but relay confidentiality is not.
+### Contract and content addressing
+
+The session was created under a **contract** that pins every parameter: purpose code, output schema, prompt template, model profile, and enforcement policy. Each component is identified by its SHA-256 hash. The contract itself is hashed (JCS-canonicalized JSON), and that `contract_hash` appears in the receipt. Changing any component — even a single schema field — produces a different hash, so both agents can verify they participated under the same rules.
+
+### Schema-enforced output bounding
+
+The relay does not return free text. The LLM output must parse as valid JSON conforming to the contract's **output schema**. If it doesn't, the session aborts with `SchemaValidation` — nothing is returned. This is the structural bound: the schema defines exactly which fields can leave the session and their types. Enum fields with fixed variants limit the output to a known set of values; the relay measures the **channel capacity** (maximum information the schema can carry) and includes it in the receipt.
+
+### Guardian policy enforcement
+
+After schema validation, the **guardian policy** applies semantic rules — for example, rejecting output that contains PII, raw financial figures, or verbatim fragments of either agent's input. Guardian rules are themselves content-addressed and pinned in the contract. The canary check in the demo UI is a client-side echo of this: it tests whether recognizable fragments of private input survived into the output.
+
+### Receipt and signature
+
+A **v2.1 receipt** is produced binding the contract hash, guardian policy hash, prompt template hash, model profile hash, relay build hash, channel capacity measurement, and the output itself into a single signed envelope. The Ed25519 signature proves that the relay attests to this specific combination. The receipt does not prove relay honesty or input confidentiality from the relay — it proves which rules the relay claims to have applied. Independent verification requires a TEE attestation (see [Protocol Specification](protocol-spec.md)).
+
+### Ephemeral execution
+
+The relay discards raw inputs after receipt construction. Only commitment hashes (SHA-256 of each agent's input) persist in the receipt. Session data does not outlast execution — there is no transcript, no conversation log, no stored context.
 
 ## Alternative: CLI demo with Claude Code
 
