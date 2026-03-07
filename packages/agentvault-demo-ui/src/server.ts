@@ -497,7 +497,29 @@ app.post('/api/start', async (req, res) => {
         });
       }
     } catch (err) {
-      console.warn('Failed to fetch relay health for policy event:', err instanceof Error ? err.message : String(err));
+      const detail = err instanceof Error ? err.message : String(err);
+      console.warn('Failed to fetch relay health for policy event:', detail);
+      events.emit({
+        ts: new Date().toISOString(),
+        type: 'system',
+        agent: 'relay_unreachable',
+        payload: { relay_url: RELAY_URL, detail },
+      });
+      events.emitSystem('Session aborted — relay is not reachable');
+      res.json({ ok: false, error: `Relay unreachable at ${RELAY_URL}: ${detail}` });
+      return;
+    }
+
+    if (!relayHealth) {
+      events.emit({
+        ts: new Date().toISOString(),
+        type: 'system',
+        agent: 'relay_unreachable',
+        payload: { relay_url: RELAY_URL, detail: 'Health endpoint returned non-OK status' },
+      });
+      events.emitSystem('Session aborted — relay health check failed');
+      res.json({ ok: false, error: `Relay health check failed at ${RELAY_URL}` });
+      return;
     }
 
     // Load prompts — use request body if provided, else fall back to files

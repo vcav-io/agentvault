@@ -763,6 +763,15 @@ var VaultCardManager = (function () {
           addStatus(card, true, 'Contract bound');
         }
 
+        // Relay unreachable — session cannot proceed
+        if (event.agent === 'relay_unreachable') {
+          var u = event.payload;
+          var card = addCard('Relay Unreachable', 'vault-card--error vault-card--expanded');
+          addLine(card, 'relay URL', String(u.relay_url || 'unknown'));
+          addLine(card, 'detail', String(u.detail || 'Connection failed'));
+          addStatus(card, false, 'Session cannot start — check relay is running');
+        }
+
         // 2. Relay — confirms it admits the requested policy and shows
         //    its identity (signing key, model, admitted capabilities)
         if (event.agent === 'relay_policy') {
