@@ -100,12 +100,12 @@ interface BurstParams {
 async function runLLMBurst(
   params: BurstParams,
   ephemeralUserMessage?: string,
+  signal?: AbortSignal,
 ): Promise<BurstResult> {
   const { name, provider, registry, systemPrompt, events, state } = params;
 
-  // Guard: if session already completed, exit immediately. Prevents queued
-  // heartbeat bursts (enqueued before completion) from resetting status to
-  // 'running'→'idle' and defeating the no-cost heartbeat tick.
+  // Guard: if aborted or session already completed, exit immediately.
+  if (signal?.aborted) return 'idle';
   if (state.status === 'completed') {
     return 'idle';
   }
@@ -133,6 +133,7 @@ async function runLLMBurst(
 
   try {
     for (let turn = 0; turn < MAX_TURNS; turn++) {
+      if (signal?.aborted) break;
       state.turnCount++;
 
       const response = await provider.chat({
@@ -291,7 +292,7 @@ export async function runHeartbeatLoop(
 
     if (state.started) {
       events.emitSystem(`${name}: Heartbeat`);
-      await queue.enqueue(() => runLLMBurst(heartbeatParams, HEARTBEAT_PROMPT));
+      await queue.enqueue(() => runLLMBurst(heartbeatParams, HEARTBEAT_PROMPT, signal));
 
       // Exponential backoff on errors: 2s → 4s → 8s → 16s → 30s cap
       if (state.status === 'error') {
