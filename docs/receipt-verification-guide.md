@@ -91,7 +91,7 @@ Key signing properties:
 
 v2 receipts reorganise all fields into two sections — `commitments` (independently
 verifiable) and `claims` (relay-asserted). The `receipt_schema_version` field is
-`"2.0.0"`. The signature is an object with an `alg` field.
+`"2.1.0"`. The signature is an object with an `alg` field.
 
 Key signing properties:
 - Domain separator: `VCAV-RECEIPT-V2:`
@@ -101,7 +101,7 @@ Key signing properties:
 
 ```json
 {
-  "receipt_schema_version": "2.0.0",
+  "receipt_schema_version": "2.1.0",
   "receipt_canonicalization": "JCS_V1",
   "receipt_id": "...",
   "session_id": "...",
@@ -412,7 +412,7 @@ function verifyInputCommitment(
 
 | Field | Type | Description |
 |---|---|---|
-| `receipt_schema_version` | string | Always `"2.0.0"` for v2 receipts |
+| `receipt_schema_version` | string | Always `"2.1.0"` for v2 receipts |
 | `receipt_canonicalization` | string | Always `"JCS_V1"` |
 | `receipt_id` | string (UUID) | Unique receipt identifier |
 | `session_id` | string (UUID) | Session this receipt covers |
@@ -462,6 +462,30 @@ attestation infrastructure.
 | `provider_latency_ms` | Wall-clock time for the provider API call |
 | `token_usage` | Prompt, completion, and total token counts |
 | `relay_software_version` | Semver of the relay that issued the receipt |
+| `status` | Session outcome status |
+| `signal_class` | Classification of the signal produced |
+| `execution_lane` | `SELF_ASSERTED` (software) or `HARDWARE_ATTESTED` (TEE) |
+| `channel_capacity_bits_upper_bound` | Computed upper bound on schema information capacity (bits) |
+| `channel_capacity_measurement_version` | Algorithm version for capacity computation (e.g., `"enum_cardinality_v1"`) |
+| `entropy_budget_bits` | Budget declared in the contract |
+| `schema_entropy_ceiling_bits` | Schema-level entropy ceiling |
+| `budget_usage` | `{pair_id, bits_used_before, bits_used_after, budget_limit, enforcement_tier}` |
+
+### TEE attestation fields
+
+Present when `claims.execution_lane` is `HARDWARE_ATTESTED`. The `tee_attestation`
+object is a top-level receipt field alongside `commitments` and `claims`.
+
+| Field | Meaning |
+|---|---|
+| `tee_type` | `Simulated` (testing) or `SevSnp` (AMD SEV-SNP hardware) |
+| `attestation_hash` | SHA-256 of the platform attestation report |
+| `receipt_signing_pubkey_hex` | Ed25519 public key bound into the TEE attestation |
+| `transcript_hash_hex` | SHA-512 of the canonical session transcript (embedded in SEV-SNP `user_data`) |
+
+TEE commitments add `initiator_submission_hash` and `responder_submission_hash` to
+the `commitments` object, binding each participant's raw submission into the
+attestation chain.
 
 ### Assurance levels
 
@@ -473,11 +497,12 @@ of external evidence backing the receipt.
 | `SELF_ASSERTED` | The relay signs its own receipt. No external attestation. Claims are relay assertions only. |
 | `OPERATOR_AUDITED` | The operator publishes a verifiable audit trail. Claims can be cross-checked against the audit log. |
 | `PROVIDER_ATTESTED` | The model provider supplied signed inference metadata. `claims.model_identity_attested` can be trusted. |
-| `TEE_ATTESTED` | Hardware TEE attestation binds the receipt to an enclave measurement. The relay build hash is hardware-verified. |
+| `TEE_ATTESTED` | Hardware TEE attestation (AMD SEV-SNP) binds the receipt to the CVM measurement. The relay binary, signing key, and session transcript are hardware-verified. Operational via `av-tee` relay. |
 
-Current AgentVault deployments operate at `SELF_ASSERTED`. Never display "receipt
-verified" without also showing the assurance level — a SELF_ASSERTED receipt is
-much weaker than a TEE_ATTESTED one.
+The software relay operates at `SELF_ASSERTED`. The TEE relay (`av-tee`) operates
+at `HARDWARE_ATTESTED` on AMD SEV-SNP hardware (validated on GCP N2D instances).
+Never display "receipt verified" without also showing the assurance level — a
+`SELF_ASSERTED` receipt is much weaker than a `HARDWARE_ATTESTED` one.
 
 ### Operator identity
 
@@ -608,7 +633,7 @@ were verified — that requires the caller to hold the original artefacts.
   "tool": "agentvault.verify_receipt",
   "arguments": {
     "receipt": {
-      "receipt_schema_version": "2.0.0",
+      "receipt_schema_version": "2.1.0",
       "receipt_canonicalization": "JCS_V1",
       "receipt_id": "a1b2c3d4-...",
       "session_id": "e5f6a7b8-...",

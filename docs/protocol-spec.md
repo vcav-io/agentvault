@@ -33,8 +33,10 @@ The protocol supports two execution modes:
 JSON Schema, (b) the guardian enforcement policy was applied, (c) the receipt
 cryptographically binds all content-addressed artefacts that governed the session.
 
-**Non-guarantees.** The protocol does not guarantee model quality, relay honesty, input
-confidentiality from the relay, or fair simultaneous delivery to both parties.
+**Non-guarantees.** At the `SELF_ASSERTED` level, the protocol does not guarantee model
+quality, relay honesty, input confidentiality from the relay, or fair simultaneous
+delivery to both parties. The TEE execution lane (see [Section 11](#11-tee-execution-lane))
+addresses relay honesty via hardware attestation.
 
 **Related documents.** See [API Reference](api-reference.md) for HTTP endpoint details,
 [Getting Started](getting-started.md) for an implementation tutorial, and
@@ -102,7 +104,7 @@ Describes the provider and model configuration agreed to by both parties.
 |-------|------|-------------|
 | `profile_version` | string | Profile format version (e.g., `"1"`). |
 | `profile_id` | string | Human-readable identifier (e.g., `"api-claude-sonnet-v1"`). |
-| `provider` | string | `"anthropic"` or `"openai"`. |
+| `provider` | string | `"anthropic"`, `"openai"`, or `"gemini"`. |
 | `model_family` | string | Model family name (e.g., `"claude-sonnet"`). |
 | `reasoning_mode` | string | Reasoning mode (e.g., `"unconstrained"`). |
 | `structured_output` | boolean | Whether the provider supports structured output. |
@@ -132,7 +134,7 @@ The signed audit record returned with every completed session. This is the core
 verifiable artefact of the protocol. All hash fields are 64-character lowercase hex
 strings (SHA-256).
 
-Receipt v2 (schema version `"2.0.0"`) organises fields into two top-level groups:
+Receipt v2 (schema version `"2.1.0"`) organises fields into two top-level groups:
 **commitments** (independently verifiable hashes) and **claims** (relay assertions).
 See [docs/architecture/contract-receipt-v2.md](architecture/contract-receipt-v2.md)
 for the full field reference and migration notes.
@@ -141,7 +143,7 @@ for the full field reference and migration notes.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `receipt_schema_version` | string | Receipt format version. `"2.0.0"`. |
+| `receipt_schema_version` | string | Receipt format version. `"2.1.0"`. |
 | `receipt_canonicalization` | string | `"JCS_V1"`. |
 | `receipt_id` | string (UUID) | Unique receipt identifier. |
 | `session_id` | string (UUID) | Session identifier. |
@@ -179,6 +181,30 @@ independently recompute all these hashes):
 | `provider_latency_ms` | integer or null | Wall-clock latency of the provider call. |
 | `token_usage` | object or null | `{prompt_tokens, completion_tokens, total_tokens}`. |
 | `relay_software_version` | string or null | Relay software version string. |
+| `status` | string or null | Session outcome status. |
+| `signal_class` | string or null | Classification of the signal produced. |
+| `execution_lane` | string enum or null | `SELF_ASSERTED` (software relay) or `HARDWARE_ATTESTED` (TEE execution). |
+| `channel_capacity_bits_upper_bound` | integer or null | Computed upper bound on the output schema's information capacity (bits). |
+| `channel_capacity_measurement_version` | string or null | Algorithm version used to compute the channel capacity bound (e.g., `"enum_cardinality_v1"`). |
+| `entropy_budget_bits` | integer or null | Budget declared in the contract. |
+| `schema_entropy_ceiling_bits` | integer or null | Schema-level entropy ceiling. |
+| `budget_usage` | object or null | `{pair_id, bits_used_before, bits_used_after, budget_limit, enforcement_tier}`. |
+
+**TEE attestation** (present when `execution_lane` is `HARDWARE_ATTESTED`):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tee_type` | string enum | `Simulated` (testing) or `SevSnp` (AMD SEV-SNP hardware). |
+| `attestation_hash` | string (64 hex) | Hash of the platform attestation report. |
+| `receipt_signing_pubkey_hex` | string (64 hex) | Ed25519 public key used to sign the receipt, bound into the TEE attestation. |
+| `transcript_hash_hex` | string (128 hex) | SHA-512 hash of the canonical session transcript. For SEV-SNP, this is embedded in the attestation report's `user_data` field. |
+
+**TEE commitments** (additional fields in `commitments` when TEE-attested):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `initiator_submission_hash` | string (64 hex) or null | SHA-256 of the initiator's raw submission. |
+| `responder_submission_hash` | string (64 hex) or null | SHA-256 of the responder's raw submission. |
 
 **Assurance levels:**
 
@@ -524,9 +550,10 @@ receipt alone.
 - The output was delivered simultaneously to both parties.
 
 **Assurance levels** extend what receipts prove beyond `SELF_ASSERTED`. See
-[Section 2.6](#26-receipt) for the level definitions. Higher assurance levels
-(`OPERATOR_AUDITED`, `PROVIDER_ATTESTED`, `TEE_ATTESTED`) are defined in the schema
-and receipt v2 spec but are not yet active in the production relay.
+[Section 2.6](#26-receipt) for the level definitions. The `TEE_ATTESTED` level is
+operational via the `av-tee` relay running on AMD SEV-SNP hardware (validated on
+GCP N2D instances). `OPERATOR_AUDITED` and `PROVIDER_ATTESTED` are defined in the
+schema but are not yet active in production.
 
 ---
 
@@ -691,6 +718,102 @@ accumulation).
 The `x-vcav-entropy-bits-upper-bound` JSON Schema extension property on array fields is
 a hint to the entropy calculator. Standard JSON Schema validators ignore unknown
 extensions — its presence does not affect schema validation behavior.
+
+---
+
+## 11. TEE Execution Lane
+
+### 11.1 Overview
+
+The protocol supports two execution lanes that run the same session protocol:
+
+- **Software lane** (`SELF_ASSERTED`) — the relay runs as a standard process. The
+  operator is trusted not to tamper with inputs or fabricate output.
+- **TEE lane** (`HARDWARE_ATTESTED`) — the relay runs inside a Trusted Execution
+  Environment (AMD SEV-SNP confidential VM). Hardware attestation binds the receipt
+  to the relay binary and session transcript, removing relay operator trust.
+
+The TEE lane does not change the protocol — the same contract, input envelopes,
+prompt programs, and receipt structure are used. What changes is the assurance
+level and the additional attestation fields in the receipt.
+
+### 11.2 TEE Types
+
+| Value | Description |
+|-------|-------------|
+| `Simulated` | Software simulation for testing. No hardware attestation. |
+| `SevSnp` | AMD SEV-SNP confidential VM. The entire VM is the trust boundary. |
+
+### 11.3 Attestation Binding
+
+When running in the TEE lane, the relay:
+
+1. Derives a session-scoped Ed25519 signing key inside the CVM.
+2. Builds a canonical transcript of the session (versioned JSON, `av-tee-transcript-v1`).
+3. Computes SHA-512 of the transcript (64 bytes) and embeds it in the SEV-SNP
+   attestation report's `user_data` field.
+4. Signs the receipt with the CVM-derived key.
+5. Includes `tee_attestation` in the receipt with `attestation_hash`,
+   `receipt_signing_pubkey_hex`, and `transcript_hash_hex`.
+
+A verifier can request the raw attestation report from the relay, verify the AMD
+signature chain, and confirm that the `user_data` matches the transcript hash —
+proving the receipt was produced inside an attested CVM.
+
+### 11.4 Trust Properties
+
+At `HARDWARE_ATTESTED` level, the receipt additionally proves:
+
+- The relay binary measurement matches the expected value (CVM launch digest).
+- The session transcript (inputs, prompt, output) was not tampered with.
+- The signing key was generated inside the CVM and never exposed to the host.
+
+---
+
+## 12. Artefact Registry
+
+### 12.1 Overview
+
+The relay maintains a content-addressed artefact registry. All governance
+artefacts — output schemas, guardian policies, model profiles, and prompt
+programs — are registered by their SHA-256(JCS) hash before they can be used
+in sessions. Relay admission is **fail-closed**: only registered artefacts are
+accepted.
+
+### 12.2 Artefact Kinds
+
+| Kind | Description |
+|------|-------------|
+| Schemas | JSON Schema definitions for session output. |
+| Policies | Guardian enforcement policies (SAFE/RICH compatibility validated). |
+| Profiles | Model provider and configuration profiles. |
+| Prompt programs | Content-addressed prompt assembly templates. |
+
+### 12.3 Content Addressing
+
+Every artefact is identified by `SHA-256(JCS(artefact_json))`. The registry
+stores artefacts by hash and validates that the stored content re-hashes to
+the same value on load (integrity check).
+
+### 12.4 Contract Composition
+
+The `av-contract` CLI composes contracts from registry artefacts:
+
+- `av-contract list` — enumerate registered artefacts by kind.
+- `av-contract build` — assemble a contract from artefact references.
+- `av-contract validate` — verify that a contract's artefact references resolve
+  and that schema/policy compatibility holds (SAFE/RICH validation).
+
+### 12.5 SAFE/RICH Compatibility
+
+Schemas and policies undergo compatibility validation:
+
+- **SAFE** schemas have constrained output (strict enums, bounded arrays) that
+  the guardian policy can fully enforce.
+- **RICH** schemas permit wider output ranges and may require advisory-only
+  enforcement for some fields.
+
+The registry validates compatibility at registration time, not at session time.
 
 ---
 

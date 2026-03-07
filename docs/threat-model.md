@@ -2,7 +2,7 @@
 
 > **Issue:** #156 (explicit confidentiality model)
 > **Protocol version:** 0.1.0
-> **Receipt schema:** v2
+> **Receipt schema:** v2.1
 
 ---
 
@@ -148,8 +148,11 @@ assembled prompt, the raw LLM output, and the bounded result. Deploying AgentVau
 does not constrain operator access to session data.
 
 Operators who need to limit their own access to session inputs should evaluate the
-TEE upgrade path described in Section 5 (PROVIDER_ATTESTED and TEE_ATTESTED tiers).
-Those tiers are not yet implemented.
+TEE upgrade path described in Section 5. The `TEE_ATTESTED` tier has been
+hardware-validated on GCP N2D (AMD SEV-SNP) in the av-tee repo and produces
+receipts with populated `tee_attestation` fields. The `PROVIDER_ATTESTED` tier
+is not yet implemented. Integration of TEE attestation into the AgentVault relay
+is pending.
 
 **Provider confidentiality**
 
@@ -253,16 +256,17 @@ presented together with the assurance level.
 | `SELF_ASSERTED` | The relay signs its own receipt. Trust the operator. | Implemented |
 | `OPERATOR_AUDITED` | The operator publishes an independently verifiable audit trail. Trust is externally checkable but still rests on the operator. | Not yet implemented |
 | `PROVIDER_ATTESTED` | The LLM provider co-signs inference metadata, binding `model_identity` to a cryptographic commitment. | Not yet implemented |
-| `TEE_ATTESTED` | A hardware enclave (SGX, TDX, SEV-SNP) signs the receipt and binds it to an enclave measurement. The relay operator cannot see inputs or fabricate outputs without breaking the attestation. | Not yet implemented |
+| `TEE_ATTESTED` | A hardware enclave (SGX, TDX, SEV-SNP) signs the receipt and binds it to an enclave measurement. The relay operator cannot see inputs or fabricate outputs without breaking the attestation. | Hardware validated (av-tee, GCP N2D AMD SEV-SNP). Not yet integrated into the AgentVault relay. |
 
 All current AgentVault deployments operate at `SELF_ASSERTED`. The operator-audited
 tier is the near-term upgrade path. TEE attestation is the intended end state for
 deployments where relay confidentiality is a hard requirement.
 
-Receipt v2 includes attestation slots (`provider_attestation`, `tee_attestation`)
-that are defined in the schema but not yet populated by any relay implementation.
-Their presence in the schema allows the attestation tiers to be added without a
-schema breaking change.
+Receipt v2.1 includes attestation slots (`provider_attestation`, `tee_attestation`).
+The `tee_attestation` slot is populated by the av-tee relay when running in a
+TEE environment, binding `attestation_hash`, `receipt_signing_pubkey_hex`, and
+`transcript_hash_hex` into the receipt. The AgentVault relay does not yet populate
+these slots. `provider_attestation` is not yet populated by any implementation.
 
 ---
 
@@ -370,13 +374,18 @@ Policy gate rejections return a fixed-body 422 with no detail. Auth failures ret
 a fixed-body 401. This prevents callers from reverse-engineering the guardian policy
 or enumerating session state through error shapes.
 
-### 7.2 Planned (Not Yet Implemented)
+### 7.2 Validated (Not Yet Integrated into AgentVault Relay)
 
 **TEE execution**
 
-A hardware-attested execution environment (VCAV-H) would bind the receipt to an
-enclave measurement, preventing relay operators from observing inputs or fabricating
-outputs without breaking the attestation.
+A hardware-attested execution environment (VCAV-H) binds the receipt to an enclave
+measurement, preventing relay operators from observing inputs or fabricating outputs
+without breaking the attestation. This has been hardware-validated on GCP N2D
+(AMD SEV-SNP) in the av-tee repo: real SEV-SNP attestation reports, sealed key
+material, and transcript-bound receipts with populated `tee_attestation` fields.
+Integration into the AgentVault relay is the remaining step.
+
+### 7.3 Planned (Not Yet Implemented)
 
 **Provider attestation**
 
