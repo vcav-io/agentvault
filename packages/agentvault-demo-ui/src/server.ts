@@ -442,33 +442,9 @@ app.post('/api/start', async (req, res) => {
     const runFile = events.startRecording(RUNS_DIR);
     events.emitSystem(`Recording to ${runFile}`);
 
-    // Fetch relay health to emit enforcement policy at session start
-    try {
-      const healthRes = await fetch(`${RELAY_URL}/health`);
-      if (healthRes.ok) {
-        const health = await healthRes.json() as Record<string, unknown>;
-        const policySummary = health.policy_summary as Record<string, unknown> | undefined;
-        events.emit({
-          ts: new Date().toISOString(),
-          type: 'system',
-          agent: 'relay_policy',
-          payload: {
-            policy_id: policySummary?.policy_id ?? 'unknown',
-            policy_hash: policySummary?.policy_hash ?? 'unknown',
-            model_profile_allowlist: policySummary?.model_profile_allowlist ?? [],
-            provider_allowlist: policySummary?.provider_allowlist ?? [],
-            enforcement_rules: policySummary?.enforcement_rules ?? [],
-            entropy_constraints: policySummary?.entropy_constraints ?? null,
-            verifying_key_hex: health.verifying_key_hex ?? 'unknown',
-            model_id: health.model_id ?? 'unknown',
-          },
-        });
-      }
-    } catch (err) {
-      console.warn('Failed to fetch relay health for policy event:', err instanceof Error ? err.message : String(err));
-    }
-
-    // Emit contract enforcement parameters for the default MEDIATION contract
+    // Emit contract parameters first — the contract drives the session and
+    // specifies which enforcement policy to use (by hash).
+    let relayHealth: Record<string, unknown> | null = null;
     try {
       const mediationContract = buildRelayContract('MEDIATION', ['alice', 'bob']);
       if (mediationContract) {
@@ -494,6 +470,34 @@ app.post('/api/start', async (req, res) => {
       }
     } catch (err) {
       console.warn('Failed to emit contract enforcement event:', err instanceof Error ? err.message : String(err));
+    }
+
+    // Fetch relay health — shows the relay's identity (signing key) and which
+    // policies/models it has admitted. The contract's enforcement_policy_hash
+    // must be in this set for the relay to accept the session.
+    try {
+      const healthRes = await fetch(`${RELAY_URL}/health`);
+      if (healthRes.ok) {
+        relayHealth = await healthRes.json() as Record<string, unknown>;
+        const policySummary = relayHealth.policy_summary as Record<string, unknown> | undefined;
+        events.emit({
+          ts: new Date().toISOString(),
+          type: 'system',
+          agent: 'relay_policy',
+          payload: {
+            policy_id: policySummary?.policy_id ?? 'unknown',
+            policy_hash: policySummary?.policy_hash ?? 'unknown',
+            model_profile_allowlist: policySummary?.model_profile_allowlist ?? [],
+            provider_allowlist: policySummary?.provider_allowlist ?? [],
+            enforcement_rules: policySummary?.enforcement_rules ?? [],
+            entropy_constraints: policySummary?.entropy_constraints ?? null,
+            verifying_key_hex: relayHealth.verifying_key_hex ?? 'unknown',
+            model_id: relayHealth.model_id ?? 'unknown',
+          },
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to fetch relay health for policy event:', err instanceof Error ? err.message : String(err));
     }
 
     // Load prompts — use request body if provided, else fall back to files

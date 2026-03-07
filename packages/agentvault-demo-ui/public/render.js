@@ -738,20 +738,47 @@ var VaultCardManager = (function () {
         break;
       }
 
-      // system events — relay_policy and contract_enforcement create cards
+      // system events — contract_enforcement and relay_policy create cards
+      // The contract drives the session: it specifies purpose, schema, and
+      // which enforcement policy (by hash) the relay must apply.
       case 'system': {
+        // 1. Contract — specifies what the session must enforce
+        if (event.agent === 'contract_enforcement') {
+          var c = event.payload;
+          var card = addCard('Contract Parameters', 'vault-card--contract vault-card--expanded');
+          addLine(card, 'version', 'v2');
+          addLine(card, 'purpose', String(c.purpose_code || 'unknown'));
+          if (c.output_schema_id) addLine(card, 'output schema', String(c.output_schema_id));
+          if (c.enforcement_policy_hash) addLine(card, 'required policy', truncate(String(c.enforcement_policy_hash), 16));
+          if (c.output_schema_hash) addLine(card, 'schema hash', truncate(String(c.output_schema_hash), 16));
+          if (c.entropy_enforcement) addLine(card, 'entropy mode', String(c.entropy_enforcement));
+          if (c.max_completion_tokens) addLine(card, 'max tokens', String(c.max_completion_tokens));
+          var modelConstraints = c.model_constraints;
+          if (modelConstraints) {
+            if (modelConstraints.allowed_providers) addLine(card, 'allowed providers', modelConstraints.allowed_providers.join(', '));
+            if (modelConstraints.allowed_models) addLine(card, 'allowed models', modelConstraints.allowed_models.join(', '));
+          }
+          if (c.session_ttl_secs) addLine(card, 'session TTL', c.session_ttl_secs + 's');
+          if (c.invite_ttl_secs) addLine(card, 'invite TTL', c.invite_ttl_secs + 's');
+          addStatus(card, true, 'Contract bound');
+        }
+
+        // 2. Relay — confirms it admits the requested policy and shows
+        //    its identity (signing key, model, admitted capabilities)
         if (event.agent === 'relay_policy') {
           var p = event.payload;
-          var card = addCard('Relay Enforcement Active', 'vault-card--policy vault-card--expanded');
-          addLine(card, 'policy', truncate(String(p.policy_id || 'unknown'), 40));
+          var card = addCard('Relay Identity & Policy', 'vault-card--policy vault-card--expanded');
+          addLine(card, 'signing key', truncate(String(p.verifying_key_hex || ''), 20));
+          addLine(card, 'model', String(p.model_id || 'unknown'));
+          addLine(card, 'admitted policy', truncate(String(p.policy_id || 'unknown'), 40));
           addLine(card, 'policy hash', truncate(String(p.policy_hash || ''), 16));
           var allowlist = p.model_profile_allowlist;
           if (Array.isArray(allowlist) && allowlist.length > 0) {
-            addLine(card, 'model profiles', allowlist.join(', '));
+            addLine(card, 'admitted profiles', allowlist.join(', '));
           }
           var providerAllowlist = p.provider_allowlist;
           if (Array.isArray(providerAllowlist) && providerAllowlist.length > 0) {
-            addLine(card, 'providers', providerAllowlist.join(', '));
+            addLine(card, 'admitted providers', providerAllowlist.join(', '));
           }
 
           // Human-readable rule descriptions
@@ -778,30 +805,7 @@ var VaultCardManager = (function () {
             addLine(card, 'entropy budget', (entropy.budget_bits || '?') + ' bits (' + (entropy.classification || 'ADVISORY') + ')');
           }
 
-          addLine(card, 'relay model', String(p.model_id || 'unknown'));
-          addLine(card, 'signing key', truncate(String(p.verifying_key_hex || ''), 20));
-          addStatus(card, true, 'Enforcement policy bound');
-        }
-
-        // Contract enforcement parameters (emitted at session start)
-        if (event.agent === 'contract_enforcement') {
-          var c = event.payload;
-          var card = addCard('Contract Enforcement', 'vault-card--contract vault-card--expanded');
-          addLine(card, 'version', 'v2');
-          addLine(card, 'purpose', String(c.purpose_code || 'unknown'));
-          if (c.output_schema_id) addLine(card, 'output schema', String(c.output_schema_id));
-          if (c.enforcement_policy_hash) addLine(card, 'policy hash', truncate(String(c.enforcement_policy_hash), 16));
-          if (c.output_schema_hash) addLine(card, 'schema hash', truncate(String(c.output_schema_hash), 16));
-          if (c.entropy_enforcement) addLine(card, 'entropy mode', String(c.entropy_enforcement));
-          if (c.max_completion_tokens) addLine(card, 'max tokens', String(c.max_completion_tokens));
-          var modelConstraints = c.model_constraints;
-          if (modelConstraints) {
-            if (modelConstraints.allowed_providers) addLine(card, 'allowed providers', modelConstraints.allowed_providers.join(', '));
-            if (modelConstraints.allowed_models) addLine(card, 'allowed models', modelConstraints.allowed_models.join(', '));
-          }
-          if (c.session_ttl_secs) addLine(card, 'session TTL', c.session_ttl_secs + 's');
-          if (c.invite_ttl_secs) addLine(card, 'invite TTL', c.invite_ttl_secs + 's');
-          addStatus(card, true, 'Contract bound');
+          addStatus(card, true, 'Policy admitted \u2014 relay ready');
         }
         break;
       }
