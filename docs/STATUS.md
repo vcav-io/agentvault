@@ -30,47 +30,34 @@
 
 ## Open Work — Prioritised Cross-Repo Backlog
 
-### Tier 1 — High-value, next up
+### Tier 1 — Protocol stabilisation (needs design/planning)
 
 | Repo | Issue | Description | Size | Notes |
 |------|-------|-------------|------|-------|
-| agentvault | [#164](https://github.com/vcav-io/agentvault/issues/164) | Formal registries for schemas, policies, profiles, programs | L | Umbrella; #181 done, next concrete steps |
-| agentvault | [#205](https://github.com/vcav-io/agentvault/issues/205) | Update README to reflect TEE lane | S | Blocked on av-tee Phase 2 |
-| website | [#41](https://github.com/vcav-io/website/issues/41) | SEO Phase 4: technical authority content | L | Phases 1-3 complete; unblocked |
+| agentvault | [#164](https://github.com/vcav-io/agentvault/issues/164) | Formal registries for schemas, policies, profiles, programs | L | Schema registry done (#181); policy + profile registries need design (local-first vs remote, discovery model) |
+| agentvault | [#166](https://github.com/vcav-io/agentvault/issues/166) | Custom contract builder + SAFE/RICH variants | L | Depends on #164; SAFE/RICH taxonomy needs design |
+| agentvault | [#167](https://github.com/vcav-io/agentvault/issues/167) | Protocol stabilisation (meta) | L | All sub-issues closed except #164 and #166 |
+| agentvault | [#214](https://github.com/vcav-io/agentvault/issues/214) | A2A integration: AgentVault as an A2A extension | L | Design exploration |
 
-### Tier 2 — Important, medium-term
+### Tier 2 — Backlog
 
-| Repo | Issue | Description | Size |
-|------|-------|-------------|------|
-| av-tee | [#8](https://github.com/vcav-io/av-tee/issues/8) | Env var parse failures silently use defaults | S |
-| av-tee | [#9](https://github.com/vcav-io/av-tee/issues/9) | API key absence only detected at inference time | S |
-| av-tee | [#10](https://github.com/vcav-io/av-tee/issues/10) | Echo mode collapses all errors to `()` | S |
-| av-tee | [#14](https://github.com/vcav-io/av-tee/issues/14) | Implement quote verification in tee-verifier | M |
-| agentvault | [#154](https://github.com/vcav-io/agentvault/issues/154) | PKI / key pinning for relay verifying keys | M |
-| VFC | [#15](https://github.com/vcav-io/vault-family-core/issues/15) | AFAL Agent Discovery: DNS-like resolution | L |
-| agentvault | [#167](https://github.com/vcav-io/agentvault/issues/167) | Protocol stabilisation (meta) | L |
-
-### Tier 3 — Backlog
-
-| Repo | Issue | Description | Size |
-|------|-------|-------------|------|
-| av-tee | [#13](https://github.com/vcav-io/av-tee/issues/13) | Implement SEV-SNP CvmRuntime (real hardware) | L |
-| av-tee | [#11](https://github.com/vcav-io/av-tee/issues/11) | Document transcript_binding field | S |
-| av-tee | [#15](https://github.com/vcav-io/av-tee/issues/15) | Live transparency log for enclave measurements | L |
-| av-tee | [#16](https://github.com/vcav-io/av-tee/issues/16) | TypeScript tee-verifier | M |
-| agentvault | [#166](https://github.com/vcav-io/agentvault/issues/166) | Custom contract builder + SAFE/RICH variants | L |
-| agentvault | [#165](https://github.com/vcav-io/agentvault/issues/165) | Extended accumulation experiment N=20-100 | M |
-| agentvault | [#162](https://github.com/vcav-io/agentvault/issues/162) | Inbox hardening: timeouts, validation, persistence | M |
-| agentvault | [#163](https://github.com/vcav-io/agentvault/issues/163) | Extract inbox protocol types to VFC | S |
-| agentvault | [#161](https://github.com/vcav-io/agentvault/issues/161) | First live async invite session | M |
-| website | [#42](https://github.com/vcav-io/website/issues/42) | SEO Phase 5: IA and authority signals | L |
-| website | [#29](https://github.com/vcav-io/website/issues/29) | Align simulation visual style with demo UI | S |
-| vcav | [#770](https://github.com/vcav-io/vcav/issues/770) | Move session.run() to spawn_blocking | S |
+| Repo | Issue | Description | Size | Notes |
+|------|-------|-------------|------|-------|
+| agentvault | [#165](https://github.com/vcav-io/agentvault/issues/165) | Extended accumulation experiment N=20-100 | M | Research; informs entropy budget design |
+| VFC | [#15](https://github.com/vcav-io/vault-family-core/issues/15) | AFAL Agent Discovery: DNS-like resolution | L | No urgent consumer yet |
+| av-tee | [#15](https://github.com/vcav-io/av-tee/issues/15) | Live transparency log for enclave measurements | L | Unblocked now #13 is done; low priority (StaticAllowlist sufficient for early deployments) |
+| website | [#42](https://github.com/vcav-io/website/issues/42) | SEO Phase 5: IA and authority signals | L | Unblocked now Phase 4 is done |
+| website | [#29](https://github.com/vcav-io/website/issues/29) | Align simulation visual style with demo UI | S | |
+| vcav | [#770](https://github.com/vcav-io/vcav/issues/770) | Move session.run() to spawn_blocking | S | |
 
 ## Recently Completed
 
 | Issue | Description | PR |
 |-------|-------------|-----|
+| av-tee [#13](https://github.com/vcav-io/av-tee/issues/13) | Real SEV-SNP CvmRuntime — `tee-snp` crate, validated on GCP N2D (AMD Milan) | av-tee #22, #23 |
+| av-tee [#11](https://github.com/vcav-io/av-tee/issues/11) | TranscriptBinding assurance level docs (UserData > Fallback > None) | av-tee #21 |
+| av-tee [#16](https://github.com/vcav-io/av-tee/issues/16) | TypeScript tee-verifier — transcript hash, attestation hash, measurement allowlist | #215 |
+| [#205](https://github.com/vcav-io/agentvault/issues/205) | README two-lane positioning (software lane + TEE lane) | #216 |
 | [#182](https://github.com/vcav-io/agentvault/issues/182), [#181](https://github.com/vcav-io/agentvault/issues/181) | Multi-policy selection + schema registry improvements (PolicyRegistry, hash-only contract refs, discovery endpoints) | #211 |
 | av-tee [#14](https://github.com/vcav-io/av-tee/issues/14) | Quote verification in tee-verifier — `QuoteVerifier` trait, simulated + SNP parse-only, receipt-bound cross-checks | av-tee #19, #20 |
 | av-tee [#8](https://github.com/vcav-io/av-tee/issues/8), [#9](https://github.com/vcav-io/av-tee/issues/9), [#10](https://github.com/vcav-io/av-tee/issues/10) | Operational hardening — env var validation, early API key check, typed echo errors | av-tee #18 |
