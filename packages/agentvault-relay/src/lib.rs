@@ -480,11 +480,11 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
         // Prompt template + assembled prompt hashes
         let prompt_program = match &state.admitted_programs {
             Some(programs) => programs
-                .get(&contract.purpose_code.to_string())
+                .get(&contract.prompt_template_hash)
                 .cloned()?,
             None => crate::prompt_program::load_prompt_program(
                 &state.prompt_program_dir,
-                &contract.purpose_code.to_string(),
+                &contract.prompt_template_hash,
             )
             .ok()?,
         };
