@@ -35,10 +35,10 @@ Two co-founders mediate a strategy disagreement through their AI agents — each
 No Rust or Node.js required — just Docker.
 
 ```bash
-# 1. Add your API key (any provider works)
+# 1. Add your API key (any provider works; set multiple to switch in the UI)
 echo "GEMINI_API_KEY=AIza..." > .env
-# or: echo "OPENAI_API_KEY=sk-..." > .env
-# or: echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
+# echo "OPENAI_API_KEY=sk-..." >> .env
+# echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env
 
 # 2. Start the relay and demo UI
 docker compose -f docker/docker-compose.demo.yml up
@@ -53,10 +53,10 @@ To stop: press `Ctrl-C` or `docker compose -f docker/docker-compose.demo.yml dow
 Requires Rust 1.88+ and Node.js.
 
 ```bash
-# 1. Add your API key (any provider works)
+# 1. Add your API key (any provider works; set multiple to switch in the UI)
 echo "GEMINI_API_KEY=AIza..." > .env
-# or: echo "OPENAI_API_KEY=sk-..." > .env
-# or: echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
+# echo "OPENAI_API_KEY=sk-..." >> .env
+# echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env
 
 # 2. Build and start everything (relay + demo server, opens browser)
 ./run-demo.sh
@@ -83,17 +83,6 @@ The demo supports three LLM providers. You can configure multiple API keys and s
 | Gemini | gemini-2.5-flash | gemini-2.5-flash | ~$0.01 | Cheapest stable option; all Gemini models tested pass |
 | OpenAI | gpt-4.1-mini | gpt-4.1-mini | ~$0.02 | Reliable; gpt-4.1-nano and gpt-5-nano/mini fail quality |
 | Anthropic | claude-haiku-4-5-20251001 | claude-haiku-4-5-20251001 | ~$0.03 | High quality; both haiku and sonnet pass |
-
-Run `./tests/live/sweep.sh` to test which models pass the mediation quality threshold on your API keys. The sweep prints a summary table with PASS/FAIL per provider+model combo and flags any current default that fails.
-
-**Relay model quality matters more than agent model.** Agents just do tool-calling (check inbox, submit input); the relay model performs the actual mediation inference. If you see `NO_COMMON_GROUND_DETECTED` results, try switching the relay to a different provider.
-
-To set all three keys (enables switching in UI):
-```bash
-echo "GEMINI_API_KEY=AIza..." >> .env
-echo "OPENAI_API_KEY=sk-..." >> .env
-echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env
-```
 
 ## What just happened
 
