@@ -1,7 +1,10 @@
 /**
  * Relay contract templates and hashing for AgentVault bounded signals.
  *
- * Templates are the canonical source of truth for bundled relay contracts.
+ * **Deprecated**: The hardcoded TEMPLATES map is a legacy convenience layer.
+ * New code should use `buildContract` from `./contract-builder.js` with a
+ * registry index for composable, registry-backed contract construction.
+ *
  * `computeRelayContractHash` uses RFC 8785 (JCS) canonicalization + SHA-256,
  * matching the Rust relay's `compute_contract_hash` (relay.rs). No domain
  * prefix — this is a contract hash, not a signature hash.
@@ -53,6 +56,10 @@ type ContractTemplate = Omit<RelayContract, 'participants'>;
 /**
  * Bundled contract templates. Fields match the Rust `Contract` struct
  * serialization exactly — all Optional fields present as null when absent.
+ *
+ * @deprecated Use `buildContract` from `./contract-builder.js` with a registry
+ * index for composable contract construction. These templates are preserved
+ * for backward compatibility only.
  */
 const TEMPLATES: Record<string, ContractTemplate> = {
   MEDIATION: {
@@ -219,6 +226,9 @@ function validateParticipantId(id: string): string | null {
  * Build a full relay contract from a bundled template and participant list.
  * Returns undefined for unknown purpose codes.
  * Throws on invalid participant IDs (empty or contains whitespace).
+ *
+ * @deprecated Use `buildContract` from `./contract-builder.js` with a registry
+ * index for composable contract construction.
  */
 export function buildRelayContract(
   purpose: string,
