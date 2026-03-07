@@ -29,6 +29,7 @@
 | Execution Environments | Two-lane framing (standard vs confidential), trust model table, limitations docs | Complete |
 | Artefact Registry | Content-addressed ecosystem registry (`agentvault-registry`), relay admission with digest verification, SAFE/RICH compatibility | Complete |
 | Contract Builder | Client-side `buildContract` with registry index resolution (digest/alias/channel), compatibility validation, deprecation handling | Complete |
+| Contract CLI | `av-contract build` CLI wrapper over registry index + contract builder | Complete |
 
 ## Open Work — Prioritised Cross-Repo Backlog
 
@@ -53,6 +54,8 @@
 
 | Issue | Description | PR |
 |-------|-------------|-----|
+| [#222](https://github.com/vcav-io/agentvault/issues/222) | `av-contract` CLI wrapper over `loadRegistryIndex` + `buildContract` | #224 |
+| [#223](https://github.com/vcav-io/agentvault/issues/223) | Wire admitted programs/profiles into relay prompt assembly | #225 |
 | [#164](https://github.com/vcav-io/agentvault/issues/164) | Artefact registry + relay admission module | #219 |
 | [#166](https://github.com/vcav-io/agentvault/issues/166) | Contract builder with registry index resolution | #220 |
 | [#167](https://github.com/vcav-io/agentvault/issues/167) | Protocol stabilisation (meta) — all sub-issues closed | #218, #219, #220 |
