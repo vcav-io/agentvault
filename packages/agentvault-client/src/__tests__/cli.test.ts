@@ -71,7 +71,7 @@ function runCli(args: string[]): Promise<{ stdout: string; stderr: string; code:
       resolve({
         stdout: stdout ?? '',
         stderr: stderr ?? '',
-        code: error ? (error as NodeJS.ErrnoException & { code?: number }).code as unknown as number ?? 1 : 0,
+        code: error ? (error as { status?: number }).status ?? 1 : 0,
       });
     });
   });
