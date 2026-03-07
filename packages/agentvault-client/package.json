@@ -39,6 +39,9 @@
       "types": "./dist/contract-builder.d.ts"
     }
   },
+  "bin": {
+    "av-contract": "./dist/cli.js"
+  },
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
