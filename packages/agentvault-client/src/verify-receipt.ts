@@ -257,15 +257,15 @@ export function verifyReceipt(
 
   let detectedVersion: string;
   let isV2: boolean;
-  if (receiptSchemaVersion === '2.0.0') {
-    detectedVersion = '2.0.0';
+  if (typeof receiptSchemaVersion === 'string' && receiptSchemaVersion.startsWith('2.')) {
+    detectedVersion = receiptSchemaVersion;
     isV2 = true;
   } else if (schemaVersion === '1.0.0') {
     detectedVersion = '1.0.0';
     isV2 = false;
   } else {
     errors.push(
-      'Cannot detect receipt version: expected receipt_schema_version "2.0.0" or schema_version "1.0.0"',
+      'Cannot detect receipt version: expected receipt_schema_version "2.x.y" or schema_version "1.0.0"',
     );
     return {
       valid: false,
@@ -348,7 +348,8 @@ export function verifyReceipt(
 export function detectReceiptVersion(
   receipt: Record<string, unknown>,
 ): '1.0.0' | '2.0.0' | null {
-  if (receipt['receipt_schema_version'] === '2.0.0') return '2.0.0';
+  const rsv = receipt['receipt_schema_version'];
+  if (typeof rsv === 'string' && rsv.startsWith('2.')) return '2.0.0';
   if (receipt['schema_version'] === '1.0.0') return '1.0.0';
   return null;
 }
