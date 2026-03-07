@@ -14,6 +14,7 @@ repository = "https://github.com/vcav-io/agentvault"
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+toml = "0.8"
 
 # Schema validation
 jsonschema = { version = "0.18", default-features = false, features = ["draft202012"] }

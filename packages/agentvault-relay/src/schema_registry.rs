@@ -25,6 +25,11 @@ impl SchemaRegistry {
         }
     }
 
+    /// Create a registry from a pre-verified map of hash -> schema.
+    pub fn from_map(schemas: HashMap<String, serde_json::Value>) -> Self {
+        Self { schemas }
+    }
+
     /// Load all `.json` files from `dir` and index by content hash.
     ///
     /// Skips files that fail to parse as JSON. Logs a warning for hash

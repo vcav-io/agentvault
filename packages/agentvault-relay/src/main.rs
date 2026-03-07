@@ -60,11 +60,58 @@ async fn main() {
         std::env::var("AV_GEMINI_MODEL_ID").unwrap_or_else(|_| "gemini-2.5-flash".to_string());
     let gemini_base_url = std::env::var("GEMINI_BASE_URL").ok();
 
+    // ========================================================================
+    // Registry admission: if AV_REGISTRY_PATH is set, use the admission
+    // module to load artefacts from the local registry clone.
+    // ========================================================================
+    let registry_admission = match std::env::var("AV_REGISTRY_PATH") {
+        Ok(registry_path) => {
+            let config_path = std::env::var("AV_ADMISSION_CONFIG")
+                .unwrap_or_else(|_| "relay-admission.toml".to_string());
+            let config_path = std::path::Path::new(&config_path);
+            // If config_path is relative, resolve against the registry path parent
+            let config_path = if config_path.is_relative() {
+                std::env::current_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    .join(config_path)
+            } else {
+                config_path.to_path_buf()
+            };
+            tracing::info!(
+                registry_path = %registry_path,
+                config = %config_path.display(),
+                "Loading artefacts via registry admission"
+            );
+            match agentvault_relay::admission::load_admission(&config_path) {
+                Ok(artefacts) => {
+                    tracing::info!(
+                        schemas = artefacts.schemas.len(),
+                        policies = artefacts.policies.len(),
+                        profiles = artefacts.profiles.len(),
+                        programs = artefacts.programs.len(),
+                        "Registry admission: all artefacts loaded and verified"
+                    );
+                    Some(artefacts)
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "registry admission failed — refusing to start");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Err(_) => None,
+    };
+
     // Validate model profile lockfile before binding to port.
     // Exits with a non-zero code on hash mismatch.
-    if let Err(e) = agentvault_relay::prompt_program::validate_model_profile_lockfile(&prompt_dir) {
-        tracing::error!(error = %e, "model profile lockfile validation failed — refusing to start");
-        std::process::exit(1);
+    // Skip when registry admission is active (profiles already verified).
+    if registry_admission.is_none() {
+        if let Err(e) =
+            agentvault_relay::prompt_program::validate_model_profile_lockfile(&prompt_dir)
+        {
+            tracing::error!(error = %e, "model profile lockfile validation failed — refusing to start");
+            std::process::exit(1);
+        }
     }
 
     // Load and validate enforcement policy. Fail-closed: missing lockfile = startup failure.
@@ -81,7 +128,48 @@ async fn main() {
     let is_dev_for_lockfile = std::env::var("AV_ENV").map(|v| v == "dev").unwrap_or(false);
     let skip_enforcement = lockfile_skip && is_dev_for_lockfile;
 
-    let policy_registry = if skip_enforcement {
+    let policy_registry = if let Some(ref admitted) = registry_admission {
+        // Build policy registry from admitted artefacts
+        if admitted.policies.is_empty() && !skip_enforcement {
+            tracing::error!(
+                "registry admission loaded zero policies and enforcement is not skipped — refusing to start"
+            );
+            std::process::exit(1);
+        }
+        if admitted.policies.is_empty() && skip_enforcement {
+            tracing::warn!("registry admission loaded zero policies — using dev skip");
+            enforcement_policy::PolicyRegistry::dev_skip()
+        } else {
+            let default_hash = match &admitted.default_policy_hash {
+                Some(h) => h.clone(),
+                None if admitted.policies.len() == 1 => {
+                    admitted.policies.keys().next().unwrap().clone()
+                }
+                None => {
+                    tracing::error!(
+                        count = admitted.policies.len(),
+                        "policies.default is required in admission config when multiple policies are admitted"
+                    );
+                    std::process::exit(1);
+                }
+            };
+            match enforcement_policy::PolicyRegistry::new(admitted.policies.clone(), default_hash) {
+                Ok(registry) => {
+                    tracing::info!(
+                        count = registry.len(),
+                        default = %registry.default_policy().hash,
+                        hashes = ?registry.hashes(),
+                        "Enforcement policy registry loaded (from registry admission)"
+                    );
+                    registry
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "failed to construct policy registry from admission — refusing to start");
+                    std::process::exit(1);
+                }
+            }
+        }
+    } else if skip_enforcement {
         tracing::warn!(
             "AV_ENFORCEMENT_LOCKFILE_SKIP=1 + AV_ENV=dev — skipping enforcement policy (dev mode only)"
         );
@@ -254,17 +342,25 @@ async fn main() {
         Err(_) => 4096,
     };
 
-    // Load schema registry (optional — empty registry if dir not found)
-    let schema_registry_dir = std::env::var("AV_SCHEMA_DIR").unwrap_or_else(|_| {
-        std::path::Path::new(&prompt_dir)
-            .parent()
-            .unwrap_or(std::path::Path::new("."))
-            .join("schemas")
-            .join("output")
-            .to_string_lossy()
-            .into_owned()
-    });
-    let schema_registry = {
+    // Load schema registry — from admission if available, otherwise from directory
+    let schema_registry = if let Some(ref admitted) = registry_admission {
+        let reg =
+            agentvault_relay::schema_registry::SchemaRegistry::from_map(admitted.schemas.clone());
+        tracing::info!(
+            schema_count = reg.len(),
+            "Schema registry loaded (from registry admission)"
+        );
+        reg
+    } else {
+        let schema_registry_dir = std::env::var("AV_SCHEMA_DIR").unwrap_or_else(|_| {
+            std::path::Path::new(&prompt_dir)
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join("schemas")
+                .join("output")
+                .to_string_lossy()
+                .into_owned()
+        });
         let path = std::path::Path::new(&schema_registry_dir);
         if path.is_dir() {
             match agentvault_relay::schema_registry::SchemaRegistry::load_from_dir(path) {
