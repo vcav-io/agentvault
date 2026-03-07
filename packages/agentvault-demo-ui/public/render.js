@@ -837,7 +837,7 @@ var VaultCardManager = (function () {
     header.appendChild(step);
     header.appendChild(titleEl);
     card.appendChild(header);
-    addLine(card, 'detail', detail);
+    addStatus(card, false, detail);
     container.appendChild(card);
     card.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }

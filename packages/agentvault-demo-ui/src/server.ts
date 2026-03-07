@@ -435,29 +435,7 @@ app.post('/api/start', async (req, res) => {
   }
 
   try {
-    // Per-run provider override: if agentProvider is specified, switch the
-    // module-level provider for this run (persists until next /api/start or reset).
-    // Note: heartbeat loops keep their startup provider — they're lightweight polling
-    // loops and restarting them mid-session would risk losing in-flight state.
-    const agentProvider = req.body?.agentProvider as string | undefined;
-    const agentModel = req.body?.agentModel as string | undefined;
-    if (agentProvider) {
-      provider = createProviderFromSpec(agentProvider, agentModel);
-      events.emitSystem(`Agent provider overridden: ${agentProvider}/${agentModel ?? 'default'}`);
-
-      // Restart heartbeat loops with the new provider
-      abortController.abort();
-      const hbModel = HEARTBEAT_DEFAULTS[agentProvider];
-      const hbProvider = createProviderFromSpec(agentProvider, hbModel);
-      startHeartbeatLoops(provider, hbProvider);
-      events.emitSystem(`Heartbeat loops restarted for provider: ${agentProvider}`);
-    }
-
-    // Start JSONL recording
-    const runFile = events.startRecording(RUNS_DIR);
-    events.emitSystem(`Recording to ${runFile}`);
-
-    // Check relay is reachable before starting — fail fast with a clear error
+    // Check relay is reachable before doing anything else — fail fast with a clear error
     let relayHealth: Record<string, unknown> | null = null;
     try {
       const healthRes = await fetch(`${RELAY_URL}/health`, { signal: AbortSignal.timeout(3000) });
@@ -492,6 +470,25 @@ app.post('/api/start', async (req, res) => {
         },
       });
     }
+
+    // Relay is reachable — safe to proceed with provider override and recording
+    const agentProvider = req.body?.agentProvider as string | undefined;
+    const agentModel = req.body?.agentModel as string | undefined;
+    if (agentProvider) {
+      provider = createProviderFromSpec(agentProvider, agentModel);
+      events.emitSystem(`Agent provider overridden: ${agentProvider}/${agentModel ?? 'default'}`);
+
+      // Restart heartbeat loops with the new provider
+      abortController.abort();
+      const hbModel = HEARTBEAT_DEFAULTS[agentProvider];
+      const hbProvider = createProviderFromSpec(agentProvider, hbModel);
+      startHeartbeatLoops(provider, hbProvider);
+      events.emitSystem(`Heartbeat loops restarted for provider: ${agentProvider}`);
+    }
+
+    // Start JSONL recording
+    const runFile = events.startRecording(RUNS_DIR);
+    events.emitSystem(`Recording to ${runFile}`);
 
     // Emit contract enforcement parameters for the default MEDIATION contract
     try {
