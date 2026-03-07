@@ -283,7 +283,7 @@ describe('handleVerifyReceipt — TEE attestation introspection', () => {
     expect(result.data?.tee_info).toBeDefined();
     expect(result.data?.tee_info?.tee_type).toBe('Simulated');
     expect(result.data?.tee_info?.measurement).toBe('a'.repeat(64));
-    expect(result.data?.tee_info?.note).toContain('tee-verifier');
+    expect(result.data?.tee_info?.note).toContain('TEE fields present');
   });
 
   it('does not include tee_info when tee_attestation is absent', async () => {

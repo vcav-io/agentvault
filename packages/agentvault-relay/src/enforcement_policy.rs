@@ -1420,7 +1420,9 @@ mod tests {
         let registry = PolicyRegistry::dev_skip();
         // In dev-skip mode, an unknown hash should fall back to the default
         // policy instead of returning PolicyNotAvailable (issue #234).
-        let resolved = registry.resolve(Some("nonexistent_hash_from_demo_ui")).unwrap();
+        let resolved = registry
+            .resolve(Some("nonexistent_hash_from_demo_ui"))
+            .unwrap();
         assert_eq!(resolved.policy.policy_id, "dev-skip");
     }
 
