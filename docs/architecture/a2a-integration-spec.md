@@ -63,6 +63,7 @@ an A2A `AgentExtension`:
     "relay_url": "https://relay.example.com",
     "public_key_hex": "a1b2c3d4...64hex",
     "supported_purposes": ["COMPATIBILITY", "MEDIATION"],
+    "a2a_send_message_url": "https://agent.example.com/a2a/send-message",
     "afal_endpoint": "https://agent.example.com/afal"
   }
 }
@@ -72,6 +73,7 @@ Fields in `params`:
 - `relay_url` — preferred relay for sessions initiated with this agent
 - `public_key_hex` — Ed25519 public key for proposal signature verification
 - `supported_purposes` — purpose codes this agent accepts
+- `a2a_send_message_url` — explicit A2A-native bootstrap endpoint
 - `afal_endpoint` (optional) — AFAL HTTP endpoint for agents that support
   both transports. Omit if A2A-only.
 
@@ -98,6 +100,11 @@ Each supported purpose maps to an A2A `AgentSkill`:
 3. If present, client reads `params` to learn relay URL, public key, and
    supported purposes
 4. Client proceeds to Phase 2 (proposal) or Phase 3 (A2A-native transport)
+
+Current implementation note:
+- clients prefer the explicit `a2a_send_message_url` when present
+- clients still fall back to deriving the A2A message endpoint from `card.url`
+  for backward compatibility with earlier Agent Cards
 
 This replaces `GET /afal/descriptor` from the current AFAL flow.
 
@@ -178,12 +185,18 @@ AgentVault-specific message parts.
 
 ### Admit/Deny Response
 
-The responder returns a Task with the admission decision as a message part.
+The responder returns a minimal completed Task with the admission decision as a
+message part.
 
 ### Session Token Delivery
 
 After creating the relay session, the initiator sends a follow-up
 `SendMessage` with the session tokens.
+
+Current implementation note:
+- AgentVault currently uses a narrow `SendMessage`/completed-Task wrapper for
+  bootstrap only
+- it does not yet implement a broader A2A task lifecycle beyond that exchange
 
 ### Bilateral Consent in A2A's Asymmetric Model
 

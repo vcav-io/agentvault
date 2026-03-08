@@ -16,6 +16,7 @@
  *   AV_AFAL_TRUSTED_AGENTS     — JSON: [{"agentId":"...","publicKeyHex":"..."}]
  *   AV_AFAL_ALLOWED_PURPOSES   — comma-separated: "MEDIATION,COMPATIBILITY"
  *   AV_AFAL_PEER_DESCRIPTOR_URL — peer descriptor URL (INITIATE mode)
+ *   AV_AFAL_ADVERTISE_AFAL_ENDPOINT — set to "false" to publish an A2A-only Agent Card
  *
  * Transport injection:
  *   INITIATE and RESPOND modes require an InviteTransport implementation.
@@ -129,6 +130,7 @@ function buildDirectTransportFromEnv(): DirectAfalTransport | null {
   const httpPort = process.env['AV_AFAL_HTTP_PORT'];
   const bindAddress = process.env['AV_AFAL_BIND_ADDRESS'] ?? '127.0.0.1';
   const peerDescriptorUrl = process.env['AV_AFAL_PEER_DESCRIPTOR_URL'];
+  const advertiseAfalEndpoint = process.env['AV_AFAL_ADVERTISE_AFAL_ENDPOINT'] !== 'false';
 
   let pubKeyHex: string;
   try {
@@ -221,7 +223,7 @@ function buildDirectTransportFromEnv(): DirectAfalTransport | null {
       defaultTier: 'DENY',
     };
 
-    config.respondMode = { httpPort: port, bindAddress, policy };
+    config.respondMode = { httpPort: port, bindAddress, policy, advertiseAfalEndpoint };
   }
 
   return new DirectAfalTransport(config);
