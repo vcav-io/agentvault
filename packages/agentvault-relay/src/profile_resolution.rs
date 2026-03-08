@@ -96,8 +96,7 @@ pub fn resolve_runtime_profile(
 
     if profile_hash != expected_hash {
         return Err(RelayError::ContractValidation(format!(
-            "model_profile_hash '{}' does not match resolved profile '{}'",
-            expected_hash, profile_hash
+            "model_profile_hash '{expected_hash}' does not match resolved profile '{profile_hash}'"
         )));
     }
 
