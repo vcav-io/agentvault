@@ -461,7 +461,23 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
         use sha2::{Digest as _, Sha256};
 
         let contract_hash = compute_contract_hash(&contract).ok()?;
-        let output_schema_hash = compute_output_schema_hash(&contract.output_schema).ok()?;
+
+        // Resolve effective schema — same logic as relay_core (relay.rs ~line 387)
+        let is_stub_schema = contract
+            .output_schema
+            .as_object()
+            .map(|obj| !obj.contains_key("properties"))
+            .unwrap_or(true);
+        let effective_schema = if let Some(ref requested_hash) = contract.output_schema_hash {
+            if is_stub_schema {
+                state.schema_registry.get(requested_hash).cloned()?
+            } else {
+                contract.output_schema.clone()
+            }
+        } else {
+            contract.output_schema.clone()
+        };
+        let output_schema_hash = compute_output_schema_hash(&effective_schema).ok()?;
 
         // Input commitments — same logic as relay_core
         let input_commitments: Vec<receipt_core::InputCommitment> = [
@@ -518,9 +534,9 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
         let git_sha = env!("AV_GIT_SHA");
         let runtime_hash = hex::encode(Sha256::digest(git_sha.as_bytes()));
 
-        // Entropy bits
+        // Entropy bits — must use the resolved effective schema, not the raw stub
         let entropy_bits =
-            entropy_core::calculate_schema_entropy_upper_bound(&contract.output_schema)
+            entropy_core::calculate_schema_entropy_upper_bound(&effective_schema)
                 .unwrap_or(0);
 
         // Effective model ID and max tokens
