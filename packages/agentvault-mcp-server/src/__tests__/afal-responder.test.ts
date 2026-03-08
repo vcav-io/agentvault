@@ -259,6 +259,15 @@ describe('AfalResponder', () => {
       expect(result.outcome).toBe('DENY');
     });
 
+    it('DENYs malformed acceptable_model_profiles arrays (UNSUPPORTED)', () => {
+      const body = makeWrappedBody();
+      (body.propose as Record<string, unknown>)['acceptable_model_profiles'] = [{ id: 'bad' }];
+      body.propose = signMessage(DOMAIN_PREFIXES.PROPOSE, body.propose, PROPOSER_SEED);
+      const result = responder.handlePropose(body);
+      expect(result.outcome).toBe('DENY');
+      expect(result.response['deny_code']).toBe('UNSUPPORTED');
+    });
+
     it('DENYs tampered proposal_id (INTEGRITY)', () => {
       const body = makeWrappedBody();
       (body.propose as Record<string, unknown>)['proposal_id'] = 'f'.repeat(64);

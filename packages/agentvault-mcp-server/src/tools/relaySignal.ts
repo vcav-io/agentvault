@@ -119,6 +119,26 @@ const ABORT_DESCRIPTIONS: Record<string, string> = {
 
 export type ResumeStrategy = 'IMMEDIATE' | 'DEFERRED';
 
+interface LegacyProposeRetryState {
+  retryKind: 'legacy';
+  propose: AfalPropose;
+  relay: RelayInvitePayload;
+  templateId: string;
+  budgetTier: string;
+}
+
+interface DirectProposeRetryState {
+  retryKind: 'direct';
+  proposeParams: {
+    propose: AfalPropose;
+    templateId: string;
+    budgetTier: string;
+  };
+  contract: object;
+  relayUrl: string;
+  purposeHint?: string | null;
+}
+
 // ── Types ───────────────────────────────────────────────────────────────
 
 export interface RelaySignalArgs {
@@ -954,6 +974,9 @@ function failedResponse(
 
 function preferredModelProfileRef(contract: RelayContract | undefined): ModelProfileRef | undefined {
   if (!contract?.model_profile_id || !contract.model_profile_hash) return undefined;
+  // Relay contracts currently bind profile id/hash but not version. Until the
+  // contract schema grows a version field, direct AFAL negotiations must treat
+  // the bundled templates as v1 profiles.
   return {
     id: contract.model_profile_id,
     version: '1',
@@ -1148,7 +1171,10 @@ async function phaseInvite(
       await transport.sendPropose(proposeParams);
     } catch (err) {
       if (isRetryableTransportError(err)) {
-        handle.retryState = proposeParams;
+        handle.retryState = {
+          retryKind: 'legacy',
+          ...proposeParams,
+        } satisfies LegacyProposeRetryState;
         handle.phase = 'PROPOSE_RETRY';
         return awaitingResponse(
           handle,
@@ -1184,7 +1210,13 @@ async function phaseInvite(
     });
   } catch (err) {
     if (isRetryableTransportError(err)) {
-      handle.retryState = { proposeParams, contract, relayUrl, purposeHint };
+      handle.retryState = {
+        retryKind: 'direct',
+        proposeParams,
+        contract,
+        relayUrl,
+        purposeHint,
+      } satisfies DirectProposeRetryState;
       handle.phase = 'PROPOSE_RETRY';
       return awaitingResponse(
         handle,
@@ -1444,26 +1476,10 @@ async function phaseRetryPropose(
     );
   }
 
-  const params = handle.retryState as
-    | {
-        propose: AfalPropose;
-        relay: RelayInvitePayload;
-        templateId: string;
-        budgetTier: string;
-      }
-    | {
-        proposeParams: {
-          propose: AfalPropose;
-          templateId: string;
-          budgetTier: string;
-        };
-        contract: object;
-        relayUrl: string;
-        purposeHint?: string | null;
-      };
+  const params = handle.retryState as LegacyProposeRetryState | DirectProposeRetryState;
 
   try {
-    if ('propose' in params) {
+    if (params.retryKind === 'legacy') {
       await transport.sendPropose(params);
       handle.phase = 'POLL_RELAY';
       handle.retryState = undefined;

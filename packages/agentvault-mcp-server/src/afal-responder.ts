@@ -433,6 +433,8 @@ function parsePropose(raw: Record<string, unknown>): AfalPropose | null {
     if (typeof raw[field] !== 'string' || !raw[field]) return null;
   }
   if (typeof raw['requested_entropy_bits'] !== 'number') return null;
+  const acceptableModelProfiles = parseModelProfileRefs(raw['acceptable_model_profiles']);
+  if (raw['acceptable_model_profiles'] !== undefined && acceptableModelProfiles === null) return null;
 
   return {
     proposal_version: raw['proposal_version'] as string,
@@ -454,8 +456,8 @@ function parsePropose(raw: Record<string, unknown>): AfalPropose | null {
     ...(typeof raw['model_profile_hash'] === 'string' && {
       model_profile_hash: raw['model_profile_hash'],
     }),
-    ...(Array.isArray(raw['acceptable_model_profiles']) && {
-      acceptable_model_profiles: raw['acceptable_model_profiles'] as ModelProfileRef[],
+    ...(acceptableModelProfiles !== null && {
+      acceptable_model_profiles: acceptableModelProfiles,
     }),
     ...(typeof raw['prev_receipt_hash'] === 'string' && {
       prev_receipt_hash: raw['prev_receipt_hash'],
@@ -465,6 +467,29 @@ function parsePropose(raw: Record<string, unknown>): AfalPropose | null {
     }),
     ...(typeof raw['signature'] === 'string' && { signature: raw['signature'] }),
   };
+}
+
+function parseModelProfileRefs(raw: unknown): ModelProfileRef[] | null {
+  if (raw === undefined) return null;
+  if (!Array.isArray(raw)) return null;
+  const parsed: ModelProfileRef[] = [];
+  for (const item of raw) {
+    if (
+      !item ||
+      typeof item !== 'object' ||
+      typeof (item as Record<string, unknown>)['id'] !== 'string' ||
+      typeof (item as Record<string, unknown>)['version'] !== 'string' ||
+      typeof (item as Record<string, unknown>)['hash'] !== 'string'
+    ) {
+      return null;
+    }
+    parsed.push({
+      id: (item as Record<string, unknown>)['id'] as string,
+      version: (item as Record<string, unknown>)['version'] as string,
+      hash: (item as Record<string, unknown>)['hash'] as string,
+    });
+  }
+  return parsed;
 }
 
 function selectModelProfile(
