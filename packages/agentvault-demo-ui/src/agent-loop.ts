@@ -306,7 +306,7 @@ export async function runHeartbeatLoop(
     }
 
     if (state.started) {
-      if (!queue.isIdle() || state.status === 'running') {
+      if (!queue.isIdle()) {
         await delay(HEARTBEAT_INTERVAL_MS, signal);
         continue;
       }
