@@ -3,6 +3,7 @@ import { ed25519 } from '@noble/curves/ed25519';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
 import { DirectAfalTransport } from '../direct-afal-transport.js';
 import type { AgentDescriptor } from '../direct-afal-transport.js';
+import { AGENTVAULT_A2A_EXTENSION_URI } from '../a2a-agent-card.js';
 import { signMessage, DOMAIN_PREFIXES, contentHash } from '../afal-signing.js';
 import type { AfalPropose, RelayInvitePayload } from '../afal-types.js';
 import { computeProposalId } from '../afal-types.js';
@@ -50,6 +51,32 @@ function makeLocalDescriptor(): AgentDescriptor {
 
 function makePeerDescriptor(overrides: Partial<AgentDescriptor> = {}): AgentDescriptor {
   return makeDescriptor('bob-test', PEER_PUBKEY, PEER_SEED, overrides);
+}
+
+function makeAgentCard(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    name: 'bob-test',
+    description: 'Supports AgentVault bounded-disclosure coordination sessions',
+    version: '1.0.0',
+    url: 'http://peer.example.com',
+    capabilities: {
+      extensions: [
+        {
+          uri: AGENTVAULT_A2A_EXTENSION_URI,
+          description: 'Supports AgentVault bounded-disclosure coordination sessions',
+          required: false,
+          params: {
+            public_key_hex: PEER_PUBKEY,
+            relay_url: 'http://relay.example.com',
+            supported_purposes: ['MEDIATION'],
+            afal_endpoint: 'http://peer.example.com/afal',
+          },
+        },
+      ],
+    },
+    skills: [],
+    ...overrides,
+  };
 }
 
 // ── AfalPropose helper ─────────────────────────────────────────────────────
@@ -362,6 +389,11 @@ describe('DirectAfalTransport', () => {
       });
 
       mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        json: () => Promise.resolve({}),
+      });
+      mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve(makePeerDescriptor({ agent_id: 'mallory-test' })),
       });
@@ -385,6 +417,12 @@ describe('DirectAfalTransport', () => {
       const propose = makePropose(); // has no descriptor_hash or model_profile_hash
       const admit = makeSignedAdmit(propose.proposal_id);
 
+      // Agent Card probe misses, then fall back to signed descriptor fetch
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        json: () => Promise.resolve({}),
+      });
       // descriptor fetch
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -404,7 +442,7 @@ describe('DirectAfalTransport', () => {
       });
 
       // Verify the wire message did NOT include descriptor_hash or model_profile_hash
-      const sentBody = JSON.parse(mockFetch.mock.calls[1][1].body as string);
+      const sentBody = JSON.parse(mockFetch.mock.calls[2][1].body as string);
       expect(sentBody.propose['descriptor_hash']).toBeUndefined();
       expect(sentBody.propose['model_profile_hash']).toBeUndefined();
 
@@ -652,24 +690,21 @@ describe('DirectAfalTransport', () => {
   // ── resolvePeerDescriptor — caching ───────────────────────────────────────
 
   describe('resolvePeerDescriptor', () => {
-    it('fetches descriptor on first sendPropose when not pre-injected', async () => {
-      // Create fresh transport without pre-injected descriptor
+    it('prefers Agent Card discovery before AFAL descriptor fetch', async () => {
       const fresh = new DirectAfalTransport({
         agentId: 'alice-test',
         seedHex: TEST_SEED,
         localDescriptor,
-        peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-descriptor.json',
+        peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
       });
 
       const propose = makePropose();
       const admit = makeSignedAdmit(propose.proposal_id);
 
-      // First call: descriptor fetch
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve(peerDescriptor),
+        json: () => Promise.resolve(makeAgentCard()),
       });
-      // Second call: propose POST
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve(admit),
@@ -683,7 +718,103 @@ describe('DirectAfalTransport', () => {
       });
 
       expect(mockFetch).toHaveBeenCalledTimes(2);
-      const [descriptorUrl] = mockFetch.mock.calls[0] as [string];
+      expect(mockFetch.mock.calls[0]?.[0]).toBe('http://peer.example.com/.well-known/agent-card.json');
+      expect(mockFetch.mock.calls[1]?.[0]).toBe('http://peer.example.com/afal/propose');
+    });
+
+    it('falls back to signed AFAL descriptor when no AgentVault A2A extension is present', async () => {
+      const fresh = new DirectAfalTransport({
+        agentId: 'alice-test',
+        seedHex: TEST_SEED,
+        localDescriptor,
+        peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
+      });
+
+      const propose = makePropose();
+      const admit = makeSignedAdmit(propose.proposal_id);
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ name: 'bob-test', capabilities: { extensions: [] } }),
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(peerDescriptor),
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(admit),
+      });
+
+      await fresh.sendPropose({
+        propose,
+        relay: makeRelay(),
+        templateId: 't',
+        budgetTier: 'SMALL',
+      });
+
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+      expect(mockFetch.mock.calls[0]?.[0]).toBe('http://peer.example.com/.well-known/agent-card.json');
+      expect(mockFetch.mock.calls[1]?.[0]).toBe('http://peer.example.com/afal/descriptor');
+      expect(mockFetch.mock.calls[2]?.[0]).toBe('http://peer.example.com/afal/propose');
+    });
+
+    it('rejects Agent Card discovery for the wrong peer agent_id', async () => {
+      const fresh = new DirectAfalTransport({
+        agentId: 'alice-test',
+        seedHex: TEST_SEED,
+        localDescriptor,
+        peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(makeAgentCard({ name: 'mallory-test' })),
+      });
+
+      const propose = makePropose({ to: 'bob-test' });
+      await expect(
+        fresh.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' }),
+      ).rejects.toThrow('Peer agent card identity mismatch');
+    });
+
+    it('fetches descriptor on first sendPropose when not pre-injected', async () => {
+      // Create fresh transport without pre-injected descriptor
+      const fresh = new DirectAfalTransport({
+        agentId: 'alice-test',
+        seedHex: TEST_SEED,
+        localDescriptor,
+        peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-descriptor.json',
+      });
+
+      const propose = makePropose();
+      const admit = makeSignedAdmit(propose.proposal_id);
+
+      // First call: agent card probe (falls back)
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+      });
+      // Second call: descriptor fetch
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(peerDescriptor),
+      });
+      // Third call: propose POST
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(admit),
+      });
+
+      await fresh.sendPropose({
+        propose,
+        relay: makeRelay(),
+        templateId: 't',
+        budgetTier: 'SMALL',
+      });
+
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+      const [descriptorUrl] = mockFetch.mock.calls[1] as [string];
       expect(descriptorUrl).toBe('http://peer.example.com/.well-known/agent-descriptor.json');
     });
 
@@ -695,7 +826,11 @@ describe('DirectAfalTransport', () => {
         peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-descriptor.json',
       });
 
-      // First resolution: descriptor + propose
+      // First resolution: agent card probe + descriptor + propose
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+      });
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve(peerDescriptor),
@@ -727,8 +862,8 @@ describe('DirectAfalTransport', () => {
         budgetTier: 'SMALL',
       });
 
-      // 3 calls total: 1 descriptor + 2 propose POSTs
-      expect(mockFetch).toHaveBeenCalledTimes(3);
+      // 4 calls total: 1 agent card probe + 1 descriptor + 2 propose POSTs
+      expect(mockFetch).toHaveBeenCalledTimes(4);
     });
 
     it('re-fetches descriptor when cached one has expired', async () => {
@@ -738,12 +873,17 @@ describe('DirectAfalTransport', () => {
       const propose = makePropose();
       const admit = makeSignedAdmit(propose.proposal_id);
 
-      // First call: re-fetch expired descriptor
+      // First call: agent card probe (falls back)
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+      });
+      // Second call: re-fetch expired descriptor
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve(peerDescriptor),
       });
-      // Second call: propose POST
+      // Third call: propose POST
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve(admit),
@@ -756,7 +896,7 @@ describe('DirectAfalTransport', () => {
         budgetTier: 'SMALL',
       });
 
-      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(mockFetch).toHaveBeenCalledTimes(3);
     });
 
     it('rejects descriptor with invalid signature', async () => {
@@ -770,6 +910,10 @@ describe('DirectAfalTransport', () => {
       // Return a descriptor with a tampered signature
       const badDescriptor = { ...peerDescriptor, agent_id: 'evil-agent' };
 
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+      });
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve(badDescriptor),
@@ -789,6 +933,10 @@ describe('DirectAfalTransport', () => {
         peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-descriptor.json',
       });
 
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+      });
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve(makePeerDescriptor({ agent_id: 'mallory-test' })),
@@ -825,6 +973,10 @@ describe('DirectAfalTransport', () => {
       const expiredPeer = makePeerDescriptor({ expires_at: '2000-01-01T00:00:00Z' });
 
       mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+      });
+      mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve(expiredPeer),
       });
@@ -843,6 +995,10 @@ describe('DirectAfalTransport', () => {
         peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-descriptor.json',
       });
 
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+      });
       mockFetch.mockResolvedValueOnce({
         ok: false,
         status: 404,
