@@ -7,8 +7,8 @@ license.workspace = true
 
 [dependencies]
 # TODO: replace git rev pins with tagged releases once vault-family-core stabilises
-afal-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "83c732e", package = "afal-core" }
-entropy-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "83c732e", package = "entropy-core" }
+afal-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "e1dcee4", package = "afal-core" }
+entropy-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "e1dcee4", package = "entropy-core" }
 receipt-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "e1dcee4", package = "receipt-core" }
 vault-family-types = { git = "https://github.com/vcav-io/vault-family-core", rev = "e1dcee4", package = "vault-family-types" }
 

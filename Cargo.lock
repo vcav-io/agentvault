@@ -5,17 +5,17 @@ version = 4
 [[package]]
 name = "afal-core"
 version = "0.1.0"
-source = "git+https://github.com/vcav-io/vault-family-core?rev=83c732e#83c732e5bc06d20f26fab17f862a37f6d6b649eb"
+source = "git+https://github.com/vcav-io/vault-family-core?rev=e1dcee4#e1dcee47c774d24d21fecd43f9e457956bf4a845"
 dependencies = [
  "chrono",
  "ed25519-dalek",
  "hex",
- "receipt-core 0.1.0 (git+https://github.com/vcav-io/vault-family-core?rev=83c732e)",
+ "receipt-core",
  "serde",
  "serde_json",
  "sha2",
  "thiserror",
- "vault-family-types 0.1.0 (git+https://github.com/vcav-io/vault-family-core?rev=83c732e)",
+ "vault-family-types",
 ]
 
 [[package]]
@@ -31,7 +31,7 @@ dependencies = [
  "hex",
  "jsonschema",
  "rand",
- "receipt-core 0.1.0 (git+https://github.com/vcav-io/vault-family-core?rev=e1dcee4)",
+ "receipt-core",
  "reqwest",
  "rusqlite",
  "serde",
@@ -46,7 +46,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
- "vault-family-types 0.1.0 (git+https://github.com/vcav-io/vault-family-core?rev=e1dcee4)",
+ "vault-family-types",
  "verifier-core",
 ]
 
@@ -423,10 +423,10 @@ dependencies = [
 [[package]]
 name = "entropy-core"
 version = "0.1.0"
-source = "git+https://github.com/vcav-io/vault-family-core?rev=83c732e#83c732e5bc06d20f26fab17f862a37f6d6b649eb"
+source = "git+https://github.com/vcav-io/vault-family-core?rev=e1dcee4#e1dcee47c774d24d21fecd43f9e457956bf4a845"
 dependencies = [
  "chrono",
- "receipt-core 0.1.0 (git+https://github.com/vcav-io/vault-family-core?rev=83c732e)",
+ "receipt-core",
  "serde",
  "serde_json",
  "sha2",
@@ -1455,24 +1455,6 @@ dependencies = [
 [[package]]
 name = "receipt-core"
 version = "0.1.0"
-source = "git+https://github.com/vcav-io/vault-family-core?rev=83c732e#83c732e5bc06d20f26fab17f862a37f6d6b649eb"
-dependencies = [
- "base64",
- "chrono",
- "ed25519-dalek",
- "hex",
- "rand",
- "serde",
- "serde_json",
- "sha2",
- "thiserror",
- "unicode-normalization",
- "vault-family-types 0.1.0 (git+https://github.com/vcav-io/vault-family-core?rev=83c732e)",
-]
-
-[[package]]
-name = "receipt-core"
-version = "0.1.0"
 source = "git+https://github.com/vcav-io/vault-family-core?rev=e1dcee4#e1dcee47c774d24d21fecd43f9e457956bf4a845"
 dependencies = [
  "base64",
@@ -1485,7 +1467,7 @@ dependencies = [
  "sha2",
  "thiserror",
  "unicode-normalization",
- "vault-family-types 0.1.0 (git+https://github.com/vcav-io/vault-family-core?rev=e1dcee4)",
+ "vault-family-types",
 ]
 
 [[package]]
@@ -2318,18 +2300,6 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 [[package]]
 name = "vault-family-types"
 version = "0.1.0"
-source = "git+https://github.com/vcav-io/vault-family-core?rev=83c732e#83c732e5bc06d20f26fab17f862a37f6d6b649eb"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "sha2",
- "unicode-normalization",
-]
-
-[[package]]
-name = "vault-family-types"
-version = "0.1.0"
 source = "git+https://github.com/vcav-io/vault-family-core?rev=e1dcee4#e1dcee47c774d24d21fecd43f9e457956bf4a845"
 dependencies = [
  "chrono",
@@ -2353,7 +2323,7 @@ dependencies = [
  "base64",
  "ed25519-dalek",
  "hex",
- "receipt-core 0.1.0 (git+https://github.com/vcav-io/vault-family-core?rev=e1dcee4)",
+ "receipt-core",
  "serde",
  "serde_json",
  "sha2",
