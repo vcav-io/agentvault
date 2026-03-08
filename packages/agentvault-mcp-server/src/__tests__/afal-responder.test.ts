@@ -3,7 +3,7 @@ import { ed25519 } from '@noble/curves/ed25519';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
 import { AfalResponder, NonceCache } from '../afal-responder.js';
 import type { AdmissionPolicy } from '../afal-responder.js';
-import { signMessage, verifyMessage, DOMAIN_PREFIXES } from '../afal-signing.js';
+import { signMessage, verifyMessage, DOMAIN_PREFIXES, contentHash } from '../afal-signing.js';
 import { computeProposalId } from '../afal-types.js';
 import type { AfalPropose, RelayInvitePayload } from '../afal-types.js';
 
@@ -62,13 +62,17 @@ function makeWrappedBody(
   proposeOverrides: Partial<Omit<AfalPropose, 'proposal_id'>> = {},
   relayOverrides: Partial<RelayInvitePayload> = {},
 ): { propose: Record<string, unknown>; relay: RelayInvitePayload } {
-  const propose = makePropose(proposeOverrides);
+  const relay = { ...makeRelay(), ...relayOverrides };
+  const propose = makePropose({
+    relay_binding_hash: contentHash(relay),
+    ...proposeOverrides,
+  });
   const signed = signMessage(
     DOMAIN_PREFIXES.PROPOSE,
     propose as unknown as Record<string, unknown>,
     PROPOSER_SEED,
   );
-  return { propose: signed, relay: { ...makeRelay(), ...relayOverrides } };
+  return { propose: signed, relay };
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -206,6 +210,25 @@ describe('AfalResponder', () => {
       // Re-sign with tampered id
       const resigned = signMessage(DOMAIN_PREFIXES.PROPOSE, body.propose, PROPOSER_SEED);
       body.propose = resigned;
+      const result = responder.handlePropose(body);
+      expect(result.outcome).toBe('DENY');
+      expect(result.response['deny_code']).toBe('INTEGRITY');
+    });
+
+    it('DENYs missing relay_binding_hash (INTEGRITY)', () => {
+      const body = makeWrappedBody();
+      delete (body.propose as Record<string, unknown>)['relay_binding_hash'];
+      body.propose = signMessage(DOMAIN_PREFIXES.PROPOSE, body.propose, PROPOSER_SEED);
+
+      const result = responder.handlePropose(body);
+      expect(result.outcome).toBe('DENY');
+      expect(result.response['deny_code']).toBe('INTEGRITY');
+    });
+
+    it('DENYs tampered relay payload with stale binding hash (INTEGRITY)', () => {
+      const body = makeWrappedBody();
+      body.relay.session_id = 'sess-attacker';
+
       const result = responder.handlePropose(body);
       expect(result.outcome).toBe('DENY');
       expect(result.response['deny_code']).toBe('INTEGRITY');

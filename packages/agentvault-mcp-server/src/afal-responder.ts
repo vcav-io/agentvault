@@ -150,12 +150,16 @@ export class AfalResponder {
       return this.deny(proposalId, 'UNTRUSTED', now);
     }
 
-    // 6b. Verify relay_binding_hash if present in the propose
-    if (typeof wrapped.propose['relay_binding_hash'] === 'string') {
-      const expectedRelayHash = contentHash(relay);
-      if (wrapped.propose['relay_binding_hash'] !== expectedRelayHash) {
-        return this.deny(proposalId, 'INTEGRITY', now);
-      }
+    // 6b. Wrapped direct AFAL proposals must bind the attached relay payload.
+    // Without this, a responder can verify the PROPOSE signature yet still
+    // accept attacker-modified session tokens or relay URL.
+    const relayBindingHash = wrapped.propose['relay_binding_hash'];
+    if (typeof relayBindingHash !== 'string' || !relayBindingHash) {
+      return this.deny(proposalId, 'INTEGRITY', now);
+    }
+    const expectedRelayHash = contentHash(relay);
+    if (relayBindingHash !== expectedRelayHash) {
+      return this.deny(proposalId, 'INTEGRITY', now);
     }
 
     // 7. Check timestamp staleness (> 10 min)
