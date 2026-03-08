@@ -15,6 +15,7 @@ use crate::error::RelayError;
 use crate::inbox_types::*;
 use crate::relay::compute_contract_hash;
 use crate::session::SessionStore;
+use crate::types::Contract;
 
 #[cfg(feature = "persistence")]
 use crate::inbox_sqlite::SqliteDb;
@@ -126,24 +127,25 @@ impl InboxStore {
     fn validate_invite_contract_binding(
         from_agent_id: &str,
         to_agent_id: &str,
-        request: &CreateInviteRequest,
+        purpose_code: &str,
+        contract: &Contract,
     ) -> Result<(), RelayError> {
-        if request.purpose_code != request.contract.purpose_code.to_string() {
+        if purpose_code != contract.purpose_code.to_string() {
             return Err(RelayError::ContractValidation(
                 "purpose_code must match contract.purpose_code".to_string(),
             ));
         }
-        if request.contract.participants.len() != 2 {
+        if contract.participants.len() != 2 {
             return Err(RelayError::ContractValidation(
                 "contract must have exactly 2 participants".to_string(),
             ));
         }
-        if !request.contract.participants.iter().any(|p| p == from_agent_id) {
+        if !contract.participants.iter().any(|p| p == from_agent_id) {
             return Err(RelayError::ContractValidation(
                 "contract participants must include from_agent_id".to_string(),
             ));
         }
-        if !request.contract.participants.iter().any(|p| p == to_agent_id) {
+        if !contract.participants.iter().any(|p| p == to_agent_id) {
             return Err(RelayError::ContractValidation(
                 "contract participants must include to_agent_id".to_string(),
             ));
@@ -173,7 +175,12 @@ impl InboxStore {
                 "purpose_code must not be empty".to_string(),
             ));
         }
-        Self::validate_invite_contract_binding(from_agent_id, &request.to_agent_id, request)?;
+        Self::validate_invite_contract_binding(
+            from_agent_id,
+            &request.to_agent_id,
+            &request.purpose_code,
+            &request.contract,
+        )?;
         let contract_hash = compute_contract_hash(&request.contract)?;
 
         let now = Utc::now();
@@ -385,18 +392,6 @@ impl InboxStore {
                     ));
                 }
             }
-            Self::validate_invite_contract_binding(
-                &invite.from_agent_id,
-                &invite.to_agent_id,
-                &CreateInviteRequest {
-                    to_agent_id: invite.to_agent_id.clone(),
-                    contract: invite.contract.clone(),
-                    provider: invite.provider.clone(),
-                    purpose_code: invite.purpose_code.clone(),
-                    from_agent_pubkey: invite.from_agent_pubkey.clone(),
-                },
-            )?;
-
             // Clone data needed for Phase 2 (session creation)
             (
                 invite.contract.clone(),

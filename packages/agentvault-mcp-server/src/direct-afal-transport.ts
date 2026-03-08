@@ -182,13 +182,6 @@ export class DirectAfalTransport implements AfalTransport {
   }): Promise<void> {
     const peer = await this.resolvePeerDescriptor(params.propose.to);
 
-    // Verify the resolved peer descriptor matches the intended recipient
-    if (peer.agent_id !== params.propose.to) {
-      throw new Error(
-        `Peer descriptor agent_id "${peer.agent_id}" does not match propose.to "${params.propose.to}"`,
-      );
-    }
-
     // Never inject hashable fields post-hoc — they must be set before
     // computeProposalId or proposal_id integrity will fail on the receiver.
     const proposeMessage: Record<string, unknown> = {

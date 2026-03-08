@@ -145,7 +145,7 @@ describe('av-contract CLI', () => {
     ]);
 
     expect(result.code).not.toBe(0);
-    expect(result.stderr).toContain('exactly two participants');
+    expect(result.stderr).toContain('exactly 2 participants (bilateral only)');
   });
 
   it('exits with error for unknown subcommand', async () => {

@@ -96,7 +96,7 @@ export class AfalResponder {
   private readonly config: AfalResponderConfig;
   private readonly nonceCache: NonceCache;
   private readonly admitStore = new Map<string, AdmittedProposal>();
-  private readonly queue: AdmittedProposal[] = [];
+  private queue: AdmittedProposal[] = [];
 
   constructor(config: AfalResponderConfig) {
     this.config = config;

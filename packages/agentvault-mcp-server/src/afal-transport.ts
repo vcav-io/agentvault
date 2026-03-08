@@ -243,6 +243,9 @@ export class OrchestratorInboxAdapter implements AfalTransport {
     inviteId: string,
     _expectedContractHash?: string,
   ): Promise<AcceptResult | undefined> {
+    // Host-provided orchestrator transports authenticate and validate the
+    // invite outside this adapter, so there is no separate contract-hash
+    // assertion to forward here.
     await this.transport.acceptInvite(inviteId);
     return undefined;
   }
