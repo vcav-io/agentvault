@@ -34,6 +34,7 @@ export interface RelayContract {
   timing_class: string | null;
   metadata: Record<string, string> | null;
   model_profile_id: string | null;
+  model_profile_hash?: string;
 
   // v2 contract fields (optional — Rust uses skip_serializing_if = "Option::is_none")
   /** Content hash of the enforcement policy governing this session. */
@@ -113,6 +114,7 @@ const TEMPLATES: Record<string, ContractTemplate> = {
     prompt_template_hash: 'bc4fdec512a08e5fd46f57a5f07d3ea6b2e0cf68f9e8f7cd4ba3d16d10bc36f2',
     entropy_budget_bits: 12,
     model_profile_id: 'api-claude-sonnet-v1',
+    model_profile_hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
     metadata: { scenario: 'cofounder-mediation', version: '3' },
     timing_class: null,
     // v2 fields — enforcement_policy_hash from relay_policies.lock
@@ -203,6 +205,7 @@ const TEMPLATES: Record<string, ContractTemplate> = {
     prompt_template_hash: '18b1b459ceb12fc03cb005314f6b4e168c113ead7255b4b65329fb8a6c60f874',
     entropy_budget_bits: 32,
     model_profile_id: 'api-claude-sonnet-v1',
+    model_profile_hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
     metadata: { scenario: 'scheduling-compatibility', version: '2' },
     timing_class: null,
     // v2 fields — enforcement_policy_hash from relay_policies.lock

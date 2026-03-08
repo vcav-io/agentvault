@@ -35,6 +35,9 @@ describe('buildRelayContract', () => {
     );
     expect(contract!.entropy_budget_bits).toBe(12);
     expect(contract!.model_profile_id).toBe('api-claude-sonnet-v1');
+    expect(contract!.model_profile_hash).toBe(
+      '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
+    );
     expect(contract!.timing_class).toBeNull();
     expect(contract!.metadata).toEqual({ scenario: 'cofounder-mediation', version: '3' });
   });
@@ -170,13 +173,13 @@ describe('golden hash vectors (cross-language parity)', () => {
   it('mediation contract hash matches Rust relay', () => {
     const contract = buildRelayContract('MEDIATION', ['alice-demo', 'bob-demo'])!;
     const hash = computeRelayContractHash(contract);
-    expect(hash).toBe('034ef466fc903f5394a86775b8e751c2de544ab85d100cfae87c806288be5e37');
+    expect(hash).toBe('dc670f0ed3a547f6225c88ff7cb44ab9e2b4b537b7beb32d8e524ec7c9012bc7');
   });
 
   it('compatibility contract hash matches Rust relay', () => {
     const contract = buildRelayContract('COMPATIBILITY', ['alice-demo', 'bob-demo'])!;
     const hash = computeRelayContractHash(contract);
-    expect(hash).toBe('8efa3d99bc44dd8f3ae2c977751895acdc2b6d7ee6c8f529cc513d00d85ec069');
+    expect(hash).toBe('be46b9fec14485d80cde37cb616429db414dd2a5f93b895db81af30863976874');
   });
 });
 

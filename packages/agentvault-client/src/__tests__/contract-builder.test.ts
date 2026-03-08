@@ -281,7 +281,7 @@ describe('RegistryIndex.checkCompatibility', () => {
 
 describe('buildContract', () => {
   it('produces a contract with correct fields', () => {
-    const { registry, schemaDigest, policyDigest, programDigest } = buildTestRegistry();
+    const { registry, schemaDigest, policyDigest, profileDigest, programDigest } = buildTestRegistry();
     const contract = buildContract(registry, defaultOptions()) as unknown as Record<string, unknown>;
 
     expect(contract['purpose_code']).toBe('MEDIATION');
@@ -292,6 +292,7 @@ describe('buildContract', () => {
     expect(contract['enforcement_policy_hash']).toBe(policyDigest.slice(7));
     expect(contract['output_schema_hash']).toBe(schemaDigest.slice(7));
     expect(contract['model_profile_id']).toBe('api-claude-sonnet-v1');
+    expect(contract['model_profile_hash']).toBe(profileDigest.slice(7));
     expect(contract['entropy_budget_bits']).toBe(12);
     expect(contract['entropy_enforcement']).toBe('Advisory');
     expect(contract['timing_class']).toBeNull();

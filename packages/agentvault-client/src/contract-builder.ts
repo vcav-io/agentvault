@@ -294,6 +294,7 @@ export function buildContract(
     timing_class: null,
     metadata: null,
     model_profile_id: profile.entry.id,
+    model_profile_hash: bareDigest(profile.digest),
     enforcement_policy_hash: bareDigest(policy.digest),
     output_schema_hash: bareDigest(schema.digest),
   };
