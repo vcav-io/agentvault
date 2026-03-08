@@ -156,6 +156,7 @@ describe('AfalHttpServer', () => {
     expect(params['relay_url']).toBe('http://relay.example.com');
     expect(params['public_key_hex']).toBe(RESPONDER_PUBKEY);
     expect(params['supported_purposes']).toEqual(['MEDIATION']);
+    expect(params['a2a_send_message_url']).toBe(`${baseUrl}/a2a/send-message`);
     expect(params['afal_endpoint']).toBe(`${baseUrl}/afal`);
   });
 

@@ -631,7 +631,12 @@ export class DirectAfalTransport implements AfalTransport {
     const publicKeyHex = params['public_key_hex'];
     const afalEndpoint =
       typeof params['afal_endpoint'] === 'string' ? params['afal_endpoint'] : undefined;
-    const a2aSendMessageUrl = typeof card.url === 'string' ? deriveA2ASendMessageUrl(card.url) : null;
+    const a2aSendMessageUrl =
+      typeof params['a2a_send_message_url'] === 'string'
+        ? params['a2a_send_message_url']
+        : typeof card.url === 'string'
+          ? deriveA2ASendMessageUrl(card.url)
+          : null;
     if (typeof publicKeyHex !== 'string' || (!afalEndpoint && !a2aSendMessageUrl)) {
       return null;
     }
