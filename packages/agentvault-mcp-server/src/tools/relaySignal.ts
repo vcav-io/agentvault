@@ -27,12 +27,16 @@ import {
   buildRelayContract,
   listRelayPurposes,
   computeRelayContractHash,
+  withRelayContractModelProfile,
+  type RelayContract,
 } from 'agentvault-client/contracts';
 import type { AfalTransport, AfalInviteMessage } from '../afal-transport.js';
 import { PURPOSE_TO_TEMPLATE, isAcceptResult } from '../afal-transport.js';
 import { RelayInboxTransport, RELAY_INBOX_PAYLOAD_TYPE } from '../relay-inbox-transport.js';
 import { computeProposalId, generateNonce } from '../afal-types.js';
-import type { AfalPropose, RelayInvitePayload } from '../afal-types.js';
+import type { AfalPropose, RelayInvitePayload, RelaySessionBinding } from '../afal-types.js';
+import { DirectAfalTransport } from '../direct-afal-transport.js';
+import { resolveModelProfileRefs, type ModelProfileRef } from '../model-profiles.js';
 import {
   encodeRelayToken,
   decodeRelayToken,
@@ -115,6 +119,26 @@ const ABORT_DESCRIPTIONS: Record<string, string> = {
 
 export type ResumeStrategy = 'IMMEDIATE' | 'DEFERRED';
 
+interface LegacyProposeRetryState {
+  retryKind: 'legacy';
+  propose: AfalPropose;
+  relay: RelayInvitePayload;
+  templateId: string;
+  budgetTier: string;
+}
+
+interface DirectProposeRetryState {
+  retryKind: 'direct';
+  proposeParams: {
+    propose: AfalPropose;
+    templateId: string;
+    budgetTier: string;
+  };
+  contract: object;
+  relayUrl: string;
+  purposeHint?: string | null;
+}
+
 // ── Types ───────────────────────────────────────────────────────────────
 
 export interface RelaySignalArgs {
@@ -125,6 +149,7 @@ export interface RelaySignalArgs {
   counterparty?: string;
   purpose?: string;
   contract?: object;
+  acceptable_model_profiles?: string[];
   my_input?: string;
   relay_url?: string;
 
@@ -947,6 +972,67 @@ function failedResponse(
   });
 }
 
+function preferredModelProfileRef(contract: RelayContract | undefined): ModelProfileRef | undefined {
+  if (!contract?.model_profile_id || !contract.model_profile_hash) return undefined;
+  // Relay contracts currently bind profile id/hash but not version. Until the
+  // contract schema grows a version field, direct AFAL negotiations must treat
+  // the bundled templates as v1 profiles.
+  return {
+    id: contract.model_profile_id,
+    version: '1',
+    hash: contract.model_profile_hash,
+  };
+}
+
+function bindSelectedProfile(
+  contract: object,
+  selectedProfile: ModelProfileRef | undefined,
+): object {
+  if (!selectedProfile) return contract;
+  return withRelayContractModelProfile(contract as RelayContract, {
+    id: selectedProfile.id,
+    hash: selectedProfile.hash,
+    version: selectedProfile.version,
+  });
+}
+
+async function createCommittedDirectSession(params: {
+  handle: RelayHandle;
+  transport: AfalTransport;
+  relayUrl: string;
+  contract: object;
+  myInput: string;
+  proposalId: string;
+  purposeHint?: string | null;
+}): Promise<void> {
+  const config = { relay_url: params.relayUrl };
+  const created = await createAndSubmit(config, params.contract, params.myInput, 'initiator');
+  const relaySession: RelaySessionBinding = {
+    session_id: created.sessionId,
+    responder_submit_token: created.responderSubmitToken,
+    responder_read_token: created.responderReadToken,
+    relay_url: params.relayUrl,
+    contract_hash: created.contractHash,
+  };
+
+  params.handle.sessionId = created.sessionId;
+  params.handle.contractHash = created.contractHash;
+  params.handle.relayUrl = params.relayUrl;
+  params.handle.tokens = {
+    submit: '',
+    read: '',
+    initiatorRead: created.initiatorReadToken,
+  };
+  params.handle.purpose = params.purposeHint ?? undefined;
+  params.handle.proposalId = params.proposalId;
+
+  writeLastSessionFile(created.sessionId, 'INITIATOR', created.initiatorReadToken, params.relayUrl);
+
+  if (params.transport.commitAdmit) {
+    await params.transport.commitAdmit(params.proposalId, relaySession);
+  }
+}
+
 // ── INITIATE Phases ─────────────────────────────────────────────────────
 
 async function phaseInvite(
@@ -988,6 +1074,22 @@ async function phaseInvite(
     );
   }
 
+  const negotiatedProfiles = args.acceptable_model_profiles?.length
+    ? resolveModelProfileRefs(args.acceptable_model_profiles)
+    : undefined;
+  if (negotiatedProfiles && !(transport instanceof DirectAfalTransport)) {
+    return buildError(
+      'INVALID_INPUT',
+      'acceptable_model_profiles is currently supported only for direct AFAL transport',
+    );
+  }
+  if (negotiatedProfiles && args.contract) {
+    return buildError(
+      'INVALID_INPUT',
+      'acceptable_model_profiles is only supported with purpose-based direct AFAL contracts',
+    );
+  }
+
   // ── Relay inbox path ──────────────────────────────────────────────────
   // When using RelayInboxTransport, create an invite via the relay's inbox
   // instead of creating a session eagerly. The relay creates the session
@@ -1012,15 +1114,11 @@ async function phaseInvite(
   }
 
   const relayUrl = resolveRelayUrl(args.relay_url);
-  const config = { relay_url: relayUrl };
-
-  // 1. Create session and submit own input
-  const created = await createAndSubmit(config, contract, args.my_input ?? '', 'initiator');
-
-  // 2. Build AfalPropose from purpose and contract template (reuses `relayContract` from above)
+  // 1. Build AfalPropose from purpose and contract template.
   const templateId = purposeHint
     ? (PURPOSE_TO_TEMPLATE[purposeHint] ?? 'mediation-demo.v1.standard')
     : 'mediation-demo.v1.standard';
+  const preferredProfile = negotiatedProfiles?.[0] ?? preferredModelProfileRef(relayContract);
 
   const proposeFields: Omit<AfalPropose, 'proposal_id'> = {
     proposal_version: '1',
@@ -1034,44 +1132,91 @@ async function phaseInvite(
     output_schema_version: '1',
     requested_budget_tier: relayContract?.metadata?.['budget_tier'] ?? 'SMALL',
     requested_entropy_bits: relayContract?.entropy_budget_bits ?? 12,
-    model_profile_id: relayContract?.model_profile_id ?? 'api-claude-sonnet-v1',
-    model_profile_version: '1',
+    model_profile_id: preferredProfile?.id ?? relayContract?.model_profile_id ?? 'api-claude-sonnet-v1',
+    model_profile_version: preferredProfile?.version ?? '1',
     admission_tier_requested: 'DEFAULT',
+    ...(preferredProfile?.hash ? { model_profile_hash: preferredProfile.hash } : {}),
+    ...(negotiatedProfiles ? { acceptable_model_profiles: negotiatedProfiles } : {}),
   };
 
   const proposalId = computeProposalId(proposeFields);
   const propose: AfalPropose = { ...proposeFields, proposal_id: proposalId };
-
-  const relay: RelayInvitePayload = {
-    session_id: created.sessionId,
-    responder_submit_token: created.responderSubmitToken,
-    responder_read_token: created.responderReadToken,
-    relay_url: relayUrl,
-  };
-
-  // 3. Populate handle with session data (before sendPropose so PROPOSE_RETRY has state)
-  handle.sessionId = created.sessionId;
-  handle.contractHash = created.contractHash;
-  handle.relayUrl = relayUrl;
-  handle.tokens = {
-    submit: '', // initiator doesn't need submit
-    read: '', // initiator doesn't need responder read
-    initiatorRead: created.initiatorReadToken,
-  };
   handle.purpose = purposeHint ?? undefined;
   handle.myInput = args.my_input;
   handle.proposalId = proposalId;
 
-  writeLastSessionFile(created.sessionId, 'INITIATOR', created.initiatorReadToken, relayUrl);
+  if (!(transport instanceof DirectAfalTransport)) {
+    const config = { relay_url: relayUrl };
+    const created = await createAndSubmit(config, contract, args.my_input ?? '', 'initiator');
+    const relay: RelayInvitePayload = {
+      session_id: created.sessionId,
+      responder_submit_token: created.responderSubmitToken,
+      responder_read_token: created.responderReadToken,
+      relay_url: relayUrl,
+    };
+
+    handle.sessionId = created.sessionId;
+    handle.contractHash = created.contractHash;
+    handle.relayUrl = relayUrl;
+    handle.tokens = {
+      submit: '',
+      read: '',
+      initiatorRead: created.initiatorReadToken,
+    };
+
+    writeLastSessionFile(created.sessionId, 'INITIATOR', created.initiatorReadToken, relayUrl);
+
+    const proposeParams = { propose, relay, templateId, budgetTier: 'SMALL' as const };
+    try {
+      await transport.sendPropose(proposeParams);
+    } catch (err) {
+      if (isRetryableTransportError(err)) {
+        handle.retryState = {
+          retryKind: 'legacy',
+          ...proposeParams,
+        } satisfies LegacyProposeRetryState;
+        handle.phase = 'PROPOSE_RETRY';
+        return awaitingResponse(
+          handle,
+          'Counterparty not yet reachable (they may not have started yet). Will keep trying.',
+          { strategy: 'DEFERRED', seconds: 60 },
+        );
+      }
+      throw err;
+    }
+
+    handle.phase = 'POLL_RELAY';
+    return awaitingResponse(handle, 'Relay session created. Waiting for counterparty to join.', {
+      strategy: 'IMMEDIATE',
+      seconds: 5,
+    });
+  }
 
   // 4. Send via AFAL transport — if peer is unreachable, transition to PROPOSE_RETRY
   //    so the FSM retries across tool calls (up to the overall timeout).
-  const proposeParams = { propose, relay, templateId, budgetTier: 'SMALL' as const };
+  const proposeParams = { propose, templateId, budgetTier: 'SMALL' as const };
   try {
-    await transport.sendPropose(proposeParams);
+    const response = await transport.sendPropose(proposeParams);
+    const selectedProfile = response?.selectedModelProfile ?? preferredProfile;
+    const finalContract = bindSelectedProfile(contract, selectedProfile);
+    await createCommittedDirectSession({
+      handle,
+      transport,
+      relayUrl,
+      contract: finalContract,
+      myInput: args.my_input ?? '',
+      proposalId,
+      purposeHint,
+    });
   } catch (err) {
     if (isRetryableTransportError(err)) {
-      handle.retryState = proposeParams;
+      handle.retryState = {
+        retryKind: 'direct',
+        proposeParams,
+        contract,
+        relayUrl,
+        purposeHint,
+      } satisfies DirectProposeRetryState;
       handle.phase = 'PROPOSE_RETRY';
       return awaitingResponse(
         handle,
@@ -1083,7 +1228,7 @@ async function phaseInvite(
   }
 
   handle.phase = 'POLL_RELAY';
-  return awaitingResponse(handle, 'Relay session created. Waiting for counterparty to join.', {
+  return awaitingResponse(handle, 'Counterparty admitted the invite. Waiting for relay session to complete.', {
     strategy: 'IMMEDIATE',
     seconds: 5,
   });
@@ -1331,15 +1476,41 @@ async function phaseRetryPropose(
     );
   }
 
-  const params = handle.retryState as {
-    propose: AfalPropose;
-    relay: RelayInvitePayload;
-    templateId: string;
-    budgetTier: string;
-  };
+  const params = handle.retryState as LegacyProposeRetryState | DirectProposeRetryState;
 
   try {
-    await transport.sendPropose(params);
+    if (params.retryKind === 'legacy') {
+      await transport.sendPropose(params);
+      handle.phase = 'POLL_RELAY';
+      handle.retryState = undefined;
+      return awaitingResponse(
+        handle,
+        'Invite delivered. Waiting for counterparty to join relay session.',
+        { strategy: 'IMMEDIATE', seconds: 5 },
+      );
+    }
+
+    const response = await transport.sendPropose(params.proposeParams);
+    const preferredProfile =
+      params.proposeParams.propose.acceptable_model_profiles?.[0] ??
+      (params.proposeParams.propose.model_profile_hash
+        ? {
+            id: params.proposeParams.propose.model_profile_id,
+            version: params.proposeParams.propose.model_profile_version,
+            hash: params.proposeParams.propose.model_profile_hash,
+          }
+        : undefined);
+    const selectedProfile = response?.selectedModelProfile ?? preferredProfile;
+    const finalContract = bindSelectedProfile(params.contract, selectedProfile);
+    await createCommittedDirectSession({
+      handle,
+      transport,
+      relayUrl: params.relayUrl,
+      contract: finalContract,
+      myInput: handle.myInput ?? '',
+      proposalId: params.proposeParams.propose.proposal_id,
+      purposeHint: params.purposeHint,
+    });
   } catch (err) {
     if (isRetryableTransportError(err)) {
       return awaitingResponse(handle, 'Counterparty still not reachable. Will keep trying.', {
@@ -1352,12 +1523,11 @@ async function phaseRetryPropose(
     return failedResponse(handle, 'SESSION_ERROR', detail);
   }
 
-  // PROPOSE succeeded — advance to relay polling
   handle.phase = 'POLL_RELAY';
   handle.retryState = undefined;
   return awaitingResponse(
     handle,
-    'Invite delivered. Waiting for counterparty to join relay session.',
+    'Counterparty admitted the invite. Waiting for relay session to complete.',
     { strategy: 'IMMEDIATE', seconds: 5 },
   );
 }
@@ -1468,10 +1638,17 @@ async function phaseDiscover(
       if (handle.expectedPurpose) {
         const myId = handle.agentId;
         try {
-          const relayContract = buildRelayContract(handle.expectedPurpose, [
+          let relayContract = buildRelayContract(handle.expectedPurpose, [
             handle.counterparty,
             myId,
           ]);
+          if (relayContract && invite.afalPropose?.model_profile_hash) {
+            relayContract = withRelayContractModelProfile(relayContract, {
+              id: invite.afalPropose.model_profile_id,
+              hash: invite.afalPropose.model_profile_hash,
+              version: invite.afalPropose.model_profile_version,
+            });
+          }
           if (relayContract) relayContractHash = computeRelayContractHash(relayContract);
         } catch (err) {
           // Non-fatal — relay will verify on submit, but log for diagnostics

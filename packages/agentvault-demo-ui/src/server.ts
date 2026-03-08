@@ -26,6 +26,7 @@ import {
   DirectAfalTransport,
   isAgentDescriptor,
   AfalHttpServer,
+  listKnownModelProfiles,
 } from 'agentvault-mcp-server';
 import type {
   DirectAfalTransportConfig,
@@ -191,7 +192,11 @@ function buildDescriptor(agentId: string, seedHex: string, pubKeyHex: string, ht
       propose: base ? `${base}/afal/propose` : '',
       commit: base ? `${base}/afal/commit` : '',
     },
-    capabilities: { supported_body_formats: ['wrapped_v1'], supports_commit: true },
+    capabilities: {
+      supported_body_formats: ['wrapped_v1'],
+      supports_commit: true,
+      supported_model_profiles: listKnownModelProfiles(),
+    },
     policy_commitments: {},
   };
 

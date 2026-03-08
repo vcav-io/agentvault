@@ -11,6 +11,7 @@
 
 import { createHash, randomBytes } from 'node:crypto';
 import { canonicalize } from 'json-canonicalize';
+import type { ModelProfileRef } from './model-profiles.js';
 
 // ── AFAL Message Types ──────────────────────────────────────────────────
 
@@ -29,6 +30,7 @@ export interface AfalPropose {
   requested_entropy_bits: number;
   model_profile_id: string;
   model_profile_version: string;
+  acceptable_model_profiles?: ModelProfileRef[];
   admission_tier_requested: string;
   descriptor_hash?: string;
   model_profile_hash?: string;
@@ -44,6 +46,7 @@ export interface AfalAdmit {
   admit_token_id: string;
   admission_tier: string;
   expires_at: string;
+  selected_model_profile?: ModelProfileRef;
   signature?: string;
 }
 
@@ -63,6 +66,10 @@ export interface RelayInvitePayload {
   responder_submit_token: string;
   responder_read_token: string;
   relay_url: string;
+}
+
+export interface RelaySessionBinding extends RelayInvitePayload {
+  contract_hash: string;
 }
 
 // ── Type Guard ──────────────────────────────────────────────────────────
@@ -103,6 +110,7 @@ const HASHABLE_FIELDS = new Set([
   'requested_entropy_bits',
   'model_profile_id',
   'model_profile_version',
+  'acceptable_model_profiles',
   'admission_tier_requested',
   'descriptor_hash',
   'model_profile_hash',

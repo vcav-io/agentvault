@@ -10,11 +10,12 @@
  */
 
 import type { AfalTransport, AfalInviteMessage, AcceptResult } from './afal-transport.js';
-import type { AfalPropose, RelayInvitePayload } from './afal-types.js';
+import type { AfalAdmit, AfalPropose, RelayInvitePayload, RelaySessionBinding } from './afal-types.js';
 import { signMessage, verifyMessage, DOMAIN_PREFIXES, contentHash } from './afal-signing.js';
 import { AfalResponder } from './afal-responder.js';
-import type { AdmissionPolicy } from './afal-responder.js';
+import type { AdmissionPolicy, AdmittedProposal } from './afal-responder.js';
 import { AfalHttpServer } from './afal-http-server.js';
+import type { ModelProfileRef } from './model-profiles.js';
 
 // ── AgentDescriptor ────────────────────────────────────────────────────────
 
@@ -80,7 +81,7 @@ export interface DirectAfalTransportConfig {
 export class DirectAfalTransport implements AfalTransport {
   private readonly config: DirectAfalTransportConfig;
   private peerDescriptor: AgentDescriptor | null = null;
-  private storedAdmits = new Map<string, Record<string, unknown>>();
+  private storedAdmits = new Map<string, AfalAdmit>();
   private readonly responder: AfalResponder | null;
   private readonly httpServer: AfalHttpServer | null;
 
@@ -92,6 +93,7 @@ export class DirectAfalTransport implements AfalTransport {
         agentId: config.agentId,
         seedHex: config.seedHex,
         policy: config.respondMode.policy,
+        supportedModelProfiles: parseSupportedModelProfiles(config.localDescriptor),
       });
 
       // Fill in descriptor endpoints based on HTTP server config and re-sign.
@@ -176,10 +178,10 @@ export class DirectAfalTransport implements AfalTransport {
   // PROPOSE_RETRY phase with CALL_AGAIN cycling (up to 120s overall timeout).
   async sendPropose(params: {
     propose: AfalPropose;
-    relay: RelayInvitePayload;
+    relay?: RelayInvitePayload;
     templateId: string;
     budgetTier: string;
-  }): Promise<void> {
+  }): Promise<{ selectedModelProfile?: ModelProfileRef } | undefined> {
     const peer = await this.resolvePeerDescriptor(params.propose.to);
 
     // Never inject hashable fields post-hoc — they must be set before
@@ -215,13 +217,15 @@ export class DirectAfalTransport implements AfalTransport {
 
     // Bind the relay payload to the signed PROPOSE envelope so the receiver
     // can verify the relay tokens haven't been tampered with in transit.
-    const relayBindingHash = contentHash(params.relay);
-    proposeMessage['relay_binding_hash'] = relayBindingHash;
+    if (params.relay) {
+      const relayBindingHash = contentHash(params.relay);
+      proposeMessage['relay_binding_hash'] = relayBindingHash;
+    }
 
     const signed = signMessage(DOMAIN_PREFIXES.PROPOSE, proposeMessage, this.config.seedHex);
 
-    // M4: wrapped body with relay tokens alongside the signed PROPOSE
-    const wrappedBody = { propose: signed, relay: params.relay };
+    // Wrapped direct AFAL requests can negotiate before a relay session exists.
+    const wrappedBody = params.relay ? { propose: signed, relay: params.relay } : { propose: signed };
 
     const response = await fetch(peer.endpoints.propose, {
       method: 'POST',
@@ -260,7 +264,9 @@ export class DirectAfalTransport implements AfalTransport {
           `ADMIT response missing required admit_token_id for proposal: ${params.propose.proposal_id}`,
         );
       }
-      this.storedAdmits.set(params.propose.proposal_id, admitOrDeny);
+      const admit = admitOrDeny as unknown as AfalAdmit;
+      this.storedAdmits.set(params.propose.proposal_id, admit);
+      return { selectedModelProfile: admit.selected_model_profile };
     } else if (outcome === 'DENY') {
       const verified = verifyMessage(
         DOMAIN_PREFIXES.DENY,
@@ -300,10 +306,15 @@ export class DirectAfalTransport implements AfalTransport {
     return { invites: this.mapAdmitted(admitted) };
   }
 
-  private mapAdmitted(admitted: { propose: AfalPropose; relay: { session_id: string; responder_submit_token: string; responder_read_token: string; relay_url: string }; proposerAgentId: string }[]): AfalInviteMessage[] {
-    return admitted.map((item) => ({
+  private mapAdmitted(
+    admitted: AdmittedProposal[],
+  ): AfalInviteMessage[] {
+    return admitted
+      .filter((item): item is AdmittedProposal & { relay: RelaySessionBinding } => item.relay !== undefined)
+      .map((item) => ({
       invite_id: item.propose.proposal_id,
       from_agent_id: item.proposerAgentId,
+      contract_hash: item.relay.contract_hash,
       payload_type: 'VCAV_E_INVITE_V1',
       payload: {
         session_id: item.relay.session_id,
@@ -332,15 +343,27 @@ export class DirectAfalTransport implements AfalTransport {
       throw new Error(`No stored ADMIT for proposal_id: ${inviteId}`);
     }
 
-    const peer = await this.resolvePeerDescriptor(admit['from'] as string);
+    throw new Error(
+      'DirectAfalTransport requires commitAdmit() after relay session creation; acceptInvite() is responder-only in direct mode',
+    );
+  }
+
+  async commitAdmit(inviteId: string, relaySession: RelaySessionBinding): Promise<void> {
+    const admit = this.storedAdmits.get(inviteId);
+    if (!admit) {
+      throw new Error(`No stored ADMIT for proposal_id: ${inviteId}`);
+    }
+
+    const peer = await this.resolvePeerDescriptor();
 
     const commitMessage: Record<string, unknown> = {
       commit_version: '1',
       proposal_id: inviteId,
       from: this.config.agentId,
-      admit_token_id: admit['admit_token_id'] as string,
+      admit_token_id: admit.admit_token_id,
       encrypted_input_hash: contentHash({}),
       agent_descriptor_hash: contentHash(this.config.localDescriptor),
+      relay_session: relaySession,
     };
 
     const signedCommit = signMessage(DOMAIN_PREFIXES.COMMIT, commitMessage, this.config.seedHex);
@@ -467,12 +490,35 @@ export class DirectAfalTransport implements AfalTransport {
   }
 
   /** Get a stored ADMIT (testing only). */
-  _getStoredAdmit(proposalId: string): Record<string, unknown> | undefined {
+  _getStoredAdmit(proposalId: string): AfalAdmit | undefined {
     return this.storedAdmits.get(proposalId);
   }
 
   /** Inject a stored ADMIT directly (testing only). */
-  _setStoredAdmitForTesting(proposalId: string, admit: Record<string, unknown>): void {
+  _setStoredAdmitForTesting(proposalId: string, admit: AfalAdmit): void {
     this.storedAdmits.set(proposalId, admit);
   }
+}
+
+function parseSupportedModelProfiles(descriptor: AgentDescriptor): ModelProfileRef[] {
+  const raw = descriptor.capabilities['supported_model_profiles'];
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item) => {
+    if (
+      item &&
+      typeof item === 'object' &&
+      typeof (item as Record<string, unknown>)['id'] === 'string' &&
+      typeof (item as Record<string, unknown>)['version'] === 'string' &&
+      typeof (item as Record<string, unknown>)['hash'] === 'string'
+    ) {
+      return [
+        {
+          id: (item as Record<string, unknown>)['id'] as string,
+          version: (item as Record<string, unknown>)['version'] as string,
+          hash: (item as Record<string, unknown>)['hash'] as string,
+        },
+      ];
+    }
+    return [];
+  });
 }

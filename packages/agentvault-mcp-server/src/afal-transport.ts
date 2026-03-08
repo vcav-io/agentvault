@@ -11,9 +11,10 @@
  */
 
 import type { InviteTransport, InviteMessage } from './invite-transport.js';
-import type { AfalPropose, RelayInvitePayload } from './afal-types.js';
+import type { AfalPropose, RelayInvitePayload, RelaySessionBinding } from './afal-types.js';
 import { hasAfalDraft, computeProposalId } from './afal-types.js';
 import { contentHash } from './afal-signing.js';
+import type { ModelProfileRef } from './model-profiles.js';
 
 // ── AfalTransport Interface ─────────────────────────────────────────────
 
@@ -42,10 +43,10 @@ export function isAcceptResult(value: unknown): value is AcceptResult {
 export interface AfalTransport {
   sendPropose(params: {
     propose: AfalPropose;
-    relay: RelayInvitePayload;
+    relay?: RelayInvitePayload;
     templateId: string;
     budgetTier: string;
-  }): Promise<void>;
+  }): Promise<{ selectedModelProfile?: ModelProfileRef } | undefined>;
 
   checkInbox(): Promise<{ invites: AfalInviteMessage[] }>;
 
@@ -56,6 +57,8 @@ export interface AfalTransport {
     inviteId: string,
     expectedContractHash?: string,
   ): Promise<AcceptResult | undefined>;
+
+  commitAdmit?(inviteId: string, relaySession: RelaySessionBinding): Promise<void>;
 
   readonly agentId: string;
 }
@@ -87,11 +90,14 @@ export class OrchestratorInboxAdapter implements AfalTransport {
 
   async sendPropose(params: {
     propose: AfalPropose;
-    relay: RelayInvitePayload;
+    relay?: RelayInvitePayload;
     templateId: string;
     budgetTier: string;
-  }): Promise<void> {
+  }): Promise<{ selectedModelProfile?: ModelProfileRef } | undefined> {
     const { propose, relay, templateId, budgetTier } = params;
+    if (!relay) {
+      throw new Error('OrchestratorInboxAdapter requires relay session details');
+    }
 
     const draft: Record<string, unknown> = {
       compliance: 'UNSIGNED',
@@ -116,6 +122,8 @@ export class OrchestratorInboxAdapter implements AfalTransport {
     if (propose.descriptor_hash !== undefined) draft['descriptor_hash'] = propose.descriptor_hash;
     if (propose.model_profile_hash !== undefined)
       draft['model_profile_hash'] = propose.model_profile_hash;
+    if (propose.acceptable_model_profiles !== undefined)
+      draft['acceptable_model_profiles'] = propose.acceptable_model_profiles;
     if (propose.prev_receipt_hash !== undefined)
       draft['prev_receipt_hash'] = propose.prev_receipt_hash;
     // Bind the relay payload to the propose draft so the receiver can verify integrity.
@@ -135,6 +143,7 @@ export class OrchestratorInboxAdapter implements AfalTransport {
         afal_propose_draft: draft,
       },
     });
+    return undefined;
   }
 
   async checkInbox(): Promise<{ invites: AfalInviteMessage[] }> {
@@ -198,6 +207,9 @@ export class OrchestratorInboxAdapter implements AfalTransport {
           requested_entropy_bits: draft['requested_entropy_bits'] as number,
           model_profile_id: draft['model_profile_id'] as string,
           model_profile_version: draft['model_profile_version'] as string,
+          ...(Array.isArray(draft['acceptable_model_profiles']) && {
+            acceptable_model_profiles: draft['acceptable_model_profiles'] as ModelProfileRef[],
+          }),
           admission_tier_requested: draft['admission_tier_requested'] as string,
           // Optional fields — only set if present and correctly typed
           ...(typeof draft['descriptor_hash'] === 'string' && {
