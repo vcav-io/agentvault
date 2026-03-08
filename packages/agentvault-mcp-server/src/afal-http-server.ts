@@ -1,10 +1,11 @@
 /**
  * AfalHttpServer — lightweight HTTP server for AFAL RESPOND mode.
  *
- * 3 routes:
+ * 4 routes:
  *   GET  /afal/descriptor → agent descriptor
  *   POST /afal/propose    → AfalResponder.handlePropose
  *   POST /afal/commit     → AfalResponder.handleCommit
+ *   POST /a2a/send-message → minimal A2A wrapper for propose/session tokens
  *
  * Guards:
  *   - 64KB body size limit
@@ -18,6 +19,15 @@ import type { Server, IncomingMessage, ServerResponse } from 'node:http';
 import type { AfalResponder } from './afal-responder.js';
 import type { AgentDescriptor } from './direct-afal-transport.js';
 import { buildAgentCard } from './a2a-agent-card.js';
+import {
+  A2A_SEND_MESSAGE_PATH,
+  AGENTVAULT_ADMIT_MEDIA_TYPE,
+  AGENTVAULT_DENY_MEDIA_TYPE,
+  AGENTVAULT_PROPOSE_MEDIA_TYPE,
+  AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
+  buildA2ATaskResponse,
+  parseA2ASendMessagePart,
+} from './a2a-messages.js';
 
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_CONCURRENT = 16;
@@ -130,7 +140,10 @@ export class AfalHttpServer {
       return;
     }
 
-    if (method === 'POST' && (url === '/afal/propose' || url === '/afal/commit')) {
+    if (
+      method === 'POST' &&
+      (url === '/afal/propose' || url === '/afal/commit' || url === A2A_SEND_MESSAGE_PATH)
+    ) {
       const contentType = req.headers['content-type'] ?? '';
       if (!contentType.startsWith('application/json')) {
         res.writeHead(415, { 'Content-Type': 'application/json' });
@@ -153,6 +166,41 @@ export class AfalHttpServer {
             const result = this.config.responder.handlePropose(body);
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(result.response));
+          } else if (url === A2A_SEND_MESSAGE_PATH) {
+            const parsed = parseA2ASendMessagePart(body, [
+              AGENTVAULT_PROPOSE_MEDIA_TYPE,
+              AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
+            ]);
+            if (!parsed) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Unsupported A2A message body' }));
+            } else if (parsed.mediaType === AGENTVAULT_PROPOSE_MEDIA_TYPE) {
+              const result = this.config.responder.handlePropose({ propose: parsed.data });
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify(
+                  buildA2ATaskResponse({
+                    mediaType:
+                      result.outcome === 'ADMIT'
+                        ? AGENTVAULT_ADMIT_MEDIA_TYPE
+                        : AGENTVAULT_DENY_MEDIA_TYPE,
+                    data: result.response,
+                  }),
+                ),
+              );
+            } else {
+              const result = this.config.responder.handleCommit(parsed.data);
+              const status = result.ok ? 200 : 400;
+              res.writeHead(status, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify(
+                  buildA2ATaskResponse({
+                    mediaType: AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
+                    data: result,
+                  }),
+                ),
+              );
+            }
           } else {
             const result = this.config.responder.handleCommit(body);
             const status = result.ok ? 200 : 400;
