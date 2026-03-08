@@ -83,8 +83,7 @@ pub fn resolve_runtime_profile(
 
     let profile_hash = profile.content_hash().map_err(|e| {
         RelayError::PromptProgram(format!(
-            "failed to compute profile hash for '{}': {}",
-            profile_id, e
+            "failed to compute profile hash for '{profile_id}': {e}"
         ))
     })?;
 
