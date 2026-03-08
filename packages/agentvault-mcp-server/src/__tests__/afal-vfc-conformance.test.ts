@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import { ed25519 } from '@noble/curves/ed25519';
@@ -15,7 +15,9 @@ import { computeProposalId, generateNonce } from '../afal-types.js';
 import type { AfalPropose, RelayInvitePayload } from '../afal-types.js';
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
-const VFC_SCHEMA_DIR = join(TEST_DIR, '../../../../../vfc/schemas');
+const VFC_SCHEMA_DIR =
+  process.env['VFC_SCHEMA_DIR'] ?? join(TEST_DIR, '../../../../../vfc/schemas');
+const HAS_VFC_SCHEMAS = existsSync(VFC_SCHEMA_DIR);
 
 const { default: Ajv2020 } = await import('ajv/dist/2020.js');
 const { default: addFormats } = await import('ajv-formats');
@@ -27,17 +29,21 @@ function compileSchema(filename: string) {
   return ajv.compile(schema);
 }
 
-const validateDescriptor = compileSchema('afal_agent_descriptor.schema.json');
-const validatePropose = compileSchema('afal_propose.schema.json');
-const validateAdmit = compileSchema('afal_admit.schema.json');
-const validateDeny = compileSchema('afal_deny.schema.json');
-const validateCommit = compileSchema('afal_commit.schema.json');
+const validateDescriptor = HAS_VFC_SCHEMAS
+  ? compileSchema('afal_agent_descriptor.schema.json')
+  : null;
+const validatePropose = HAS_VFC_SCHEMAS ? compileSchema('afal_propose.schema.json') : null;
+const validateAdmit = HAS_VFC_SCHEMAS ? compileSchema('afal_admit.schema.json') : null;
+const validateDeny = HAS_VFC_SCHEMAS ? compileSchema('afal_deny.schema.json') : null;
+const validateCommit = HAS_VFC_SCHEMAS ? compileSchema('afal_commit.schema.json') : null;
 
 function assertSchema(
-  validator: ReturnType<typeof compileSchema>,
+  validator: ReturnType<typeof compileSchema> | null,
   value: unknown,
   label: string,
 ): void {
+  expect(validator, `${label}: schema validator should be available`).not.toBeNull();
+  if (validator === null) return;
   const ok = validator(value);
   expect(ok, `${label}: ${ajv.errorsText(validator.errors ?? [])}`).toBe(true);
 }
@@ -116,7 +122,9 @@ function makeRelay(): RelayInvitePayload {
   };
 }
 
-describe('AFAL VFC conformance', () => {
+const describeIfSchemas = HAS_VFC_SCHEMAS ? describe : describe.skip;
+
+describeIfSchemas('AFAL VFC conformance', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -246,8 +254,7 @@ describe('AFAL VFC conformance', () => {
       });
 
     transport._setPeerDescriptorForTesting(peerDescriptor);
-    const internal = transport as unknown as { storedAdmits: Map<string, Record<string, unknown>> };
-    internal.storedAdmits.set(propose.proposal_id, {
+    transport._setStoredAdmitForTesting(propose.proposal_id, {
       ...admit,
       from: 'bob-test',
     });
