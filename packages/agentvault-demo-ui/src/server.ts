@@ -59,6 +59,7 @@ const PUBLIC_DIR = path.resolve(__dirname, '../public');
 const DEMO_DIR = path.resolve(__dirname, '..');
 
 const PORT = parseInt(process.env['DEMO_PORT'] ?? '3200', 10);
+const HOST = process.env['DEMO_BIND_HOST'] ?? '127.0.0.1';
 const RELAY_URL = process.env['AV_RELAY_URL'] ?? 'http://localhost:3100';
 const RUNS_DIR = process.env['DEMO_RUNS_DIR'] ?? path.join(DEMO_DIR, 'runs');
 const BOB_AFAL_PORT = parseInt(process.env['BOB_AFAL_PORT'] ?? '3201', 10);
@@ -580,6 +581,7 @@ app.post('/api/start', async (req, res) => {
       events,
       state: aliceState,
       queue: aliceQueue,
+      signal: abortController.signal,
     };
 
     const bobParams = {
@@ -590,6 +592,7 @@ app.post('/api/start', async (req, res) => {
       events,
       state: bobState,
       queue: bobQueue,
+      signal: abortController.signal,
     };
 
     res.json({ ok: true, runFile });
@@ -641,6 +644,7 @@ app.post('/api/message', async (req, res) => {
     events,
     state,
     queue: agent === 'alice' ? aliceQueue : bobQueue,
+    signal: abortController.signal,
   };
 
   events.emitUserMessage(agent, message.trim(), localId);
@@ -801,8 +805,8 @@ app.get('/api/replay', (req, res) => {
 
 // ── Start server ─────────────────────────────────────────────────────────
 
-app.listen(PORT, async () => {
-  console.log(`AgentVault Demo UI running at http://localhost:${PORT}`);
+app.listen(PORT, HOST, async () => {
+  console.log(`AgentVault Demo UI running at http://${HOST}:${PORT}`);
   console.log(`Relay URL: ${RELAY_URL}`);
   console.log(`Runs directory: ${RUNS_DIR}`);
 

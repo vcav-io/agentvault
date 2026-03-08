@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 # ---------------------------------------------------------------------------
 # demo/setup.sh — One-command demo setup for AgentVault
@@ -42,10 +43,11 @@ while [[ $# -gt 0 ]]; do
         kill "$(cat /tmp/vcav-demo-relay.pid)" 2>/dev/null || true
         rm -f /tmp/vcav-demo-relay.pid
       fi
-      # Kill any relay on port 3100 and AFAL server on port 3201
+      # Kill any relay on port 3100 and AFAL servers on ports 3201/3202
       if command -v lsof &>/dev/null; then
         lsof -ti:3100 2>/dev/null | xargs kill 2>/dev/null || true
         lsof -ti:3201 2>/dev/null | xargs kill 2>/dev/null || true
+        lsof -ti:3202 2>/dev/null | xargs kill 2>/dev/null || true
       fi
       # Remove workspace dirs
       rm -rf /tmp/vcav-demo-*
@@ -95,12 +97,16 @@ fi
 
 RELAY_URL="http://localhost:3100"
 RELAY_PID=""
+DEMO_DIR=""
 
 cleanup() {
   if [[ -n "${RELAY_PID}" ]] && kill -0 "${RELAY_PID}" 2>/dev/null; then
     log_info "Stopping relay (pid ${RELAY_PID})"
     kill "${RELAY_PID}" 2>/dev/null || true
     rm -f /tmp/vcav-demo-relay.pid
+  fi
+  if [[ -n "${DEMO_DIR}" ]] && [[ -d "${DEMO_DIR}" ]]; then
+    rm -rf "${DEMO_DIR}"
   fi
 }
 trap cleanup EXIT INT TERM
@@ -162,12 +168,14 @@ fi
 # ---------------------------------------------------------------------------
 
 if command -v lsof &>/dev/null; then
-  STALE_AFAL="$(lsof -ti:3201 2>/dev/null | head -1)" || true
-  if [[ -n "${STALE_AFAL}" ]]; then
-    log_info "Killing stale AFAL server on port 3201 (pid ${STALE_AFAL})"
-    lsof -ti:3201 2>/dev/null | xargs kill 2>/dev/null || true
-    sleep 1
-  fi
+  for port in 3201 3202; do
+    STALE_AFAL="$(lsof -ti:${port} 2>/dev/null | head -1)" || true
+    if [[ -n "${STALE_AFAL}" ]]; then
+      log_info "Killing stale AFAL server on port ${port} (pid ${STALE_AFAL})"
+      lsof -ti:${port} 2>/dev/null | xargs kill 2>/dev/null || true
+      sleep 1
+    fi
+  done
 fi
 
 # ---------------------------------------------------------------------------
@@ -190,6 +198,7 @@ EOF
 ALICE_SEED="$(echo "${KEYS}" | python3 -c "import sys,json; print(json.load(sys.stdin)['as'])")"
 ALICE_PUB="$(echo "${KEYS}" | python3 -c "import sys,json; print(json.load(sys.stdin)['ap'])")"
 BOB_SEED="$(echo "${KEYS}" | python3 -c "import sys,json; print(json.load(sys.stdin)['bs'])")"
+BOB_PUB="$(echo "${KEYS}" | python3 -c "import sys,json; print(json.load(sys.stdin)['bp'])")"
 ALICE_RESUME="$(openssl rand -hex 32)"
 BOB_RESUME="$(openssl rand -hex 32)"
 
@@ -200,7 +209,9 @@ log_success "Identities generated"
 # ---------------------------------------------------------------------------
 
 DEMO_DIR="$(mktemp -d /tmp/vcav-demo-XXXX)"
-mkdir -p "${DEMO_DIR}/alice/.agentvault" "${DEMO_DIR}/bob/.agentvault"
+mkdir -p -m 700 "${DEMO_DIR}/alice/.agentvault" "${DEMO_DIR}/bob/.agentvault"
+chmod 700 "${DEMO_DIR}" "${DEMO_DIR}/alice" "${DEMO_DIR}/bob" \
+  "${DEMO_DIR}/alice/.agentvault" "${DEMO_DIR}/bob/.agentvault"
 
 cat >"${DEMO_DIR}/alice/.mcp.json" <<JSON
 {
@@ -212,7 +223,9 @@ cat >"${DEMO_DIR}/alice/.mcp.json" <<JSON
         "AV_RELAY_URL": "${RELAY_URL}",
         "AV_AGENT_ID": "alice",
         "AV_AFAL_SEED_HEX": "${ALICE_SEED}",
+        "AV_AFAL_HTTP_PORT": "3202",
         "AV_AFAL_PEER_DESCRIPTOR_URL": "http://localhost:3201/afal/descriptor",
+        "AV_AFAL_TRUSTED_AGENTS": "[{\"agentId\":\"bob\",\"publicKeyHex\":\"${BOB_PUB}\"}]",
         "AV_KNOWN_AGENTS": "[{\"agent_id\":\"bob\",\"aliases\":[\"Bob\"]}]",
         "AV_RESUME_TOKEN_SECRET": "${ALICE_RESUME}",
         "AV_WORKDIR": "${DEMO_DIR}/alice"
@@ -221,6 +234,7 @@ cat >"${DEMO_DIR}/alice/.mcp.json" <<JSON
   }
 }
 JSON
+chmod 600 "${DEMO_DIR}/alice/.mcp.json"
 
 cat >"${DEMO_DIR}/bob/.mcp.json" <<JSON
 {
@@ -233,6 +247,7 @@ cat >"${DEMO_DIR}/bob/.mcp.json" <<JSON
         "AV_AGENT_ID": "bob",
         "AV_AFAL_SEED_HEX": "${BOB_SEED}",
         "AV_AFAL_HTTP_PORT": "3201",
+        "AV_AFAL_PEER_DESCRIPTOR_URL": "http://localhost:3202/afal/descriptor",
         "AV_AFAL_TRUSTED_AGENTS": "[{\"agentId\":\"alice\",\"publicKeyHex\":\"${ALICE_PUB}\"}]",
         "AV_AFAL_ALLOWED_PURPOSES": "MEDIATION,COMPATIBILITY",
         "AV_KNOWN_AGENTS": "[{\"agent_id\":\"alice\",\"aliases\":[\"Alice\"]}]",
@@ -243,6 +258,7 @@ cat >"${DEMO_DIR}/bob/.mcp.json" <<JSON
   }
 }
 JSON
+chmod 600 "${DEMO_DIR}/bob/.mcp.json"
 
 log_success "Workspaces created: ${DEMO_DIR}"
 

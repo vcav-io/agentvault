@@ -265,6 +265,11 @@ interface HeartbeatParams extends BurstParams {
   heartbeatProvider?: LLMProvider;
 }
 
+interface SendUserMessageParams extends BurstParams {
+  queue: ReturnType<typeof createQueue>;
+  signal: AbortSignal;
+}
+
 /**
  * Persistent heartbeat loop. Started at server startup. Never resolves.
  * Killed via AbortSignal when the server shuts down or resets.
@@ -321,17 +326,18 @@ export async function runHeartbeatLoop(
  * concurrent mutation of state.messages during a running burst.
  */
 export async function sendUserMessage(
-  params: BurstParams & { queue: ReturnType<typeof createQueue> },
+  params: SendUserMessageParams,
   message: string,
 ): Promise<void> {
-  const { name, events, state, queue } = params;
+  const { name, events, state, queue, signal } = params;
 
   state.started = true;
   events.emitSystem(`${name}: User message received`);
 
   await queue.enqueue(() => {
+    if (signal.aborted) return Promise.resolve();
     state.messages.push({ role: 'user', content: message });
-    return runLLMBurst(params);
+    return runLLMBurst(params, undefined, signal);
   });
 }
 
