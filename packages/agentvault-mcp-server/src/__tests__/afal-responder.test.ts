@@ -132,6 +132,23 @@ describe('AfalResponder', () => {
       responder.handlePropose(body);
       expect(responder._getAdmitStoreSize()).toBe(1);
     });
+
+    it('purges expired proposals from both admitStore and queue', () => {
+      const body = makeWrappedBody();
+      responder.handlePropose(body);
+
+      const internal = responder as unknown as {
+        queue: Array<{ expiresAt: number }>;
+        admitStore: Map<string, { expiresAt: number }>;
+      };
+      internal.queue[0].expiresAt = Date.now() - 1;
+      for (const admitted of internal.admitStore.values()) {
+        admitted.expiresAt = Date.now() - 1;
+      }
+
+      expect(responder.peekQueue()).toHaveLength(0);
+      expect(responder._getAdmitStoreSize()).toBe(0);
+    });
   });
 
   // ── handlePropose — DENY cases ──────────────────────────────────────────

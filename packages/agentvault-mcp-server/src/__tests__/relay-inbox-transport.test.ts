@@ -127,6 +127,24 @@ describe('RelayInboxTransport', () => {
       expect(url).toBe('http://localhost:3100/invites/inv_abc/accept');
       expect(opts.method).toBe('POST');
     });
+
+    it('forwards expected_contract_hash when provided', async () => {
+      mockFetch.mockResolvedValueOnce(
+        mockResponse({
+          invite_id: 'inv_abc',
+          session_id: 'sess_123',
+          contract_hash: 'hash123',
+          responder_submit_token: 'rs_tok',
+          responder_read_token: 'rr_tok',
+        }),
+      );
+
+      const transport = createTransport();
+      await transport.acceptInvite('inv_abc', 'expected_hash');
+
+      const [, opts] = mockFetch.mock.calls[0];
+      expect(opts.body).toBe(JSON.stringify({ expected_contract_hash: 'expected_hash' }));
+    });
   });
 
   describe('createRelayInvite', () => {

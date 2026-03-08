@@ -470,6 +470,16 @@ describe('buildContract — error cases', () => {
     ).toThrow('must not be empty');
   });
 
+  it('throws for non-bilateral participant lists', () => {
+    const { registry } = buildTestRegistry();
+    expect(() =>
+      buildContract(registry, defaultOptions({ participants: ['alice'] })),
+    ).toThrow('exactly 2 participants');
+    expect(() =>
+      buildContract(registry, defaultOptions({ participants: ['alice', 'bob', 'charlie'] })),
+    ).toThrow('exactly 2 participants');
+  });
+
   it('throws for participant ID with whitespace', () => {
     const { registry } = buildTestRegistry();
     expect(() =>

@@ -317,23 +317,23 @@ describe('DirectAfalTransport', () => {
       expect('prev_receipt_hash' in body.propose).toBe(false);
     });
 
-    it('throws when peer descriptor agent_id does not match propose.to', async () => {
-      // Peer descriptor says agent_id is "bob-test" but propose.to is "charlie-test"
-      const propose = makePropose({ to: 'charlie-test' });
+    it('rejects a valid descriptor for the wrong peer agent_id', async () => {
+      const fresh = new DirectAfalTransport({
+        agentId: 'alice-test',
+        seedHex: TEST_SEED,
+        localDescriptor,
+        peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-descriptor.json',
+      });
 
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(makePeerDescriptor({ agent_id: 'mallory-test' })),
+      });
+
+      const propose = makePropose({ to: 'bob-test' });
       await expect(
-        transport.sendPropose({
-          propose,
-          relay: makeRelay(),
-          templateId: 't',
-          budgetTier: 'SMALL',
-        }),
-      ).rejects.toThrow(
-        'Peer descriptor agent_id "bob-test" does not match propose.to "charlie-test"',
-      );
-
-      // Should not have made any fetch calls
-      expect(mockFetch).not.toHaveBeenCalled();
+        fresh.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' }),
+      ).rejects.toThrow('Peer descriptor identity mismatch');
     });
 
     it('ADMIT succeeds when propose has no descriptor_hash or model_profile_hash (regression)', async () => {
@@ -737,6 +737,25 @@ describe('DirectAfalTransport', () => {
       await expect(
         fresh.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' }),
       ).rejects.toThrow('Peer descriptor signature verification failed');
+    });
+
+    it('rejects a valid descriptor for the wrong peer agent_id', async () => {
+      const fresh = new DirectAfalTransport({
+        agentId: 'alice-test',
+        seedHex: TEST_SEED,
+        localDescriptor,
+        peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-descriptor.json',
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(makePeerDescriptor({ agent_id: 'mallory-test' })),
+      });
+
+      const propose = makePropose({ to: 'bob-test' });
+      await expect(
+        fresh.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' }),
+      ).rejects.toThrow('Peer descriptor identity mismatch');
     });
 
     it('throws when no peerDescriptorUrl is configured', async () => {

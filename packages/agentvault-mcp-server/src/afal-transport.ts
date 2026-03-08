@@ -52,7 +52,10 @@ export interface AfalTransport {
   /** Non-destructive inbox check — items remain in queue for checkInbox() to drain. */
   peekInbox(): Promise<{ invites: AfalInviteMessage[] }>;
 
-  acceptInvite(inviteId: string, expectedContractHash?: string): Promise<AcceptResult | undefined>;
+  acceptInvite(
+    inviteId: string,
+    expectedContractHash?: string,
+  ): Promise<AcceptResult | undefined>;
 
   readonly agentId: string;
 }
@@ -236,7 +239,13 @@ export class OrchestratorInboxAdapter implements AfalTransport {
     return this.checkInbox();
   }
 
-  async acceptInvite(inviteId: string, _expectedContractHash?: string): Promise<AcceptResult | undefined> {
+  async acceptInvite(
+    inviteId: string,
+    _expectedContractHash?: string,
+  ): Promise<AcceptResult | undefined> {
+    // Host-provided orchestrator transports authenticate and validate the
+    // invite outside this adapter, so there is no separate contract-hash
+    // assertion to forward here.
     await this.transport.acceptInvite(inviteId);
     return undefined;
   }

@@ -132,6 +132,22 @@ describe('av-contract CLI', () => {
     expect(stderr).toContain('Missing required flag');
   });
 
+  it('exits with error for non-bilateral participant lists', async () => {
+    const result = await runCli([
+      'build',
+      '--registry', tmpDir,
+      '--schema', 'vcav_e_mediation_signal_v2',
+      '--policy', 'compatibility_safe_v1',
+      '--profile', 'api-claude-sonnet-v1',
+      '--program', 'mediation_system_v1',
+      '--purpose', 'MEDIATION',
+      '--participants', 'alice',
+    ]);
+
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('exactly 2 participants (bilateral only)');
+  });
+
   it('exits with error for unknown subcommand', async () => {
     const { code, stderr } = await runCli(['deploy']);
 

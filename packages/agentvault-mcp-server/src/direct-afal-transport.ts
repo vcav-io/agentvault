@@ -180,14 +180,7 @@ export class DirectAfalTransport implements AfalTransport {
     templateId: string;
     budgetTier: string;
   }): Promise<void> {
-    const peer = await this.resolvePeerDescriptor();
-
-    // Verify the resolved peer descriptor matches the intended recipient
-    if (peer.agent_id !== params.propose.to) {
-      throw new Error(
-        `Peer descriptor agent_id "${peer.agent_id}" does not match propose.to "${params.propose.to}"`,
-      );
-    }
+    const peer = await this.resolvePeerDescriptor(params.propose.to);
 
     // Never inject hashable fields post-hoc — they must be set before
     // computeProposalId or proposal_id integrity will fail on the receiver.
@@ -322,7 +315,10 @@ export class DirectAfalTransport implements AfalTransport {
     }));
   }
 
-  async acceptInvite(inviteId: string, _expectedContractHash?: string): Promise<AcceptResult | undefined> {
+  async acceptInvite(
+    inviteId: string,
+    _expectedContractHash?: string,
+  ): Promise<AcceptResult | undefined> {
     // RESPOND mode: remove the consumed invite from the queue so subsequent
     // peekInbox() calls don't rediscover stale invites pointing to dead sessions.
     if (this.responder) {
@@ -336,7 +332,7 @@ export class DirectAfalTransport implements AfalTransport {
       throw new Error(`No stored ADMIT for proposal_id: ${inviteId}`);
     }
 
-    const peer = await this.resolvePeerDescriptor();
+    const peer = await this.resolvePeerDescriptor(admit['from'] as string);
 
     const commitMessage: Record<string, unknown> = {
       commit_version: '1',
@@ -365,7 +361,7 @@ export class DirectAfalTransport implements AfalTransport {
 
   // ── Internal helpers ──────────────────────────────────────────────────────
 
-  private async resolvePeerDescriptor(): Promise<AgentDescriptor> {
+  private async resolvePeerDescriptor(expectedPeerAgentId?: string): Promise<AgentDescriptor> {
     if (this.peerDescriptor !== null) {
       const expiresMs = Date.parse(this.peerDescriptor.expires_at);
       if (Number.isNaN(expiresMs)) {
@@ -374,7 +370,14 @@ export class DirectAfalTransport implements AfalTransport {
         );
         this.peerDescriptor = null;
       } else if (expiresMs > Date.now()) {
-        return this.peerDescriptor;
+        if (
+          expectedPeerAgentId !== undefined &&
+          this.peerDescriptor.agent_id !== expectedPeerAgentId
+        ) {
+          this.peerDescriptor = null;
+        } else {
+          return this.peerDescriptor;
+        }
       } else {
         this.peerDescriptor = null;
       }
@@ -440,6 +443,11 @@ export class DirectAfalTransport implements AfalTransport {
     );
     if (!verified) {
       throw new Error('Peer descriptor signature verification failed');
+    }
+    if (expectedPeerAgentId !== undefined && descriptor.agent_id !== expectedPeerAgentId) {
+      throw new Error(
+        `Peer descriptor identity mismatch: expected ${expectedPeerAgentId} but got ${descriptor.agent_id}`,
+      );
     }
 
     const expiresMs = Date.parse(descriptor.expires_at);

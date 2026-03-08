@@ -96,7 +96,7 @@ export class AfalResponder {
   private readonly config: AfalResponderConfig;
   private readonly nonceCache: NonceCache;
   private readonly admitStore = new Map<string, AdmittedProposal>();
-  private readonly queue: AdmittedProposal[] = [];
+  private queue: AdmittedProposal[] = [];
 
   constructor(config: AfalResponderConfig) {
     this.config = config;
@@ -310,11 +310,7 @@ export class AfalResponder {
         this.admitStore.delete(tokenId);
       }
     }
-    for (let i = this.queue.length - 1; i >= 0; i--) {
-      if (this.queue[i].expiresAt <= now) {
-        this.queue.splice(i, 1);
-      }
-    }
+    this.queue = this.queue.filter((item) => item.expiresAt > now);
   }
 
   _resetForTesting(): void {
