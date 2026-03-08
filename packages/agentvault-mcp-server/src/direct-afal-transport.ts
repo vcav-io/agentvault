@@ -15,6 +15,7 @@ import { signMessage, verifyMessage, DOMAIN_PREFIXES, contentHash } from './afal
 import { AfalResponder } from './afal-responder.js';
 import type { AdmissionPolicy, AdmittedProposal } from './afal-responder.js';
 import { AfalHttpServer } from './afal-http-server.js';
+import { AGENTVAULT_A2A_EXTENSION_URI } from './a2a-agent-card.js';
 import type { ModelProfileRef } from './model-profiles.js';
 
 // ── AgentDescriptor ────────────────────────────────────────────────────────
@@ -62,6 +63,17 @@ export function isAgentDescriptor(value: unknown): value is AgentDescriptor {
     typeof v.policy_commitments === 'object' &&
     v.policy_commitments !== null
   );
+}
+
+interface AgentCard {
+  name?: string;
+  url?: string;
+  capabilities?: {
+    extensions?: Array<{
+      uri?: string;
+      params?: Record<string, unknown>;
+    }>;
+  };
 }
 
 // ── DirectAfalTransport ────────────────────────────────────────────────────
@@ -416,7 +428,97 @@ export class DirectAfalTransport implements AfalTransport {
       );
     }
 
-    const response = await fetch(this.config.peerDescriptorUrl);
+    const a2aDescriptor = await this.tryResolvePeerViaAgentCard(
+      this.config.peerDescriptorUrl,
+      expectedPeerAgentId,
+    );
+    if (a2aDescriptor) {
+      this.peerDescriptor = a2aDescriptor;
+      return a2aDescriptor;
+    }
+
+    const descriptor = await this.fetchSignedPeerDescriptor(
+      this.config.peerDescriptorUrl,
+      expectedPeerAgentId,
+    );
+    this.peerDescriptor = descriptor;
+    return descriptor;
+  }
+
+  private async tryResolvePeerViaAgentCard(
+    peerUrl: string,
+    expectedPeerAgentId?: string,
+  ): Promise<AgentDescriptor | null> {
+    const agentCardUrl = deriveAgentCardUrl(peerUrl);
+    if (!agentCardUrl) return null;
+
+    let response: Response;
+    try {
+      response = await fetch(agentCardUrl);
+    } catch {
+      return null;
+    }
+    if (!response.ok) {
+      return null;
+    }
+
+    let card: AgentCard;
+    try {
+      card = (await response.json()) as AgentCard;
+    } catch {
+      return null;
+    }
+
+    const extension = card.capabilities?.extensions?.find(
+      (item) => item.uri === AGENTVAULT_A2A_EXTENSION_URI,
+    );
+    const params = extension?.params;
+    if (!params) return null;
+
+    const publicKeyHex = params['public_key_hex'];
+    const afalEndpoint = params['afal_endpoint'];
+    if (typeof publicKeyHex !== 'string' || typeof afalEndpoint !== 'string') {
+      return null;
+    }
+
+    const agentId = typeof card.name === 'string' ? card.name : expectedPeerAgentId;
+    if (!agentId) return null;
+    if (expectedPeerAgentId !== undefined && agentId !== expectedPeerAgentId) {
+      throw new Error(
+        `Peer agent card identity mismatch: expected ${expectedPeerAgentId} but got ${agentId}`,
+      );
+    }
+
+    // Agent Card discovery synthesizes a short-lived unsigned descriptor.
+    // In this phase the trust anchor is the fetched A2A document itself, not
+    // an Ed25519 AFAL descriptor signature.
+    return {
+      descriptor_version: '1',
+      agent_id: agentId,
+      issued_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      identity_key: {
+        algorithm: 'ed25519',
+        public_key_hex: publicKeyHex,
+      },
+      envelope_key: {
+        algorithm: 'ed25519',
+        public_key_hex: publicKeyHex,
+      },
+      endpoints: {
+        propose: `${afalEndpoint}/propose`,
+        commit: `${afalEndpoint}/commit`,
+      },
+      capabilities: {},
+      policy_commitments: {},
+    };
+  }
+
+  private async fetchSignedPeerDescriptor(
+    descriptorUrl: string,
+    expectedPeerAgentId?: string,
+  ): Promise<AgentDescriptor> {
+    const response = await fetch(descriptorUrl);
     if (!response.ok) {
       throw new Error(`Failed to fetch peer descriptor: ${response.status}`);
     }
@@ -425,7 +527,7 @@ export class DirectAfalTransport implements AfalTransport {
     try {
       raw = (await response.json()) as Record<string, unknown>;
     } catch {
-      throw new Error(`Peer descriptor from ${this.config.peerDescriptorUrl} returned non-JSON`);
+      throw new Error(`Peer descriptor from ${descriptorUrl} returned non-JSON`);
     }
 
     // Validate required nested structure before trusting the cast
@@ -438,7 +540,7 @@ export class DirectAfalTransport implements AfalTransport {
       typeof identityKey.public_key_hex !== 'string'
     ) {
       throw new Error(
-        `Peer descriptor from ${this.config.peerDescriptorUrl} is malformed: missing or invalid identity_key.public_key_hex`,
+        `Peer descriptor from ${descriptorUrl} is malformed: missing or invalid identity_key.public_key_hex`,
       );
     }
     const endpoints = (raw as Record<string, unknown>).endpoints as
@@ -451,13 +553,13 @@ export class DirectAfalTransport implements AfalTransport {
       typeof endpoints.commit !== 'string'
     ) {
       throw new Error(
-        `Peer descriptor from ${this.config.peerDescriptorUrl} is malformed: missing required endpoints (propose, commit)`,
+        `Peer descriptor from ${descriptorUrl} is malformed: missing required endpoints (propose, commit)`,
       );
     }
 
     if (!isAgentDescriptor(raw)) {
       throw new Error(
-        `Peer descriptor from ${this.config.peerDescriptorUrl} is malformed: failed structural validation`,
+        `Peer descriptor from ${descriptorUrl} is malformed: failed structural validation`,
       );
     }
     const descriptor = raw;
@@ -481,7 +583,6 @@ export class DirectAfalTransport implements AfalTransport {
       throw new Error(`Fetched peer descriptor expired or invalid expires_at: "${descriptor.expires_at}"`);
     }
 
-    this.peerDescriptor = descriptor;
     return descriptor;
   }
 
@@ -500,6 +601,18 @@ export class DirectAfalTransport implements AfalTransport {
   /** Inject a stored ADMIT directly (testing only). */
   _setStoredAdmitForTesting(proposalId: string, admit: AfalAdmit): void {
     this.storedAdmits.set(proposalId, admit);
+  }
+}
+
+function deriveAgentCardUrl(peerUrl: string): string | null {
+  try {
+    const url = new URL(peerUrl);
+    if (url.pathname === '/.well-known/agent-card.json') {
+      return url.toString();
+    }
+    return `${url.origin}/.well-known/agent-card.json`;
+  } catch {
+    return null;
   }
 }
 
