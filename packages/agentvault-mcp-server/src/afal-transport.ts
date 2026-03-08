@@ -51,7 +51,7 @@ export interface AfalTransport {
   /** Non-destructive inbox check — items remain in queue for checkInbox() to drain. */
   peekInbox(): Promise<{ invites: AfalInviteMessage[] }>;
 
-  acceptInvite(inviteId: string): Promise<AcceptResult | undefined>;
+  acceptInvite(inviteId: string, expectedContractHash?: string): Promise<AcceptResult | undefined>;
 
   readonly agentId: string;
 }
@@ -230,7 +230,7 @@ export class OrchestratorInboxAdapter implements AfalTransport {
     return this.checkInbox();
   }
 
-  async acceptInvite(inviteId: string): Promise<AcceptResult | undefined> {
+  async acceptInvite(inviteId: string, _expectedContractHash?: string): Promise<AcceptResult | undefined> {
     await this.transport.acceptInvite(inviteId);
     return undefined;
   }

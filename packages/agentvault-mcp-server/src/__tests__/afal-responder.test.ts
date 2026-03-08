@@ -380,6 +380,23 @@ describe('AfalResponder', () => {
       expect(responder._getAdmitStoreSize()).toBe(0);
       vi.useRealTimers();
     });
+
+    it('GC removes expired proposals from queue', () => {
+      const body = makeWrappedBody();
+      responder.handlePropose(body);
+
+      // Verify item is in queue before expiry
+      expect(responder.peekQueue()).toHaveLength(1);
+
+      // Fast-forward past ADMIT_TTL (10 min)
+      vi.useFakeTimers();
+      vi.advanceTimersByTime(11 * 60 * 1000);
+
+      // Both peekQueue and drainQueue should return empty after GC
+      expect(responder.peekQueue()).toHaveLength(0);
+      expect(responder.drainQueue()).toHaveLength(0);
+      vi.useRealTimers();
+    });
   });
 });
 

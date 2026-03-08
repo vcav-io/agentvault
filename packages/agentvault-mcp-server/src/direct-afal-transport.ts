@@ -310,7 +310,7 @@ export class DirectAfalTransport implements AfalTransport {
     }));
   }
 
-  async acceptInvite(inviteId: string): Promise<AcceptResult | undefined> {
+  async acceptInvite(inviteId: string, _expectedContractHash?: string): Promise<AcceptResult | undefined> {
     // RESPOND mode: remove the consumed invite from the queue so subsequent
     // peekInbox() calls don't rediscover stale invites pointing to dead sessions.
     if (this.responder) {
@@ -428,6 +428,11 @@ export class DirectAfalTransport implements AfalTransport {
     );
     if (!verified) {
       throw new Error('Peer descriptor signature verification failed');
+    }
+
+    const expiresMs = Date.parse(descriptor.expires_at);
+    if (Number.isNaN(expiresMs) || expiresMs <= Date.now()) {
+      throw new Error(`Fetched peer descriptor expired or invalid expires_at: "${descriptor.expires_at}"`);
     }
 
     this.peerDescriptor = descriptor;

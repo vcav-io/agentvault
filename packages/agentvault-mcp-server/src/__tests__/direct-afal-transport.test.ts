@@ -734,6 +734,27 @@ describe('DirectAfalTransport', () => {
       ).rejects.toThrow('Cannot initiate: no peer connection configured');
     });
 
+    it('rejects fetched descriptor with expired expires_at', async () => {
+      const fresh = new DirectAfalTransport({
+        agentId: 'alice-test',
+        seedHex: TEST_SEED,
+        localDescriptor,
+        peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-descriptor.json',
+      });
+
+      const expiredPeer = makePeerDescriptor({ expires_at: '2000-01-01T00:00:00Z' });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(expiredPeer),
+      });
+
+      const propose = makePropose();
+      await expect(
+        fresh.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' }),
+      ).rejects.toThrow(/Fetched peer descriptor expired or invalid expires_at/);
+    });
+
     it('throws when descriptor fetch returns non-200', async () => {
       const fresh = new DirectAfalTransport({
         agentId: 'alice-test',
