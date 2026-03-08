@@ -106,9 +106,9 @@ describe('INITIATE with AFAL', () => {
     );
 
     const call = vi.mocked(transport.sendPropose).mock.calls[0][0];
-    expect(call.relay.session_id).toBe('sess-mock');
-    expect(call.relay.responder_submit_token).toBe('resp-sub-tok');
-    expect(call.relay.responder_read_token).toBe('resp-read-tok');
+    expect(call.relay?.session_id).toBe('sess-mock');
+    expect(call.relay?.responder_submit_token).toBe('resp-sub-tok');
+    expect(call.relay?.responder_read_token).toBe('resp-read-tok');
     expect(call.templateId).toBe('mediation-demo.v1.standard');
     expect(call.budgetTier).toBe('SMALL');
   });

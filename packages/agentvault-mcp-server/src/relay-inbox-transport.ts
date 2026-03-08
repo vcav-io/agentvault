@@ -53,10 +53,10 @@ export class RelayInboxTransport implements AfalTransport {
    */
   async sendPropose(_params: {
     propose: AfalPropose;
-    relay: RelayInvitePayload;
+    relay?: RelayInvitePayload;
     templateId: string;
     budgetTier: string;
-  }): Promise<void> {
+  }): Promise<undefined> {
     throw new Error(
       'RelayInboxTransport does not support sendPropose — use createRelayInvite instead',
     );

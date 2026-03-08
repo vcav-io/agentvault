@@ -55,6 +55,12 @@ export interface RelayContract {
   relay_verifying_key_hex?: string;
 }
 
+export interface ModelProfileBinding {
+  id: string;
+  hash: string;
+  version?: string;
+}
+
 type ContractTemplate = Omit<RelayContract, 'participants'>;
 
 /**
@@ -257,6 +263,17 @@ export function buildRelayContract(
     contract.model_profile_id = modelProfileId;
   }
   return contract;
+}
+
+export function withRelayContractModelProfile(
+  contract: RelayContract,
+  profile: ModelProfileBinding,
+): RelayContract {
+  return {
+    ...contract,
+    model_profile_id: profile.id,
+    model_profile_hash: profile.hash,
+  };
 }
 
 /** List available bundled purpose codes. */

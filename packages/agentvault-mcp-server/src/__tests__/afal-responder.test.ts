@@ -5,7 +5,8 @@ import { AfalResponder, NonceCache } from '../afal-responder.js';
 import type { AdmissionPolicy } from '../afal-responder.js';
 import { signMessage, verifyMessage, DOMAIN_PREFIXES, contentHash } from '../afal-signing.js';
 import { computeProposalId } from '../afal-types.js';
-import type { AfalPropose, RelayInvitePayload } from '../afal-types.js';
+import type { AfalPropose, RelayInvitePayload, RelaySessionBinding } from '../afal-types.js';
+import type { ModelProfileRef } from '../model-profiles.js';
 
 // ── Test keypairs ────────────────────────────────────────────────────────────
 
@@ -14,6 +15,16 @@ const RESPONDER_PUBKEY = bytesToHex(ed25519.getPublicKey(hexToBytes(RESPONDER_SE
 
 const PROPOSER_SEED = '0101010101010101010101010101010101010101010101010101010101010101';
 const PROPOSER_PUBKEY = '8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c';
+const PROFILE_A: ModelProfileRef = {
+  id: 'api-claude-sonnet-v1',
+  version: '1',
+  hash: 'a'.repeat(64),
+};
+const PROFILE_B: ModelProfileRef = {
+  id: 'api-openai-4.1-mini-v1',
+  version: '1',
+  hash: 'b'.repeat(64),
+};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -75,6 +86,25 @@ function makeWrappedBody(
   return { propose: signed, relay };
 }
 
+function makeSignedCommit(
+  admitTokenId: string,
+  proposalId: string,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const commitMsg: Record<string, unknown> = {
+    commit_version: '1',
+    proposal_id: proposalId,
+    from: 'alice-test',
+    admit_token_id: admitTokenId,
+    relay_session: {
+      ...makeRelay(),
+      contract_hash: 'c'.repeat(64),
+    } satisfies RelaySessionBinding,
+    ...overrides,
+  };
+  return signMessage(DOMAIN_PREFIXES.COMMIT, commitMsg, PROPOSER_SEED);
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe('AfalResponder', () => {
@@ -124,17 +154,43 @@ describe('AfalResponder', () => {
 
     it('enqueues admitted proposal to drain queue', () => {
       const body = makeWrappedBody();
-      responder.handlePropose(body);
+      const result = responder.handlePropose(body);
+      const commit = makeSignedCommit(
+        result.response['admit_token_id'] as string,
+        result.response['proposal_id'] as string,
+      );
+      responder.handleCommit(commit);
       const queued = responder.drainQueue();
       expect(queued).toHaveLength(1);
       expect(queued[0].proposerAgentId).toBe('alice-test');
-      expect(queued[0].relay.session_id).toBe('sess-001');
+      expect(queued[0].relay?.session_id).toBe('sess-001');
     });
 
     it('stores admit token for COMMIT verification', () => {
       const body = makeWrappedBody();
       responder.handlePropose(body);
       expect(responder._getAdmitStoreSize()).toBe(1);
+    });
+
+    it('selects a supported model profile from acceptable_model_profiles', () => {
+      responder = new AfalResponder({
+        agentId: 'bob-test',
+        seedHex: RESPONDER_SEED,
+        policy: makePolicy(),
+        supportedModelProfiles: [PROFILE_B],
+      });
+
+      const result = responder.handlePropose(
+        makeWrappedBody({
+          model_profile_id: PROFILE_A.id,
+          model_profile_version: PROFILE_A.version,
+          model_profile_hash: PROFILE_A.hash,
+          acceptable_model_profiles: [PROFILE_A, PROFILE_B],
+        }),
+      );
+
+      expect(result.outcome).toBe('ADMIT');
+      expect(result.response['selected_model_profile']).toEqual(PROFILE_B);
     });
 
     it('purges expired proposals from both admitStore and queue', () => {
@@ -145,7 +201,6 @@ describe('AfalResponder', () => {
         queue: Array<{ expiresAt: number }>;
         admitStore: Map<string, { expiresAt: number }>;
       };
-      internal.queue[0].expiresAt = Date.now() - 1;
       for (const admitted of internal.admitStore.values()) {
         admitted.expiresAt = Date.now() - 1;
       }
@@ -322,21 +377,6 @@ describe('AfalResponder', () => {
       };
     }
 
-    function makeSignedCommit(
-      admitTokenId: string,
-      proposalId: string,
-      overrides: Record<string, unknown> = {},
-    ): Record<string, unknown> {
-      const commitMsg: Record<string, unknown> = {
-        commit_version: '1',
-        proposal_id: proposalId,
-        from: 'alice-test',
-        admit_token_id: admitTokenId,
-        ...overrides,
-      };
-      return signMessage(DOMAIN_PREFIXES.COMMIT, commitMsg, PROPOSER_SEED);
-    }
-
     it('accepts valid COMMIT', () => {
       const { tokenId, proposalId } = admitAndGetIds();
       const commit = makeSignedCommit(tokenId, proposalId);
@@ -401,8 +441,20 @@ describe('AfalResponder', () => {
 
   describe('drainQueue', () => {
     it('returns and clears the queue', () => {
-      responder.handlePropose(makeWrappedBody({ nonce: 'a'.repeat(64) }));
-      responder.handlePropose(makeWrappedBody({ nonce: 'b'.repeat(64) }));
+      const admitA = responder.handlePropose(makeWrappedBody({ nonce: 'a'.repeat(64) }));
+      responder.handleCommit(
+        makeSignedCommit(
+          admitA.response['admit_token_id'] as string,
+          admitA.response['proposal_id'] as string,
+        ),
+      );
+      const admitB = responder.handlePropose(makeWrappedBody({ nonce: 'b'.repeat(64) }));
+      responder.handleCommit(
+        makeSignedCommit(
+          admitB.response['admit_token_id'] as string,
+          admitB.response['proposal_id'] as string,
+        ),
+      );
       const items = responder.drainQueue();
       expect(items).toHaveLength(2);
       expect(responder.drainQueue()).toHaveLength(0);
@@ -422,8 +474,13 @@ describe('AfalResponder', () => {
     });
 
     it('GC removes expired proposals from queue', () => {
-      const body = makeWrappedBody();
-      responder.handlePropose(body);
+      const admit = responder.handlePropose(makeWrappedBody());
+      responder.handleCommit(
+        makeSignedCommit(
+          admit.response['admit_token_id'] as string,
+          admit.response['proposal_id'] as string,
+        ),
+      );
 
       // Verify item is in queue before expiry
       expect(responder.peekQueue()).toHaveLength(1);

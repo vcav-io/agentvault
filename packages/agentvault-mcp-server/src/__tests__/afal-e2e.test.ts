@@ -154,15 +154,24 @@ describe('AFAL M4 E2E', () => {
     // Verify A stored the ADMIT
     const storedAdmit = transportA._getStoredAdmit(propose.proposal_id);
     expect(storedAdmit).toBeDefined();
-    expect(storedAdmit!['outcome']).toBe('ADMIT');
-    expect(storedAdmit!['proposal_id']).toBe(propose.proposal_id);
+    expect(storedAdmit!.outcome).toBe('ADMIT');
+    expect(storedAdmit!.proposal_id).toBe(propose.proposal_id);
 
     // Verify ADMIT is signed by Bob
-    expect(verifyMessage(DOMAIN_PREFIXES.ADMIT, storedAdmit!, BOB_PUBKEY)).toBe(true);
+    expect(
+      verifyMessage(
+        DOMAIN_PREFIXES.ADMIT,
+        storedAdmit! as unknown as Record<string, unknown>,
+        BOB_PUBKEY,
+      ),
+    ).toBe(true);
 
     // ── Step 2: Agent A sends COMMIT ───────────────────────────────────
 
-    await transportA.acceptInvite(propose.proposal_id);
+    await transportA.commitAdmit!(propose.proposal_id, {
+      ...relay,
+      contract_hash: 'c'.repeat(64),
+    });
 
     // ADMIT should be consumed
     expect(transportA._getStoredAdmit(propose.proposal_id)).toBeUndefined();

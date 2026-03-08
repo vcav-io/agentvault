@@ -179,6 +179,10 @@ describe('AfalHttpServer', () => {
       proposal_id: proposalId,
       from: 'alice-test',
       admit_token_id: admitTokenId,
+      relay_session: {
+        ...makeRelay(),
+        contract_hash: 'c'.repeat(64),
+      },
     };
     const signedCommit = signMessage(DOMAIN_PREFIXES.COMMIT, commitMsg, PROPOSER_SEED);
 

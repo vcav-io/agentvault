@@ -86,7 +86,10 @@ function makeRelay(): RelayInvitePayload {
 
 // ── Signed ADMIT/DENY helpers ──────────────────────────────────────────────
 
-function makeSignedAdmit(proposalId: string): Record<string, unknown> {
+function makeSignedAdmit(
+  proposalId: string,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
   const unsigned = {
     admission_version: '1',
     outcome: 'ADMIT',
@@ -94,6 +97,7 @@ function makeSignedAdmit(proposalId: string): Record<string, unknown> {
     admit_token_id: 'a'.repeat(64),
     admission_tier: 'DEFAULT',
     expires_at: '2026-01-01T00:15:00Z',
+    ...overrides,
   };
   return signMessage(DOMAIN_PREFIXES.ADMIT, unsigned as Record<string, unknown>, PEER_SEED);
 }
@@ -212,6 +216,34 @@ describe('DirectAfalTransport', () => {
       expect(stored).toBeDefined();
       expect(stored!['outcome']).toBe('ADMIT');
       expect(stored!['admit_token_id']).toBe('a'.repeat(64));
+    });
+
+    it('returns selected_model_profile from ADMIT responses', async () => {
+      const propose = makePropose();
+      const admit = makeSignedAdmit(propose.proposal_id, {
+        selected_model_profile: {
+          id: 'api-openai-4.1-mini-v1',
+          version: '1',
+          hash: 'b'.repeat(64),
+        },
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(admit),
+      });
+
+      const result = await transport.sendPropose({
+        propose,
+        templateId: 't',
+        budgetTier: 'SMALL',
+      });
+
+      expect(result?.selectedModelProfile).toEqual({
+        id: 'api-openai-4.1-mini-v1',
+        version: '1',
+        hash: 'b'.repeat(64),
+      });
     });
 
     it('includes descriptor_hash in wire message when present in propose', async () => {
@@ -520,12 +552,13 @@ describe('DirectAfalTransport', () => {
     });
   });
 
-  // ── acceptInvite ─────────────────────────────────────────────────────────
+  // ── commitAdmit ─────────────────────────────────────────────────────────
 
-  describe('acceptInvite', () => {
+  describe('commitAdmit', () => {
     it('sends a signed COMMIT to the peer commit endpoint', async () => {
       const propose = makePropose();
       const admit = makeSignedAdmit(propose.proposal_id);
+      const relaySession = { ...makeRelay(), contract_hash: 'c'.repeat(64) };
 
       // Seed the stored ADMIT manually
       mockFetch.mockResolvedValueOnce({
@@ -541,7 +574,7 @@ describe('DirectAfalTransport', () => {
 
       // Now send COMMIT
       mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) });
-      await transport.acceptInvite(propose.proposal_id);
+      await transport.commitAdmit!(propose.proposal_id, relaySession);
 
       // Should have been called twice total
       expect(mockFetch).toHaveBeenCalledTimes(2);
@@ -554,12 +587,14 @@ describe('DirectAfalTransport', () => {
       expect(body['from']).toBe('alice-test');
       expect(body['admit_token_id']).toBe('a'.repeat(64));
       expect(body['proposal_id']).toBe(propose.proposal_id);
+      expect(body['relay_session']).toEqual(relaySession);
       expect(typeof body['signature']).toBe('string');
     });
 
     it('removes stored ADMIT after successful COMMIT', async () => {
       const propose = makePropose();
       const admit = makeSignedAdmit(propose.proposal_id);
+      const relaySession = { ...makeRelay(), contract_hash: 'c'.repeat(64) };
 
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -573,13 +608,15 @@ describe('DirectAfalTransport', () => {
       });
 
       mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) });
-      await transport.acceptInvite(propose.proposal_id);
+      await transport.commitAdmit!(propose.proposal_id, relaySession);
 
       expect(transport._getStoredAdmit(propose.proposal_id)).toBeUndefined();
     });
 
     it('throws when no stored ADMIT exists for the proposal_id', async () => {
-      await expect(transport.acceptInvite('no-such-proposal-id')).rejects.toThrow(
+      await expect(
+        transport.commitAdmit!('no-such-proposal-id', { ...makeRelay(), contract_hash: 'c'.repeat(64) }),
+      ).rejects.toThrow(
         'No stored ADMIT for proposal_id: no-such-proposal-id',
       );
     });
@@ -587,6 +624,7 @@ describe('DirectAfalTransport', () => {
     it('throws when COMMIT endpoint returns non-200', async () => {
       const propose = makePropose();
       const admit = makeSignedAdmit(propose.proposal_id);
+      const relaySession = { ...makeRelay(), contract_hash: 'c'.repeat(64) };
 
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -605,7 +643,7 @@ describe('DirectAfalTransport', () => {
         text: () => Promise.resolve('Conflict'),
       });
 
-      await expect(transport.acceptInvite(propose.proposal_id)).rejects.toThrow(
+      await expect(transport.commitAdmit!(propose.proposal_id, relaySession)).rejects.toThrow(
         'COMMIT rejected: 409 Conflict',
       );
     });

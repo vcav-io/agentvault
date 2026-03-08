@@ -12,16 +12,18 @@ import type { AdmissionPolicy } from '../afal-responder.js';
 import type { AgentDescriptor } from '../direct-afal-transport.js';
 import { signMessage, DOMAIN_PREFIXES, contentHash } from '../afal-signing.js';
 import { computeProposalId, generateNonce } from '../afal-types.js';
-import type { AfalPropose, RelayInvitePayload } from '../afal-types.js';
+import type { AfalAdmit, AfalPropose, RelayInvitePayload } from '../afal-types.js';
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const VFC_SCHEMA_DIR =
   process.env['VFC_SCHEMA_DIR'] ?? join(TEST_DIR, '../../../../../vfc/schemas');
 const HAS_VFC_SCHEMAS = existsSync(VFC_SCHEMA_DIR);
 
-const { default: Ajv2020 } = await import('ajv/dist/2020.js');
-const { default: addFormats } = await import('ajv-formats');
-const ajv = new Ajv2020({ allErrors: true, strict: false });
+const Ajv2020 = (await import('ajv/dist/2020.js')).default as unknown as new (
+  ...args: unknown[]
+) => any;
+const addFormats = (await import('ajv-formats')).default as unknown as (ajv: unknown) => void;
+const ajv: any = new Ajv2020({ allErrors: true, strict: false });
 addFormats(ajv);
 
 function compileSchema(filename: string) {
@@ -238,7 +240,7 @@ describeIfSchemas('AFAL VFC conformance', () => {
         expires_at: '2026-03-08T15:10:00.000Z',
       },
       BOB_SEED,
-    );
+    ) as unknown as AfalAdmit;
     const peerDescriptor = makeDescriptor('bob-test', BOB_PUBKEY, BOB_SEED);
 
     const mockFetch = vi.fn();
@@ -254,12 +256,15 @@ describeIfSchemas('AFAL VFC conformance', () => {
       });
 
     transport._setPeerDescriptorForTesting(peerDescriptor);
-    transport._setStoredAdmitForTesting(propose.proposal_id, {
-      ...admit,
-      from: 'bob-test',
-    });
+    transport._setStoredAdmitForTesting(propose.proposal_id, admit);
 
-    await transport.acceptInvite(propose.proposal_id);
+    await transport.commitAdmit!(propose.proposal_id, {
+      session_id: 'sess-001',
+      responder_submit_token: 'sub-tok',
+      responder_read_token: 'read-tok',
+      relay_url: 'http://relay.example.com',
+      contract_hash: 'c'.repeat(64),
+    });
 
     const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
     const commit = JSON.parse(init.body as string) as unknown;

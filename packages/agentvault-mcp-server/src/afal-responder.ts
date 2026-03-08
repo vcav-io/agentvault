@@ -2,7 +2,7 @@
  * AfalResponder — AFAL admission logic for RESPOND mode.
  *
  * Evaluates incoming PROPOSE messages against an AdmissionPolicy, signs
- * ADMIT/DENY responses, and queues admitted proposals for checkInbox() drain.
+ * ADMIT/DENY responses, and queues committed proposals for checkInbox() drain.
  *
  * DENY is a fixed 6-field set: admission_version, proposal_id, outcome,
  * deny_code, expires_at, signature.
@@ -12,9 +12,10 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import type { AfalPropose, RelayInvitePayload } from './afal-types.js';
+import type { AfalPropose, RelaySessionBinding } from './afal-types.js';
 import { computeProposalId } from './afal-types.js';
 import { signMessage, verifyMessage, DOMAIN_PREFIXES, contentHash } from './afal-signing.js';
+import type { ModelProfileRef } from './model-profiles.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -36,11 +37,12 @@ export interface AdmissionPolicy {
 
 export interface AdmittedProposal {
   propose: AfalPropose;
-  relay: RelayInvitePayload;
+  relay?: RelaySessionBinding;
   admitTokenId: string;
   proposerAgentId: string;
   proposerPublicKeyHex: string;
   expiresAt: number;
+  selectedModelProfile?: ModelProfileRef;
 }
 
 // ── NonceCache ───────────────────────────────────────────────────────────────
@@ -91,6 +93,7 @@ export interface AfalResponderConfig {
   agentId: string;
   seedHex: string;
   policy: AdmissionPolicy;
+  supportedModelProfiles?: ModelProfileRef[];
 }
 
 export class AfalResponder {
@@ -107,18 +110,15 @@ export class AfalResponder {
   handlePropose(body: unknown): { outcome: 'ADMIT' | 'DENY'; response: Record<string, unknown> } {
     const now = Date.now();
 
-    // 1. Detect body shape: wrapped {propose, relay} vs flat M3
+    // 1. Detect body shape: wrapped {propose, relay?}
     if (!isWrappedBody(body)) {
       return this.deny('', 'UNSUPPORTED', now);
     }
 
-    const wrapped = body as { propose: Record<string, unknown>; relay: Record<string, unknown> };
-
-    // 2. Validate relay tokens (4 required string fields)
-    const relay = parseRelay(wrapped.relay);
-    if (!relay) {
-      return this.deny('', 'UNSUPPORTED', now);
-    }
+    const wrapped = body as {
+      propose: Record<string, unknown>;
+      relay?: Record<string, unknown>;
+    };
 
     // 3. Parse propose fields, verify proposal_id integrity
     const propose = parsePropose(wrapped.propose);
@@ -151,16 +151,24 @@ export class AfalResponder {
       return this.deny(proposalId, 'UNTRUSTED', now);
     }
 
-    // 6b. Wrapped direct AFAL proposals must bind the attached relay payload.
-    // Without this, a responder can verify the PROPOSE signature yet still
-    // accept attacker-modified session tokens or relay URL.
+    // 6b. If a relay payload is attached, it must be explicitly bound.
     const relayBindingHash = wrapped.propose['relay_binding_hash'];
-    if (typeof relayBindingHash !== 'string' || !relayBindingHash) {
-      return this.deny(proposalId, 'INTEGRITY', now);
-    }
-    const expectedRelayHash = contentHash(relay);
-    if (relayBindingHash !== expectedRelayHash) {
-      return this.deny(proposalId, 'INTEGRITY', now);
+    const relay = wrapped.relay ? parseRelay(wrapped.relay) : null;
+    if (wrapped.relay !== undefined) {
+      if (!relay) {
+        return this.deny(proposalId, 'UNSUPPORTED', now);
+      }
+      if (typeof relayBindingHash !== 'string' || !relayBindingHash) {
+        return this.deny(proposalId, 'INTEGRITY', now);
+      }
+      const expectedRelayHash = contentHash(relay);
+      if (relayBindingHash !== expectedRelayHash) {
+        return this.deny(proposalId, 'INTEGRITY', now);
+      }
+    } else if (relayBindingHash !== undefined) {
+      if (typeof relayBindingHash !== 'string' || !relayBindingHash) {
+        return this.deny(proposalId, 'INTEGRITY', now);
+      }
     }
 
     // 7. Check timestamp staleness (> 10 min)
@@ -189,6 +197,14 @@ export class AfalResponder {
       return this.deny(proposalId, 'REPLAY', now);
     }
 
+    const selectedModelProfile = selectModelProfile(
+      propose,
+      this.config.supportedModelProfiles ?? [],
+    );
+    if (propose.acceptable_model_profiles?.length && !selectedModelProfile) {
+      return this.deny(proposalId, 'UNSUPPORTED', now);
+    }
+
     // All checks passed — ADMIT
     const admitTokenId = randomBytes(32).toString('hex');
     const expiresAt = now + ADMIT_TTL_MS;
@@ -201,21 +217,21 @@ export class AfalResponder {
       admit_token_id: admitTokenId,
       admission_tier: propose.admission_tier_requested,
       expires_at: expiresAtIso,
+      ...(selectedModelProfile ? { selected_model_profile: selectedModelProfile } : {}),
     };
 
     const signedAdmit = signMessage(DOMAIN_PREFIXES.ADMIT, admitUnsigned, this.config.seedHex);
 
     const admitted: AdmittedProposal = {
       propose,
-      relay,
       admitTokenId,
       proposerAgentId: propose.from,
       proposerPublicKeyHex: trustedAgent.publicKeyHex,
       expiresAt,
+      selectedModelProfile: selectedModelProfile ?? undefined,
     };
 
     this.admitStore.set(admitTokenId, admitted);
-    this.queue.push(admitted);
 
     return { outcome: 'ADMIT', response: signedAdmit };
   }
@@ -257,7 +273,26 @@ export class AfalResponder {
       return { ok: false, error: 'COMMIT signature verification failed' };
     }
 
+    const relaySession = parseRelaySession(commit['relay_session']);
+    if (!relaySession) {
+      return { ok: false, error: 'COMMIT missing relay_session binding' };
+    }
+
+    const finalizedPropose = admitted.selectedModelProfile
+      ? {
+          ...admitted.propose,
+          model_profile_id: admitted.selectedModelProfile.id,
+          model_profile_version: admitted.selectedModelProfile.version,
+          model_profile_hash: admitted.selectedModelProfile.hash,
+        }
+      : admitted.propose;
+
     this.admitStore.delete(admitTokenId);
+    this.queue.push({
+      ...admitted,
+      propose: finalizedPropose,
+      relay: relaySession,
+    });
     return { ok: true };
   }
 
@@ -335,20 +370,19 @@ export class AfalResponder {
 
 function isWrappedBody(
   body: unknown,
-): body is { propose: Record<string, unknown>; relay: Record<string, unknown> } {
+): body is { propose: Record<string, unknown>; relay?: Record<string, unknown> } {
   if (!body || typeof body !== 'object') return false;
   const b = body as Record<string, unknown>;
   return (
     b['propose'] != null &&
     typeof b['propose'] === 'object' &&
     !Array.isArray(b['propose']) &&
-    b['relay'] != null &&
-    typeof b['relay'] === 'object' &&
-    !Array.isArray(b['relay'])
+    (b['relay'] === undefined ||
+      (b['relay'] != null && typeof b['relay'] === 'object' && !Array.isArray(b['relay'])))
   );
 }
 
-function parseRelay(raw: Record<string, unknown>): RelayInvitePayload | null {
+function parseRelay(raw: Record<string, unknown>): Omit<RelaySessionBinding, 'contract_hash'> | null {
   const { session_id, responder_submit_token, responder_read_token, relay_url } = raw as Record<
     string,
     string
@@ -366,6 +400,15 @@ function parseRelay(raw: Record<string, unknown>): RelayInvitePayload | null {
     return null;
   }
   return { session_id, responder_submit_token, responder_read_token, relay_url };
+}
+
+function parseRelaySession(raw: unknown): RelaySessionBinding | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const value = raw as Record<string, unknown>;
+  const relay = parseRelay(value);
+  if (!relay) return null;
+  if (typeof value['contract_hash'] !== 'string' || !value['contract_hash']) return null;
+  return { ...relay, contract_hash: value['contract_hash'] };
 }
 
 const REQUIRED_PROPOSE_STRINGS = [
@@ -411,6 +454,9 @@ function parsePropose(raw: Record<string, unknown>): AfalPropose | null {
     ...(typeof raw['model_profile_hash'] === 'string' && {
       model_profile_hash: raw['model_profile_hash'],
     }),
+    ...(Array.isArray(raw['acceptable_model_profiles']) && {
+      acceptable_model_profiles: raw['acceptable_model_profiles'] as ModelProfileRef[],
+    }),
     ...(typeof raw['prev_receipt_hash'] === 'string' && {
       prev_receipt_hash: raw['prev_receipt_hash'],
     }),
@@ -419,4 +465,35 @@ function parsePropose(raw: Record<string, unknown>): AfalPropose | null {
     }),
     ...(typeof raw['signature'] === 'string' && { signature: raw['signature'] }),
   };
+}
+
+function selectModelProfile(
+  propose: AfalPropose,
+  supportedProfiles: ModelProfileRef[],
+): ModelProfileRef | null {
+  const acceptable = propose.acceptable_model_profiles ?? [];
+  if (acceptable.length === 0) {
+    if (!propose.model_profile_hash) return null;
+    return {
+      id: propose.model_profile_id,
+      version: propose.model_profile_version,
+      hash: propose.model_profile_hash,
+    };
+  }
+
+  if (supportedProfiles.length === 0) {
+    return acceptable[0] ?? null;
+  }
+
+  for (const supported of supportedProfiles) {
+    const match = acceptable.find(
+      (candidate) =>
+        candidate.id === supported.id &&
+        candidate.version === supported.version &&
+        candidate.hash === supported.hash,
+    );
+    if (match) return match;
+  }
+
+  return null;
 }

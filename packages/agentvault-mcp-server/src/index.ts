@@ -42,6 +42,7 @@ import type { DirectAfalTransportConfig } from './direct-afal-transport.js';
 import { RelayInboxTransport } from './relay-inbox-transport.js';
 import { signMessage, DOMAIN_PREFIXES } from './afal-signing.js';
 import type { AdmissionPolicy, TrustedAgent } from './afal-responder.js';
+import { listKnownModelProfiles } from './model-profiles.js';
 import { ed25519 } from '@noble/curves/ed25519';
 import { hexToBytes, bytesToHex } from '@noble/hashes/utils';
 
@@ -154,7 +155,11 @@ function buildDirectTransportFromEnv(): DirectAfalTransport | null {
       propose: base ? `${base}/afal/propose` : '',
       commit: base ? `${base}/afal/commit` : '',
     },
-    capabilities: { supported_body_formats: ['wrapped_v1'], supports_commit: true },
+    capabilities: {
+      supported_body_formats: ['wrapped_v1'],
+      supports_commit: true,
+      supported_model_profiles: listKnownModelProfiles(),
+    },
     policy_commitments: {},
   };
   const localDescriptorRaw = signMessage(DOMAIN_PREFIXES.DESCRIPTOR, descriptorUnsigned, seedHex);
@@ -369,3 +374,5 @@ export type { AdmissionPolicy, TrustedAgent, DenyCode } from './afal-responder.j
 export { AfalHttpServer } from './afal-http-server.js';
 export { signMessage, DOMAIN_PREFIXES } from './afal-signing.js';
 export { isAgentDescriptor } from './direct-afal-transport.js';
+export { listKnownModelProfiles, resolveModelProfileRefs } from './model-profiles.js';
+export type { ModelProfileRef } from './model-profiles.js';
