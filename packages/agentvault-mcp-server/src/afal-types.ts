@@ -1,9 +1,10 @@
 /**
  * AFAL protocol type interfaces for agentvault-mcp-server.
  *
- * These are minimal structural guides — schema validation is the real check.
- * Fields not available in M2 (signature, descriptor_hash, model_profile_hash,
- * prev_receipt_hash) are optional.
+ * These are minimal structural guides for the AFAL envelopes AgentVault
+ * currently emits on the wire. They intentionally match the canonical AFAL
+ * v1 envelopes published in vault-family-core rather than the older draft
+ * comments that assumed richer admission payloads.
  *
  * See: vfc schemas/afal_propose.schema.json (Binding Spec v1, Section 3.1)
  */
@@ -37,15 +38,22 @@ export interface AfalPropose {
 }
 
 export interface AfalAdmit {
+  admission_version: string;
   proposal_id: string;
+  outcome: 'ADMIT';
+  admit_token_id: string;
   admission_tier: string;
-  session_token?: string;
+  expires_at: string;
+  signature?: string;
 }
 
 export interface AfalDeny {
+  admission_version: string;
   proposal_id: string;
-  reason_code: string;
-  reason_text?: string;
+  outcome: 'DENY';
+  deny_code: string;
+  expires_at: string;
+  signature?: string;
 }
 
 // ── Relay Invite Payload ────────────────────────────────────────────────
