@@ -1,0 +1,9 @@
+{
+  "profile_version": "1",
+  "profile_id": "api-gpt5-v1",
+  "provider": "openai",
+  "model_id": "gpt-5",
+  "model_family": "gpt-5",
+  "reasoning_mode": "unconstrained",
+  "structured_output": true
+}

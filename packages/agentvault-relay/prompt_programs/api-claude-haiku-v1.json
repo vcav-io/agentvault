@@ -1,9 +1,9 @@
 {
   "profile_version": "1",
-  "profile_id": "api-claude-sonnet-v1",
+  "profile_id": "api-claude-haiku-v1",
   "provider": "anthropic",
-  "model_id": "claude-sonnet-4-6",
-  "model_family": "claude-sonnet",
+  "model_id": "claude-haiku-4-5-20251001",
+  "model_family": "claude-haiku",
   "reasoning_mode": "unconstrained",
   "structured_output": true
 }

@@ -43,6 +43,12 @@ pub enum RelayError {
     #[error("Service unavailable: {0}")]
     ServiceUnavailable(String),
 
+    #[error("Model profile not found: '{profile_id}'")]
+    ProfileNotFound { profile_id: String },
+
+    #[error("Model profile not admitted: '{profile_id}' exists on disk but is not in the admission allowlist")]
+    ProfileNotAdmitted { profile_id: String },
+
     #[error("Policy not available: requested hash '{requested_hash}'")]
     PolicyNotAvailable { requested_hash: String },
 
@@ -68,6 +74,8 @@ impl RelayError {
             }
             RelayError::InviteStateConflict(_) => StatusCode::CONFLICT,
             RelayError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            RelayError::ProfileNotFound { .. } => StatusCode::BAD_REQUEST,
+            RelayError::ProfileNotAdmitted { .. } => StatusCode::BAD_REQUEST,
             RelayError::PolicyNotAvailable { .. } => StatusCode::BAD_REQUEST,
             RelayError::NoPolicyResolvable(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }

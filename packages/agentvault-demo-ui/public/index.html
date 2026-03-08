@@ -45,13 +45,23 @@
             <select id="template-select"></select>
           </div>
           <div class="template-selector">
-            <label for="provider-select">Agent Provider</label>
+            <label for="coordination-model-select">Coordination model</label>
+            <select id="coordination-model-select">
+              <option value="">Loading...</option>
+            </select>
+          </div>
+          <label class="split-toggle">
+            <input type="checkbox" id="split-model-toggle">
+            <span>Split model config</span>
+          </label>
+          <div class="template-selector split-model-field" id="agent-provider-wrap" style="display:none">
+            <label for="provider-select">Agent provider</label>
             <select id="provider-select">
               <option value="">Loading...</option>
             </select>
           </div>
-          <div class="template-selector">
-            <label for="model-select">Agent Model</label>
+          <div class="template-selector split-model-field" id="agent-model-wrap" style="display:none">
+            <label for="model-select">Agent model</label>
             <select id="model-select">
               <option value="">—</option>
             </select>

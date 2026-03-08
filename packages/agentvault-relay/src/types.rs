@@ -17,13 +17,21 @@ pub struct RelayInput {
     pub context: serde_json::Value,
 }
 
-/// Tier 2 model profile — describes the provider + model configuration
-/// consented to by both parties. Hash is bound into the receipt.
+/// Tier 2 model profile — describes the cognitive class consented to by both
+/// parties. Hash is bound into the receipt.
+///
+/// A profile is more than provider + SKU: it declares reasoning mode,
+/// structured-output capability, and the concrete model binding. `model_id`
+/// is what the relay dispatches to the provider API; the other fields
+/// describe the cognitive class the parties agreed on.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelProfile {
     pub profile_version: String,
     pub profile_id: String,
     pub provider: String,
+    /// Concrete model identifier dispatched to the provider API.
+    /// e.g. "claude-sonnet-4-6", "gpt-5", "gemini-3-flash".
+    pub model_id: String,
     pub model_family: String,
     pub reasoning_mode: String,
     pub structured_output: bool,

@@ -1,0 +1,9 @@
+{
+  "profile_version": "1",
+  "profile_id": "api-gemini3flash-lite-v1",
+  "provider": "gemini",
+  "model_id": "gemini-3-flash-lite",
+  "model_family": "gemini-3",
+  "reasoning_mode": "unconstrained",
+  "structured_output": true
+}
