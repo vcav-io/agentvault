@@ -17,6 +17,7 @@ import { createServer } from 'node:http';
 import type { Server, IncomingMessage, ServerResponse } from 'node:http';
 import type { AfalResponder } from './afal-responder.js';
 import type { AgentDescriptor } from './direct-afal-transport.js';
+import { buildAgentCard } from './a2a-agent-card.js';
 
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_CONCURRENT = 16;
@@ -26,6 +27,8 @@ export interface AfalHttpServerConfig {
   bindAddress?: string;
   responder: AfalResponder;
   localDescriptor: AgentDescriptor;
+  relayUrl?: string;
+  supportedPurposes?: string[];
 }
 
 export class AfalHttpServer {
@@ -84,6 +87,15 @@ export class AfalHttpServer {
     return this._localDescriptor;
   }
 
+  get agentCard() {
+    return buildAgentCard({
+      baseUrl: this.baseUrl,
+      descriptor: this._localDescriptor,
+      supportedPurposes: this.config.supportedPurposes ?? [],
+      relayUrl: this.config.relayUrl,
+    });
+  }
+
   /** Extracted for testability — handles a single HTTP request. */
   handleRequest(req: IncomingMessage, res: ServerResponse): void {
     // Concurrent request guard
@@ -107,6 +119,13 @@ export class AfalHttpServer {
     if (method === 'GET' && url === '/afal/descriptor') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(this._localDescriptor));
+      done();
+      return;
+    }
+
+    if (method === 'GET' && url === '/.well-known/agent-card.json') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(this.agentCard));
       done();
       return;
     }

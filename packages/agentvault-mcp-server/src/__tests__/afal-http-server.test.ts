@@ -5,6 +5,7 @@ import { AfalHttpServer } from '../afal-http-server.js';
 import { AfalResponder } from '../afal-responder.js';
 import type { AdmissionPolicy } from '../afal-responder.js';
 import type { AgentDescriptor } from '../direct-afal-transport.js';
+import { AGENTVAULT_A2A_EXTENSION_URI } from '../a2a-agent-card.js';
 import { signMessage, DOMAIN_PREFIXES, contentHash } from '../afal-signing.js';
 import { computeProposalId } from '../afal-types.js';
 import type { AfalPropose, RelayInvitePayload } from '../afal-types.js';
@@ -108,6 +109,8 @@ describe('AfalHttpServer', () => {
       port: 0,
       responder,
       localDescriptor: descriptor,
+      relayUrl: 'http://relay.example.com',
+      supportedPurposes: ['MEDIATION'],
     });
     await server.start();
     // Get actual port from the underlying server
@@ -129,6 +132,24 @@ describe('AfalHttpServer', () => {
     expect((body['capabilities'] as Record<string, unknown>)['supported_body_formats']).toEqual([
       'wrapped_v1',
     ]);
+  });
+
+  it('GET /.well-known/agent-card.json returns an Agent Card with the AgentVault extension', async () => {
+    const res = await fetch(`${baseUrl}/.well-known/agent-card.json`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body['name']).toBe('bob-test');
+    expect(body['url']).toBe(baseUrl);
+    const capabilities = body['capabilities'] as Record<string, unknown>;
+    const extensions = capabilities['extensions'] as Array<Record<string, unknown>>;
+    expect(extensions).toHaveLength(1);
+    expect(extensions[0]['uri']).toBe(AGENTVAULT_A2A_EXTENSION_URI);
+    expect(extensions[0]['required']).toBe(false);
+    const params = extensions[0]['params'] as Record<string, unknown>;
+    expect(params['relay_url']).toBe('http://relay.example.com');
+    expect(params['public_key_hex']).toBe(RESPONDER_PUBKEY);
+    expect(params['supported_purposes']).toEqual(['MEDIATION']);
+    expect(params['afal_endpoint']).toBe(`${baseUrl}/afal`);
   });
 
   it('POST /afal/propose returns ADMIT for valid body', async () => {

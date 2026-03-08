@@ -70,6 +70,7 @@ export interface DirectAfalTransportConfig {
   agentId: string;
   seedHex: string;
   localDescriptor: AgentDescriptor;
+  relayUrl?: string;
   peerDescriptorUrl?: string;
   respondMode?: {
     httpPort: number;
@@ -127,6 +128,8 @@ export class DirectAfalTransport implements AfalTransport {
         bindAddress: config.respondMode.bindAddress,
         responder: this.responder,
         localDescriptor: signedDescriptor,
+        relayUrl: config.relayUrl,
+        supportedPurposes: config.respondMode.policy.allowedPurposeCodes,
       });
     } else {
       this.responder = null;

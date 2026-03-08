@@ -299,6 +299,7 @@ async function setupAndStartHeartbeats(): Promise<void> {
     agentId: 'bob',
     seedHex: bob.seedHex,
     localDescriptor: bobDescriptor,
+    relayUrl: RELAY_URL,
     peerDescriptorUrl: `http://127.0.0.1:${ALICE_AFAL_PORT}/afal/descriptor`,
     respondMode: { httpPort: BOB_AFAL_PORT, bindAddress: '127.0.0.1', policy: bobPolicy },
   };
@@ -306,6 +307,7 @@ async function setupAndStartHeartbeats(): Promise<void> {
     agentId: 'alice',
     seedHex: alice.seedHex,
     localDescriptor: aliceDescriptor,
+    relayUrl: RELAY_URL,
     peerDescriptorUrl: `http://127.0.0.1:${BOB_AFAL_PORT}/afal/descriptor`,
     respondMode: { httpPort: ALICE_AFAL_PORT, bindAddress: '127.0.0.1', policy: alicePolicy },
   };

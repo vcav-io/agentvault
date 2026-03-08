@@ -10,6 +10,7 @@ import { AfalHttpServer } from '../afal-http-server.js';
 import { AfalResponder } from '../afal-responder.js';
 import type { AdmissionPolicy } from '../afal-responder.js';
 import type { AgentDescriptor } from '../direct-afal-transport.js';
+import { AGENTVAULT_A2A_EXTENSION_URI } from '../a2a-agent-card.js';
 import { signMessage, DOMAIN_PREFIXES, contentHash } from '../afal-signing.js';
 import { computeProposalId, generateNonce } from '../afal-types.js';
 import type { AfalAdmit, AfalPropose, RelayInvitePayload } from '../afal-types.js';
@@ -144,6 +145,38 @@ describeIfSchemas('AFAL VFC conformance', () => {
       const res = await fetch(`${server.baseUrl}/afal/descriptor`);
       const body = (await res.json()) as unknown;
       assertSchema(validateDescriptor, body, 'descriptor');
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('served Agent Card exposes the AgentVault A2A extension params', async () => {
+    const descriptor = makeDescriptor('bob-test', BOB_PUBKEY, BOB_SEED);
+    const responder = new AfalResponder({
+      agentId: 'bob-test',
+      seedHex: BOB_SEED,
+      policy: makePolicy(),
+    });
+    const server = new AfalHttpServer({
+      port: 0,
+      responder,
+      localDescriptor: descriptor,
+      relayUrl: 'http://relay.example.com',
+      supportedPurposes: ['MEDIATION'],
+    });
+    await server.start();
+    try {
+      const res = await fetch(`${server.baseUrl}/.well-known/agent-card.json`);
+      const body = (await res.json()) as Record<string, unknown>;
+      const capabilities = body['capabilities'] as Record<string, unknown>;
+      const extensions = capabilities['extensions'] as Array<Record<string, unknown>>;
+      expect(extensions[0]?.['uri']).toBe(AGENTVAULT_A2A_EXTENSION_URI);
+      expect((extensions[0]?.['params'] as Record<string, unknown>)['relay_url']).toBe(
+        'http://relay.example.com',
+      );
+      expect((extensions[0]?.['params'] as Record<string, unknown>)['afal_endpoint']).toBe(
+        `${server.baseUrl}/afal`,
+      );
     } finally {
       await server.stop();
     }
