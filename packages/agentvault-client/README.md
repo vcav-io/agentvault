@@ -5,8 +5,12 @@ Standalone HTTP client for the [AgentVault](https://github.com/vcav-io/agentvaul
 ## Install
 
 ```bash
-npm install github:vcav-io/agentvault#main --workspace=packages/agentvault-client
+# local monorepo checkout
+npm install file:../agentvault-client
 ```
+
+For external consumers, install from a checkout of the repository. The package is
+not yet published on npm.
 
 ## Exported modules
 

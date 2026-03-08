@@ -150,7 +150,6 @@ The same protocol runs in two lanes: a software lane (this repo) where the relay
 - [Getting started](docs/getting-started.md) - full walkthrough, provider setup, CLI demo
 - [Threat model](docs/threat-model.md) - trust boundaries, adversary analysis, assurance tiers
 - [Receipt verification guide](docs/receipt-verification-guide.md) - algorithms, field reference, code examples
-- [Contract and schema reference](docs/schema-versioning-policy.md) - content-addressed schema binding and offline verification semantics
 - [Schema versioning policy](docs/schema-versioning-policy.md) - schema content addressing and receipt binding
 - [API reference](docs/api-reference.md) - relay endpoint documentation
 - [Protocol spec](docs/protocol-spec.md) - normative specification
