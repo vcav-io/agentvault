@@ -1,7 +1,7 @@
 # A2A Integration Spec: AgentVault as an A2A Extension
 
 > Status: Draft
-> Related: agentvault #216, VFC #15 (AFAL discovery)
+> Related: agentvault #214, VFC #15 (AFAL discovery)
 
 ## Context
 
