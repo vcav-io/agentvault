@@ -172,6 +172,7 @@ function buildDirectTransportFromEnv(): DirectAfalTransport | null {
     agentId,
     seedHex,
     localDescriptor,
+    relayUrl: process.env['AV_RELAY_URL'],
     peerDescriptorUrl,
   };
 
@@ -376,3 +377,5 @@ export { signMessage, DOMAIN_PREFIXES } from './afal-signing.js';
 export { isAgentDescriptor } from './direct-afal-transport.js';
 export { listKnownModelProfiles, resolveModelProfileRefs } from './model-profiles.js';
 export type { ModelProfileRef } from './model-profiles.js';
+export { buildAgentCard, AGENTVAULT_A2A_EXTENSION_URI } from './a2a-agent-card.js';
+export type { AgentCard } from './a2a-agent-card.js';
