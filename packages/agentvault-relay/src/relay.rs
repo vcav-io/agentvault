@@ -322,7 +322,7 @@ pub async fn relay_core(
         }
     }
 
-    // 2c. Validate model constraints against the effective provider (#261 review)
+    // 2c. Validate provider against contract allowed_providers (#151 gap 3, #261)
     if let Some(ref constraints) = contract.model_constraints {
         if !constraints.allowed_providers.is_empty()
             && !constraints

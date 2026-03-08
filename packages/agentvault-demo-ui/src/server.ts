@@ -494,11 +494,9 @@ app.post('/api/start', async (req, res) => {
       events.emitSystem(`Heartbeat loops restarted for provider: ${agentProvider}`);
     }
 
-    // Recreate registries with relay profile override if specified
-    if (relayProfileId) {
-      initRegistries(relayProfileId);
-      events.emitSystem(`Relay profile override: ${relayProfileId}`);
-    }
+    // Recreate registries with relay profile override (or reset to default)
+    initRegistries(relayProfileId);
+    events.emitSystem(`Relay profile: ${relayProfileId ?? 'default'}`);
 
     // Start JSONL recording
     const runFile = events.startRecording(RUNS_DIR);
