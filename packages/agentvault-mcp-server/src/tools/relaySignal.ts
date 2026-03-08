@@ -1560,7 +1560,7 @@ async function phaseJoin(
     // For legacy transports: tokens are already in handle from phaseDiscover.
     if (!handle.sessionId || !handle.tokens) {
       // No session tokens yet — must be relay inbox path. Accept to get them.
-      const result = await transport.acceptInvite(handle.inviteId);
+      const result = await transport.acceptInvite(handle.inviteId, handle.contractHash);
       if (isAcceptResult(result)) {
         handle.sessionId = result.session_id;
         handle.tokens = {

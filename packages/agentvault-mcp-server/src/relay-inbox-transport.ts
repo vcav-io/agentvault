@@ -107,8 +107,8 @@ export class RelayInboxTransport implements AfalTransport {
    * Accept an invite via the relay's accept endpoint.
    * Returns AcceptResult with session tokens (unlike other transports which return undefined).
    */
-  async acceptInvite(inviteId: string): Promise<AcceptResult> {
-    const response = await acceptInvite(this.config, inviteId, this.inboxToken);
+  async acceptInvite(inviteId: string, expectedContractHash?: string): Promise<AcceptResult> {
+    const response = await acceptInvite(this.config, inviteId, this.inboxToken, expectedContractHash);
     return {
       session_id: response.session_id,
       submit_token: response.responder_submit_token,

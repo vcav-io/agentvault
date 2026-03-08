@@ -302,6 +302,11 @@ export class AfalResponder {
         this.admitStore.delete(tokenId);
       }
     }
+    for (let i = this.queue.length - 1; i >= 0; i--) {
+      if (this.queue[i].expiresAt <= now) {
+        this.queue.splice(i, 1);
+      }
+    }
   }
 
   _resetForTesting(): void {
