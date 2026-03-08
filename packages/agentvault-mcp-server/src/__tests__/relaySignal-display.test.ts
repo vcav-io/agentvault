@@ -197,7 +197,7 @@ describe('completedResponse display directives', () => {
     expect(invalidClaims).toMatch(/counterparty/i);
   });
 
-  it('provenance contains session_id from handle', async () => {
+  it('provenance contains session_id from completed handle state', async () => {
     const transport = createMockAfalTransport();
     const { resumeToken } = await initiateAndResume(transport);
 
@@ -212,6 +212,30 @@ describe('completedResponse display directives', () => {
     const provenance = data.interpretation_context!.provenance;
     expect(provenance.session_id).toBe('sess-mock');
     expect(provenance.receipt_available).toBe(true);
+  });
+
+  it('prefers receipt session_id over the stale handle session_id', async () => {
+    const transport = createMockAfalTransport();
+    const { resumeToken } = await initiateAndResume(transport);
+
+    mockGetStatus.mockResolvedValueOnce({ state: 'COMPLETED' });
+    mockGetOutput.mockResolvedValueOnce({
+      state: 'COMPLETED',
+      output: { mediation_signal: 'ALIGNMENT_POSSIBLE' },
+      receipt_v2: {
+        receipt_schema_version: '2.1.0',
+        session_id: 'sess-final',
+      },
+    });
+
+    const result = await handleRelaySignal({ resume_token: resumeToken }, transport);
+    const data = result.data as RelaySignalOutput;
+
+    expect(data.session_id).toBe('sess-final');
+    expect(data.interpretation_context?.provenance.session_id).toBe('sess-final');
+    expect(data.interpretation_context?.epistemic_limits.valid_claims.join(' ')).toContain(
+      'session_id=sess-final',
+    );
   });
 
   it('resume_token_display is null for completed responses', async () => {
