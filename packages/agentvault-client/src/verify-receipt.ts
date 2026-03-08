@@ -307,6 +307,21 @@ export function verifyReceipt(
         }
       }
     }
+
+  }
+
+  // Cross-check TEE attested signing key (#282)
+  if (isV2 && typeof receipt['tee_attestation'] === 'object' && receipt['tee_attestation'] !== null) {
+    const att = receipt['tee_attestation'] as Record<string, unknown>;
+    const attestedKey = typeof att['receipt_signing_pubkey_hex'] === 'string'
+      ? (att['receipt_signing_pubkey_hex'] as string)
+      : '';
+    if (attestedKey && attestedKey !== publicKeyHex) {
+      errors.push(
+        `TEE attestation receipt_signing_pubkey_hex does not match verification key`,
+      );
+      valid = false;
+    }
   }
 
   // Extract TEE attestation info if present (introspection, not verification)

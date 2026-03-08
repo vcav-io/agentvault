@@ -286,3 +286,54 @@ describe('verifyReceipt — relay key pinning', () => {
     expect(result.errors.some((e) => e.includes('Contract pins relay key'))).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// verifyReceipt — TEE pubkey binding (#282)
+// ---------------------------------------------------------------------------
+
+describe('verifyReceipt — TEE pubkey binding', () => {
+  it('passes when tee_attestation.receipt_signing_pubkey_hex matches signing key', () => {
+    const { seedHex, publicKeyHex } = generateKeypair();
+    const base: Record<string, unknown> = {
+      receipt_schema_version: '2.0.0',
+      session_id: 'sess-tee-1',
+      issued_at: '2024-01-01T00:00:00Z',
+      tee_attestation: {
+        tee_type: 'Simulated',
+        measurement: 'abc123',
+        attestation_hash: 'def456',
+        receipt_signing_pubkey_hex: publicKeyHex,
+        transcript_hash_hex: '789aaa',
+      },
+    };
+    const signed = signV2(base, seedHex);
+    const result = verifyReceipt(signed, publicKeyHex);
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('fails when tee_attestation.receipt_signing_pubkey_hex differs from signing key', () => {
+    const { seedHex, publicKeyHex } = generateKeypair();
+    const { publicKeyHex: differentKey } = generateKeypair();
+    const base: Record<string, unknown> = {
+      receipt_schema_version: '2.0.0',
+      session_id: 'sess-tee-2',
+      issued_at: '2024-01-01T00:00:00Z',
+      tee_attestation: {
+        tee_type: 'Simulated',
+        measurement: 'abc123',
+        attestation_hash: 'def456',
+        receipt_signing_pubkey_hex: differentKey,
+        transcript_hash_hex: '789aaa',
+      },
+    };
+    const signed = signV2(base, seedHex);
+    const result = verifyReceipt(signed, publicKeyHex);
+    expect(result.valid).toBe(false);
+    expect(
+      result.errors.some((e) =>
+        e.includes('TEE attestation receipt_signing_pubkey_hex does not match verification key'),
+      ),
+    ).toBe(true);
+  });
+});
