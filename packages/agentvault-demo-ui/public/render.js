@@ -154,6 +154,7 @@ function createLogEntry(event) {
 var VaultCardManager = (function () {
   var stepCount = 0;
   var container = null;
+  var latestRelayVerifyingKeyHex = null;
 
   // Track state per agent to detect milestone transitions
   var agentState = {};
@@ -169,12 +170,14 @@ var VaultCardManager = (function () {
     stepCount = 0;
     agentState = {};
     pendingCalls = [];
+    latestRelayVerifyingKeyHex = null;
   }
 
   function reset() {
     stepCount = 0;
     agentState = {};
     pendingCalls = [];
+    latestRelayVerifyingKeyHex = null;
   }
 
   function setOutputSignalCallback(cb) {
@@ -560,7 +563,10 @@ var VaultCardManager = (function () {
                     fetch('/api/verify-receipt', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ receipt: vReceipt }),
+                      body: JSON.stringify({
+                        receipt: vReceipt,
+                        public_key_hex: latestRelayVerifyingKeyHex || undefined,
+                      }),
                     })
                       .then(function (r) { return r.json(); })
                       .then(function (res) {
@@ -636,7 +642,10 @@ var VaultCardManager = (function () {
                       fetch('/api/verify-receipt', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ receipt: vReceipt }),
+                        body: JSON.stringify({
+                          receipt: vReceipt,
+                          public_key_hex: latestRelayVerifyingKeyHex || undefined,
+                        }),
                       })
                         .then(function (r) { return r.json(); })
                         .then(function (res) {
@@ -776,6 +785,9 @@ var VaultCardManager = (function () {
         //    its identity (signing key, model, admitted capabilities)
         if (event.agent === 'relay_policy') {
           var p = event.payload;
+          if (typeof p.verifying_key_hex === 'string' && p.verifying_key_hex) {
+            latestRelayVerifyingKeyHex = p.verifying_key_hex;
+          }
           var card = addCard('Relay Identity & Policy', 'vault-card--policy vault-card--expanded');
           addLine(card, 'signing key', truncate(String(p.verifying_key_hex || ''), 20));
           addLine(card, 'model', String(p.model_id || 'unknown'));

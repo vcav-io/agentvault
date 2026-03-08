@@ -191,14 +191,18 @@ function verifySignatureV2(
 
 interface CommitmentMapping {
   artefactKey: keyof VerifyArtefacts;
-  receiptField: string;
+  receiptField: string | ((isV2: boolean) => string);
   isString: boolean;
 }
 
 const COMMITMENT_MAPPINGS: CommitmentMapping[] = [
   { artefactKey: 'output', receiptField: 'output_hash', isString: false },
   { artefactKey: 'contract', receiptField: 'contract_hash', isString: false },
-  { artefactKey: 'outputSchema', receiptField: 'schema_hash', isString: false },
+  {
+    artefactKey: 'outputSchema',
+    receiptField: (isV2) => (isV2 ? 'output_schema_hash' : 'schema_hash'),
+    isString: false,
+  },
   { artefactKey: 'promptTemplate', receiptField: 'prompt_template_hash', isString: true },
 ];
 
@@ -219,7 +223,11 @@ function verifyCommitments(
     const artefact = artefacts[mapping.artefactKey];
     if (artefact === undefined) continue;
 
-    const expected = commitments[mapping.receiptField];
+    const receiptField =
+      typeof mapping.receiptField === 'function'
+        ? mapping.receiptField(isV2)
+        : mapping.receiptField;
+    const expected = commitments[receiptField];
     if (typeof expected !== 'string') continue;
 
     const computed = mapping.isString
@@ -227,11 +235,11 @@ function verifyCommitments(
       : computeCommitmentHash(artefact);
 
     const match = computed === expected;
-    checks.push({ field: mapping.receiptField, expected, computed, match });
+    checks.push({ field: receiptField, expected, computed, match });
 
     if (!match) {
       errors.push(
-        `Commitment mismatch: ${mapping.receiptField} expected ${expected.slice(0, 16)}... got ${computed.slice(0, 16)}...`,
+        `Commitment mismatch: ${receiptField} expected ${expected.slice(0, 16)}... got ${computed.slice(0, 16)}...`,
       );
     }
   }
@@ -326,12 +334,11 @@ export function verifyReceipt(
   return {
     valid,
     schema_version: detectedVersion,
-    assurance_level:
-      detectedVersion === '2.0.0' && typeof receipt['assurance_level'] === 'string'
-        ? (receipt['assurance_level'] as string)
-        : undefined,
+    assurance_level: isV2 && typeof receipt['assurance_level'] === 'string'
+      ? (receipt['assurance_level'] as string)
+      : undefined,
     operator_id:
-      detectedVersion === '2.0.0' &&
+      isV2 &&
       typeof receipt['operator'] === 'object' &&
       receipt['operator'] !== null &&
       typeof (receipt['operator'] as Record<string, unknown>)['operator_id'] === 'string'
@@ -352,6 +359,22 @@ export function detectReceiptVersion(
   if (typeof rsv === 'string' && rsv.startsWith('2.')) return '2.0.0';
   if (receipt['schema_version'] === '1.0.0') return '1.0.0';
   return null;
+}
+
+/**
+ * Extract a receipt-bound verification key when the receipt carries one.
+ *
+ * Today this is available on TEE-backed v2 receipts via
+ * `tee_attestation.receipt_signing_pubkey_hex`.
+ */
+export function extractReceiptPublicKey(receipt: Record<string, unknown>): string | undefined {
+  const teeAttestation = receipt['tee_attestation'];
+  if (typeof teeAttestation !== 'object' || teeAttestation === null) {
+    return undefined;
+  }
+
+  const key = (teeAttestation as Record<string, unknown>)['receipt_signing_pubkey_hex'];
+  return typeof key === 'string' ? key : undefined;
 }
 
 /**

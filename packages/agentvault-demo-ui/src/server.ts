@@ -16,6 +16,7 @@ import { randomBytes } from 'node:crypto';
 import {
   verifyReceipt,
   fetchRelayPublicKey,
+  extractReceiptPublicKey,
 } from 'agentvault-client/verify';
 
 import {
@@ -655,8 +656,11 @@ app.post('/api/message', async (req, res) => {
 // Verify receipt signature — supports both v1 and v2 receipts via shared verifier
 app.post('/api/verify-receipt', async (req, res) => {
   try {
-    const { receipt } = req.body as {
+    const { receipt, public_key_hex, relay_url, allow_live_relay_lookup } = req.body as {
       receipt?: Record<string, unknown>;
+      public_key_hex?: string;
+      relay_url?: string;
+      allow_live_relay_lookup?: boolean;
     };
 
     if (!receipt) {
@@ -664,11 +668,25 @@ app.post('/api/verify-receipt', async (req, res) => {
       return;
     }
 
-    let pubKeyHex: string;
-    try {
-      pubKeyHex = await fetchRelayPublicKey(RELAY_URL);
-    } catch (err) {
-      res.json({ verified: false, error: `Could not fetch relay public key: ${err instanceof Error ? err.message : String(err)}` });
+    let pubKeyHex = public_key_hex ?? extractReceiptPublicKey(receipt);
+    if (!pubKeyHex && allow_live_relay_lookup === true) {
+      try {
+        pubKeyHex = await fetchRelayPublicKey(relay_url ?? RELAY_URL);
+      } catch (err) {
+        res.json({
+          verified: false,
+          error: `Could not fetch relay public key: ${err instanceof Error ? err.message : String(err)}`,
+        });
+        return;
+      }
+    }
+
+    if (!pubKeyHex) {
+      res.json({
+        verified: false,
+        error:
+          'No verification key available. Provide public_key_hex for API-mediated receipts, or verify a TEE receipt that carries tee_attestation.receipt_signing_pubkey_hex.',
+      });
       return;
     }
 

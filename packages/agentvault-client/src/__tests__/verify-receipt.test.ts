@@ -13,6 +13,7 @@ import {
   verifyReceipt,
   computeCommitmentHash,
   computePromptTemplateHash,
+  extractReceiptPublicKey,
 } from '../verify-receipt.js';
 import type { VerifyArtefacts } from '../verify-receipt.js';
 
@@ -163,7 +164,7 @@ describe('verifyReceipt — with artefacts', () => {
       commitments: {
         output_hash: expectedHashes.output_hash,
         contract_hash: expectedHashes.contract_hash,
-        schema_hash: expectedHashes.schema_hash,
+        output_schema_hash: expectedHashes.schema_hash,
         prompt_template_hash: expectedHashes.prompt_template_hash,
       },
     };
@@ -180,6 +181,22 @@ describe('verifyReceipt — with artefacts', () => {
     expect(result.errors).toHaveLength(0);
     expect(result.commitment_checks).toHaveLength(4);
     expect(result.commitment_checks!.every((c) => c.match)).toBe(true);
+  });
+
+  it('reads v2 schema commitments from output_schema_hash', () => {
+    const { seedHex, publicKeyHex } = generateKeypair();
+    const base: Record<string, unknown> = {
+      receipt_schema_version: '2.0.0',
+      session_id: 'sess-3b',
+      commitments: {
+        schema_hash: expectedHashes.schema_hash,
+      },
+    };
+    const signed = signV2(base, seedHex);
+
+    const result = verifyReceipt(signed, publicKeyHex, { outputSchema: sampleSchema });
+    expect(result.valid).toBe(true);
+    expect(result.commitment_checks).toBeUndefined();
   });
 
   it('passes when all commitment hashes match (v1 — top-level fields)', () => {
@@ -284,5 +301,37 @@ describe('verifyReceipt — relay key pinning', () => {
     const result = verifyReceipt(signed, publicKeyHex, { contract: contractWithKey });
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.includes('Contract pins relay key'))).toBe(true);
+  });
+});
+
+describe('verifyReceipt — v2 metadata extraction', () => {
+  it('extracts assurance_level and operator_id from 2.x receipts', () => {
+    const { seedHex, publicKeyHex } = generateKeypair();
+    const base: Record<string, unknown> = {
+      receipt_schema_version: '2.1.0',
+      session_id: 'sess-9',
+      assurance_level: 'TEE_BOUND',
+      operator: { operator_id: 'op-next' },
+    };
+    const signed = signV2(base, seedHex);
+
+    const result = verifyReceipt(signed, publicKeyHex);
+    expect(result.valid).toBe(true);
+    expect(result.assurance_level).toBe('TEE_BOUND');
+    expect(result.operator_id).toBe('op-next');
+  });
+});
+
+describe('extractReceiptPublicKey', () => {
+  it('returns the TEE receipt signing key when present', () => {
+    expect(
+      extractReceiptPublicKey({
+        tee_attestation: { receipt_signing_pubkey_hex: 'ab'.repeat(32) },
+      }),
+    ).toBe('ab'.repeat(32));
+  });
+
+  it('returns undefined when no receipt-bound key is present', () => {
+    expect(extractReceiptPublicKey({})).toBeUndefined();
   });
 });
