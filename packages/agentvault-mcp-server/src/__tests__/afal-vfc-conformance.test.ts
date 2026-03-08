@@ -174,6 +174,9 @@ describeIfSchemas('AFAL VFC conformance', () => {
       expect((extensions[0]?.['params'] as Record<string, unknown>)['relay_url']).toBe(
         'http://relay.example.com',
       );
+      expect((extensions[0]?.['params'] as Record<string, unknown>)['a2a_send_message_url']).toBe(
+        `${server.baseUrl}/a2a/send-message`,
+      );
       expect((extensions[0]?.['params'] as Record<string, unknown>)['afal_endpoint']).toBe(
         `${server.baseUrl}/afal`,
       );
@@ -184,7 +187,6 @@ describeIfSchemas('AFAL VFC conformance', () => {
 
   it('DirectAfalTransport emits a PROPOSE that validates against the canonical VFC schema', async () => {
     const localDescriptor = makeDescriptor('alice-test', ALICE_PUBKEY, ALICE_SEED);
-    const peerDescriptor = makeDescriptor('bob-test', BOB_PUBKEY, BOB_SEED);
     const propose = makePropose(localDescriptor);
     const relay = makeRelay();
 
@@ -193,7 +195,25 @@ describeIfSchemas('AFAL VFC conformance', () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve(peerDescriptor),
+        json: () =>
+          Promise.resolve({
+            name: 'bob-test',
+            url: 'http://peer.example.com',
+            capabilities: {
+              extensions: [
+                {
+                  uri: AGENTVAULT_A2A_EXTENSION_URI,
+                  params: {
+                    public_key_hex: BOB_PUBKEY,
+                    relay_url: 'http://relay.example.com',
+                    supported_purposes: ['MEDIATION'],
+                    a2a_send_message_url: 'http://peer.example.com/a2a/send-message',
+                    afal_endpoint: 'http://peer.example.com/afal',
+                  },
+                },
+              ],
+            },
+          }),
       })
       .mockResolvedValueOnce({
         ok: true,

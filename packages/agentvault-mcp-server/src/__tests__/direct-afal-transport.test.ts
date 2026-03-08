@@ -74,6 +74,7 @@ function makeAgentCard(overrides: Record<string, unknown> = {}): Record<string, 
             public_key_hex: PEER_PUBKEY,
             relay_url: 'http://relay.example.com',
             supported_purposes: ['MEDIATION'],
+            a2a_send_message_url: 'http://peer.example.com/a2a/send-message',
             afal_endpoint: 'http://peer.example.com/afal',
           },
         },
@@ -838,6 +839,7 @@ describe('DirectAfalTransport', () => {
                       public_key_hex: PEER_PUBKEY,
                       relay_url: 'http://relay.example.com',
                       supported_purposes: ['MEDIATION'],
+                      a2a_send_message_url: 'http://peer.example.com/custom-a2a',
                     },
                   },
                 ],
@@ -863,7 +865,7 @@ describe('DirectAfalTransport', () => {
       });
 
       expect(mockFetch).toHaveBeenCalledTimes(2);
-      expect(mockFetch.mock.calls[1]?.[0]).toBe('http://peer.example.com/a2a/send-message');
+      expect(mockFetch.mock.calls[1]?.[0]).toBe('http://peer.example.com/custom-a2a');
       const [, init] = mockFetch.mock.calls[1] as [string, RequestInit];
       const body = JSON.parse(init.body as string) as Record<string, unknown>;
       expect(body['method']).toBe('SendMessage');

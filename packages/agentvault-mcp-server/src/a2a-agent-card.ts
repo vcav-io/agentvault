@@ -7,6 +7,7 @@ export interface AgentVaultA2AExtensionParams {
   public_key_hex: string;
   supported_purposes: string[];
   afal_endpoint?: string;
+  a2a_send_message_url?: string;
 }
 
 export interface AgentCardExtension {
@@ -47,6 +48,7 @@ export function buildAgentCard(params: {
     public_key_hex: params.descriptor.identity_key.public_key_hex,
     supported_purposes: params.supportedPurposes,
     ...(params.relayUrl ? { relay_url: params.relayUrl } : {}),
+    a2a_send_message_url: `${params.baseUrl}/a2a/send-message`,
     ...(params.includeAfalEndpoint === false ? {} : { afal_endpoint: `${params.baseUrl}/afal` }),
   };
 
