@@ -12,11 +12,12 @@ export async function dispatch(
   args: Record<string, unknown>,
   transport?: AfalTransport,
   knownAgents: NormalizedKnownAgent[] = [],
+  agentId?: string,
 ): Promise<unknown> {
   switch (toolName) {
     case 'agentvault.get_identity': {
       const { handleGetIdentity } = await import('./tools/getIdentity.js');
-      return handleGetIdentity(process.env['AV_AGENT_ID'], knownAgents, transport);
+      return handleGetIdentity(agentId, knownAgents, transport);
     }
     case 'agentvault.relay_signal': {
       const { handleRelaySignal } = await import('./tools/relaySignal.js');

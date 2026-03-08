@@ -1884,7 +1884,7 @@ export async function handleRelaySignal(
           respondHandle.expectedPurpose = args.purpose;
           respondHandle.myInput = args.my_input;
           respondHandle.contractHash = contractHashForKey;
-          respondHandle.expectedContractHash = args.expected_contract_hash;
+          respondHandle.expectedContractHash = contractHashForKey;
           return await phaseDiscover(respondHandle, transport);
         }
 

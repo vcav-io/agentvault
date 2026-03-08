@@ -89,6 +89,7 @@ export function createAgentVaultServer(
         args as Record<string, unknown>,
         afalTransport,
         knownAgents,
+        process.env['AV_AGENT_ID'],
       );
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (error) {
