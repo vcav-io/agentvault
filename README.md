@@ -26,11 +26,15 @@ echo "GEMINI_API_KEY=AIza..." > .env
 # or: echo "OPENAI_API_KEY=sk-..." > .env
 # or: echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
 
-# 2. Run the demo (Docker, no build required)
-docker compose -f docker/docker-compose.demo.yml --env-file .env up
+# 2. Run the demo (Docker, builds the current local source)
+docker compose -f docker/docker-compose.demo.yml --env-file .env up --build
 
 # 3. Open http://localhost:3200 and click "Start Protocol"
 ```
+
+The first build can take a few minutes. This path now builds the checked-out `main`
+source, so the demo UI stays aligned with the repo rather than relying on a
+previously published image.
 
 No Docker? Build from source:
 

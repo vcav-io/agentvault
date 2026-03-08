@@ -44,8 +44,10 @@ export interface AgentState {
 
 function createQueue() {
   let queue: Promise<void> = Promise.resolve();
+  let pending = 0;
 
   function enqueue(fn: () => Promise<unknown>): Promise<void> {
+    pending++;
     queue = queue
       .then(fn, (prevErr) => {
         console.error('Previous queue item failed:', prevErr);
@@ -53,15 +55,23 @@ function createQueue() {
       })
       .then(() => {}, (err) => {
         console.error('Queue item failed:', err);
+      })
+      .finally(() => {
+        pending = Math.max(0, pending - 1);
       });
     return queue;
   }
 
   function reset(): void {
     queue = Promise.resolve();
+    pending = 0;
   }
 
-  return { enqueue, reset };
+  function isIdle(): boolean {
+    return pending === 0;
+  }
+
+  return { enqueue, reset, isIdle };
 }
 
 // ── Delay helper with AbortSignal support ────────────────────────────────
@@ -69,11 +79,16 @@ function createQueue() {
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     if (signal?.aborted) { resolve(); return; }
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener('abort', () => {
+    const onAbort = () => {
       clearTimeout(timer);
       resolve();
-    }, { once: true });
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    timer.unref?.();
   });
 }
 
@@ -291,6 +306,10 @@ export async function runHeartbeatLoop(
     }
 
     if (state.started) {
+      if (!queue.isIdle()) {
+        await delay(HEARTBEAT_INTERVAL_MS, signal);
+        continue;
+      }
       events.emitSystem(`${name}: Heartbeat`);
       await queue.enqueue(() => runLLMBurst(heartbeatParams, HEARTBEAT_PROMPT, signal));
 
