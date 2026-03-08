@@ -276,6 +276,31 @@ pub async fn relay_core(
         }
     }
 
+    // 2b. Resolve model profile early — profile's provider is authoritative
+    // when present, overriding the caller-supplied provider_name.
+    let resolved_profile = match &contract.model_profile_id {
+        Some(profile_id) => {
+            let profile = match &state.admitted_profiles {
+                Some(profiles) => profiles
+                    .values()
+                    .find(|p| p.profile_id == *profile_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        RelayError::PromptProgram(format!(
+                            "model profile not found in admitted set for id: {profile_id}"
+                        ))
+                    })?,
+                None => load_model_profile(&state.prompt_program_dir, profile_id)?,
+            };
+            Some(profile)
+        }
+        None => None,
+    };
+    let effective_provider = match &resolved_profile {
+        Some(profile) => profile.provider.as_str(),
+        None => provider_name,
+    };
+
     // 2b2. Validate relay verifying key pinning (#184)
     if let Some(ref pinned_key) = contract.relay_verifying_key_hex {
         let our_key = receipt_core::public_key_to_hex(&state.signing_key.verifying_key());
@@ -288,22 +313,22 @@ pub async fn relay_core(
         }
     }
 
-    // 2c. Validate model constraints from contract (#151 gap 3)
+    // 2c. Validate model constraints against the effective provider (#261 review)
     if let Some(ref constraints) = contract.model_constraints {
         if !constraints.allowed_providers.is_empty()
             && !constraints
                 .allowed_providers
-                .contains(&provider_name.to_string())
+                .contains(&effective_provider.to_string())
         {
             return Err(RelayError::ContractValidation(format!(
                 "provider '{}' not in contract model_constraints.allowed_providers {:?}",
-                provider_name, constraints.allowed_providers,
+                effective_provider, constraints.allowed_providers,
             )));
         }
     }
 
-    // 2d. Resolve effective model_id for the selected provider
-    let effective_model_id = match provider_name {
+    // 2d. Resolve effective model_id for the effective provider
+    let effective_model_id = match effective_provider {
         "anthropic" => state.anthropic_model_id.clone(),
         "openai" => state.openai_model_id.clone(),
         "gemini" => state.gemini_model_id.clone(),
@@ -456,9 +481,10 @@ pub async fn relay_core(
         max_tokens: effective_max_tokens,
     };
 
-    // 6. Call provider
+    // 6. Call provider (using effective_provider, which may differ from
+    //    caller-supplied provider_name when a model profile overrides it)
     let inference_start = Utc::now();
-    let provider_response = match provider_name {
+    let provider_response = match effective_provider {
         "anthropic" => {
             let api_key = state.anthropic_api_key.clone().ok_or_else(|| {
                 RelayError::ContractValidation("Anthropic API key not configured".to_string())
@@ -494,7 +520,7 @@ pub async fn relay_core(
         }
         _ => {
             return Err(RelayError::ContractValidation(format!(
-                "unsupported provider: {provider_name}"
+                "unsupported provider: {effective_provider}"
             )));
         }
     };
@@ -578,23 +604,9 @@ pub async fn relay_core(
     let inference_config_hash = hex::encode(Sha256::digest(b"api-mediated-no-local-inference"));
     let guardian_policy_hash = resolved_hash.clone();
 
-    // Load model profile hash if contract specifies one
-    let model_profile_hash = match &contract.model_profile_id {
-        Some(profile_id) => {
-            let profile = match &state.admitted_profiles {
-                Some(profiles) => profiles
-                    .values()
-                    .find(|p| p.profile_id == *profile_id)
-                    .cloned()
-                    .ok_or_else(|| {
-                        RelayError::PromptProgram(format!(
-                            "model profile not found in admitted set for id: {profile_id}"
-                        ))
-                    })?,
-                None => load_model_profile(&state.prompt_program_dir, profile_id)?,
-            };
-            Some(profile.content_hash()?)
-        }
+    // Reuse the profile resolved earlier (step 2b) for receipt binding
+    let model_profile_hash = match &resolved_profile {
+        Some(profile) => Some(profile.content_hash()?),
         None => None,
     };
 
@@ -625,7 +637,7 @@ pub async fn relay_core(
         .contract_timing_class(contract.timing_class.clone())
         .model_profile_hash(model_profile_hash.clone())
         .model_identity(Some(receipt_core::ModelIdentity {
-            provider: provider_name.to_string(),
+            provider: effective_provider.to_string(),
             model_id: provider_response.model_id.clone(),
             model_version: None,
         }))
@@ -656,7 +668,7 @@ pub async fn relay_core(
         &prompt_template_hash,
         model_profile_hash.as_deref(),
         &provider_response.model_id,
-        provider_name,
+        effective_provider,
         &runtime_hash,
         &resolved_hash,
         state,

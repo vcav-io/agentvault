@@ -9,7 +9,7 @@
 export type SessionState = 'CREATED' | 'PARTIAL' | 'PROCESSING' | 'COMPLETED' | 'ABORTED';
 
 /** Wire format matches Rust `#[serde(rename_all = "SCREAMING_SNAKE_CASE")]`. */
-export type AbortReason = 'TIMEOUT' | 'SCHEMA_VALIDATION' | 'PROVIDER_ERROR' | 'CONTRACT_MISMATCH';
+export type AbortReason = 'TIMEOUT' | 'SCHEMA_VALIDATION' | 'PROVIDER_ERROR' | 'CONTRACT_MISMATCH' | 'POLICY_GATE';
 
 export interface RelayClientConfig {
   relay_url: string;

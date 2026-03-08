@@ -135,6 +135,23 @@ describe('verifyReceipt — no artefacts (backward compat)', () => {
     expect(result.errors).toHaveLength(0);
   });
 
+  it('surfaces assurance_level and operator_id for v2.1.0 receipt', () => {
+    const { seedHex, publicKeyHex } = generateKeypair();
+    const base: Record<string, unknown> = {
+      receipt_schema_version: '2.1.0',
+      session_id: 'sess-v21',
+      issued_at: '2024-01-01T00:00:00Z',
+      assurance_level: 'VERIFIED',
+      operator: { operator_id: 'op-123' },
+    };
+    const signed = signV2(base, seedHex);
+    const result = verifyReceipt(signed, publicKeyHex);
+    expect(result.valid).toBe(true);
+    expect(result.schema_version).toBe('2.1.0');
+    expect(result.assurance_level).toBe('VERIFIED');
+    expect(result.operator_id).toBe('op-123');
+  });
+
   it('rejects a tampered receipt', () => {
     const { seedHex, publicKeyHex } = generateKeypair();
     const base: Record<string, unknown> = {

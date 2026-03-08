@@ -82,6 +82,10 @@ pub struct CreateSessionResponse {
 /// POST /sessions/:id/input request body.
 #[derive(Debug, Deserialize)]
 pub struct SubmitInputRequest {
+    /// Deprecated/ignored: the relay derives the participant role from the
+    /// authenticated submit token (initiator → participants[0], responder →
+    /// participants[1]). This field is accepted for backward compatibility
+    /// but its value is not used.
     pub role: String,
     pub context: serde_json::Value,
     /// If provided, the relay verifies this matches the session's contract_hash

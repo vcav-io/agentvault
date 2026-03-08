@@ -25,7 +25,7 @@ export interface ToolRegistryConfig {
   knownAgents: NormalizedKnownAgent[];
   inboxService?: InboxService;
   /**
-   * Agent ID to set in process.env before each tool call.
+   * Agent ID passed to tool handlers.
    * Required when running multiple registries in the same process
    * (e.g. demo UI running Alice and Bob concurrently).
    * Falls back to transport.agentId if not provided.
@@ -67,29 +67,12 @@ export function createToolRegistry(config: ToolRegistryConfig): ToolRegistry {
   const { transport, knownAgents, inboxService } = config;
   const agentId = config.agentId ?? transport.agentId;
 
-  /**
-   * Set AV_AGENT_ID before each handler call.
-   *
-   * SAFETY NOTE: This is safe only because handleRelaySignal captures agentId
-   * from transport.agentId at function entry (before any await). The env var is
-   * a fallback for code paths that don't have access to the transport. Long-lived
-   * awaits (e.g. bounded poll in phaseDiscover) must NOT re-read this env var —
-   * they use handle.agentId instead.
-   */
-  function setAgentEnv(): void {
-    if (agentId) {
-      process.env['AV_AGENT_ID'] = agentId;
-    }
-  }
-
   const registry: ToolRegistry = {
     handleGetIdentity() {
-      setAgentEnv();
-      return handleGetIdentity(knownAgents, inboxService ?? transport);
+      return handleGetIdentity(agentId, knownAgents, inboxService ?? transport);
     },
 
     handleRelaySignal(args: RelaySignalArgs) {
-      setAgentEnv();
       return handleRelaySignal(args, transport, knownAgents);
     },
 

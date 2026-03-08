@@ -110,6 +110,7 @@ const ABORT_DESCRIPTIONS: Record<string, string> = {
   TIMEOUT: 'The relay session timed out.',
   SCHEMA_VALIDATION: 'The LLM output did not match the contract schema.',
   CONTRACT_MISMATCH: 'Contract hash mismatch (configuration error).',
+  POLICY_GATE: 'Session aborted: a guardian enforcement rule with GATE classification fired.',
 };
 
 export type ResumeStrategy = 'IMMEDIATE' | 'DEFERRED';
@@ -1292,6 +1293,8 @@ async function phasePollRelay(
           });
           respondHandle.expectedPurpose = handle.purpose;
           respondHandle.myInput = handle.myInput;
+          respondHandle.contractHash = handle.contractHash;
+          respondHandle.expectedContractHash = handle.expectedContractHash ?? handle.contractHash;
           // Mark old handle as abandoned
           handle.phase = 'FAILED';
           return await phaseDiscover(respondHandle, transport);
@@ -1839,6 +1842,19 @@ export async function handleRelaySignal(
         const counterparty = resolveAgentAlias(args.counterparty, knownAgents);
         const agentId = transport.agentId ?? process.env['AV_AGENT_ID'] ?? '';
 
+        // Compute contract hash early — needed for both collision path and idempotency key
+        let contractHashForKey: string;
+        if (args.contract) {
+          contractHashForKey = createHash('sha256')
+            .update(JSON.stringify(args.contract))
+            .digest('hex');
+        } else if (args.purpose) {
+          const built = buildRelayContract(args.purpose, [agentId, counterparty]);
+          contractHashForKey = built ? computeRelayContractHash(built) : args.purpose;
+        } else {
+          contractHashForKey = '';
+        }
+
         // ── Pre-INITIATE collision detection ─────────────────────────
         // If the counterparty already sent us an invite, join their session
         // instead of creating a redundant one. The agent with the later
@@ -1867,22 +1883,13 @@ export async function handleRelaySignal(
           });
           respondHandle.expectedPurpose = args.purpose;
           respondHandle.myInput = args.my_input;
+          respondHandle.contractHash = contractHashForKey;
+          respondHandle.expectedContractHash = contractHashForKey;
           return await phaseDiscover(respondHandle, transport);
         }
 
         // Compute idempotency key
         const inputHash = hashInput(args.my_input ?? '');
-        let contractHashForKey: string;
-        if (args.contract) {
-          contractHashForKey = createHash('sha256')
-            .update(JSON.stringify(args.contract))
-            .digest('hex');
-        } else if (args.purpose) {
-          const built = buildRelayContract(args.purpose, [agentId, counterparty]);
-          contractHashForKey = built ? computeRelayContractHash(built) : args.purpose;
-        } else {
-          contractHashForKey = '';
-        }
         const idempotencyKey = computeRelayIdempotencyKey(agentId, [
           contractHashForKey,
           counterparty,

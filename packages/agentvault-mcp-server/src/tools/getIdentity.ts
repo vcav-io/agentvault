@@ -31,10 +31,10 @@ export interface GetIdentityOutput {
 }
 
 export async function handleGetIdentity(
+  agentId: string | undefined,
   knownAgents: NormalizedKnownAgent[],
   inboxService?: InboxService,
 ): Promise<ToolResponse<GetIdentityOutput>> {
-  const agentId = process.env['AV_AGENT_ID'];
   const result: GetIdentityOutput = { agent_id: agentId, known_agents: knownAgents };
 
   if (inboxService) {

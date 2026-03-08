@@ -32,6 +32,7 @@ export interface AfalPropose {
   descriptor_hash?: string;
   model_profile_hash?: string;
   prev_receipt_hash?: string;
+  relay_binding_hash?: string;
   signature?: string;
 }
 

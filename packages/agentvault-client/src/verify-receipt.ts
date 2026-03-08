@@ -362,11 +362,11 @@ export function verifyReceipt(
     valid,
     schema_version: detectedVersion,
     assurance_level:
-      detectedVersion === '2.0.0' && typeof receipt['assurance_level'] === 'string'
+      isV2 && typeof receipt['assurance_level'] === 'string'
         ? (receipt['assurance_level'] as string)
         : undefined,
     operator_id:
-      detectedVersion === '2.0.0' &&
+      isV2 &&
       typeof receipt['operator'] === 'object' &&
       receipt['operator'] !== null &&
       typeof (receipt['operator'] as Record<string, unknown>)['operator_id'] === 'string'

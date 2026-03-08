@@ -30,8 +30,7 @@ export const VERIFY_TOOLS = [
       'Verify the cryptographic signature of an AgentVault session receipt. ' +
       'Supports v1 receipts (schema_version: "1.0.0") and v2 receipts ' +
       '(receipt_schema_version: "2.0.0"). ' +
-      'Returns valid: true only if the receipt signature is cryptographically valid. ' +
-      'If public_key_hex is omitted, fetches the relay public key from relay_url/health.',
+      'Returns valid: true only if the receipt signature is cryptographically valid.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -41,18 +40,10 @@ export const VERIFY_TOOLS = [
         },
         public_key_hex: {
           type: 'string',
-          description:
-            'Ed25519 public key as 64 hex chars. ' +
-            'If omitted, fetches from relay /health endpoint.',
-        },
-        relay_url: {
-          type: 'string',
-          description:
-            'Relay base URL to fetch the public key from (default: http://localhost:4840). ' +
-            'Only used when public_key_hex is omitted.',
+          description: 'Ed25519 public key as 64 hex chars.',
         },
       },
-      required: ['receipt'],
+      required: ['receipt', 'public_key_hex'],
     },
   },
 ];

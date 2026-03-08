@@ -2931,3 +2931,257 @@ async fn test_contract_relay_key_pinning_correct_key_accepted() {
 
     std::fs::remove_dir_all(&prompt_dir).ok();
 }
+
+// ============================================================================
+// Issue #250: Role binding — submitted role is ignored, contract role is used
+// ============================================================================
+
+#[tokio::test]
+async fn test_submit_with_wrong_role_uses_contract_role() {
+    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+
+    let (session_id, tokens) = state
+        .session_store
+        .create(
+            serde_json::from_value(serde_json::json!({
+                "purpose_code": "COMPATIBILITY",
+                "output_schema_id": "test",
+                "output_schema": {"type": "object"},
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": "a".repeat(64)
+            }))
+            .unwrap(),
+            "hash".to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+
+    let app = build_router(Arc::clone(&state));
+
+    // Submit as initiator but with a WRONG role string
+    let input_request = serde_json::json!({
+        "role": "EVIL_IMPERSONATOR",
+        "context": { "preference": "morning" }
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/sessions/{session_id}/input"))
+                .header("content-type", "application/json")
+                .header(
+                    "authorization",
+                    format!("Bearer {}", tokens.initiator_submit),
+                )
+                .body(Body::from(serde_json::to_vec(&input_request).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Verify the stored input has the contract-derived role, not the submitted one
+    let stored_role = state
+        .session_store
+        .with_session(&session_id, |session| {
+            session
+                .initiator_input
+                .as_ref()
+                .expect("initiator_input should be set")
+                .role
+                .clone()
+        })
+        .await
+        .expect("session should exist");
+
+    assert_eq!(
+        stored_role, "alice",
+        "stored role must be the contract participant, not the submitted role"
+    );
+}
+
+// ============================================================================
+// Failure receipt with hash-only output_schema_hash contract
+// ============================================================================
+
+/// Start a mock Anthropic API that always returns 500 (provider error).
+async fn start_mock_anthropic_error() -> String {
+    use axum::routing::post;
+
+    let app = axum::Router::new().route(
+        "/v1/messages",
+        post(|| async { (StatusCode::INTERNAL_SERVER_ERROR, "mock provider error") }),
+    );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let base_url = format!("http://127.0.0.1:{}", addr.port());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    base_url
+}
+
+#[tokio::test]
+async fn test_failure_receipt_uses_resolved_schema_hash() {
+    use agentvault_relay::relay::compute_output_schema_hash;
+
+    // 1. Set up prompt program
+    let (prompt_dir, prompt_hash) = setup_prompt_program("failure-schema-hash");
+
+    // 2. Start mock that returns 500 (triggers abort with failure receipt)
+    let mock_base_url = start_mock_anthropic_error().await;
+
+    // 3. Compute the schema hash for the real schema
+    let real_schema = mediation_schema();
+    let real_schema_hash = compute_output_schema_hash(&real_schema).unwrap();
+
+    // 4. Build state with the real schema in the registry
+    let mut registry_map = std::collections::HashMap::new();
+    registry_map.insert(real_schema_hash.clone(), real_schema.clone());
+
+    let state = Arc::new(AppState {
+        signing_key: test_signing_key(),
+        anthropic_api_key: Some("test-key".to_string()),
+        anthropic_model_id: "test-model".to_string(),
+        anthropic_base_url: Some(mock_base_url.clone()),
+        openai_api_key: None,
+        openai_model_id: "gpt-4o".to_string(),
+        openai_base_url: None,
+        gemini_api_key: None,
+        gemini_model_id: "gemini-2.5-flash".to_string(),
+        gemini_base_url: None,
+        prompt_program_dir: prompt_dir.clone(),
+        session_store: SessionStore::new(Duration::from_secs(600)),
+        policy_registry: test_policy_registry(),
+        agent_registry: AgentRegistry::empty(),
+        inbox_store: InboxStore::new(Duration::from_secs(600)),
+        max_completion_tokens: 4096,
+        session_ttl_secs: 600,
+        invite_ttl_secs: 604800,
+        schema_registry: agentvault_relay::schema_registry::SchemaRegistry::from_map(registry_map),
+        is_dev: false,
+        health_expose_model: false,
+        admitted_programs: None,
+        admitted_profiles: None,
+    });
+
+    // 5. Create session with hash-only contract (stub schema + output_schema_hash)
+    let (session_id, tokens) = state
+        .session_store
+        .create(
+            serde_json::from_value(serde_json::json!({
+                "purpose_code": "MEDIATION",
+                "output_schema_id": "vault_result_mediation",
+                "output_schema": {},
+                "output_schema_hash": real_schema_hash,
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": prompt_hash,
+                "entropy_budget_bits": 64
+            }))
+            .unwrap(),
+            "will-be-recomputed".to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+
+    // 6. Submit both inputs to trigger inference (which will fail)
+    let app = build_router(Arc::clone(&state));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/sessions/{session_id}/input"))
+                .header("content-type", "application/json")
+                .header(
+                    "authorization",
+                    format!("Bearer {}", tokens.initiator_submit),
+                )
+                .body(Body::from(
+                    serde_json::to_vec(&serde_json::json!({
+                        "role": "alice",
+                        "context": { "preference": "morning" }
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let app = build_router(Arc::clone(&state));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/sessions/{session_id}/input"))
+                .header("content-type", "application/json")
+                .header(
+                    "authorization",
+                    format!("Bearer {}", tokens.responder_submit),
+                )
+                .body(Body::from(
+                    serde_json::to_vec(&serde_json::json!({
+                        "role": "bob",
+                        "context": { "preference": "afternoon" }
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // 7. Wait for session to abort
+    for _ in 0..50 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let (s, _) = state.session_store.get_state(&session_id).await.unwrap();
+        if s == agentvault_relay::session::SessionState::Aborted {
+            break;
+        }
+    }
+
+    let (final_state, _) = state.session_store.get_state(&session_id).await.unwrap();
+    assert_eq!(
+        final_state,
+        agentvault_relay::session::SessionState::Aborted,
+        "session should be aborted after provider error"
+    );
+
+    // 8. Retrieve the failure receipt and verify output_schema_hash
+    let receipt_v2 = state
+        .session_store
+        .with_session(&session_id, |session| session.receipt_v2.clone())
+        .await
+        .expect("session should exist")
+        .expect("failure receipt should be present");
+
+    let receipt_json = serde_json::to_value(&receipt_v2).unwrap();
+    let commitments = &receipt_json["commitments"];
+    let receipt_schema_hash = commitments["schema_hash"]
+        .as_str()
+        .expect("schema_hash should be present in failure receipt commitments");
+
+    // The hash must match the RESOLVED schema from the registry,
+    // not the stub {} that was in the contract.
+    assert_eq!(
+        receipt_schema_hash, real_schema_hash,
+        "failure receipt output_schema_hash must use the resolved schema from the registry, \
+         not the raw contract stub"
+    );
+
+    // Also verify it does NOT match what hashing the stub would produce
+    let stub_hash = compute_output_schema_hash(&serde_json::json!({})).unwrap();
+    assert_ne!(
+        receipt_schema_hash, stub_hash,
+        "failure receipt must not use the stub schema hash"
+    );
+
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}

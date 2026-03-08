@@ -317,6 +317,25 @@ describe('DirectAfalTransport', () => {
       expect('prev_receipt_hash' in body.propose).toBe(false);
     });
 
+    it('throws when peer descriptor agent_id does not match propose.to', async () => {
+      // Peer descriptor says agent_id is "bob-test" but propose.to is "charlie-test"
+      const propose = makePropose({ to: 'charlie-test' });
+
+      await expect(
+        transport.sendPropose({
+          propose,
+          relay: makeRelay(),
+          templateId: 't',
+          budgetTier: 'SMALL',
+        }),
+      ).rejects.toThrow(
+        'Peer descriptor agent_id "bob-test" does not match propose.to "charlie-test"',
+      );
+
+      // Should not have made any fetch calls
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
     it('ADMIT succeeds when propose has no descriptor_hash or model_profile_hash (regression)', async () => {
       // This test covers the bug where _sendProposeOnce injected descriptor_hash
       // and model_profile_hash post-hoc, breaking proposal_id integrity on the receiver.

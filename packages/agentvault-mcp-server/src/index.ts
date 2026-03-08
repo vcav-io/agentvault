@@ -84,11 +84,15 @@ export function createAgentVaultServer(
     const { name, arguments: args } = request.params;
 
     try {
+      // Resolve agent identity from the transport when available;
+      // fall back to env only for standalone (no-transport) mode.
+      const agentId = afalTransport?.agentId ?? process.env['AV_AGENT_ID'];
       const result = await dispatch(
         name,
         args as Record<string, unknown>,
         afalTransport,
         knownAgents,
+        agentId,
       );
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (error) {
