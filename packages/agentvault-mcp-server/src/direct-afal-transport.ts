@@ -470,4 +470,9 @@ export class DirectAfalTransport implements AfalTransport {
   _getStoredAdmit(proposalId: string): Record<string, unknown> | undefined {
     return this.storedAdmits.get(proposalId);
   }
+
+  /** Inject a stored ADMIT directly (testing only). */
+  _setStoredAdmitForTesting(proposalId: string, admit: Record<string, unknown>): void {
+    this.storedAdmits.set(proposalId, admit);
+  }
 }

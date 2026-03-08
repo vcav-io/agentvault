@@ -91,7 +91,7 @@ function makeSignedAdmit(proposalId: string): Record<string, unknown> {
     admission_version: '1',
     outcome: 'ADMIT',
     proposal_id: proposalId,
-    admit_token_id: 'token-abc-123',
+    admit_token_id: 'a'.repeat(64),
     admission_tier: 'DEFAULT',
     expires_at: '2026-01-01T00:15:00Z',
   };
@@ -211,7 +211,7 @@ describe('DirectAfalTransport', () => {
       const stored = transport._getStoredAdmit(propose.proposal_id);
       expect(stored).toBeDefined();
       expect(stored!['outcome']).toBe('ADMIT');
-      expect(stored!['admit_token_id']).toBe('token-abc-123');
+      expect(stored!['admit_token_id']).toBe('a'.repeat(64));
     });
 
     it('includes descriptor_hash in wire message when present in propose', async () => {
@@ -552,7 +552,7 @@ describe('DirectAfalTransport', () => {
 
       const body = JSON.parse(init.body as string) as Record<string, unknown>;
       expect(body['from']).toBe('alice-test');
-      expect(body['admit_token_id']).toBe('token-abc-123');
+      expect(body['admit_token_id']).toBe('a'.repeat(64));
       expect(body['proposal_id']).toBe(propose.proposal_id);
       expect(typeof body['signature']).toBe('string');
     });

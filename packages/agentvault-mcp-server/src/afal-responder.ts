@@ -11,7 +11,7 @@
  * admit_token_id, admission_tier, expires_at, signature.
  */
 
-import { randomUUID } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import type { AfalPropose, RelayInvitePayload } from './afal-types.js';
 import { computeProposalId } from './afal-types.js';
 import { signMessage, verifyMessage, DOMAIN_PREFIXES, contentHash } from './afal-signing.js';
@@ -85,6 +85,7 @@ export class NonceCache {
 // ── AfalResponder ────────────────────────────────────────────────────────────
 
 const ADMIT_TTL_MS = 10 * 60 * 1000;
+const EMPTY_PROPOSAL_ID = '0'.repeat(64);
 
 export interface AfalResponderConfig {
   agentId: string;
@@ -189,7 +190,7 @@ export class AfalResponder {
     }
 
     // All checks passed — ADMIT
-    const admitTokenId = randomUUID();
+    const admitTokenId = randomBytes(32).toString('hex');
     const expiresAt = now + ADMIT_TTL_MS;
     const expiresAtIso = new Date(expiresAt).toISOString();
 
@@ -287,16 +288,18 @@ export class AfalResponder {
     denyCode: DenyCode,
     nowMs: number,
   ): { outcome: 'DENY'; response: Record<string, unknown> } {
+    const normalizedProposalId =
+      /^[0-9a-f]{64}$/.test(proposalId) ? proposalId : EMPTY_PROPOSAL_ID;
     console.error(
-      `AfalResponder DENY: code=${denyCode}, proposal=${proposalId}, agentId=${this.config.agentId}` +
+      `AfalResponder DENY: code=${denyCode}, proposal=${normalizedProposalId}, agentId=${this.config.agentId}` +
         (denyCode === 'INTEGRITY'
-          ? ` (proposal_id mismatch: claimed=${proposalId.slice(0, 16)}…)`
+          ? ` (proposal_id mismatch: claimed=${normalizedProposalId.slice(0, 16)}…)`
           : ''),
     );
     const expiresAtIso = new Date(nowMs + ADMIT_TTL_MS).toISOString();
     const denyUnsigned: Record<string, unknown> = {
       admission_version: '1',
-      proposal_id: proposalId,
+      proposal_id: normalizedProposalId,
       outcome: 'DENY',
       deny_code: denyCode,
       expires_at: expiresAtIso,
