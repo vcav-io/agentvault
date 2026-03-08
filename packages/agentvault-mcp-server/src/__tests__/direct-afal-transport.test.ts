@@ -88,20 +88,23 @@ function makeRelay(): RelayInvitePayload {
 
 function makeSignedAdmit(proposalId: string): Record<string, unknown> {
   const unsigned = {
+    admission_version: '1',
     outcome: 'ADMIT',
     proposal_id: proposalId,
     admit_token_id: 'token-abc-123',
     admission_tier: 'DEFAULT',
+    expires_at: '2026-01-01T00:15:00Z',
   };
   return signMessage(DOMAIN_PREFIXES.ADMIT, unsigned as Record<string, unknown>, PEER_SEED);
 }
 
 function makeSignedDeny(proposalId: string): Record<string, unknown> {
   const unsigned = {
+    admission_version: '1',
     outcome: 'DENY',
     proposal_id: proposalId,
-    reason_code: 'POLICY_MISMATCH',
-    reason_text: 'Agent policy does not permit this purpose code',
+    deny_code: 'POLICY',
+    expires_at: '2026-01-01T00:15:00Z',
   };
   return signMessage(DOMAIN_PREFIXES.DENY, unsigned as Record<string, unknown>, PEER_SEED);
 }
@@ -455,7 +458,7 @@ describe('DirectAfalTransport', () => {
       const tampered = {
         ...makeSignedDeny(propose.proposal_id),
         outcome: 'DENY',
-        reason_code: 'INJECTED',
+        deny_code: 'INJECTED',
         signature: '0'.repeat(128),
       };
 
