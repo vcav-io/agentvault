@@ -464,7 +464,7 @@ attestation infrastructure.
 | `relay_software_version` | Semver of the relay that issued the receipt |
 | `status` | Session outcome status |
 | `signal_class` | Classification of the signal produced |
-| `execution_lane` | `SELF_ASSERTED` (software) or `HARDWARE_ATTESTED` (TEE) |
+| `execution_lane` | `standard` (software) or `tee` (TEE) |
 | `channel_capacity_bits_upper_bound` | Computed upper bound on schema information capacity (bits) |
 | `channel_capacity_measurement_version` | Algorithm version for capacity computation (e.g., `"enum_cardinality_v1"`) |
 | `entropy_budget_bits` | Budget declared in the contract |
@@ -473,7 +473,7 @@ attestation infrastructure.
 
 ### TEE attestation fields
 
-Present when `claims.execution_lane` is `HARDWARE_ATTESTED`. The `tee_attestation`
+Present when `claims.execution_lane` is `tee`. The `tee_attestation`
 object is a top-level receipt field alongside `commitments` and `claims`.
 
 | Field | Meaning |
@@ -500,9 +500,9 @@ of external evidence backing the receipt.
 | `TEE_ATTESTED` | Hardware TEE attestation (AMD SEV-SNP) binds the receipt to the CVM measurement. The relay binary, signing key, and session transcript are hardware-verified. Operational via `av-tee` relay. |
 
 The software relay operates at `SELF_ASSERTED`. The TEE relay (`av-tee`) operates
-at `HARDWARE_ATTESTED` on AMD SEV-SNP hardware (validated on GCP N2D instances).
+at `TEE_ATTESTED` on AMD SEV-SNP hardware (validated on GCP N2D instances).
 Never display "receipt verified" without also showing the assurance level — a
-`SELF_ASSERTED` receipt is much weaker than a `HARDWARE_ATTESTED` one.
+`SELF_ASSERTED` receipt is much weaker than a `TEE_ATTESTED` one.
 
 ### Operator identity
 
@@ -615,7 +615,7 @@ the key.
 ```typescript
 {
   "valid": true,
-  "schema_version": "2.0.0",
+  "schema_version": "2.1.0",
   "assurance_level": "SELF_ASSERTED",    // v2 only
   "operator_id": "relay.agentvault.dev", // v2 only
   "errors": [],

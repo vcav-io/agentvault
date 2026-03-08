@@ -113,7 +113,7 @@ Maps directly from `agentvault-receipt-schema-v2.1.0.revised.json`.
 
 ```rust
 pub struct ReceiptV2 {
-    pub receipt_schema_version: String,       // "2.0.0"
+    pub receipt_schema_version: String,       // "2.1.0"
     pub receipt_canonicalization: String,      // "JCS_V1"
     pub receipt_id: String,                   // UUID
     pub session_id: String,                   // UUID
@@ -354,7 +354,7 @@ fn verify(receipt_json: &[u8]) -> Result<VerificationResult> {
     let version = extract_schema_version(receipt_json)?;
     match version.as_str() {
         "1.0.0" => verify_v1(receipt_json),
-        "2.0.0" => verify_v2(receipt_json),
+        "2.1.0" => verify_v2(receipt_json),
         _ => Err(UnsupportedVersion(version)),
     }
 }
@@ -414,7 +414,7 @@ v2 supports Ed25519, ES256 (P-256), and ES384 (P-384). The relay's `signature.al
 
 - v2 adds new top-level fields (`assurance_level`, `operator`, `commitments`, `claims`)
 - v2 removes the flat field layout (all v1 fields are reorganized into commitments/claims)
-- This is a breaking schema change, hence the major version bump to 2.0.0
+- This was a breaking schema change in the v2 line; the current published schema version is 2.1.0
 
 ### Relay Transition
 
@@ -484,7 +484,7 @@ The relay MUST NOT call `assemble()` again on retry. The cached bytes are the ca
 
 ```json
 {
-  "receipt_schema_version": "2.0.0",
+  "receipt_schema_version": "2.1.0",
   "receipt_canonicalization": "JCS_V1",
   "receipt_id": "a1b2c3d4-...",
   "session_id": "e5f6a7b8-...",

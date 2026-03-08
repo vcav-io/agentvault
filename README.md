@@ -59,7 +59,7 @@ agents → contract → relay enforcement → bounded signal → receipt
 | **Counterparty disclosure** | Bounded by schema | Bounded by schema |
 | **Relay operator** | Trusted (sees plaintext) | Excluded (hardware-encrypted) |
 | **Model provider** | Trusted (sees prompt) | Trusted (sees prompt) |
-| **Receipt assurance** | `SELF_ASSERTED` | `HARDWARE_ATTESTED` |
+| **Receipt assurance** | `SELF_ASSERTED` | `TEE_ATTESTED` |
 
 The software lane is available now. The TEE lane has been hardware-validated on GCP N2D (AMD SEV-SNP). See [docs/threat-model.md](docs/threat-model.md) for the full adversary analysis and assurance tier definitions.
 
@@ -92,7 +92,7 @@ After the run completes, click **Verify Receipt** on any result card.
 - That the relay actually executed the model it claims to have run
 - That the relay did not inspect or log your input
 
-In the software lane, assurance level is `SELF_ASSERTED` — the relay asserts its own honesty. The [TEE lane](https://github.com/vcav-io/av-tee) raises this to `HARDWARE_ATTESTED`: the same protocol runs inside an AMD SEV-SNP confidential VM (validated on GCP N2D), where attestation binding and transcript hashes are included in the receipt.
+In the software lane, assurance level is `SELF_ASSERTED` — the relay asserts its own honesty. The [TEE lane](https://github.com/vcav-io/av-tee) raises this to `TEE_ATTESTED`: the same protocol runs inside an AMD SEV-SNP confidential VM (validated on GCP N2D), where attestation binding and transcript hashes are included in the receipt.
 
 See [docs/receipt-verification-guide.md](docs/receipt-verification-guide.md) for the full verification algorithm, field reference, and TypeScript/Python examples.
 
@@ -118,7 +118,7 @@ curl -X POST http://localhost:8080/api/sessions \
   -d @contract.json
 ```
 
-The contract builder resolves artefacts, validates compatibility between schemas and policies, and computes the contract hash. See [docs/registry.md](docs/registry.md) for the full registry reference.
+The contract builder resolves artefacts, validates compatibility between schemas and policies, and computes the contract hash. See [docs/api-reference.md](docs/api-reference.md) and [docs/protocol-spec.md](docs/protocol-spec.md) for the current public contract and relay references.
 
 ---
 
@@ -150,8 +150,7 @@ The same protocol runs in two lanes: a software lane (this repo) where the relay
 - [Getting started](docs/getting-started.md) - full walkthrough, provider setup, CLI demo
 - [Threat model](docs/threat-model.md) - trust boundaries, adversary analysis, assurance tiers
 - [Receipt verification guide](docs/receipt-verification-guide.md) - algorithms, field reference, code examples
-- [Registry reference](docs/registry.md) - artefact kinds, admission, content addressing
-- [Contract builder](docs/contract-builder.md) - composing contracts from registry artefacts
+- [Schema versioning policy](docs/schema-versioning-policy.md) - schema content addressing and receipt binding
 - [API reference](docs/api-reference.md) - relay endpoint documentation
 - [Protocol spec](docs/protocol-spec.md) - normative specification
 
@@ -190,4 +189,3 @@ MIT OR Apache-2.0
 ---
 
 *Not affiliated with any other projects named "AgentVault."*
-

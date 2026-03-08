@@ -183,14 +183,14 @@ independently recompute all these hashes):
 | `relay_software_version` | string or null | Relay software version string. |
 | `status` | string or null | Session outcome status. |
 | `signal_class` | string or null | Classification of the signal produced. |
-| `execution_lane` | string enum or null | `SELF_ASSERTED` (software relay) or `HARDWARE_ATTESTED` (TEE execution). |
+| `execution_lane` | string enum or null | `standard` (software relay) or `tee` (TEE execution). |
 | `channel_capacity_bits_upper_bound` | integer or null | Computed upper bound on the output schema's information capacity (bits). |
 | `channel_capacity_measurement_version` | string or null | Algorithm version used to compute the channel capacity bound (e.g., `"enum_cardinality_v1"`). |
 | `entropy_budget_bits` | integer or null | Budget declared in the contract. |
 | `schema_entropy_ceiling_bits` | integer or null | Schema-level entropy ceiling. |
 | `budget_usage` | object or null | `{pair_id, bits_used_before, bits_used_after, budget_limit, enforcement_tier}`. |
 
-**TEE attestation** (present when `execution_lane` is `HARDWARE_ATTESTED`):
+**TEE attestation** (present when `execution_lane` is `tee`):
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -537,7 +537,7 @@ receipt alone.
 **What receipts prove (at `SELF_ASSERTED` level):**
 
 - The output was produced by a relay that holds the corresponding signing key.
-- The output conforms to the schema identified by `commitments.schema_hash`.
+- The output conforms to the schema identified by `commitments.schema_hash` (derived from the effective output schema bound by the contract).
 - The guardian policy identified by `commitments.preflight_bundle.policy_hash` was loaded at startup.
 - The prompt program identified by `commitments.prompt_template_hash` was used.
 - Each participant's input is bound by hash in `commitments.input_commitments`.
@@ -727,9 +727,9 @@ extensions — its presence does not affect schema validation behavior.
 
 The protocol supports two execution lanes that run the same session protocol:
 
-- **Software lane** (`SELF_ASSERTED`) — the relay runs as a standard process. The
+- **Software lane** (`standard`, typically with `assurance_level = SELF_ASSERTED`) — the relay runs as a standard process. The
   operator is trusted not to tamper with inputs or fabricate output.
-- **TEE lane** (`HARDWARE_ATTESTED`) — the relay runs inside a Trusted Execution
+- **TEE lane** (`tee`, with `assurance_level = TEE_ATTESTED`) — the relay runs inside a Trusted Execution
   Environment (AMD SEV-SNP confidential VM). Hardware attestation binds the receipt
   to the relay binary and session transcript, removing relay operator trust.
 
@@ -762,7 +762,7 @@ proving the receipt was produced inside an attested CVM.
 
 ### 11.4 Trust Properties
 
-At `HARDWARE_ATTESTED` level, the receipt additionally proves:
+At `TEE_ATTESTED` level, the receipt additionally proves:
 
 - The relay binary measurement matches the expected value (CVM launch digest).
 - The session transcript (inputs, prompt, output) was not tampered with.
