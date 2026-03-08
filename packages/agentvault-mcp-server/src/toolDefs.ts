@@ -29,7 +29,7 @@ export const VERIFY_TOOLS = [
     description:
       'Verify the cryptographic signature of an AgentVault session receipt. ' +
       'Supports v1 receipts (schema_version: "1.0.0") and v2 receipts ' +
-      '(receipt_schema_version: "2.0.0"). ' +
+      '(receipt_schema_version: "2.1.0"). ' +
       'Returns valid: true only if the receipt signature is cryptographically valid.',
     inputSchema: {
       type: 'object' as const,

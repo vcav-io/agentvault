@@ -1,6 +1,6 @@
 # A2A Integration Spec: AgentVault as an A2A Extension
 
-> Status: Draft
+> Status: Implemented bootstrap design
 > Related: agentvault #214, VFC #15 (AFAL discovery)
 
 ## Context
@@ -235,7 +235,5 @@ pre-session governance messages.
 
 | Phase | What | AFAL Status | A2A Status |
 |-------|------|-------------|------------|
-| Current | AFAL-only | Primary | Not supported |
-| Phase 1 | A2A discovery | Primary transport | Discovery only |
-| Phase 2 | Dual-stack | Supported, secondary | Primary for discovery + new transport |
-| Phase 3 | A2A-native | Deprecated | Primary for everything |
+| Current | Discovery + dual-stack bootstrap + A2A-native bootstrap | Supported | Supported |
+| Follow-up | Fuller task lifecycle, signed cards, relay arbitration | Supported | Tracked in #308-#311 |

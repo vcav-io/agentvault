@@ -5,7 +5,7 @@ Standalone HTTP client for the [AgentVault](https://github.com/vcav-io/agentvaul
 ## Install
 
 ```bash
-npm install agentvault-client
+npm install github:vcav-io/agentvault#main --workspace=packages/agentvault-client
 ```
 
 ## Exported modules

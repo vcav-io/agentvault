@@ -2,7 +2,7 @@
 
 # AgentVault Status
 
-**Last Updated:** 2026-03-07
+**Last Updated:** 2026-03-08
 
 ## Current Capabilities
 
@@ -37,7 +37,7 @@
 
 | Repo | Issue | Description | Size | Notes |
 |------|-------|-------------|------|-------|
-| agentvault | [#214](https://github.com/vcav-io/agentvault/issues/214) | A2A integration: AgentVault as an A2A extension | L | Design exploration |
+| agentvault | [#214](https://github.com/vcav-io/agentvault/issues/214) | A2A integration: AgentVault as an A2A extension | L | Complete; follow-up work split into #308-#311 |
 
 ### Tier 2 — Backlog
 
