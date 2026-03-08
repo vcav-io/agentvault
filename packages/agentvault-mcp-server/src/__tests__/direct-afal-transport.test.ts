@@ -690,6 +690,27 @@ describe('DirectAfalTransport', () => {
   // ── resolvePeerDescriptor — caching ───────────────────────────────────────
 
   describe('resolvePeerDescriptor', () => {
+    it('returns relay and purpose metadata from Agent Card discovery', async () => {
+      const fresh = new DirectAfalTransport({
+        agentId: 'alice-test',
+        seedHex: TEST_SEED,
+        localDescriptor,
+        peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(makeAgentCard()),
+      });
+
+      await expect(fresh.discoverPeerAgentCard('bob-test')).resolves.toEqual({
+        relayUrl: 'http://relay.example.com',
+        supportedPurposes: ['MEDIATION'],
+      });
+      expect(mockFetch).toHaveBeenCalledOnce();
+      expect(mockFetch.mock.calls[0]?.[0]).toBe('http://peer.example.com/.well-known/agent-card.json');
+    });
+
     it('prefers Agent Card discovery before AFAL descriptor fetch', async () => {
       const fresh = new DirectAfalTransport({
         agentId: 'alice-test',
@@ -776,6 +797,47 @@ describe('DirectAfalTransport', () => {
       await expect(
         fresh.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' }),
       ).rejects.toThrow('Peer agent card identity mismatch');
+    });
+
+    it('rejects purposes the peer Agent Card does not advertise', async () => {
+      const fresh = new DirectAfalTransport({
+        agentId: 'alice-test',
+        seedHex: TEST_SEED,
+        localDescriptor,
+        peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve(
+            makeAgentCard({
+              capabilities: {
+                extensions: [
+                  {
+                    uri: AGENTVAULT_A2A_EXTENSION_URI,
+                    params: {
+                      public_key_hex: PEER_PUBKEY,
+                      relay_url: 'http://relay.example.com',
+                      supported_purposes: ['COMPATIBILITY'],
+                      afal_endpoint: 'http://peer.example.com/afal',
+                    },
+                  },
+                ],
+              },
+            }),
+          ),
+      });
+
+      await expect(
+        fresh.sendPropose({
+          propose: makePropose({ purpose_code: 'MEDIATION' }),
+          relay: makeRelay(),
+          templateId: 't',
+          budgetTier: 'SMALL',
+        }),
+      ).rejects.toThrow('Peer agent card does not advertise support for purpose_code "MEDIATION"');
+      expect(mockFetch).toHaveBeenCalledOnce();
     });
 
     it('fetches descriptor on first sendPropose when not pre-injected', async () => {

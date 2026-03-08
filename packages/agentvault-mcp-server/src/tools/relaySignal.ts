@@ -559,10 +559,12 @@ function buildInterpretationContext(
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-function resolveRelayUrl(argsUrl?: string): string {
-  const url = argsUrl ?? process.env['AV_RELAY_URL'];
+function resolveRelayUrl(argsUrl?: string, discoveredUrl?: string): string {
+  const url = argsUrl ?? process.env['AV_RELAY_URL'] ?? discoveredUrl;
   if (!url) {
-    throw new Error('relay_url is required (or set AV_RELAY_URL environment variable)');
+    throw new Error(
+      'relay_url is required (or set AV_RELAY_URL environment variable, or discover a peer Agent Card relay_url in direct AFAL mode)',
+    );
   }
   return url;
 }
@@ -1113,7 +1115,23 @@ async function phaseInvite(
     });
   }
 
-  const relayUrl = resolveRelayUrl(args.relay_url);
+  const peerDiscovery =
+    transport instanceof DirectAfalTransport
+      ? await transport.discoverPeerAgentCard(counterparty)
+      : null;
+  if (
+    purposeHint &&
+    peerDiscovery?.supportedPurposes.length &&
+    !peerDiscovery.supportedPurposes.includes(purposeHint)
+  ) {
+    return buildError(
+      'INVALID_INPUT',
+      `Counterparty Agent Card does not advertise support for purpose "${purposeHint}". ` +
+        `Advertised purposes: ${peerDiscovery.supportedPurposes.join(', ')}`,
+    );
+  }
+
+  const relayUrl = resolveRelayUrl(args.relay_url, peerDiscovery?.relayUrl);
   // 1. Build AfalPropose from purpose and contract template.
   const templateId = purposeHint
     ? (PURPOSE_TO_TEMPLATE[purposeHint] ?? 'mediation-demo.v1.standard')

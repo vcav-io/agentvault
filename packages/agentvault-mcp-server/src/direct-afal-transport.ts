@@ -76,6 +76,11 @@ interface AgentCard {
   };
 }
 
+export interface AgentVaultPeerDiscovery {
+  relayUrl?: string;
+  supportedPurposes: string[];
+}
+
 // ── DirectAfalTransport ────────────────────────────────────────────────────
 
 export interface DirectAfalTransportConfig {
@@ -94,6 +99,7 @@ export interface DirectAfalTransportConfig {
 export class DirectAfalTransport implements AfalTransport {
   private readonly config: DirectAfalTransportConfig;
   private peerDescriptor: AgentDescriptor | null = null;
+  private peerDiscovery: AgentVaultPeerDiscovery | null = null;
   private storedAdmits = new Map<string, AfalAdmit>();
   private readonly responder: AfalResponder | null;
   private readonly httpServer: AfalHttpServer | null;
@@ -198,6 +204,17 @@ export class DirectAfalTransport implements AfalTransport {
     budgetTier: string;
   }): Promise<{ selectedModelProfile?: ModelProfileRef } | undefined> {
     const peer = await this.resolvePeerDescriptor(params.propose.to);
+    // Tool-level callers can preflight supported purposes earlier for better
+    // user-facing errors, but keep the transport-level check as a fail-closed
+    // backstop for direct callers and future reuse outside relay_signal.
+    if (
+      this.peerDiscovery?.supportedPurposes.length &&
+      !this.peerDiscovery.supportedPurposes.includes(params.propose.purpose_code)
+    ) {
+      throw new Error(
+        `Peer agent card does not advertise support for purpose_code "${params.propose.purpose_code}"`,
+      );
+    }
 
     // Never inject hashable fields post-hoc — they must be set before
     // computeProposalId or proposal_id integrity will fail on the receiver.
@@ -399,6 +416,40 @@ export class DirectAfalTransport implements AfalTransport {
 
   // ── Internal helpers ──────────────────────────────────────────────────────
 
+  async discoverPeerAgentCard(
+    expectedPeerAgentId?: string,
+  ): Promise<AgentVaultPeerDiscovery | null> {
+    if (this.peerDescriptor !== null && this.peerDiscovery !== null) {
+      const expiresMs = Date.parse(this.peerDescriptor.expires_at);
+      if (
+        !Number.isNaN(expiresMs) &&
+        expiresMs > Date.now() &&
+        (expectedPeerAgentId === undefined || this.peerDescriptor.agent_id === expectedPeerAgentId)
+      ) {
+        return { ...this.peerDiscovery, supportedPurposes: [...this.peerDiscovery.supportedPurposes] };
+      }
+    }
+
+    if (!this.config.peerDescriptorUrl) {
+      return null;
+    }
+
+    const a2aDescriptor = await this.tryResolvePeerViaAgentCard(
+      this.config.peerDescriptorUrl,
+      expectedPeerAgentId,
+    );
+    if (!a2aDescriptor) {
+      return null;
+    }
+
+    this.peerDescriptor = a2aDescriptor.descriptor;
+    this.peerDiscovery = a2aDescriptor.discovery;
+    return {
+      ...a2aDescriptor.discovery,
+      supportedPurposes: [...a2aDescriptor.discovery.supportedPurposes],
+    };
+  }
+
   private async resolvePeerDescriptor(expectedPeerAgentId?: string): Promise<AgentDescriptor> {
     if (this.peerDescriptor !== null) {
       const expiresMs = Date.parse(this.peerDescriptor.expires_at);
@@ -407,17 +458,20 @@ export class DirectAfalTransport implements AfalTransport {
           `resolvePeerDescriptor: cached descriptor has unparseable expires_at: "${this.peerDescriptor.expires_at}". Re-fetching.`,
         );
         this.peerDescriptor = null;
+        this.peerDiscovery = null;
       } else if (expiresMs > Date.now()) {
         if (
           expectedPeerAgentId !== undefined &&
           this.peerDescriptor.agent_id !== expectedPeerAgentId
         ) {
           this.peerDescriptor = null;
+          this.peerDiscovery = null;
         } else {
           return this.peerDescriptor;
         }
       } else {
         this.peerDescriptor = null;
+        this.peerDiscovery = null;
       }
     }
 
@@ -433,8 +487,9 @@ export class DirectAfalTransport implements AfalTransport {
       expectedPeerAgentId,
     );
     if (a2aDescriptor) {
-      this.peerDescriptor = a2aDescriptor;
-      return a2aDescriptor;
+      this.peerDescriptor = a2aDescriptor.descriptor;
+      this.peerDiscovery = a2aDescriptor.discovery;
+      return a2aDescriptor.descriptor;
     }
 
     const descriptor = await this.fetchSignedPeerDescriptor(
@@ -442,13 +497,14 @@ export class DirectAfalTransport implements AfalTransport {
       expectedPeerAgentId,
     );
     this.peerDescriptor = descriptor;
+    this.peerDiscovery = null;
     return descriptor;
   }
 
   private async tryResolvePeerViaAgentCard(
     peerUrl: string,
     expectedPeerAgentId?: string,
-  ): Promise<AgentDescriptor | null> {
+  ): Promise<{ descriptor: AgentDescriptor; discovery: AgentVaultPeerDiscovery } | null> {
     const agentCardUrl = deriveAgentCardUrl(peerUrl);
     if (!agentCardUrl) return null;
 
@@ -480,6 +536,10 @@ export class DirectAfalTransport implements AfalTransport {
     if (typeof publicKeyHex !== 'string' || typeof afalEndpoint !== 'string') {
       return null;
     }
+    const relayUrl = typeof params['relay_url'] === 'string' ? params['relay_url'] : undefined;
+    const supportedPurposes = Array.isArray(params['supported_purposes'])
+      ? params['supported_purposes'].filter((item): item is string => typeof item === 'string')
+      : [];
 
     const agentId = typeof card.name === 'string' ? card.name : expectedPeerAgentId;
     if (!agentId) return null;
@@ -493,24 +553,30 @@ export class DirectAfalTransport implements AfalTransport {
     // In this phase the trust anchor is the fetched A2A document itself, not
     // an Ed25519 AFAL descriptor signature.
     return {
-      descriptor_version: '1',
-      agent_id: agentId,
-      issued_at: new Date().toISOString(),
-      expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
-      identity_key: {
-        algorithm: 'ed25519',
-        public_key_hex: publicKeyHex,
+      descriptor: {
+        descriptor_version: '1',
+        agent_id: agentId,
+        issued_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+        identity_key: {
+          algorithm: 'ed25519',
+          public_key_hex: publicKeyHex,
+        },
+        envelope_key: {
+          algorithm: 'ed25519',
+          public_key_hex: publicKeyHex,
+        },
+        endpoints: {
+          propose: `${afalEndpoint}/propose`,
+          commit: `${afalEndpoint}/commit`,
+        },
+        capabilities: {},
+        policy_commitments: {},
       },
-      envelope_key: {
-        algorithm: 'ed25519',
-        public_key_hex: publicKeyHex,
+      discovery: {
+        ...(relayUrl ? { relayUrl } : {}),
+        supportedPurposes,
       },
-      endpoints: {
-        propose: `${afalEndpoint}/propose`,
-        commit: `${afalEndpoint}/commit`,
-      },
-      capabilities: {},
-      policy_commitments: {},
     };
   }
 

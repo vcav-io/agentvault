@@ -11,6 +11,13 @@ import { _resetHandlesForTesting } from '../tools/relayHandles.js';
 import type { AfalTransport, AfalInviteMessage } from '../afal-transport.js';
 import type { AfalPropose } from '../afal-types.js';
 import { computeProposalId } from '../afal-types.js';
+import { DirectAfalTransport } from '../direct-afal-transport.js';
+import type { AgentDescriptor } from '../direct-afal-transport.js';
+import { AGENTVAULT_A2A_EXTENSION_URI } from '../a2a-agent-card.js';
+import { signMessage, DOMAIN_PREFIXES } from '../afal-signing.js';
+import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
+import { ed25519 } from '@noble/curves/ed25519';
+import { createAndSubmit } from 'agentvault-client';
 
 // Mock agentvault-client to avoid real HTTP calls
 vi.mock('agentvault-client', () => ({
@@ -55,6 +62,58 @@ function createMockAfalTransport(invites: AfalInviteMessage[] = []): AfalTranspo
     acceptInvite: vi.fn().mockResolvedValue(undefined),
     agentId: 'alice-demo',
   };
+}
+
+const TEST_SEED = '0101010101010101010101010101010101010101010101010101010101010101';
+const TEST_PUBKEY = '8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c';
+const PEER_SEED = '0202020202020202020202020202020202020202020202020202020202020202';
+const PEER_PUBKEY = bytesToHex(ed25519.getPublicKey(hexToBytes(PEER_SEED)));
+
+function makeDescriptor(
+  agentId: string,
+  pubkeyHex: string,
+  seedHex: string,
+  overrides: Partial<AgentDescriptor> = {},
+): AgentDescriptor {
+  const unsigned: Omit<AgentDescriptor, 'signature'> = {
+    descriptor_version: '1',
+    agent_id: agentId,
+    issued_at: '2026-01-01T00:00:00Z',
+    expires_at: '2099-12-31T23:59:59Z',
+    identity_key: { algorithm: 'ed25519', public_key_hex: pubkeyHex },
+    envelope_key: { algorithm: 'ed25519', public_key_hex: pubkeyHex },
+    endpoints: {
+      propose: 'http://peer.example.com/afal/propose',
+      commit: 'http://peer.example.com/afal/commit',
+    },
+    capabilities: {},
+    policy_commitments: {},
+    ...overrides,
+  };
+  return signMessage(
+    DOMAIN_PREFIXES.DESCRIPTOR,
+    unsigned as Record<string, unknown>,
+    seedHex,
+  ) as unknown as AgentDescriptor;
+}
+
+function makeLocalDescriptor(): AgentDescriptor {
+  return makeDescriptor('alice-demo', TEST_PUBKEY, TEST_SEED);
+}
+
+function makeSignedAdmit(proposalId: string): Record<string, unknown> {
+  return signMessage(
+    DOMAIN_PREFIXES.ADMIT,
+    {
+      admission_version: '1',
+      outcome: 'ADMIT',
+      proposal_id: proposalId,
+      admit_token_id: 'a'.repeat(64),
+      admission_tier: 'DEFAULT',
+      expires_at: '2026-01-01T00:15:00Z',
+    },
+    PEER_SEED,
+  );
 }
 
 beforeEach(() => {
@@ -128,6 +187,60 @@ describe('INITIATE with AFAL', () => {
     const { proposal_id: _id, ...fields } = propose;
     const recomputed = computeProposalId(fields);
     expect(recomputed).toBe(propose.proposal_id);
+  });
+
+  it('uses peer Agent Card relay_url for direct AFAL when no relay_url was provided', async () => {
+    delete process.env['AV_RELAY_URL'];
+    const mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+
+    const transport = new DirectAfalTransport({
+      agentId: 'alice-demo',
+      seedHex: TEST_SEED,
+      localDescriptor: makeLocalDescriptor(),
+      peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
+    });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          name: 'bob-demo',
+          capabilities: {
+            extensions: [
+              {
+                uri: AGENTVAULT_A2A_EXTENSION_URI,
+                params: {
+                  public_key_hex: PEER_PUBKEY,
+                  relay_url: 'http://relay.from.card',
+                  supported_purposes: ['MEDIATION'],
+                  afal_endpoint: 'http://peer.example.com/afal',
+                },
+              },
+            ],
+          },
+        }),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(makeSignedAdmit('d'.repeat(64))),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      text: () => Promise.resolve('ok'),
+    });
+
+    await handleRelaySignal(
+      { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'hello' },
+      transport,
+    );
+
+    expect(vi.mocked(createAndSubmit)).toHaveBeenCalledWith(
+      { relay_url: 'http://relay.from.card' },
+      expect.any(Object),
+      'hello',
+      'initiator',
+    );
   });
 });
 
