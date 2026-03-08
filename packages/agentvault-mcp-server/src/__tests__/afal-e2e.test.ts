@@ -94,6 +94,7 @@ describe('AFAL M4 E2E', () => {
   /** Start Bob (RESPOND) and return the descriptor URL for Alice to use. */
   async function startResponder(
     trustedAgents: { agentId: string; publicKeyHex: string }[],
+    opts?: { advertiseAfalEndpoint?: boolean },
   ): Promise<string> {
     const bobDescriptor = makeDescriptor('bob-test', BOB_PUBKEY, BOB_SEED);
 
@@ -111,6 +112,7 @@ describe('AFAL M4 E2E', () => {
           maxEntropyBits: 256,
           defaultTier: 'DENY',
         },
+        advertiseAfalEndpoint: opts?.advertiseAfalEndpoint,
       },
     });
 
@@ -226,5 +228,44 @@ describe('AFAL M4 E2E', () => {
         budgetTier: 'SMALL',
       }),
     ).rejects.toThrow('Proposal denied');
+  });
+
+  it('completes the bootstrap flow against an A2A-only peer', async () => {
+    await startResponder(
+      [{ agentId: 'alice-test', publicKeyHex: ALICE_PUBKEY }],
+      { advertiseAfalEndpoint: false },
+    );
+
+    const server = transportB as unknown as { httpServer: { port: number } };
+    const peerUrl = `http://127.0.0.1:${server.httpServer.port}/.well-known/agent-card.json`;
+
+    const aliceDescriptor = makeDescriptor('alice-test', ALICE_PUBKEY, ALICE_SEED);
+
+    transportA = new DirectAfalTransport({
+      agentId: 'alice-test',
+      seedHex: ALICE_SEED,
+      localDescriptor: aliceDescriptor,
+      peerDescriptorUrl: peerUrl,
+    });
+
+    const propose = makeFullPropose(aliceDescriptor);
+    await transportA.sendPropose({
+      propose,
+      templateId: 'mediation-demo.v1.standard',
+      budgetTier: 'SMALL',
+    });
+
+    await transportA.commitAdmit!(propose.proposal_id, {
+      session_id: 'sess-a2a-001',
+      responder_submit_token: 'submit-a2a',
+      responder_read_token: 'read-a2a',
+      relay_url: 'http://relay.example.com',
+      contract_hash: 'd'.repeat(64),
+    });
+
+    const inbox = await transportB.checkInbox();
+    expect(inbox.invites).toHaveLength(1);
+    expect(inbox.invites[0]?.payload?.['session_id']).toBe('sess-a2a-001');
+    expect(inbox.invites[0]?.afalPropose?.proposal_id).toBe(propose.proposal_id);
   });
 });

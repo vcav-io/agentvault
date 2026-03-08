@@ -39,6 +39,7 @@ export interface AfalHttpServerConfig {
   localDescriptor: AgentDescriptor;
   relayUrl?: string;
   supportedPurposes?: string[];
+  advertiseAfalEndpoint?: boolean;
 }
 
 export class AfalHttpServer {
@@ -103,6 +104,7 @@ export class AfalHttpServer {
       descriptor: this._localDescriptor,
       supportedPurposes: this.config.supportedPurposes ?? [],
       relayUrl: this.config.relayUrl,
+      includeAfalEndpoint: this.config.advertiseAfalEndpoint,
     });
   }
 
