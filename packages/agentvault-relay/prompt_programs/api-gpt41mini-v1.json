@@ -1,0 +1,9 @@
+{
+  "profile_version": "1",
+  "profile_id": "api-gpt41mini-v1",
+  "provider": "openai",
+  "model_id": "gpt-4.1-mini",
+  "model_family": "gpt-4.1",
+  "reasoning_mode": "unconstrained",
+  "structured_output": true
+}

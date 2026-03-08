@@ -10,7 +10,8 @@ use sha2::{Digest, Sha256};
 use vault_family_types::{generate_pair_id, BudgetTier};
 
 use crate::error::RelayError;
-use crate::prompt_program::{load_model_profile, load_prompt_program};
+use crate::profile_resolution::resolve_runtime_profile;
+use crate::prompt_program::load_prompt_program;
 use crate::provider::anthropic::AnthropicProvider;
 use crate::provider::gemini::GeminiProvider;
 use crate::provider::openai::OpenAIProvider;
@@ -276,29 +277,37 @@ pub async fn relay_core(
         }
     }
 
-    // 2b. Resolve model profile early — profile's provider is authoritative
-    // when present, overriding the caller-supplied provider_name.
-    let resolved_profile = match &contract.model_profile_id {
-        Some(profile_id) => {
-            let profile = match &state.admitted_profiles {
-                Some(profiles) => profiles
-                    .values()
-                    .find(|p| p.profile_id == *profile_id)
-                    .cloned()
-                    .ok_or_else(|| {
-                        RelayError::PromptProgram(format!(
-                            "model profile not found in admitted set for id: {profile_id}"
-                        ))
-                    })?,
-                None => load_model_profile(&state.prompt_program_dir, profile_id)?,
-            };
-            Some(profile)
+    // 2b. Resolve runtime profile from contract's profile binding (fail-closed)
+    let resolved_profile = resolve_runtime_profile(
+        contract,
+        &state.admitted_profiles,
+        &state.prompt_program_dir,
+    )?;
+
+    let (effective_provider, effective_model_id, model_profile_hash) = match &resolved_profile {
+        Some(rt) => {
+            tracing::info!(
+                profile_id = %rt.profile.profile_id,
+                provider = %rt.provider,
+                model_id = %rt.model_id,
+                "profile-driven dispatch"
+            );
+            (
+                rt.provider.as_str(),
+                rt.model_id.clone(),
+                Some(rt.profile_hash.clone()),
+            )
         }
-        None => None,
-    };
-    let effective_provider = match &resolved_profile {
-        Some(profile) => profile.provider.as_str(),
-        None => provider_name,
+        None => {
+            tracing::warn!("session running in legacy unbound mode (no model_profile_id)");
+            let model = match provider_name {
+                "anthropic" => state.anthropic_model_id.clone(),
+                "openai" => state.openai_model_id.clone(),
+                "gemini" => state.gemini_model_id.clone(),
+                _ => String::new(),
+            };
+            (provider_name, model, None)
+        }
     };
 
     // 2b2. Validate relay verifying key pinning (#184)
@@ -327,15 +336,7 @@ pub async fn relay_core(
         }
     }
 
-    // 2d. Resolve effective model_id for the effective provider
-    let effective_model_id = match effective_provider {
-        "anthropic" => state.anthropic_model_id.clone(),
-        "openai" => state.openai_model_id.clone(),
-        "gemini" => state.gemini_model_id.clone(),
-        _ => String::new(),
-    };
-
-    // 2e. Validate model_id against contract allowed_models (#151 gap 3)
+    // 2d. Validate model_id against contract allowed_models (#151 gap 3)
     if let Some(ref constraints) = contract.model_constraints {
         if !constraints.allowed_models.is_empty() {
             let model_allowed = constraints.allowed_models.iter().any(|pattern| {
@@ -491,7 +492,7 @@ pub async fn relay_core(
             })?;
             let provider = AnthropicProvider::new(
                 api_key,
-                state.anthropic_model_id.clone(),
+                effective_model_id.clone(),
                 state.anthropic_base_url.clone(),
             )?;
             provider.call(provider_request).await?
@@ -502,7 +503,7 @@ pub async fn relay_core(
             })?;
             let provider = OpenAIProvider::new(
                 api_key,
-                state.openai_model_id.clone(),
+                effective_model_id.clone(),
                 state.openai_base_url.clone(),
             )?;
             provider.call(provider_request).await?
@@ -513,7 +514,7 @@ pub async fn relay_core(
             })?;
             let provider = GeminiProvider::new(
                 api_key,
-                state.gemini_model_id.clone(),
+                effective_model_id.clone(),
                 state.gemini_base_url.clone(),
             )?;
             provider.call(provider_request).await?
@@ -604,11 +605,7 @@ pub async fn relay_core(
     let inference_config_hash = hex::encode(Sha256::digest(b"api-mediated-no-local-inference"));
     let guardian_policy_hash = resolved_hash.clone();
 
-    // Reuse the profile resolved earlier (step 2b) for receipt binding
-    let model_profile_hash = match &resolved_profile {
-        Some(profile) => Some(profile.content_hash()?),
-        None => None,
-    };
+    // model_profile_hash already resolved in step 2b — no duplicate lookup needed.
 
     let unsigned = Receipt::builder()
         .session_id(session_id.clone())
@@ -638,8 +635,8 @@ pub async fn relay_core(
         .model_profile_hash(model_profile_hash.clone())
         .model_identity(Some(receipt_core::ModelIdentity {
             provider: effective_provider.to_string(),
-            model_id: provider_response.model_id.clone(),
-            model_version: None,
+            model_id: effective_model_id.clone(),
+            model_version: provider_response.model_id.clone().into(),
         }))
         .build_unsigned()
         .ok_or_else(|| {
@@ -667,7 +664,7 @@ pub async fn relay_core(
         assembled_prompt_hash,
         &prompt_template_hash,
         model_profile_hash.as_deref(),
-        &provider_response.model_id,
+        &effective_model_id,
         effective_provider,
         &runtime_hash,
         &resolved_hash,
@@ -1059,6 +1056,7 @@ mod tests {
             profile_version: "1".to_string(),
             profile_id: "test-profile-v1".to_string(),
             provider: "anthropic".to_string(),
+            model_id: "claude-sonnet-4-6".to_string(),
             model_family: "claude-sonnet".to_string(),
             reasoning_mode: "unconstrained".to_string(),
             structured_output: true,
@@ -1088,6 +1086,7 @@ mod tests {
             profile_version: "1".to_string(),
             profile_id: "receipt-test-profile-v1".to_string(),
             provider: "anthropic".to_string(),
+            model_id: "claude-sonnet-4-6".to_string(),
             model_family: "claude-sonnet".to_string(),
             reasoning_mode: "unconstrained".to_string(),
             structured_output: true,

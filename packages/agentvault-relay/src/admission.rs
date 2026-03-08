@@ -333,6 +333,7 @@ mod tests {
             "profile_version": "1",
             "profile_id": "test-profile-v1",
             "provider": "anthropic",
+            "model_id": "claude-sonnet-4-6",
             "model_family": "claude-sonnet",
             "reasoning_mode": "unconstrained",
             "structured_output": true

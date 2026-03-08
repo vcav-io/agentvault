@@ -31,6 +31,11 @@ export interface ToolRegistryConfig {
    * Falls back to transport.agentId if not provided.
    */
   agentId?: string;
+  /**
+   * Override the model profile ID in relay contracts built by this registry.
+   * When set, overrides the template's default model_profile_id.
+   */
+  relayProfileId?: string;
 }
 
 // ── Tool definition shape ────────────────────────────────────────────────
@@ -73,7 +78,7 @@ export function createToolRegistry(config: ToolRegistryConfig): ToolRegistry {
     },
 
     handleRelaySignal(args: RelaySignalArgs) {
-      return handleRelaySignal(args, transport, knownAgents);
+      return handleRelaySignal(args, transport, knownAgents, config.relayProfileId);
     },
 
     handleVerifyReceipt(args: VerifyReceiptArgs) {

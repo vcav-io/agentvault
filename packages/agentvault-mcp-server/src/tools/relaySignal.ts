@@ -954,6 +954,7 @@ async function phaseInvite(
   args: RelaySignalArgs,
   transport: AfalTransport,
   knownAgents: NormalizedKnownAgent[],
+  relayProfileId?: string,
 ): Promise<ToolResponse<RelaySignalOutput>> {
   const counterparty = resolveAgentAlias(handle.counterparty, knownAgents);
 
@@ -967,7 +968,7 @@ async function phaseInvite(
   } else if (args.purpose) {
     let built;
     try {
-      built = buildRelayContract(args.purpose, [agentId, counterparty]);
+      built = buildRelayContract(args.purpose, [agentId, counterparty], relayProfileId);
     } catch (e) {
       return buildError('INVALID_INPUT', (e as Error).message);
     }
@@ -1752,6 +1753,7 @@ export async function handleRelaySignal(
   args: RelaySignalArgs,
   transport?: AfalTransport,
   knownAgents: NormalizedKnownAgent[] = [],
+  relayProfileId?: string,
 ): Promise<ToolResponse<RelaySignalData>> {
   try {
     // Prune expired handles on every call
@@ -1852,7 +1854,7 @@ export async function handleRelaySignal(
             .update(JSON.stringify(args.contract))
             .digest('hex');
         } else if (args.purpose) {
-          const built = buildRelayContract(args.purpose, [agentId, counterparty]);
+          const built = buildRelayContract(args.purpose, [agentId, counterparty], relayProfileId);
           contractHashForKey = built ? computeRelayContractHash(built) : args.purpose;
         } else {
           contractHashForKey = '';
@@ -1920,7 +1922,7 @@ export async function handleRelaySignal(
           timeoutMs: HANDLE_TTL_MS,
         });
 
-        return await phaseInvite(handle, args, transport, knownAgents);
+        return await phaseInvite(handle, args, transport, knownAgents, relayProfileId);
       }
 
       case 'RESPOND': {

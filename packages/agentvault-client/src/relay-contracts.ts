@@ -236,6 +236,7 @@ function validateParticipantId(id: string): string | null {
 export function buildRelayContract(
   purpose: string,
   participants: string[],
+  modelProfileId?: string,
 ): RelayContract | undefined {
   const template = TEMPLATES[purpose];
   if (!template) return undefined;
@@ -248,7 +249,11 @@ export function buildRelayContract(
     if (err) throw new Error(err);
   }
 
-  return { ...template, participants };
+  const contract = { ...template, participants };
+  if (modelProfileId) {
+    contract.model_profile_id = modelProfileId;
+  }
+  return contract;
 }
 
 /** List available bundled purpose codes. */

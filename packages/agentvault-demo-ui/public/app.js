@@ -42,6 +42,10 @@
     // Signal overlay
     signalOverlay: $('signal-overlay'),
     // Provider/model selectors
+    coordinationModelSelect: $('coordination-model-select'),
+    splitModelToggle: $('split-model-toggle'),
+    agentProviderWrap: $('agent-provider-wrap'),
+    agentModelWrap: $('agent-model-wrap'),
     providerSelect: $('provider-select'),
     modelSelect: $('model-select'),
     // Canary toggle
@@ -167,6 +171,20 @@
     while (sel.firstChild) sel.removeChild(sel.firstChild);
   }
 
+  /** Populate the coordination model dropdown with all models across providers. */
+  function populateCoordinationModelSelect(defaultProvider) {
+    clearSelect(els.coordinationModelSelect);
+    providerConfig.forEach(function (prov) {
+      prov.models.forEach(function (m) {
+        var opt = document.createElement('option');
+        opt.value = JSON.stringify({ provider: prov.name, model: m.id, profileId: m.profileId });
+        opt.textContent = m.id + ' (' + prov.name + ', ' + m.tier + ')';
+        if (prov.name === defaultProvider && m.default) opt.selected = true;
+        els.coordinationModelSelect.appendChild(opt);
+      });
+    });
+  }
+
   function populateModelSelect(providerName) {
     clearSelect(els.modelSelect);
     var prov = providerConfig.find(function (p) { return p.name === providerName; });
@@ -180,6 +198,18 @@
     });
   }
 
+  /** Get the selected coordination model value. */
+  function getCoordinationModel() {
+    try { return JSON.parse(els.coordinationModelSelect.value); } catch { return null; }
+  }
+
+  // Split model toggle
+  els.splitModelToggle.addEventListener('change', function () {
+    var show = this.checked;
+    els.agentProviderWrap.style.display = show ? '' : 'none';
+    els.agentModelWrap.style.display = show ? '' : 'none';
+  });
+
   els.providerSelect.addEventListener('change', function () {
     populateModelSelect(this.value);
   });
@@ -188,6 +218,9 @@
     .then(function (r) { return r.json(); })
     .then(function (cfg) {
       providerConfig = cfg.providers || [];
+      // Coordination model (unified dropdown)
+      populateCoordinationModelSelect(cfg.defaultProvider);
+      // Agent provider/model (split mode)
       clearSelect(els.providerSelect);
       providerConfig.forEach(function (p) {
         var opt = document.createElement('option');
@@ -201,11 +234,11 @@
       }
     })
     .catch(function () {
-      clearSelect(els.providerSelect);
+      clearSelect(els.coordinationModelSelect);
       var opt = document.createElement('option');
       opt.value = '';
       opt.textContent = 'Unavailable';
-      els.providerSelect.appendChild(opt);
+      els.coordinationModelSelect.appendChild(opt);
     });
 
   // ── Phase management ───────────────────────────────────────
@@ -381,15 +414,29 @@
     els.bobLog.appendChild(createPromptBubble(bobPrompt, 'Bob'));
 
     try {
+      var coord = getCoordinationModel();
+      var isSplit = els.splitModelToggle.checked;
+      var startBody = {
+        alicePrompt: alicePrompt,
+        bobPrompt: bobPrompt,
+      };
+      if (isSplit) {
+        // Split mode: coordination model drives relay, agent model drives agent LLM
+        startBody.agentProvider = els.providerSelect.value || undefined;
+        startBody.agentModel = els.modelSelect.value || undefined;
+        if (coord) startBody.relayProfileId = coord.profileId;
+      } else {
+        // Unified mode: coordination model drives both
+        if (coord) {
+          startBody.agentProvider = coord.provider;
+          startBody.agentModel = coord.model;
+          startBody.relayProfileId = coord.profileId;
+        }
+      }
       var res = await fetch('/api/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          alicePrompt: alicePrompt,
-          bobPrompt: bobPrompt,
-          agentProvider: els.providerSelect.value || undefined,
-          agentModel: els.modelSelect.value || undefined,
-        }),
+        body: JSON.stringify(startBody),
       });
       var data = await res.json();
       if (data.error) {

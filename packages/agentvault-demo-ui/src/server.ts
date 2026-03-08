@@ -314,21 +314,28 @@ async function setupAndStartHeartbeats(): Promise<void> {
   events.emitSystem(`Alice AFAL listening on port ${ALICE_AFAL_PORT}`);
 
   // Create tool registries
+  initRegistries();
+
+  // Start heartbeat loops
+  startHeartbeatLoops(provider, heartbeatProvider);
+}
+
+/** (Re)create tool registries, optionally overriding the relay profile. */
+function initRegistries(relayProfileId?: string): void {
   const aliceKnownAgents = [{ agent_id: 'bob', aliases: ['Bob'] }];
   const bobKnownAgents = [{ agent_id: 'alice', aliases: ['Alice'] }];
 
   aliceRegistry = createToolRegistry({
     transport: aliceTransport,
     knownAgents: aliceKnownAgents,
+    relayProfileId,
   });
 
   bobRegistry = createToolRegistry({
     transport: bobTransport,
     knownAgents: bobKnownAgents,
+    relayProfileId,
   });
-
-  // Start heartbeat loops
-  startHeartbeatLoops(provider, heartbeatProvider);
 }
 
 /** Start (or restart) heartbeat loops with the given providers. */
@@ -378,13 +385,13 @@ app.use(express.static(PUBLIC_DIR));
 
 // Config endpoint — available providers and models for UI selectors
 app.get('/api/config', (_req, res) => {
-  const providers: Array<{ name: string; models: Array<{ id: string; tier: string; default?: boolean }> }> = [];
+  const providers: Array<{ name: string; models: Array<{ id: string; tier: string; profileId: string; default?: boolean }> }> = [];
   if (process.env['GEMINI_API_KEY']) {
     providers.push({
       name: 'gemini',
       models: [
-        { id: 'gemini-2.5-flash', tier: 'mid', default: true },
-        { id: 'gemini-2.5-flash-lite', tier: 'budget' },
+        { id: 'gemini-3-flash', tier: 'mid', profileId: 'api-gemini3flash-v1', default: true },
+        { id: 'gemini-3-flash-lite', tier: 'budget', profileId: 'api-gemini3flash-lite-v1' },
       ],
     });
   }
@@ -392,8 +399,8 @@ app.get('/api/config', (_req, res) => {
     providers.push({
       name: 'openai',
       models: [
-        { id: 'gpt-4.1-mini', tier: 'mid', default: true },
-        { id: 'gpt-4.1-nano', tier: 'budget' },
+        { id: 'gpt-5', tier: 'flagship', profileId: 'api-gpt5-v1' },
+        { id: 'gpt-4.1-mini', tier: 'mid', profileId: 'api-gpt41mini-v1', default: true },
       ],
     });
   }
@@ -401,8 +408,8 @@ app.get('/api/config', (_req, res) => {
     providers.push({
       name: 'anthropic',
       models: [
-        { id: 'claude-haiku-4-5-20251001', tier: 'budget', default: true },
-        { id: 'claude-sonnet-4-6', tier: 'reference' },
+        { id: 'claude-sonnet-4-6', tier: 'flagship', profileId: 'api-claude-sonnet-v1', default: true },
+        { id: 'claude-haiku-4-5-20251001', tier: 'budget', profileId: 'api-claude-haiku-v1' },
       ],
     });
   }
@@ -474,6 +481,7 @@ app.post('/api/start', async (req, res) => {
     // Relay is reachable — safe to proceed with provider override and recording
     const agentProvider = req.body?.agentProvider as string | undefined;
     const agentModel = req.body?.agentModel as string | undefined;
+    const relayProfileId = req.body?.relayProfileId as string | undefined;
     if (agentProvider) {
       provider = createProviderFromSpec(agentProvider, agentModel);
       events.emitSystem(`Agent provider overridden: ${agentProvider}/${agentModel ?? 'default'}`);
@@ -486,13 +494,19 @@ app.post('/api/start', async (req, res) => {
       events.emitSystem(`Heartbeat loops restarted for provider: ${agentProvider}`);
     }
 
+    // Recreate registries with relay profile override if specified
+    if (relayProfileId) {
+      initRegistries(relayProfileId);
+      events.emitSystem(`Relay profile override: ${relayProfileId}`);
+    }
+
     // Start JSONL recording
     const runFile = events.startRecording(RUNS_DIR);
     events.emitSystem(`Recording to ${runFile}`);
 
     // Emit contract enforcement parameters for the default MEDIATION contract
     try {
-      const mediationContract = buildRelayContract('MEDIATION', ['alice', 'bob']);
+      const mediationContract = buildRelayContract('MEDIATION', ['alice', 'bob'], relayProfileId);
       if (mediationContract) {
         const schemaHash = computeOutputSchemaHash(mediationContract.output_schema);
         events.emit({

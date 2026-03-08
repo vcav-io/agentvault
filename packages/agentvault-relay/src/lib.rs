@@ -9,6 +9,7 @@ pub mod inbox_handlers;
 #[cfg(feature = "persistence")]
 pub mod inbox_sqlite;
 pub mod inbox_types;
+pub mod profile_resolution;
 pub mod prompt_program;
 pub mod provider;
 pub mod relay;
@@ -518,17 +519,14 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
         let canonical = receipt_core::canonicalize_serializable(&prompt_json).ok()?;
         let assembled_prompt_hash = hex::encode(Sha256::digest(canonical.as_bytes()));
 
-        // Model profile hash
-        let model_profile_hash = contract
-            .model_profile_id
-            .as_deref()
-            .and_then(|id| match &state.admitted_profiles {
-                Some(profiles) => profiles.values().find(|p| p.profile_id == id).cloned(),
-                None => {
-                    crate::prompt_program::load_model_profile(&state.prompt_program_dir, id).ok()
-                }
-            })
-            .and_then(|mp| mp.content_hash().ok());
+        // Model profile resolution (shared helper)
+        let resolved_profile = profile_resolution::resolve_runtime_profile(
+            &contract,
+            &state.admitted_profiles,
+            &state.prompt_program_dir,
+        )
+        .ok()?;
+        let model_profile_hash = resolved_profile.as_ref().map(|rt| rt.profile_hash.clone());
 
         // Runtime hash
         let git_sha = env!("AV_GIT_SHA");
@@ -538,12 +536,15 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
         let entropy_bits =
             entropy_core::calculate_schema_entropy_upper_bound(&effective_schema).unwrap_or(0);
 
-        // Effective model ID and max tokens
-        let effective_model_id = match provider.as_str() {
-            "anthropic" => state.anthropic_model_id.clone(),
-            "openai" => state.openai_model_id.clone(),
-            "gemini" => state.gemini_model_id.clone(),
-            _ => "unknown".to_string(),
+        // Effective model ID and max tokens — profile-driven when available
+        let effective_model_id = match &resolved_profile {
+            Some(rt) => rt.model_id.clone(),
+            None => match provider.as_str() {
+                "anthropic" => state.anthropic_model_id.clone(),
+                "openai" => state.openai_model_id.clone(),
+                "gemini" => state.gemini_model_id.clone(),
+                _ => "unknown".to_string(),
+            },
         };
         let effective_max_tokens = match contract.max_completion_tokens {
             Some(contract_max) => std::cmp::min(contract_max, state.max_completion_tokens),
