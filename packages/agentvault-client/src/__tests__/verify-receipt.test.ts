@@ -183,7 +183,7 @@ describe('verifyReceipt — with artefacts', () => {
     expect(result.commitment_checks!.every((c) => c.match)).toBe(true);
   });
 
-  it('reads v2 schema commitments from output_schema_hash', () => {
+  it('ignores stale schema_hash on v2 receipts', () => {
     const { seedHex, publicKeyHex } = generateKeypair();
     const base: Record<string, unknown> = {
       receipt_schema_version: '2.0.0',
