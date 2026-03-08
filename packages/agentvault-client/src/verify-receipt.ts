@@ -245,7 +245,7 @@ function verifyCommitments(
 
 export function verifyReceipt(
   receipt: Record<string, unknown>,
-  publicKeyHex: string,
+  publicKeyHex?: string,
   artefacts?: VerifyArtefacts,
 ): VerifyResult {
   const errors: string[] = [];
@@ -275,10 +275,44 @@ export function verifyReceipt(
     };
   }
 
+  // Resolve the verification key: TEE-attested key takes priority for TEE receipts
+  let verifyKey: string | undefined;
+  let teeAttestedKey: string | undefined;
+
+  if (isV2 && typeof receipt['tee_attestation'] === 'object' && receipt['tee_attestation'] !== null) {
+    const att = receipt['tee_attestation'] as Record<string, unknown>;
+    if (typeof att['receipt_signing_pubkey_hex'] === 'string') {
+      teeAttestedKey = att['receipt_signing_pubkey_hex'] as string;
+    }
+  }
+
+  if (teeAttestedKey) {
+    // TEE receipt: verify against the TEE-attested key
+    verifyKey = teeAttestedKey;
+
+    // If caller also supplied a key, treat as secondary pinning check
+    if (publicKeyHex && publicKeyHex !== teeAttestedKey) {
+      warnings.push(
+        `Caller-supplied publicKeyHex differs from TEE-attested key; verifying against TEE-attested key`,
+      );
+    }
+  } else if (publicKeyHex) {
+    // Non-TEE receipt: verify against caller-supplied key
+    verifyKey = publicKeyHex;
+  } else {
+    errors.push('No verification key: neither publicKeyHex supplied nor TEE-attested key present');
+    return {
+      valid: false,
+      schema_version: detectedVersion,
+      errors,
+      warnings,
+    };
+  }
+
   // Verify signature
   const sigResult = isV2
-    ? verifySignatureV2(receipt, publicKeyHex)
-    : verifySignatureV1(receipt, publicKeyHex);
+    ? verifySignatureV2(receipt, verifyKey)
+    : verifySignatureV1(receipt, verifyKey);
 
   errors.push(...sigResult.errors);
   let valid = sigResult.valid;
@@ -299,29 +333,15 @@ export function verifyReceipt(
     if (artefacts.contract && typeof artefacts.contract === 'object') {
       const contractObj = artefacts.contract as Record<string, unknown>;
       if (typeof contractObj.relay_verifying_key_hex === 'string') {
-        if (contractObj.relay_verifying_key_hex !== publicKeyHex) {
+        if (contractObj.relay_verifying_key_hex !== verifyKey) {
           errors.push(
-            `Contract pins relay key '${contractObj.relay_verifying_key_hex.slice(0, 12)}...' but receipt was signed by '${publicKeyHex.slice(0, 12)}...'`,
+            `Contract pins relay key '${contractObj.relay_verifying_key_hex.slice(0, 12)}...' but receipt was signed by '${verifyKey.slice(0, 12)}...'`,
           );
           valid = false;
         }
       }
     }
 
-  }
-
-  // Cross-check TEE attested signing key (#282)
-  if (isV2 && typeof receipt['tee_attestation'] === 'object' && receipt['tee_attestation'] !== null) {
-    const att = receipt['tee_attestation'] as Record<string, unknown>;
-    const attestedKey = typeof att['receipt_signing_pubkey_hex'] === 'string'
-      ? (att['receipt_signing_pubkey_hex'] as string)
-      : '';
-    if (attestedKey && attestedKey !== publicKeyHex) {
-      errors.push(
-        `TEE attestation receipt_signing_pubkey_hex does not match verification key`,
-      );
-      valid = false;
-    }
   }
 
   // Extract TEE attestation info if present (introspection, not verification)

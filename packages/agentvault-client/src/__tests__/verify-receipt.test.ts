@@ -292,7 +292,7 @@ describe('verifyReceipt — relay key pinning', () => {
 // ---------------------------------------------------------------------------
 
 describe('verifyReceipt — TEE pubkey binding', () => {
-  it('passes when tee_attestation.receipt_signing_pubkey_hex matches signing key', () => {
+  it('passes when tee_attestation.receipt_signing_pubkey_hex matches caller key', () => {
     const { seedHex, publicKeyHex } = generateKeypair();
     const base: Record<string, unknown> = {
       receipt_schema_version: '2.0.0',
@@ -310,11 +310,12 @@ describe('verifyReceipt — TEE pubkey binding', () => {
     const result = verifyReceipt(signed, publicKeyHex);
     expect(result.valid).toBe(true);
     expect(result.errors).toHaveLength(0);
+    expect(result.warnings).toHaveLength(0);
   });
 
-  it('fails when tee_attestation.receipt_signing_pubkey_hex differs from signing key', () => {
-    const { seedHex, publicKeyHex } = generateKeypair();
-    const { publicKeyHex: differentKey } = generateKeypair();
+  it('verifies against TEE-attested key even when caller supplies different key', () => {
+    const { seedHex, publicKeyHex: teeKey } = generateKeypair();
+    const { publicKeyHex: callerKey } = generateKeypair();
     const base: Record<string, unknown> = {
       receipt_schema_version: '2.0.0',
       session_id: 'sess-tee-2',
@@ -323,17 +324,50 @@ describe('verifyReceipt — TEE pubkey binding', () => {
         tee_type: 'Simulated',
         measurement: 'abc123',
         attestation_hash: 'def456',
-        receipt_signing_pubkey_hex: differentKey,
+        receipt_signing_pubkey_hex: teeKey,
+        transcript_hash_hex: '789aaa',
+      },
+    };
+    // Receipt is signed with the TEE key's seed
+    const signed = signV2(base, seedHex);
+    const result = verifyReceipt(signed, callerKey);
+    // Should pass: verifies against TEE-attested key, not caller key
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+    expect(result.warnings.some((w) => w.includes('differs from TEE-attested key'))).toBe(true);
+  });
+
+  it('verifies TEE receipt without caller-supplied key', () => {
+    const { seedHex, publicKeyHex: teeKey } = generateKeypair();
+    const base: Record<string, unknown> = {
+      receipt_schema_version: '2.0.0',
+      session_id: 'sess-tee-3',
+      issued_at: '2024-01-01T00:00:00Z',
+      tee_attestation: {
+        tee_type: 'Simulated',
+        measurement: 'abc123',
+        attestation_hash: 'def456',
+        receipt_signing_pubkey_hex: teeKey,
         transcript_hash_hex: '789aaa',
       },
     };
     const signed = signV2(base, seedHex);
-    const result = verifyReceipt(signed, publicKeyHex);
+    // No caller key — TEE-attested key used directly
+    const result = verifyReceipt(signed);
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('fails when no key is available (no caller key, no TEE key)', () => {
+    const { seedHex } = generateKeypair();
+    const base: Record<string, unknown> = {
+      receipt_schema_version: '2.0.0',
+      session_id: 'sess-tee-4',
+      issued_at: '2024-01-01T00:00:00Z',
+    };
+    const signed = signV2(base, seedHex);
+    const result = verifyReceipt(signed);
     expect(result.valid).toBe(false);
-    expect(
-      result.errors.some((e) =>
-        e.includes('TEE attestation receipt_signing_pubkey_hex does not match verification key'),
-      ),
-    ).toBe(true);
+    expect(result.errors.some((e) => e.includes('No verification key'))).toBe(true);
   });
 });
