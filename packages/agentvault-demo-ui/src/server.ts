@@ -596,11 +596,11 @@ app.post('/api/start', async (req, res) => {
 
     // Send initial messages simultaneously — triggers immediate LLM bursts
     // These don't await each other; they both enqueue bursts independently
-    sendUserMessage(aliceParams, alicePrompt).catch((err) => {
+    sendUserMessage(aliceParams, alicePrompt, abortController.signal).catch((err) => {
       console.error('Alice initial message failed:', err);
       events.emitSystem(`Alice start error: ${err instanceof Error ? err.message : 'Unknown'}`);
     });
-    sendUserMessage(bobParams, bobPrompt).catch((err) => {
+    sendUserMessage(bobParams, bobPrompt, abortController.signal).catch((err) => {
       console.error('Bob initial message failed:', err);
       events.emitSystem(`Bob start error: ${err instanceof Error ? err.message : 'Unknown'}`);
     });
@@ -646,7 +646,7 @@ app.post('/api/message', async (req, res) => {
   events.emitUserMessage(agent, message.trim(), localId);
   res.json({ ok: true });
 
-  sendUserMessage(params, message.trim()).catch((err) => {
+  sendUserMessage(params, message.trim(), abortController.signal).catch((err) => {
     console.error(`${agent} mid-run message failed:`, err);
     events.emitSystem(`${agent} message error: ${err instanceof Error ? err.message : 'Unknown'}`);
   });
@@ -704,8 +704,13 @@ app.post('/api/stop', async (_req, res) => {
 
     aliceState.status = 'idle';
     bobState.status = 'idle';
+    aliceState.started = false;
+    bobState.started = false;
     aliceQueue.reset();
     bobQueue.reset();
+
+    // Recreate abort controller so the next run has a fresh signal
+    abortController = new AbortController();
 
     events.stopRecording();
     events.emitSystem('Stopped — heartbeats and agent loops halted');

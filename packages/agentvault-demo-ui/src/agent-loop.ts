@@ -323,6 +323,7 @@ export async function runHeartbeatLoop(
 export async function sendUserMessage(
   params: BurstParams & { queue: ReturnType<typeof createQueue> },
   message: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   const { name, events, state, queue } = params;
 
@@ -330,8 +331,9 @@ export async function sendUserMessage(
   events.emitSystem(`${name}: User message received`);
 
   await queue.enqueue(() => {
+    if (signal?.aborted) return Promise.resolve();
     state.messages.push({ role: 'user', content: message });
-    return runLLMBurst(params);
+    return runLLMBurst(params, undefined, signal);
   });
 }
 
