@@ -112,17 +112,24 @@ export function checkMeasurementAllowlist(
 // Transcript binding
 // ---------------------------------------------------------------------------
 
-export type TranscriptBinding = 'UserData' | 'TranscriptHashFallback' | 'None';
+export type TranscriptBinding = 'ReceiptClaimedUserData' | 'TranscriptHashFallback' | 'None';
 
 // ---------------------------------------------------------------------------
 // Full TEE verification result
 // ---------------------------------------------------------------------------
 
 export interface TeeVerificationResult {
+  // Only set when the verifier has extracted and cross-checked quote fields.
+  // The TypeScript helper does not parse quotes today, so this remains unset.
   measurement_match: MeasurementEntry | undefined;
+  // Receipt-level lookup only; not quote-verified.
+  receipt_claimed_measurement_match: MeasurementEntry | undefined;
   attestation_hash_status: AttestationHashStatus;
   transcript_hash_valid: boolean;
   transcript_binding: TranscriptBinding;
+  // False until the verifier can parse the quote and cross-check transcript-
+  // binding fields against the quote contents.
+  quote_field_cross_checked: boolean;
   submission_hashes_present: boolean;
 }
 
@@ -148,9 +155,12 @@ export interface ReceiptCommitments {
  * Verify TEE-specific fields of a v2 receipt.
  *
  * This covers transcript hash recomputation, attestation hash checking,
- * measurement allowlist lookup, and submission hash presence. Receipt
+ * receipt-claimed measurement lookup, and submission hash presence. Receipt
  * signature verification is handled separately by `verifyReceipt()`.
- * Quote parsing/platform verification is out of scope for the TS client.
+ *
+ * Quote parsing/platform verification is out of scope for the TS client, so
+ * this helper must not claim quote-derived guarantees such as UserData-bound
+ * transcript verification or quote-verified measurement allowlist matches.
  */
 export function verifyTeeReceipt(
   commitments: ReceiptCommitments,
@@ -164,7 +174,7 @@ export function verifyTeeReceipt(
   );
 
   // 2. Measurement allowlist
-  const measurement_match = teeAttestation.measurement
+  const receipt_claimed_measurement_match = teeAttestation.measurement
     ? checkMeasurementAllowlist(teeAttestation.measurement, allowlist)
     : undefined;
 
@@ -184,7 +194,7 @@ export function verifyTeeReceipt(
 
   if (teeAttestation.user_data_hex !== undefined) {
     transcript_hash_valid = computedHex === teeAttestation.user_data_hex;
-    transcript_binding = 'UserData';
+    transcript_binding = 'ReceiptClaimedUserData';
   } else if (teeAttestation.transcript_hash_hex !== undefined) {
     transcript_hash_valid = computedHex === teeAttestation.transcript_hash_hex;
     transcript_binding = 'TranscriptHashFallback';
@@ -199,10 +209,12 @@ export function verifyTeeReceipt(
     commitments.responder_submission_hash !== undefined;
 
   return {
-    measurement_match,
+    measurement_match: undefined,
+    receipt_claimed_measurement_match,
     attestation_hash_status,
     transcript_hash_valid,
     transcript_binding,
+    quote_field_cross_checked: false,
     submission_hashes_present,
   };
 }

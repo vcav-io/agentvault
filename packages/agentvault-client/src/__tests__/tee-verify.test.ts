@@ -153,7 +153,7 @@ describe('verifyTeeReceipt', () => {
     'b0fceb1f1dfd40fab87a529883810443dabde5416f0d06fbc57026a8bff0989c' +
     '233781c7beeca30d85154ea3896eba00e21d99a8aac2dbd05ae85bb1e806a256';
 
-  it('passes with UserData binding', () => {
+  it('downgrades UserData to a receipt-claimed binding without quote parsing', () => {
     const att: TeeAttestation = {
       measurement: MEASUREMENT,
       receipt_signing_pubkey_hex: 'ffff',
@@ -162,8 +162,10 @@ describe('verifyTeeReceipt', () => {
 
     const result = verifyTeeReceipt(commitments, att, allowlist);
     expect(result.transcript_hash_valid).toBe(true);
-    expect(result.transcript_binding).toBe('UserData');
-    expect(result.measurement_match).toBeDefined();
+    expect(result.transcript_binding).toBe('ReceiptClaimedUserData');
+    expect(result.quote_field_cross_checked).toBe(false);
+    expect(result.measurement_match).toBeUndefined();
+    expect(result.receipt_claimed_measurement_match).toBeDefined();
     expect(result.submission_hashes_present).toBe(true);
   });
 
@@ -199,10 +201,10 @@ describe('verifyTeeReceipt', () => {
 
     const result = verifyTeeReceipt(commitments, att, allowlist);
     expect(result.transcript_hash_valid).toBe(false);
-    expect(result.transcript_binding).toBe('UserData');
+    expect(result.transcript_binding).toBe('ReceiptClaimedUserData');
   });
 
-  it('detects unknown measurement', () => {
+  it('keeps unknown receipt-claimed measurement separate from quote-verified matches', () => {
     const att: TeeAttestation = {
       measurement: 'unknown_measurement',
       receipt_signing_pubkey_hex: 'ffff',
@@ -211,6 +213,19 @@ describe('verifyTeeReceipt', () => {
 
     const result = verifyTeeReceipt(commitments, att, allowlist);
     expect(result.measurement_match).toBeUndefined();
+    expect(result.receipt_claimed_measurement_match).toBeUndefined();
+  });
+
+  it('does not elevate allowlisted receipt-claimed measurement to quote-verified status', () => {
+    const att: TeeAttestation = {
+      measurement: MEASUREMENT,
+      receipt_signing_pubkey_hex: 'ffff',
+      user_data_hex: EXPECTED_TRANSCRIPT_HASH,
+    };
+
+    const result = verifyTeeReceipt(commitments, att, allowlist);
+    expect(result.measurement_match).toBeUndefined();
+    expect(result.receipt_claimed_measurement_match).toBeDefined();
   });
 
   it('detects missing submission hashes', () => {
