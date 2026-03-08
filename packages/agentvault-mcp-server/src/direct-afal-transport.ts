@@ -182,6 +182,13 @@ export class DirectAfalTransport implements AfalTransport {
   }): Promise<void> {
     const peer = await this.resolvePeerDescriptor();
 
+    // Verify the resolved peer descriptor matches the intended recipient
+    if (peer.agent_id !== params.propose.to) {
+      throw new Error(
+        `Peer descriptor agent_id "${peer.agent_id}" does not match propose.to "${params.propose.to}"`,
+      );
+    }
+
     // Never inject hashable fields post-hoc — they must be set before
     // computeProposalId or proposal_id integrity will fail on the receiver.
     const proposeMessage: Record<string, unknown> = {
@@ -212,6 +219,11 @@ export class DirectAfalTransport implements AfalTransport {
     if (params.propose.prev_receipt_hash !== undefined) {
       proposeMessage['prev_receipt_hash'] = params.propose.prev_receipt_hash;
     }
+
+    // Bind the relay payload to the signed PROPOSE envelope so the receiver
+    // can verify the relay tokens haven't been tampered with in transit.
+    const relayBindingHash = contentHash(params.relay);
+    proposeMessage['relay_binding_hash'] = relayBindingHash;
 
     const signed = signMessage(DOMAIN_PREFIXES.PROPOSE, proposeMessage, this.config.seedHex);
 

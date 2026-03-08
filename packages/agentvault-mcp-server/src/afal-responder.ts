@@ -14,7 +14,7 @@
 import { randomUUID } from 'node:crypto';
 import type { AfalPropose, RelayInvitePayload } from './afal-types.js';
 import { computeProposalId } from './afal-types.js';
-import { signMessage, verifyMessage, DOMAIN_PREFIXES } from './afal-signing.js';
+import { signMessage, verifyMessage, DOMAIN_PREFIXES, contentHash } from './afal-signing.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -148,6 +148,14 @@ export class AfalResponder {
     // 6. Verify Ed25519 signature
     if (!verifyMessage(DOMAIN_PREFIXES.PROPOSE, wrapped.propose, trustedAgent.publicKeyHex)) {
       return this.deny(proposalId, 'UNTRUSTED', now);
+    }
+
+    // 6b. Verify relay_binding_hash if present in the propose
+    if (typeof wrapped.propose['relay_binding_hash'] === 'string') {
+      const expectedRelayHash = contentHash(relay);
+      if (wrapped.propose['relay_binding_hash'] !== expectedRelayHash) {
+        return this.deny(proposalId, 'INTEGRITY', now);
+      }
     }
 
     // 7. Check timestamp staleness (> 10 min)
@@ -397,6 +405,9 @@ function parsePropose(raw: Record<string, unknown>): AfalPropose | null {
     }),
     ...(typeof raw['prev_receipt_hash'] === 'string' && {
       prev_receipt_hash: raw['prev_receipt_hash'],
+    }),
+    ...(typeof raw['relay_binding_hash'] === 'string' && {
+      relay_binding_hash: raw['relay_binding_hash'],
     }),
     ...(typeof raw['signature'] === 'string' && { signature: raw['signature'] }),
   };

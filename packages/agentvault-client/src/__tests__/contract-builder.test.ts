@@ -449,6 +449,20 @@ describe('buildContract — error cases', () => {
     ).toThrow('not found');
   });
 
+  it('throws for 1 participant (non-bilateral)', () => {
+    const { registry } = buildTestRegistry();
+    expect(() =>
+      buildContract(registry, defaultOptions({ participants: ['alice'] })),
+    ).toThrow('exactly 2 participants');
+  });
+
+  it('throws for 3 participants (non-bilateral)', () => {
+    const { registry } = buildTestRegistry();
+    expect(() =>
+      buildContract(registry, defaultOptions({ participants: ['alice', 'bob', 'carol'] })),
+    ).toThrow('exactly 2 participants');
+  });
+
   it('throws for empty participant ID', () => {
     const { registry } = buildTestRegistry();
     expect(() =>

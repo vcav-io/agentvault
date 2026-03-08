@@ -84,8 +84,8 @@ async function main(): Promise<void> {
   const participantsRaw = requireFlag(flags, 'participants');
 
   const participants = participantsRaw.split(',').filter((p) => p.length > 0);
-  if (participants.length === 0) {
-    console.error('--participants must contain at least one participant');
+  if (participants.length !== 2) {
+    console.error('--participants must contain exactly 2 participants (bilateral only)');
     process.exit(1);
   }
 

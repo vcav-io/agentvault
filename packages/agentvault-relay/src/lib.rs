@@ -360,8 +360,13 @@ async fn submit_input_handler(
                 ));
             }
 
+            let role = if is_initiator {
+                session.contract.participants[0].clone()
+            } else {
+                session.contract.participants[1].clone()
+            };
             let input = RelayInput {
-                role: request.role.clone(),
+                role,
                 context: request.context.clone(),
             };
 
@@ -525,9 +530,10 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
             "gemini" => state.gemini_model_id.clone(),
             _ => "unknown".to_string(),
         };
-        let effective_max_tokens = contract
-            .max_completion_tokens
-            .unwrap_or(state.max_completion_tokens);
+        let effective_max_tokens = match contract.max_completion_tokens {
+            Some(contract_max) => std::cmp::min(contract_max, state.max_completion_tokens),
+            None => state.max_completion_tokens,
+        };
 
         // Resolve policy hash for the failure receipt
         let resolved = state

@@ -16,7 +16,7 @@ export async function dispatch(
   switch (toolName) {
     case 'agentvault.get_identity': {
       const { handleGetIdentity } = await import('./tools/getIdentity.js');
-      return handleGetIdentity(knownAgents, transport);
+      return handleGetIdentity(process.env['AV_AGENT_ID'], knownAgents, transport);
     }
     case 'agentvault.relay_signal': {
       const { handleRelaySignal } = await import('./tools/relaySignal.js');

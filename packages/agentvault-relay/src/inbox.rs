@@ -145,7 +145,34 @@ impl InboxStore {
                 "purpose_code must not be empty".to_string(),
             ));
         }
+        if request.purpose_code != request.contract.purpose_code.to_string() {
+            return Err(RelayError::ContractValidation(
+                "purpose_code must match contract.purpose_code".to_string(),
+            ));
+        }
         let contract_hash = compute_contract_hash(&request.contract)?;
+
+        // Validate invite parties match contract participants
+        if request.contract.participants.len() != 2 {
+            return Err(RelayError::ContractValidation(
+                "contract must have exactly 2 participants".to_string(),
+            ));
+        }
+        if !request
+            .contract
+            .participants
+            .contains(&from_agent_id.to_string())
+        {
+            return Err(RelayError::ContractValidation(
+                "from_agent_id must be a contract participant".to_string(),
+            ));
+        }
+        if !request.contract.participants.contains(&request.to_agent_id) {
+            return Err(RelayError::ContractValidation(
+                "to_agent_id must be a contract participant".to_string(),
+            ));
+        }
+
         let now = Utc::now();
         let invite_ttl_chrono = chrono::Duration::from_std(self.invite_ttl).unwrap_or_else(|e| {
             tracing::warn!(error = %e, "invite TTL conversion overflow, falling back to 7 days");
@@ -163,7 +190,7 @@ impl InboxStore {
             contract: request.contract.clone(),
             contract_hash: contract_hash.clone(),
             provider: request.provider.clone(),
-            purpose_code: request.purpose_code.clone(),
+            purpose_code: request.contract.purpose_code.to_string(),
             status: InviteStatus::Pending,
             created_at: now,
             updated_at: now,
@@ -1615,6 +1642,76 @@ mod tests {
         assert!(
             accept_ok || cancel_ok,
             "at least one operation should succeed"
+        );
+    }
+
+    // ── Participant binding (#253) ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_create_invite_from_agent_not_in_participants() {
+        let store = InboxStore::new(Duration::from_secs(604800));
+        let request = test_create_request(); // participants: ["alice", "bob"]
+
+        // "charlie" is not in participants
+        let result = store.create_invite("charlie", &request, None).await;
+        assert!(
+            matches!(result, Err(RelayError::ContractValidation(ref msg)) if msg.contains("from_agent_id"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_invite_to_agent_not_in_participants() {
+        let store = InboxStore::new(Duration::from_secs(604800));
+        let mut request = test_create_request();
+        request.to_agent_id = "charlie".to_string(); // not in participants
+
+        let result = store.create_invite("alice", &request, None).await;
+        assert!(
+            matches!(result, Err(RelayError::ContractValidation(ref msg)) if msg.contains("to_agent_id"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_invite_wrong_participant_count() {
+        let store = InboxStore::new(Duration::from_secs(604800));
+        let mut request = test_create_request();
+        request.contract.participants = vec![
+            "alice".to_string(),
+            "bob".to_string(),
+            "charlie".to_string(),
+        ];
+
+        let result = store.create_invite("alice", &request, None).await;
+        assert!(
+            matches!(result, Err(RelayError::ContractValidation(ref msg)) if msg.contains("exactly 2"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_invite_participants_reversed_order() {
+        let store = InboxStore::new(Duration::from_secs(604800));
+        let mut request = test_create_request();
+        // Reverse the order: ["bob", "alice"] instead of ["alice", "bob"]
+        request.contract.participants = vec!["bob".to_string(), "alice".to_string()];
+
+        // Should succeed — order doesn't matter, just membership
+        let result = store.create_invite("alice", &request, None).await;
+        assert!(result.is_ok());
+    }
+
+    // ── Purpose code consistency (#257) ─────────────────────────────────
+
+    #[tokio::test]
+    async fn test_create_invite_mismatched_purpose_code() {
+        let store = InboxStore::new(Duration::from_secs(604800));
+        let mut request = test_create_request();
+        // contract.purpose_code is Compatibility ("COMPATIBILITY")
+        // but request.purpose_code is "MEDIATION"
+        request.purpose_code = "MEDIATION".to_string();
+
+        let result = store.create_invite("alice", &request, None).await;
+        assert!(
+            matches!(result, Err(RelayError::ContractValidation(ref msg)) if msg.contains("purpose_code must match"))
         );
     }
 }

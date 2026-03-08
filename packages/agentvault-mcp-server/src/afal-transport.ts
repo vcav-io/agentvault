@@ -13,6 +13,7 @@
 import type { InviteTransport, InviteMessage } from './invite-transport.js';
 import type { AfalPropose, RelayInvitePayload } from './afal-types.js';
 import { hasAfalDraft, computeProposalId } from './afal-types.js';
+import { contentHash } from './afal-signing.js';
 
 // ── AfalTransport Interface ─────────────────────────────────────────────
 
@@ -114,6 +115,8 @@ export class OrchestratorInboxAdapter implements AfalTransport {
       draft['model_profile_hash'] = propose.model_profile_hash;
     if (propose.prev_receipt_hash !== undefined)
       draft['prev_receipt_hash'] = propose.prev_receipt_hash;
+    // Bind the relay payload to the propose draft so the receiver can verify integrity.
+    draft['relay_binding_hash'] = contentHash(relay);
     // signature is always omitted in M2 (compliance: UNSIGNED)
 
     await this.transport.sendInvite({
@@ -202,6 +205,9 @@ export class OrchestratorInboxAdapter implements AfalTransport {
           }),
           ...(typeof draft['prev_receipt_hash'] === 'string' && {
             prev_receipt_hash: draft['prev_receipt_hash'],
+          }),
+          ...(typeof draft['relay_binding_hash'] === 'string' && {
+            relay_binding_hash: draft['relay_binding_hash'],
           }),
           ...(typeof draft['signature'] === 'string' && { signature: draft['signature'] }),
         };

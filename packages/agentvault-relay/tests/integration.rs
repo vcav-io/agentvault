@@ -2931,3 +2931,73 @@ async fn test_contract_relay_key_pinning_correct_key_accepted() {
 
     std::fs::remove_dir_all(&prompt_dir).ok();
 }
+
+// ============================================================================
+// Issue #250: Role binding — submitted role is ignored, contract role is used
+// ============================================================================
+
+#[tokio::test]
+async fn test_submit_with_wrong_role_uses_contract_role() {
+    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+
+    let (session_id, tokens) = state
+        .session_store
+        .create(
+            serde_json::from_value(serde_json::json!({
+                "purpose_code": "COMPATIBILITY",
+                "output_schema_id": "test",
+                "output_schema": {"type": "object"},
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": "a".repeat(64)
+            }))
+            .unwrap(),
+            "hash".to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+
+    let app = build_router(Arc::clone(&state));
+
+    // Submit as initiator but with a WRONG role string
+    let input_request = serde_json::json!({
+        "role": "EVIL_IMPERSONATOR",
+        "context": { "preference": "morning" }
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/sessions/{session_id}/input"))
+                .header("content-type", "application/json")
+                .header(
+                    "authorization",
+                    format!("Bearer {}", tokens.initiator_submit),
+                )
+                .body(Body::from(serde_json::to_vec(&input_request).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Verify the stored input has the contract-derived role, not the submitted one
+    let stored_role = state
+        .session_store
+        .with_session(&session_id, |session| {
+            session
+                .initiator_input
+                .as_ref()
+                .expect("initiator_input should be set")
+                .role
+                .clone()
+        })
+        .await
+        .expect("session should exist");
+
+    assert_eq!(
+        stored_role, "alice",
+        "stored role must be the contract participant, not the submitted role"
+    );
+}

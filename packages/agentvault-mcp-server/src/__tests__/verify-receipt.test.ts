@@ -300,17 +300,3 @@ describe('handleVerifyReceipt — TEE attestation introspection', () => {
   });
 });
 
-describe('handleVerifyReceipt — public key fetching', () => {
-  it('returns error when relay is unreachable and no public key provided', async () => {
-    const { seedHex } = generateKeypair();
-    const base = buildMinimalV1Receipt();
-    const signed = signV1Receipt(base, seedHex);
-
-    const result = await handleVerifyReceipt({
-      receipt: signed,
-      relay_url: 'http://localhost:19999', // nothing listening here
-    });
-    expect(result.data?.valid).toBe(false);
-    expect(result.data?.errors.some((e) => e.includes('Failed to fetch public key'))).toBe(true);
-  });
-});

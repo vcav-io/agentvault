@@ -274,6 +274,9 @@ export function buildContract(
   }
 
   // Validate participants
+  if (options.participants.length !== 2) {
+    throw new Error('Contract requires exactly 2 participants (bilateral only)');
+  }
   for (const p of options.participants) {
     if (p.length === 0) throw new Error('Participant ID must not be empty');
     if (/\s/.test(p)) throw new Error(`Participant ID "${p}" contains whitespace`);
