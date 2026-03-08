@@ -21,6 +21,7 @@ import { bytesToHex } from '@noble/hashes/utils';
 export interface ModelConstraints {
   allowed_providers: string[];
   allowed_models: string[];
+  min_tier?: string;
 }
 
 export interface RelayContract {
@@ -49,6 +50,8 @@ export interface RelayContract {
   invite_ttl_secs?: number;
   /** Entropy enforcement mode: Advisory | Gate | Strict. */
   entropy_enforcement?: string;
+  /** Relay signing key pinning. */
+  relay_verifying_key_hex?: string;
 }
 
 type ContractTemplate = Omit<RelayContract, 'participants'>;
@@ -236,6 +239,9 @@ export function buildRelayContract(
 ): RelayContract | undefined {
   const template = TEMPLATES[purpose];
   if (!template) return undefined;
+  if (participants.length !== 2) {
+    throw new Error('Relay contracts require exactly 2 participants');
+  }
 
   for (const p of participants) {
     const err = validateParticipantId(p);
@@ -267,6 +273,9 @@ export function buildRelayContractWithSchemaRef(
 ): RelayContract | undefined {
   const template = TEMPLATES[purpose];
   if (!template) return undefined;
+  if (participants.length !== 2) {
+    throw new Error('Relay contracts require exactly 2 participants');
+  }
 
   for (const p of participants) {
     const err = validateParticipantId(p);

@@ -123,6 +123,34 @@ impl InboxStore {
 
     // ── Public API ────────────────────────────────────────────────────────
 
+    fn validate_invite_contract_binding(
+        from_agent_id: &str,
+        to_agent_id: &str,
+        request: &CreateInviteRequest,
+    ) -> Result<(), RelayError> {
+        if request.purpose_code != request.contract.purpose_code.to_string() {
+            return Err(RelayError::ContractValidation(
+                "purpose_code must match contract.purpose_code".to_string(),
+            ));
+        }
+        if request.contract.participants.len() != 2 {
+            return Err(RelayError::ContractValidation(
+                "contract must have exactly 2 participants".to_string(),
+            ));
+        }
+        if !request.contract.participants.iter().any(|p| p == from_agent_id) {
+            return Err(RelayError::ContractValidation(
+                "contract participants must include from_agent_id".to_string(),
+            ));
+        }
+        if !request.contract.participants.iter().any(|p| p == to_agent_id) {
+            return Err(RelayError::ContractValidation(
+                "contract participants must include to_agent_id".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Create a new invite.
     pub async fn create_invite(
         &self,
@@ -145,33 +173,8 @@ impl InboxStore {
                 "purpose_code must not be empty".to_string(),
             ));
         }
-        if request.purpose_code != request.contract.purpose_code.to_string() {
-            return Err(RelayError::ContractValidation(
-                "purpose_code must match contract.purpose_code".to_string(),
-            ));
-        }
+        Self::validate_invite_contract_binding(from_agent_id, &request.to_agent_id, request)?;
         let contract_hash = compute_contract_hash(&request.contract)?;
-
-        // Validate invite parties match contract participants
-        if request.contract.participants.len() != 2 {
-            return Err(RelayError::ContractValidation(
-                "contract must have exactly 2 participants".to_string(),
-            ));
-        }
-        if !request
-            .contract
-            .participants
-            .contains(&from_agent_id.to_string())
-        {
-            return Err(RelayError::ContractValidation(
-                "from_agent_id must be a contract participant".to_string(),
-            ));
-        }
-        if !request.contract.participants.contains(&request.to_agent_id) {
-            return Err(RelayError::ContractValidation(
-                "to_agent_id must be a contract participant".to_string(),
-            ));
-        }
 
         let now = Utc::now();
         let invite_ttl_chrono = chrono::Duration::from_std(self.invite_ttl).unwrap_or_else(|e| {
@@ -382,6 +385,17 @@ impl InboxStore {
                     ));
                 }
             }
+            Self::validate_invite_contract_binding(
+                &invite.from_agent_id,
+                &invite.to_agent_id,
+                &CreateInviteRequest {
+                    to_agent_id: invite.to_agent_id.clone(),
+                    contract: invite.contract.clone(),
+                    provider: invite.provider.clone(),
+                    purpose_code: invite.purpose_code.clone(),
+                    from_agent_pubkey: invite.from_agent_pubkey.clone(),
+                },
+            )?;
 
             // Clone data needed for Phase 2 (session creation)
             (
@@ -1481,6 +1495,26 @@ mod tests {
         let store = InboxStore::new(Duration::from_secs(604800));
         let mut request = test_create_request();
         request.purpose_code = "".to_string();
+
+        let result = store.create_invite("alice", &request, None).await;
+        assert!(matches!(result, Err(RelayError::ContractValidation(_))));
+    }
+
+    #[tokio::test]
+    async fn test_create_invite_purpose_must_match_contract() {
+        let store = InboxStore::new(Duration::from_secs(604800));
+        let mut request = test_create_request();
+        request.purpose_code = "MEDIATION".to_string();
+
+        let result = store.create_invite("alice", &request, None).await;
+        assert!(matches!(result, Err(RelayError::ContractValidation(_))));
+    }
+
+    #[tokio::test]
+    async fn test_create_invite_contract_participants_must_match_inbox_agents() {
+        let store = InboxStore::new(Duration::from_secs(604800));
+        let mut request = test_create_request();
+        request.contract.participants = vec!["mallory".to_string(), "bob".to_string()];
 
         let result = store.create_invite("alice", &request, None).await;
         assert!(matches!(result, Err(RelayError::ContractValidation(_))));

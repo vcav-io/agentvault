@@ -64,6 +64,13 @@ describe('buildRelayContract', () => {
     expect(() => buildRelayContract('MEDIATION', ['', 'bob'])).toThrow('must not be empty');
   });
 
+  it('rejects non-bilateral participant lists', () => {
+    expect(() => buildRelayContract('MEDIATION', ['alice'])).toThrow('exactly 2 participants');
+    expect(() => buildRelayContract('MEDIATION', ['alice', 'bob', 'charlie'])).toThrow(
+      'exactly 2 participants',
+    );
+  });
+
   it('rejects participant ID with whitespace', () => {
     expect(() => buildRelayContract('MEDIATION', ['alice demo', 'bob'])).toThrow('whitespace');
   });
@@ -219,5 +226,26 @@ describe('buildRelayContractWithSchemaRef', () => {
     const fullContract = buildRelayContract('MEDIATION', ['a', 'b'])!;
     const refContract = buildRelayContractWithSchemaRef('MEDIATION', ['a', 'b'])!;
     expect(refContract.enforcement_policy_hash).toBe(fullContract.enforcement_policy_hash);
+  });
+
+  it('rejects non-bilateral participant lists', () => {
+    expect(() => buildRelayContractWithSchemaRef('MEDIATION', ['alice'])).toThrow(
+      'exactly 2 participants',
+    );
+  });
+});
+
+describe('RelayContract type surface', () => {
+  it('accepts min_tier and relay_verifying_key_hex fields', () => {
+    const contract = buildRelayContract('MEDIATION', ['alice', 'bob'])!;
+    contract.model_constraints = {
+      allowed_providers: ['anthropic'],
+      allowed_models: ['claude-sonnet-*'],
+      min_tier: 'mid',
+    };
+    contract.relay_verifying_key_hex = 'ab'.repeat(32);
+
+    expect(contract.model_constraints.min_tier).toBe('mid');
+    expect(contract.relay_verifying_key_hex).toBe('ab'.repeat(32));
   });
 });

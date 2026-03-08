@@ -739,6 +739,25 @@ describe('DirectAfalTransport', () => {
       ).rejects.toThrow('Peer descriptor signature verification failed');
     });
 
+    it('rejects a valid descriptor for the wrong peer agent_id', async () => {
+      const fresh = new DirectAfalTransport({
+        agentId: 'alice-test',
+        seedHex: TEST_SEED,
+        localDescriptor,
+        peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-descriptor.json',
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(makePeerDescriptor({ agent_id: 'mallory-test' })),
+      });
+
+      const propose = makePropose({ to: 'bob-test' });
+      await expect(
+        fresh.sendPropose({ propose, relay: makeRelay(), templateId: 't', budgetTier: 'SMALL' }),
+      ).rejects.toThrow('Peer descriptor identity mismatch');
+    });
+
     it('throws when no peerDescriptorUrl is configured', async () => {
       const fresh = new DirectAfalTransport({
         agentId: 'alice-test',
