@@ -35,6 +35,7 @@ export function buildA2ASendMessageRequest(params: {
 }): Record<string, unknown> {
   return {
     jsonrpc: '2.0',
+    id: randomUUID(),
     method: 'SendMessage',
     params: {
       message: {
@@ -88,6 +89,8 @@ export function parseA2ASendMessagePart(
   if (request.jsonrpc !== '2.0' || request.method !== 'SendMessage') return null;
   const parts = request.params?.message?.parts;
   if (!Array.isArray(parts)) return null;
+  // A2A messages may carry multiple parts; AgentVault bootstrap currently uses
+  // the first allowed media type and ignores the rest.
   for (const part of parts) {
     if (
       part &&

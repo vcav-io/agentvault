@@ -92,6 +92,12 @@ export interface AgentVaultPeerDiscovery {
   a2aSendMessageUrl?: string;
 }
 
+interface PeerTransportTarget {
+  proposeUrl: string;
+  commitUrl: string;
+  useA2ANative: boolean;
+}
+
 // ── DirectAfalTransport ────────────────────────────────────────────────────
 
 export interface DirectAfalTransportConfig {
@@ -266,18 +272,18 @@ export class DirectAfalTransport implements AfalTransport {
     }
 
     const signed = signMessage(DOMAIN_PREFIXES.PROPOSE, proposeMessage, this.config.seedHex);
-
+    const transportTarget = this.resolvePeerTransportTarget(peer);
     // Wrapped direct AFAL requests can negotiate before a relay session exists.
     const wrappedBody = params.relay ? { propose: signed, relay: params.relay } : { propose: signed };
 
     let response: Response;
-    if (this.peerDiscovery?.a2aSendMessageUrl && !this.peerDiscovery.afalEndpoint) {
+    if (transportTarget.useA2ANative) {
       if (params.relay) {
         throw new Error(
           'A2A-native direct transport does not accept inline relay payloads; send session tokens via commitAdmit() after ADMIT',
         );
       }
-      response = await fetch(this.peerDiscovery.a2aSendMessageUrl, {
+      response = await fetch(transportTarget.proposeUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(
@@ -304,7 +310,7 @@ export class DirectAfalTransport implements AfalTransport {
     let admitOrDeny: Record<string, unknown>;
     try {
       const payload = (await response.json()) as unknown;
-      if (this.peerDiscovery?.a2aSendMessageUrl && !this.peerDiscovery.afalEndpoint) {
+      if (transportTarget.useA2ANative) {
         const parsed = parseA2ATaskPart(payload, [
           AGENTVAULT_ADMIT_MEDIA_TYPE,
           AGENTVAULT_DENY_MEDIA_TYPE,
@@ -442,10 +448,11 @@ export class DirectAfalTransport implements AfalTransport {
     };
 
     const signedCommit = signMessage(DOMAIN_PREFIXES.COMMIT, commitMessage, this.config.seedHex);
+    const transportTarget = this.resolvePeerTransportTarget(peer);
 
     let response: Response;
-    if (this.peerDiscovery?.a2aSendMessageUrl && !this.peerDiscovery.afalEndpoint) {
-      response = await fetch(this.peerDiscovery.a2aSendMessageUrl, {
+    if (transportTarget.useA2ANative) {
+      response = await fetch(transportTarget.commitUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(
@@ -469,7 +476,7 @@ export class DirectAfalTransport implements AfalTransport {
       throw new Error(`COMMIT rejected: ${response.status} ${body}`);
     }
 
-    if (this.peerDiscovery?.a2aSendMessageUrl && !this.peerDiscovery.afalEndpoint) {
+    if (transportTarget.useA2ANative) {
       const payload = (await response.json()) as unknown;
       const parsed = parseA2ATaskPart(payload, [AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE]);
       if (
@@ -518,6 +525,23 @@ export class DirectAfalTransport implements AfalTransport {
     return {
       ...a2aDescriptor.discovery,
       supportedPurposes: [...a2aDescriptor.discovery.supportedPurposes],
+    };
+  }
+
+  private resolvePeerTransportTarget(peer: AgentDescriptor): PeerTransportTarget {
+    const a2aSendMessageUrl = this.peerDiscovery?.a2aSendMessageUrl;
+    const afalEndpoint = this.peerDiscovery?.afalEndpoint;
+    if (a2aSendMessageUrl && !afalEndpoint) {
+      return {
+        proposeUrl: a2aSendMessageUrl,
+        commitUrl: a2aSendMessageUrl,
+        useA2ANative: true,
+      };
+    }
+    return {
+      proposeUrl: peer.endpoints.propose,
+      commitUrl: peer.endpoints.commit,
+      useA2ANative: false,
     };
   }
 
@@ -640,8 +664,9 @@ export class DirectAfalTransport implements AfalTransport {
           public_key_hex: publicKeyHex,
         },
         endpoints: {
-          propose: afalEndpoint ? `${afalEndpoint}/propose` : (a2aSendMessageUrl as string),
-          commit: afalEndpoint ? `${afalEndpoint}/commit` : (a2aSendMessageUrl as string),
+          propose: afalEndpoint ? `${afalEndpoint}/propose` : '',
+          commit: afalEndpoint ? `${afalEndpoint}/commit` : '',
+          ...(a2aSendMessageUrl ? { message: a2aSendMessageUrl } : {}),
         },
         capabilities: {},
         policy_commitments: {},
