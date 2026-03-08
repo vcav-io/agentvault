@@ -1,6 +1,9 @@
 services:
   relay:
-    image: ghcr.io/vcav-io/agentvault-relay:latest
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.relay
+    image: agentvault-relay:local
     ports:
       - "3100:3100"
     environment:
@@ -20,14 +23,19 @@ services:
       retries: 3
 
   demo:
-    image: ghcr.io/vcav-io/agentvault-demo:latest
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.demo
+    image: agentvault-demo:local
     ports:
       - "3200:3200"
     depends_on:
       relay:
         condition: service_healthy
     environment:
+      - DEMO_BIND_ADDRESS=0.0.0.0
       - AV_RELAY_URL=http://relay:3100
+      - AV_WORKDIR=/app/packages/agentvault-demo-ui
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}

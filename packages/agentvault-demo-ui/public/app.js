@@ -62,6 +62,7 @@
 
   var eventSource = null;
   var totalEvents = 0;
+  var reconnectNotice = null;
 
   // ── Init vault card manager ────────────────────────────────
   VaultCardManager.init(els.vaultEvents);
@@ -250,6 +251,7 @@
   }
 
   function showSetup() {
+    clearReconnectNotice();
     els.setupPhase.classList.remove('hidden');
     els.protocolPhase.classList.add('hidden');
     els.stopBtn.style.display = 'none';
@@ -262,6 +264,7 @@
   }
 
   function showProtocol() {
+    clearReconnectNotice();
     els.setupPhase.classList.add('hidden');
     els.protocolPhase.classList.remove('hidden');
     els.stopBtn.style.display = '';
@@ -273,12 +276,20 @@
   }
 
   function showCompleted() {
+    clearReconnectNotice();
     els.stopBtn.style.display = 'none';
     els.newRunBtn.style.display = '';
     els.resetBtn.style.display = '';
     els.statusText.textContent = 'Completed';
     els.statusChip.className = 'status-chip completed';
     setChatInputsEnabled(false);
+  }
+
+  function clearReconnectNotice() {
+    if (reconnectNotice && reconnectNotice.parentNode) {
+      reconnectNotice.parentNode.removeChild(reconnectNotice);
+    }
+    reconnectNotice = null;
   }
 
   // ── Agent dot/turns updates ────────────────────────────────
@@ -471,6 +482,7 @@
     els.statusChip.className = 'status-chip error';
     els.newRunBtn.style.display = '';
     setChatInputsEnabled(false);
+    clearReconnectNotice();
   });
 
   // ── Reset button ───────────────────────────────────────────
@@ -568,10 +580,10 @@
     if (data.started) {
       showProtocol();
       VaultCardManager.setOutputSignalCallback(makeOutputCallback(activeScenario, false));
-      var note = document.createElement('div');
-      note.className = 'reconnect-notice';
-      note.textContent = 'Reconnected to running session — new events will appear below.';
-      els.vaultEvents.appendChild(note);
+      reconnectNotice = document.createElement('div');
+      reconnectNotice.className = 'reconnect-notice';
+      reconnectNotice.textContent = 'Reconnected to running session — new events will appear below.';
+      els.vaultEvents.appendChild(reconnectNotice);
     }
   }).catch(function () { /* ignore */ });
 })();

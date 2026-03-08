@@ -60,10 +60,12 @@ const PUBLIC_DIR = path.resolve(__dirname, '../public');
 const DEMO_DIR = path.resolve(__dirname, '..');
 
 const PORT = parseInt(process.env['DEMO_PORT'] ?? '3200', 10);
+const BIND_ADDRESS = process.env['DEMO_BIND_ADDRESS'] ?? '127.0.0.1';
 const RELAY_URL = process.env['AV_RELAY_URL'] ?? 'http://localhost:3100';
 const RUNS_DIR = process.env['DEMO_RUNS_DIR'] ?? path.join(DEMO_DIR, 'runs');
 const BOB_AFAL_PORT = parseInt(process.env['BOB_AFAL_PORT'] ?? '3201', 10);
 const ALICE_AFAL_PORT = parseInt(process.env['ALICE_AFAL_PORT'] ?? '3202', 10);
+const AV_WORKDIR = process.env['AV_WORKDIR'] ?? DEMO_DIR;
 
 // ── Load .env ────────────────────────────────────────────────────────────
 
@@ -268,6 +270,7 @@ async function setupAndStartHeartbeats(): Promise<void> {
 
   // Set environment variables for tool handlers
   process.env['AV_RELAY_URL'] = RELAY_URL;
+  process.env['AV_WORKDIR'] = AV_WORKDIR;
 
   // Generate identities
   const alice = generateIdentity();
@@ -729,7 +732,7 @@ app.post('/api/stop', async (_req, res) => {
     bobQueue.reset();
 
     events.stopRecording();
-    events.emitSystem('Stopped — recreating transports and heartbeats for next run');
+    events.emitSystem('Stopped — transports and heartbeats restarted for the next run');
 
     // Recreate transports, registries, and restart heartbeat loops so the
     // next /api/start has live infrastructure (stop preserves message history)
@@ -826,8 +829,8 @@ app.get('/api/replay', (req, res) => {
 
 // ── Start server ─────────────────────────────────────────────────────────
 
-app.listen(PORT, '127.0.0.1', async () => {
-  console.log(`AgentVault Demo UI running at http://127.0.0.1:${PORT}`);
+app.listen(PORT, BIND_ADDRESS, async () => {
+  console.log(`AgentVault Demo UI running at http://${BIND_ADDRESS}:${PORT}`);
   console.log(`Relay URL: ${RELAY_URL}`);
   console.log(`Runs directory: ${RUNS_DIR}`);
 

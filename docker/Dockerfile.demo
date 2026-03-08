@@ -24,6 +24,7 @@ COPY --from=builder /build/packages/agentvault-mcp-server packages/agentvault-mc
 COPY --from=builder /build/packages/agentvault-demo-ui packages/agentvault-demo-ui
 COPY --from=builder /build/demo/alice-prompt.md demo/alice-prompt.md
 COPY --from=builder /build/demo/bob-prompt.md demo/bob-prompt.md
+COPY packages/agentvault-relay/prompt_programs packages/agentvault-relay/prompt_programs
 
 ENV DEMO_PORT=3200
 EXPOSE 3200

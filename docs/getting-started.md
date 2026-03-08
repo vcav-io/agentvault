@@ -43,7 +43,7 @@ echo "GEMINI_API_KEY=AIza..." > .env
 # echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env
 
 # 2. Start the relay and demo UI
-docker compose -f docker/docker-compose.demo.yml --env-file .env up
+docker compose -f docker/docker-compose.demo.yml --env-file .env up --build
 
 # 3. Open http://localhost:3200 and click "Start Protocol"
 ```
