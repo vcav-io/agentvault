@@ -709,11 +709,12 @@ app.post('/api/stop', async (_req, res) => {
     aliceQueue.reset();
     bobQueue.reset();
 
-    // Recreate abort controller so the next run has a fresh signal
-    abortController = new AbortController();
-
     events.stopRecording();
-    events.emitSystem('Stopped — heartbeats and agent loops halted');
+    events.emitSystem('Stopped — recreating transports and heartbeats for next run');
+
+    // Recreate transports, registries, and restart heartbeat loops so the
+    // next /api/start has live infrastructure (stop preserves message history)
+    await setupAndStartHeartbeats();
 
     res.json({ ok: true });
   } catch (error) {
