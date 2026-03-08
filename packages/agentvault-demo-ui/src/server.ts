@@ -801,8 +801,8 @@ app.get('/api/replay', (req, res) => {
 
 // ── Start server ─────────────────────────────────────────────────────────
 
-app.listen(PORT, async () => {
-  console.log(`AgentVault Demo UI running at http://localhost:${PORT}`);
+app.listen(PORT, '127.0.0.1', async () => {
+  console.log(`AgentVault Demo UI running at http://127.0.0.1:${PORT}`);
   console.log(`Relay URL: ${RELAY_URL}`);
   console.log(`Runs directory: ${RUNS_DIR}`);
 
