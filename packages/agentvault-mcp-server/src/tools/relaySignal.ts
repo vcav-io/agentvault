@@ -244,6 +244,7 @@ type RelaySignalData = RelaySignalOutput | RelaySignalCreateData | RelaySignalJo
 // ── Interpretation Context ───────────────────────────────────────────────
 
 function mediationContext(handle: RelayHandle): InterpretationContext {
+  const sessionId = handle.sessionId ?? null;
   return {
     purpose: 'MEDIATION',
     signal_description:
@@ -298,7 +299,7 @@ function mediationContext(handle: RelayHandle): InterpretationContext {
       valid_claims: [
         'The protocol does not expose raw inputs to counterparties.',
         'Only a bounded signal is produced — not a summary of either input.',
-        `This session is cryptographically receipted (session_id=${handle.sessionId ?? 'n/a'}).`,
+        `This session is cryptographically receipted (session_id=${sessionId ?? 'n/a'}).`,
       ],
       invalid_claims: [
         '"Bob never saw your input" — the relay enforces privacy at its boundary, but cannot control what the counterparty\'s agent does with the relay output.',
@@ -307,7 +308,7 @@ function mediationContext(handle: RelayHandle): InterpretationContext {
       ],
     },
     provenance: {
-      session_id: handle.sessionId ?? null,
+      session_id: sessionId,
       contract_hash: handle.contractHash ?? null,
       receipt_available: true,
     },
@@ -315,6 +316,7 @@ function mediationContext(handle: RelayHandle): InterpretationContext {
 }
 
 function compatibilityContext(handle: RelayHandle): InterpretationContext {
+  const sessionId = handle.sessionId ?? null;
   return {
     purpose: 'COMPATIBILITY',
     signal_description:
@@ -410,7 +412,7 @@ function compatibilityContext(handle: RelayHandle): InterpretationContext {
       valid_claims: [
         'The protocol does not expose raw inputs to counterparties.',
         'Only a bounded signal is produced — not a summary of either input.',
-        `This session is cryptographically receipted (session_id=${handle.sessionId ?? 'n/a'}).`,
+        `This session is cryptographically receipted (session_id=${sessionId ?? 'n/a'}).`,
         'derived_fields.value is a deterministic function of other signal fields — it is not an opinion or recommendation.',
       ],
       invalid_claims: [
@@ -421,7 +423,7 @@ function compatibilityContext(handle: RelayHandle): InterpretationContext {
       ],
     },
     provenance: {
-      session_id: handle.sessionId ?? null,
+      session_id: sessionId,
       contract_hash: handle.contractHash ?? null,
       receipt_available: true,
     },
@@ -429,6 +431,7 @@ function compatibilityContext(handle: RelayHandle): InterpretationContext {
 }
 
 function customContext(handle: RelayHandle): InterpretationContext {
+  const sessionId = handle.sessionId ?? null;
   return {
     purpose: handle.purpose ?? 'CUSTOM',
     signal_description: 'Bounded signal from a custom relay contract.',
@@ -444,11 +447,24 @@ function customContext(handle: RelayHandle): InterpretationContext {
       ],
     },
     provenance: {
-      session_id: handle.sessionId ?? null,
+      session_id: sessionId,
       contract_hash: handle.contractHash ?? null,
       receipt_available: true,
     },
   };
+}
+
+function getReceiptSessionId(receipt: unknown): string | undefined {
+  if (!receipt || typeof receipt !== 'object') return undefined;
+  const sessionId = (receipt as Record<string, unknown>)['session_id'];
+  return typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : undefined;
+}
+
+function getEffectiveCompletedSessionId(
+  handle: RelayHandle,
+  output: SessionOutputResponse,
+): string | undefined {
+  return getReceiptSessionId(output.receipt_v2) ?? getReceiptSessionId(output.receipt) ?? handle.sessionId;
 }
 
 /** Pure function: deterministic derivation of next_step from COMPAT v2 signal fields.
@@ -910,6 +926,10 @@ function completedResponse(
   output: SessionOutputResponse,
 ): ToolResponse<RelaySignalOutput> {
   handle.phase = 'COMPLETED';
+  const effectiveSessionId = getEffectiveCompletedSessionId(handle, output);
+  if (effectiveSessionId) {
+    handle.sessionId = effectiveSessionId;
+  }
   removeSessionStateFile(handle);
   return buildSuccess('COMPLETE', {
     mode: handle.role === 'INITIATOR' ? 'INITIATE' : 'RESPOND',
@@ -917,7 +937,7 @@ function completedResponse(
     phase: 'COMPLETED',
     resume_token: null,
     resume_token_display: null,
-    session_id: handle.sessionId,
+    session_id: effectiveSessionId,
     contract_hash: handle.contractHash,
     from: handle.role === 'RESPONDER' ? handle.counterparty : undefined,
     action_required: 'NONE',

@@ -88,7 +88,7 @@ function signV2Receipt(
 
 function buildMinimalV2Receipt(): Record<string, unknown> {
   return {
-    receipt_schema_version: '2.0.0',
+    receipt_schema_version: '2.1.0',
     session_id: 'test-session-456',
     issued_at: '2024-01-01T00:00:00Z',
     purpose: 'MEDIATION',
@@ -121,12 +121,12 @@ describe('handleVerifyReceipt — version detection', () => {
     expect(result.data?.schema_version).toBe('1.0.0');
   });
 
-  it('detects v2 from receipt_schema_version', async () => {
+  it('detects current v2 receipts from receipt_schema_version', async () => {
     const { seedHex, publicKeyHex } = generateKeypair();
     const base = buildMinimalV2Receipt();
     const signed = signV2Receipt(base, seedHex);
     const result = await handleVerifyReceipt({ receipt: signed, public_key_hex: publicKeyHex });
-    expect(result.data?.schema_version).toBe('2.0.0');
+    expect(result.data?.schema_version).toBe('2.1.0');
   });
 });
 
@@ -197,7 +197,7 @@ describe('handleVerifyReceipt — v2 receipts', () => {
     expect(result.ok).toBe(true);
     expect(result.data?.valid).toBe(true);
     expect(result.data?.errors).toHaveLength(0);
-    expect(result.data?.schema_version).toBe('2.0.0');
+    expect(result.data?.schema_version).toBe('2.1.0');
     expect(result.data?.assurance_level).toBe('STANDARD');
     expect(result.data?.operator_id).toBe('op-test');
   });
@@ -299,4 +299,3 @@ describe('handleVerifyReceipt — TEE attestation introspection', () => {
     expect(result.data?.tee_info).toBeUndefined();
   });
 });
-

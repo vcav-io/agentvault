@@ -2,7 +2,7 @@
  * Receipt verification for the AgentVault client.
  *
  * Supports v1 receipts (schema_version: "1.0.0") and v2 receipts
- * (receipt_schema_version: "2.0.0"). Optionally recomputes commitment
+ * (receipt_schema_version: "2.x.y"). Optionally recomputes commitment
  * hashes when artefacts are provided.
  */
 
@@ -382,9 +382,9 @@ export function verifyReceipt(
 /** Detect receipt version from the receipt object. */
 export function detectReceiptVersion(
   receipt: Record<string, unknown>,
-): '1.0.0' | '2.0.0' | null {
+): '1.0.0' | `2.${string}` | null {
   const rsv = receipt['receipt_schema_version'];
-  if (typeof rsv === 'string' && rsv.startsWith('2.')) return '2.0.0';
+  if (typeof rsv === 'string' && rsv.startsWith('2.')) return rsv as `2.${string}`;
   if (receipt['schema_version'] === '1.0.0') return '1.0.0';
   return null;
 }
