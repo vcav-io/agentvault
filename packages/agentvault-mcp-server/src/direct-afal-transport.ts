@@ -489,6 +489,9 @@ export class DirectAfalTransport implements AfalTransport {
       );
     }
 
+    // Agent Card discovery synthesizes a short-lived unsigned descriptor.
+    // In this phase the trust anchor is the fetched A2A document itself, not
+    // an Ed25519 AFAL descriptor signature.
     return {
       descriptor_version: '1',
       agent_id: agentId,
