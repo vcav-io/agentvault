@@ -7,6 +7,11 @@ import { AGENTVAULT_A2A_EXTENSION_URI } from '../a2a-agent-card.js';
 import { signMessage, DOMAIN_PREFIXES, contentHash } from '../afal-signing.js';
 import type { AfalPropose, RelayInvitePayload } from '../afal-types.js';
 import { computeProposalId } from '../afal-types.js';
+import {
+  AGENTVAULT_ADMIT_MEDIA_TYPE,
+  AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
+  buildA2ATaskResponse,
+} from '../a2a-messages.js';
 
 // ── Test keypairs ──────────────────────────────────────────────────────────
 
@@ -685,6 +690,70 @@ describe('DirectAfalTransport', () => {
         'COMMIT rejected: 409 Conflict',
       );
     });
+
+    it('sends relay session tokens over A2A SendMessage for A2A-only peers', async () => {
+      const fresh = new DirectAfalTransport({
+        agentId: 'alice-test',
+        seedHex: TEST_SEED,
+        localDescriptor,
+        peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-card.json',
+      });
+
+      const propose = makePropose();
+      const admit = makeSignedAdmit(propose.proposal_id);
+      const relaySession = { ...makeRelay(), contract_hash: 'c'.repeat(64) };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve(
+            makeAgentCard({
+              capabilities: {
+                extensions: [
+                  {
+                    uri: AGENTVAULT_A2A_EXTENSION_URI,
+                    params: {
+                      public_key_hex: PEER_PUBKEY,
+                      relay_url: 'http://relay.example.com',
+                      supported_purposes: ['MEDIATION'],
+                    },
+                  },
+                ],
+              },
+            }),
+          ),
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve(
+            buildA2ATaskResponse({
+              mediaType: AGENTVAULT_ADMIT_MEDIA_TYPE,
+              data: admit,
+            }),
+          ),
+      });
+      await fresh.sendPropose({
+        propose,
+        templateId: 't',
+        budgetTier: 'SMALL',
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve(
+            buildA2ATaskResponse({
+              mediaType: AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
+              data: { ok: true },
+            }),
+          ),
+      });
+
+      await fresh.commitAdmit!(propose.proposal_id, relaySession);
+
+      expect(mockFetch.mock.calls[2]?.[0]).toBe('http://peer.example.com/a2a/send-message');
+    });
   });
 
   // ── resolvePeerDescriptor — caching ───────────────────────────────────────
@@ -704,6 +773,8 @@ describe('DirectAfalTransport', () => {
       });
 
       await expect(fresh.discoverPeerAgentCard('bob-test')).resolves.toEqual({
+        a2aSendMessageUrl: 'http://peer.example.com/a2a/send-message',
+        afalEndpoint: 'http://peer.example.com/afal',
         relayUrl: 'http://relay.example.com',
         supportedPurposes: ['MEDIATION'],
       });
@@ -741,6 +812,61 @@ describe('DirectAfalTransport', () => {
       expect(mockFetch).toHaveBeenCalledTimes(2);
       expect(mockFetch.mock.calls[0]?.[0]).toBe('http://peer.example.com/.well-known/agent-card.json');
       expect(mockFetch.mock.calls[1]?.[0]).toBe('http://peer.example.com/afal/propose');
+    });
+
+    it('uses A2A SendMessage when the Agent Card omits afal_endpoint', async () => {
+      const fresh = new DirectAfalTransport({
+        agentId: 'alice-test',
+        seedHex: TEST_SEED,
+        localDescriptor,
+        peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-card.json',
+      });
+
+      const propose = makePropose();
+      const admit = makeSignedAdmit(propose.proposal_id);
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve(
+            makeAgentCard({
+              capabilities: {
+                extensions: [
+                  {
+                    uri: AGENTVAULT_A2A_EXTENSION_URI,
+                    params: {
+                      public_key_hex: PEER_PUBKEY,
+                      relay_url: 'http://relay.example.com',
+                      supported_purposes: ['MEDIATION'],
+                    },
+                  },
+                ],
+              },
+            }),
+          ),
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve(
+            buildA2ATaskResponse({
+              mediaType: AGENTVAULT_ADMIT_MEDIA_TYPE,
+              data: admit,
+            }),
+          ),
+      });
+
+      await fresh.sendPropose({
+        propose,
+        templateId: 't',
+        budgetTier: 'SMALL',
+      });
+
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(mockFetch.mock.calls[1]?.[0]).toBe('http://peer.example.com/a2a/send-message');
+      const [, init] = mockFetch.mock.calls[1] as [string, RequestInit];
+      const body = JSON.parse(init.body as string) as Record<string, unknown>;
+      expect(body['method']).toBe('SendMessage');
     });
 
     it('falls back to signed AFAL descriptor when no AgentVault A2A extension is present', async () => {

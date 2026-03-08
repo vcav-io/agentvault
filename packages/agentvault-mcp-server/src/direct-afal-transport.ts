@@ -17,6 +17,15 @@ import type { AdmissionPolicy, AdmittedProposal } from './afal-responder.js';
 import { AfalHttpServer } from './afal-http-server.js';
 import { AGENTVAULT_A2A_EXTENSION_URI } from './a2a-agent-card.js';
 import type { ModelProfileRef } from './model-profiles.js';
+import {
+  A2A_SEND_MESSAGE_PATH,
+  AGENTVAULT_ADMIT_MEDIA_TYPE,
+  AGENTVAULT_DENY_MEDIA_TYPE,
+  AGENTVAULT_PROPOSE_MEDIA_TYPE,
+  AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
+  buildA2ASendMessageRequest,
+  parseA2ATaskPart,
+} from './a2a-messages.js';
 
 // ── AgentDescriptor ────────────────────────────────────────────────────────
 
@@ -79,6 +88,14 @@ interface AgentCard {
 export interface AgentVaultPeerDiscovery {
   relayUrl?: string;
   supportedPurposes: string[];
+  afalEndpoint?: string;
+  a2aSendMessageUrl?: string;
+}
+
+interface PeerTransportTarget {
+  proposeUrl: string;
+  commitUrl: string;
+  useA2ANative: boolean;
 }
 
 // ── DirectAfalTransport ────────────────────────────────────────────────────
@@ -255,15 +272,35 @@ export class DirectAfalTransport implements AfalTransport {
     }
 
     const signed = signMessage(DOMAIN_PREFIXES.PROPOSE, proposeMessage, this.config.seedHex);
-
+    const transportTarget = this.resolvePeerTransportTarget(peer);
     // Wrapped direct AFAL requests can negotiate before a relay session exists.
     const wrappedBody = params.relay ? { propose: signed, relay: params.relay } : { propose: signed };
 
-    const response = await fetch(peer.endpoints.propose, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(wrappedBody),
-    });
+    let response: Response;
+    if (transportTarget.useA2ANative) {
+      if (params.relay) {
+        throw new Error(
+          'A2A-native direct transport does not accept inline relay payloads; send session tokens via commitAdmit() after ADMIT',
+        );
+      }
+      response = await fetch(transportTarget.proposeUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          buildA2ASendMessageRequest({
+            mediaType: AGENTVAULT_PROPOSE_MEDIA_TYPE,
+            data: signed,
+            acceptedOutputModes: [AGENTVAULT_ADMIT_MEDIA_TYPE, AGENTVAULT_DENY_MEDIA_TYPE],
+          }),
+        ),
+      });
+    } else {
+      response = await fetch(peer.endpoints.propose, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(wrappedBody),
+      });
+    }
 
     if (!response.ok) {
       const body = await response.text();
@@ -272,7 +309,19 @@ export class DirectAfalTransport implements AfalTransport {
 
     let admitOrDeny: Record<string, unknown>;
     try {
-      admitOrDeny = (await response.json()) as Record<string, unknown>;
+      const payload = (await response.json()) as unknown;
+      if (transportTarget.useA2ANative) {
+        const parsed = parseA2ATaskPart(payload, [
+          AGENTVAULT_ADMIT_MEDIA_TYPE,
+          AGENTVAULT_DENY_MEDIA_TYPE,
+        ]);
+        if (!parsed || !parsed.data || typeof parsed.data !== 'object') {
+          throw new Error('A2A SendMessage response did not contain an AgentVault admit/deny part');
+        }
+        admitOrDeny = parsed.data as Record<string, unknown>;
+      } else {
+        admitOrDeny = payload as Record<string, unknown>;
+      }
     } catch (parseErr) {
       throw new Error(
         `PROPOSE endpoint returned non-JSON response (${response.status}): ${
@@ -399,16 +448,45 @@ export class DirectAfalTransport implements AfalTransport {
     };
 
     const signedCommit = signMessage(DOMAIN_PREFIXES.COMMIT, commitMessage, this.config.seedHex);
+    const transportTarget = this.resolvePeerTransportTarget(peer);
 
-    const response = await fetch(peer.endpoints.commit, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(signedCommit),
-    });
+    let response: Response;
+    if (transportTarget.useA2ANative) {
+      response = await fetch(transportTarget.commitUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          buildA2ASendMessageRequest({
+            mediaType: AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
+            data: signedCommit,
+            acceptedOutputModes: [AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE],
+          }),
+        ),
+      });
+    } else {
+      response = await fetch(peer.endpoints.commit, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(signedCommit),
+      });
+    }
 
     if (!response.ok) {
       const body = await response.text();
       throw new Error(`COMMIT rejected: ${response.status} ${body}`);
+    }
+
+    if (transportTarget.useA2ANative) {
+      const payload = (await response.json()) as unknown;
+      const parsed = parseA2ATaskPart(payload, [AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE]);
+      if (
+        !parsed ||
+        !parsed.data ||
+        typeof parsed.data !== 'object' ||
+        (parsed.data as Record<string, unknown>)['ok'] !== true
+      ) {
+        throw new Error('A2A SendMessage session-token response did not acknowledge success');
+      }
     }
 
     this.storedAdmits.delete(inviteId);
@@ -447,6 +525,23 @@ export class DirectAfalTransport implements AfalTransport {
     return {
       ...a2aDescriptor.discovery,
       supportedPurposes: [...a2aDescriptor.discovery.supportedPurposes],
+    };
+  }
+
+  private resolvePeerTransportTarget(peer: AgentDescriptor): PeerTransportTarget {
+    const a2aSendMessageUrl = this.peerDiscovery?.a2aSendMessageUrl;
+    const afalEndpoint = this.peerDiscovery?.afalEndpoint;
+    if (a2aSendMessageUrl && !afalEndpoint) {
+      return {
+        proposeUrl: a2aSendMessageUrl,
+        commitUrl: a2aSendMessageUrl,
+        useA2ANative: true,
+      };
+    }
+    return {
+      proposeUrl: peer.endpoints.propose,
+      commitUrl: peer.endpoints.commit,
+      useA2ANative: false,
     };
   }
 
@@ -532,8 +627,10 @@ export class DirectAfalTransport implements AfalTransport {
     if (!params) return null;
 
     const publicKeyHex = params['public_key_hex'];
-    const afalEndpoint = params['afal_endpoint'];
-    if (typeof publicKeyHex !== 'string' || typeof afalEndpoint !== 'string') {
+    const afalEndpoint =
+      typeof params['afal_endpoint'] === 'string' ? params['afal_endpoint'] : undefined;
+    const a2aSendMessageUrl = typeof card.url === 'string' ? deriveA2ASendMessageUrl(card.url) : null;
+    if (typeof publicKeyHex !== 'string' || (!afalEndpoint && !a2aSendMessageUrl)) {
       return null;
     }
     const relayUrl = typeof params['relay_url'] === 'string' ? params['relay_url'] : undefined;
@@ -567,14 +664,17 @@ export class DirectAfalTransport implements AfalTransport {
           public_key_hex: publicKeyHex,
         },
         endpoints: {
-          propose: `${afalEndpoint}/propose`,
-          commit: `${afalEndpoint}/commit`,
+          propose: afalEndpoint ? `${afalEndpoint}/propose` : '',
+          commit: afalEndpoint ? `${afalEndpoint}/commit` : '',
+          ...(a2aSendMessageUrl ? { message: a2aSendMessageUrl } : {}),
         },
         capabilities: {},
         policy_commitments: {},
       },
       discovery: {
         ...(relayUrl ? { relayUrl } : {}),
+        ...(afalEndpoint ? { afalEndpoint } : {}),
+        ...(a2aSendMessageUrl ? { a2aSendMessageUrl } : {}),
         supportedPurposes,
       },
     };
@@ -677,6 +777,14 @@ function deriveAgentCardUrl(peerUrl: string): string | null {
       return url.toString();
     }
     return `${url.origin}/.well-known/agent-card.json`;
+  } catch {
+    return null;
+  }
+}
+
+function deriveA2ASendMessageUrl(baseUrl: string): string | null {
+  try {
+    return new URL(A2A_SEND_MESSAGE_PATH, baseUrl).toString();
   } catch {
     return null;
   }

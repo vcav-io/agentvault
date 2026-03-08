@@ -1039,7 +1039,6 @@ async fn test_submit_token_is_one_time_use() {
     });
 
     // First submit succeeds
-    let app = build_router(Arc::new(test_app_state("http://unused", "/tmp")));
     // We can't easily reuse the router for two requests without cloning.
     // Instead, test via the session store directly.
 

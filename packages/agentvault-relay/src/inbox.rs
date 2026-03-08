@@ -1634,7 +1634,7 @@ mod tests {
                 is2.accept_invite(&first_id, "bob", None, &ss).await
             });
 
-        assert!(list_result.invites.len() >= 1);
+        assert!(!list_result.invites.is_empty());
         assert!(accept_result.is_ok());
     }
 

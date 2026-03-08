@@ -9,6 +9,13 @@ import { AGENTVAULT_A2A_EXTENSION_URI } from '../a2a-agent-card.js';
 import { signMessage, DOMAIN_PREFIXES, contentHash } from '../afal-signing.js';
 import { computeProposalId } from '../afal-types.js';
 import type { AfalPropose, RelayInvitePayload } from '../afal-types.js';
+import {
+  A2A_SEND_MESSAGE_PATH,
+  AGENTVAULT_ADMIT_MEDIA_TYPE,
+  AGENTVAULT_PROPOSE_MEDIA_TYPE,
+  AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
+  buildA2ASendMessageRequest,
+} from '../a2a-messages.js';
 
 // ── Test keypairs ────────────────────────────────────────────────────────────
 
@@ -182,6 +189,27 @@ describe('AfalHttpServer', () => {
     expect(body['deny_code']).toBe('UNSUPPORTED');
   });
 
+  it('POST /a2a/send-message returns an ADMIT task for valid propose parts', async () => {
+    const wrapped = makeWrappedBody();
+    const res = await fetch(`${baseUrl}${A2A_SEND_MESSAGE_PATH}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(
+        buildA2ASendMessageRequest({
+          mediaType: AGENTVAULT_PROPOSE_MEDIA_TYPE,
+          data: wrapped.propose,
+          acceptedOutputModes: [AGENTVAULT_ADMIT_MEDIA_TYPE],
+        }),
+      ),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    const history = body['history'] as Array<Record<string, unknown>>;
+    const parts = history[0]?.['parts'] as Array<Record<string, unknown>>;
+    expect(parts[0]?.['media_type']).toBe(AGENTVAULT_ADMIT_MEDIA_TYPE);
+    expect((parts[0]?.['data'] as Record<string, unknown>)['outcome']).toBe('ADMIT');
+  });
+
   it('POST /afal/commit returns 200 for valid COMMIT', async () => {
     // First admit a proposal
     const wrapped = makeWrappedBody();
@@ -215,6 +243,51 @@ describe('AfalHttpServer', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body['ok']).toBe(true);
+  });
+
+  it('POST /a2a/send-message accepts session-token follow-up parts', async () => {
+    const wrapped = makeWrappedBody();
+    const admitRes = await fetch(`${baseUrl}/afal/propose`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(wrapped),
+    });
+    const admitBody = (await admitRes.json()) as Record<string, unknown>;
+    const admitTokenId = admitBody['admit_token_id'] as string;
+    const proposalId = admitBody['proposal_id'] as string;
+
+    const commitMsg = signMessage(
+      DOMAIN_PREFIXES.COMMIT,
+      {
+        commit_version: '1',
+        proposal_id: proposalId,
+        from: 'alice-test',
+        admit_token_id: admitTokenId,
+        relay_session: {
+          ...makeRelay(),
+          contract_hash: 'c'.repeat(64),
+        },
+      },
+      PROPOSER_SEED,
+    );
+
+    const res = await fetch(`${baseUrl}${A2A_SEND_MESSAGE_PATH}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(
+        buildA2ASendMessageRequest({
+          mediaType: AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
+          data: commitMsg,
+          acceptedOutputModes: [AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE],
+        }),
+      ),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    const history = body['history'] as Array<Record<string, unknown>>;
+    const parts = history[0]?.['parts'] as Array<Record<string, unknown>>;
+    expect(parts[0]?.['media_type']).toBe(AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE);
+    expect((parts[0]?.['data'] as Record<string, unknown>)['ok']).toBe(true);
   });
 
   it('rejects POST without application/json content type', async () => {
