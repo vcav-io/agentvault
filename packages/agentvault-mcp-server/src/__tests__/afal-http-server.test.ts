@@ -5,7 +5,7 @@ import { AfalHttpServer } from '../afal-http-server.js';
 import { AfalResponder } from '../afal-responder.js';
 import type { AdmissionPolicy } from '../afal-responder.js';
 import type { AgentDescriptor } from '../direct-afal-transport.js';
-import { signMessage, DOMAIN_PREFIXES } from '../afal-signing.js';
+import { signMessage, DOMAIN_PREFIXES, contentHash } from '../afal-signing.js';
 import { computeProposalId } from '../afal-types.js';
 import type { AfalPropose, RelayInvitePayload } from '../afal-types.js';
 
@@ -47,7 +47,7 @@ function makePolicy(): AdmissionPolicy {
   };
 }
 
-function makePropose(): AfalPropose {
+function makePropose(overrides: Partial<Omit<AfalPropose, 'proposal_id'>> = {}): AfalPropose {
   const fields: Omit<AfalPropose, 'proposal_id'> = {
     proposal_version: '1',
     nonce: 'a'.repeat(64),
@@ -63,6 +63,7 @@ function makePropose(): AfalPropose {
     model_profile_id: 'api-claude-sonnet-v1',
     model_profile_version: '1',
     admission_tier_requested: 'DEFAULT',
+    ...overrides,
   };
   return { ...fields, proposal_id: computeProposalId(fields) };
 }
@@ -77,13 +78,16 @@ function makeRelay(): RelayInvitePayload {
 }
 
 function makeWrappedBody(): { propose: Record<string, unknown>; relay: RelayInvitePayload } {
-  const propose = makePropose();
+  const relay = makeRelay();
+  const propose = makePropose({
+    relay_binding_hash: contentHash(relay),
+  });
   const signed = signMessage(
     DOMAIN_PREFIXES.PROPOSE,
     propose as unknown as Record<string, unknown>,
     PROPOSER_SEED,
   );
-  return { propose: signed, relay: makeRelay() };
+  return { propose: signed, relay };
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@ import { ed25519 } from '@noble/curves/ed25519';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
 import { DirectAfalTransport } from '../direct-afal-transport.js';
 import type { AgentDescriptor } from '../direct-afal-transport.js';
-import { signMessage, DOMAIN_PREFIXES } from '../afal-signing.js';
+import { signMessage, DOMAIN_PREFIXES, contentHash } from '../afal-signing.js';
 import type { AfalPropose, RelayInvitePayload } from '../afal-types.js';
 import { computeProposalId } from '../afal-types.js';
 
@@ -185,6 +185,7 @@ describe('DirectAfalTransport', () => {
       expect(typeof body.propose['signature']).toBe('string');
       expect(body.propose['from']).toBe('alice-test');
       expect(body.propose['to']).toBe('bob-test');
+      expect(body.propose['relay_binding_hash']).toBe(contentHash(body.relay));
       expect(body.relay['session_id']).toBe('sess-001');
     });
 
@@ -871,13 +872,17 @@ describe('proposal_id integrity (end-to-end)', () => {
     });
 
     // Use fresh timestamp to avoid STALE rejection
-    const propose = makePropose({ timestamp: new Date().toISOString() });
+    const relay = makeRelay();
+    const propose = makePropose({
+      timestamp: new Date().toISOString(),
+      relay_binding_hash: contentHash(relay),
+    });
     const signed = signMessage(
       DOMAIN_PREFIXES.PROPOSE,
       propose as unknown as Record<string, unknown>,
       TEST_SEED,
     );
-    const body = { propose: signed, relay: makeRelay() };
+    const body = { propose: signed, relay };
     const result = responder.handlePropose(body);
     expect(result.outcome).toBe('ADMIT');
   });
