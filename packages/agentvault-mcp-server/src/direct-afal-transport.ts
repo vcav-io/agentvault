@@ -110,6 +110,7 @@ export interface DirectAfalTransportConfig {
     httpPort: number;
     bindAddress?: string;
     policy: AdmissionPolicy;
+    advertiseAfalEndpoint?: boolean;
   };
 }
 
@@ -165,6 +166,7 @@ export class DirectAfalTransport implements AfalTransport {
         localDescriptor: signedDescriptor,
         relayUrl: config.relayUrl,
         supportedPurposes: config.respondMode.policy.allowedPurposeCodes,
+        advertiseAfalEndpoint: config.respondMode.advertiseAfalEndpoint,
       });
     } else {
       this.responder = null;

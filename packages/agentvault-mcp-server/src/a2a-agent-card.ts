@@ -41,12 +41,13 @@ export function buildAgentCard(params: {
   descriptor: AgentDescriptor;
   supportedPurposes: string[];
   relayUrl?: string;
+  includeAfalEndpoint?: boolean;
 }): AgentCard {
   const extensionParams: AgentVaultA2AExtensionParams = {
     public_key_hex: params.descriptor.identity_key.public_key_hex,
     supported_purposes: params.supportedPurposes,
     ...(params.relayUrl ? { relay_url: params.relayUrl } : {}),
-    afal_endpoint: `${params.baseUrl}/afal`,
+    ...(params.includeAfalEndpoint === false ? {} : { afal_endpoint: `${params.baseUrl}/afal` }),
   };
 
   return {
