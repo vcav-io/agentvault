@@ -102,6 +102,10 @@ cleanup() {
     kill "${RELAY_PID}" 2>/dev/null || true
     rm -f /tmp/vcav-demo-relay.pid
   fi
+  if [[ -n "${DEMO_DIR:-}" && -d "${DEMO_DIR:-}" ]]; then
+    log_info "Removing workspace ${DEMO_DIR}"
+    rm -rf "${DEMO_DIR}"
+  fi
 }
 trap cleanup EXIT INT TERM
 
@@ -201,6 +205,7 @@ log_success "Identities generated"
 
 DEMO_DIR="$(mktemp -d /tmp/vcav-demo-XXXX)"
 mkdir -p "${DEMO_DIR}/alice/.agentvault" "${DEMO_DIR}/bob/.agentvault"
+chmod 0700 "${DEMO_DIR}" "${DEMO_DIR}/alice" "${DEMO_DIR}/bob"
 
 cat >"${DEMO_DIR}/alice/.mcp.json" <<JSON
 {
@@ -243,6 +248,8 @@ cat >"${DEMO_DIR}/bob/.mcp.json" <<JSON
   }
 }
 JSON
+
+chmod 0600 "${DEMO_DIR}/alice/.mcp.json" "${DEMO_DIR}/bob/.mcp.json"
 
 log_success "Workspaces created: ${DEMO_DIR}"
 

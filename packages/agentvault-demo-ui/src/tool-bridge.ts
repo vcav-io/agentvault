@@ -6,6 +6,26 @@ import type { ToolRegistry } from 'agentvault-mcp-server/tools';
 import type { ToolUseContent, ToolResultContent } from './providers/types.js';
 import type { EventBus } from './events.js';
 
+// ── Credential redaction ─────────────────────────────────────────────────
+
+const REDACTED_KEYS = new Set([
+  'submit_token', 'read_token', 'resume_token',
+  'responder_submit_token', 'responder_read_token',
+  'initiator_submit_token', 'initiator_read_token',
+  'my_input',
+]);
+
+/** Deep-clone an object, replacing sensitive fields with '[REDACTED]'. */
+function redactSensitive(obj: unknown): unknown {
+  if (obj === null || obj === undefined || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(redactSensitive);
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+    result[key] = REDACTED_KEYS.has(key) ? '[REDACTED]' : redactSensitive(value);
+  }
+  return result;
+}
+
 /**
  * Execute a batch of tool calls through the tool registry.
  *
@@ -20,13 +40,13 @@ export async function executeToolCalls(
   const results: ToolResultContent[] = [];
 
   for (const tu of toolUses) {
-    events.emitToolCall(agentName, tu.name, tu.input);
+    events.emitToolCall(agentName, tu.name, redactSensitive(tu.input) as Record<string, unknown>);
 
     try {
       const result = await registry.dispatch(tu.name, tu.input);
       const resultStr = JSON.stringify(result, null, 2);
 
-      events.emitToolResult(agentName, tu.name, result);
+      events.emitToolResult(agentName, tu.name, redactSensitive(result));
 
       results.push({
         type: 'tool_result',
@@ -35,7 +55,7 @@ export async function executeToolCalls(
       });
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-      events.emitToolResult(agentName, tu.name, { error: errorMsg });
+      events.emitToolResult(agentName, tu.name, redactSensitive({ error: errorMsg }));
 
       results.push({
         type: 'tool_result',
