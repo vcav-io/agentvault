@@ -204,6 +204,9 @@ export class DirectAfalTransport implements AfalTransport {
     budgetTier: string;
   }): Promise<{ selectedModelProfile?: ModelProfileRef } | undefined> {
     const peer = await this.resolvePeerDescriptor(params.propose.to);
+    // Tool-level callers can preflight supported purposes earlier for better
+    // user-facing errors, but keep the transport-level check as a fail-closed
+    // backstop for direct callers and future reuse outside relay_signal.
     if (
       this.peerDiscovery?.supportedPurposes.length &&
       !this.peerDiscovery.supportedPurposes.includes(params.propose.purpose_code)
