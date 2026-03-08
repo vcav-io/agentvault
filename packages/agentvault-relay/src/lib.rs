@@ -536,8 +536,7 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
 
         // Entropy bits — must use the resolved effective schema, not the raw stub
         let entropy_bits =
-            entropy_core::calculate_schema_entropy_upper_bound(&effective_schema)
-                .unwrap_or(0);
+            entropy_core::calculate_schema_entropy_upper_bound(&effective_schema).unwrap_or(0);
 
         // Effective model ID and max tokens
         let effective_model_id = match provider.as_str() {
