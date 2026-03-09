@@ -28,9 +28,9 @@ const HEARTBEAT_PROMPT = '[Heartbeat] Run your agent heartbeat checklist.';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
-export type BurstResult = 'idle' | 'session_completed' | 'max_turns' | 'error';
+export type BurstResult = 'idle' | 'session_completed' | 'session_failed' | 'max_turns' | 'error';
 
-export type AgentStatus = 'idle' | 'running' | 'completed' | 'error';
+export type AgentStatus = 'idle' | 'running' | 'completed' | 'failed' | 'error';
 
 export interface AgentState {
   name: string;
@@ -38,6 +38,7 @@ export interface AgentState {
   messages: Message[];
   turnCount: number;
   started: boolean;
+  generation: number;
 }
 
 // ── Promise queue (single-slot chain per agent) ──────────────────────────
@@ -116,12 +117,15 @@ async function runLLMBurst(
   params: BurstParams,
   ephemeralUserMessage?: string,
   signal?: AbortSignal,
+  expectedGeneration?: number,
 ): Promise<BurstResult> {
   const { name, provider, registry, systemPrompt, events, state } = params;
+  const generation = expectedGeneration ?? state.generation;
+  const isStale = () => signal?.aborted || state.generation !== generation;
 
   // Guard: if aborted or session already completed, exit immediately.
-  if (signal?.aborted) return 'idle';
-  if (state.status === 'completed') {
+  if (isStale()) return 'idle';
+  if (state.status === 'completed' || state.status === 'failed') {
     return 'idle';
   }
 
@@ -139,7 +143,8 @@ async function runLLMBurst(
   // When a tool result signals session completion, we set this flag instead
   // of returning immediately. This lets the loop continue for one more turn
   // so the LLM can react to the result (e.g., summarise the mediation signal).
-  let sessionDone = false;
+  let terminalState: 'completed' | 'failed' | null = null;
+  let terminalDetail: string | undefined;
 
   // Build messages for this burst — ephemeral message appended but not persisted yet
   let messages: Message[] = ephemeralUserMessage
@@ -148,7 +153,7 @@ async function runLLMBurst(
 
   try {
     for (let turn = 0; turn < MAX_TURNS; turn++) {
-      if (signal?.aborted) break;
+      if (isStale()) break;
       state.turnCount++;
 
       const response = await provider.chat({
@@ -156,6 +161,7 @@ async function runLLMBurst(
         tools: toolDefs,
         system: systemPrompt,
       });
+      if (isStale()) return 'idle';
 
       // If no tool calls, burst is done.
       // Check toolUseBlocks.length rather than wantsToolUse to prevent orphaned
@@ -183,10 +189,15 @@ async function runLLMBurst(
         // If HEARTBEAT_OK and not committed: nothing persisted — ephemeral vanishes
 
         // If the session is done and the LLM just produced its reaction text, exit
-        if (sessionDone) {
+        if (terminalState === 'completed') {
           state.status = 'completed';
           events.emitStatus(name, 'completed', 'Session completed');
           return 'session_completed';
+        }
+        if (terminalState === 'failed') {
+          state.status = 'failed';
+          events.emitStatus(name, 'failed', terminalDetail ?? 'Session failed');
+          return 'session_failed';
         }
 
         state.status = 'idle';
@@ -219,6 +230,7 @@ async function runLLMBurst(
         name,
         events,
       );
+      if (isStale()) return 'idle';
 
       // Append tool results
       const toolResultMessage = provider.buildToolResultMessage(toolResults);
@@ -227,19 +239,27 @@ async function runLLMBurst(
       // Update messages reference for next turn
       messages = state.messages;
 
-      // Check if any relay_signal tool result indicates session completion.
+      // Check if any relay_signal tool result indicates terminal completion.
       // Scoped to relay_signal only — other tools returning { state: 'COMPLETED' }
       // should not terminate the agent loop.
-      // Don't return immediately — set flag so the LLM gets one more turn to react.
+      // Don't return immediately — set a terminal state so the LLM gets one more
+      // turn to react before the burst exits.
       for (const tr of toolResults) {
         const toolName = toolNameById.get(tr.tool_use_id) ?? '';
         if (!toolName.includes('relay_signal')) continue;
         try {
           const parsed = JSON.parse(tr.content);
           // Tool results use envelope format: { ok, status, data: { state } }
-          const state = parsed?.data?.state ?? parsed?.state;
-          if (state === 'COMPLETED' || state === 'FAILED') {
-            sessionDone = true;
+          const relayState = parsed?.data?.state ?? parsed?.state;
+          const detail = parsed?.error?.detail
+            ?? parsed?.detail
+            ?? parsed?.data?.user_message;
+          if (relayState === 'COMPLETED') {
+            terminalState = 'completed';
+            terminalDetail = undefined;
+          } else if (relayState === 'FAILED') {
+            terminalState = 'failed';
+            terminalDetail = typeof detail === 'string' ? detail : undefined;
           }
         } catch {
           // Tool results are not always JSON (e.g. plain text responses).
@@ -251,10 +271,15 @@ async function runLLMBurst(
     }
 
     // Exhausted turns
-    if (sessionDone) {
+    if (terminalState === 'completed') {
       state.status = 'completed';
       events.emitStatus(name, 'completed', 'Session completed');
       return 'session_completed';
+    }
+    if (terminalState === 'failed') {
+      state.status = 'failed';
+      events.emitStatus(name, 'failed', terminalDetail ?? 'Session failed');
+      return 'session_failed';
     }
     state.status = 'idle';
     events.emitStatus(name, 'idle', `Burst reached max turns (${MAX_TURNS})`);
@@ -300,7 +325,7 @@ export async function runHeartbeatLoop(
     // No-cost local tick after session completion — loop stays alive but
     // no LLM call. Prevents budget models from spinning on post-completion
     // heartbeats (get_identity loops, session restarts).
-    if (state.status === 'completed') {
+    if (state.status === 'completed' || state.status === 'failed') {
       await delay(HEARTBEAT_INTERVAL_MS, signal);
       continue;
     }
@@ -310,8 +335,9 @@ export async function runHeartbeatLoop(
         await delay(HEARTBEAT_INTERVAL_MS, signal);
         continue;
       }
+      const generation = state.generation;
       events.emitSystem(`${name}: Heartbeat`);
-      await queue.enqueue(() => runLLMBurst(heartbeatParams, HEARTBEAT_PROMPT, signal));
+      await queue.enqueue(() => runLLMBurst(heartbeatParams, HEARTBEAT_PROMPT, signal, generation));
 
       // Exponential backoff on errors: 2s → 4s → 8s → 16s → 30s cap
       if (state.status === 'error') {
@@ -345,14 +371,15 @@ export async function sendUserMessage(
   signal?: AbortSignal,
 ): Promise<void> {
   const { name, events, state, queue } = params;
+  const generation = state.generation;
 
   state.started = true;
   events.emitSystem(`${name}: User message received`);
 
   await queue.enqueue(() => {
-    if (signal?.aborted) return Promise.resolve();
+    if (signal?.aborted || state.generation !== generation) return Promise.resolve();
     state.messages.push({ role: 'user', content: message });
-    return runLLMBurst(params, undefined, signal);
+    return runLLMBurst(params, undefined, signal, generation);
   });
 }
 
