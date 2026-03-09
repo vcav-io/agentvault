@@ -31,6 +31,7 @@ import {
   buildA2ATaskResponse,
   parseA2ASendMessagePart,
 } from './a2a-messages.js';
+import type { A2ATaskState } from './a2a-messages.js';
 import {
   parseContractOfferProposal,
   parseSupportedContractOffers,
@@ -44,6 +45,13 @@ import { listKnownModelProfiles } from './model-profiles.js';
 
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_CONCURRENT = 16;
+const INFLIGHT_TASK_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+interface InFlightTask {
+  state: 'working' | 'failed';
+  expiresAt: number;
+}
+
 
 export interface AfalHttpServerConfig {
   port: number;
@@ -62,6 +70,7 @@ export class AfalHttpServer {
   private inflight = 0;
   private _actualPort: number | null = null;
   private _localDescriptor: AgentDescriptor;
+  private readonly _inFlightTasks = new Map<string, InFlightTask>();
 
   constructor(config: AfalHttpServerConfig) {
     this.config = config;
@@ -80,6 +89,26 @@ export class AfalHttpServer {
   /** Update the served descriptor (e.g. after port 0 resolves to actual port). */
   setDescriptor(descriptor: AgentDescriptor): void {
     this._localDescriptor = descriptor;
+  }
+
+  /** Remove expired in-flight task entries. Called on each A2A request. */
+  private gcInFlightTasks(): void {
+    const now = Date.now();
+    for (const [taskId, entry] of this._inFlightTasks) {
+      if (entry.expiresAt <= now) {
+        this._inFlightTasks.delete(taskId);
+      }
+    }
+  }
+
+  /** Number of in-flight tasks (testing only). */
+  get _inFlightTaskCount(): number {
+    return this._inFlightTasks.size;
+  }
+
+  /** Check whether an in-flight task exists (testing only). */
+  _hasInFlightTask(taskId: string): boolean {
+    return this._inFlightTasks.has(taskId);
   }
 
   async start(): Promise<void> {
@@ -215,6 +244,7 @@ export class AfalHttpServer {
               res.end(JSON.stringify(selection));
             }
           } else if (url === A2A_SEND_MESSAGE_PATH) {
+            this.gcInFlightTasks();
             const parsed = parseA2ASendMessagePart(body, [
               AGENTVAULT_PROPOSE_MEDIA_TYPE,
               AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
@@ -225,6 +255,21 @@ export class AfalHttpServer {
               res.end(JSON.stringify({ error: 'Unsupported A2A message body' }));
             } else if (parsed.mediaType === AGENTVAULT_PROPOSE_MEDIA_TYPE) {
               const result = this.config.responder.handlePropose({ propose: parsed.data });
+              const hasTaskId = !!parsed.taskId;
+              let taskState: A2ATaskState;
+              if (result.outcome === 'DENY') {
+                taskState = 'failed';
+              } else if (hasTaskId) {
+                // Stateful lifecycle: ADMIT → working (session tokens still needed)
+                taskState = 'working';
+                this._inFlightTasks.set(parsed.taskId!, {
+                  state: 'working',
+                  expiresAt: Date.now() + INFLIGHT_TASK_TTL_MS,
+                });
+              } else {
+                // Old client (no task_id): stateless single-shot completed
+                taskState = 'completed';
+              }
               res.writeHead(200, { 'Content-Type': 'application/json' });
               res.end(
                 JSON.stringify(
@@ -235,6 +280,7 @@ export class AfalHttpServer {
                         : AGENTVAULT_DENY_MEDIA_TYPE,
                     data: result.response,
                     taskId: parsed.taskId,
+                    state: taskState,
                   }),
                 ),
               );
@@ -258,6 +304,7 @@ export class AfalHttpServer {
                     validateBespokeContract: validateBespokeContractSelection,
                   },
                 );
+                // Contract negotiation is single-round → always completed
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(
                   JSON.stringify(
@@ -265,13 +312,19 @@ export class AfalHttpServer {
                       mediaType: AGENTVAULT_CONTRACT_OFFER_SELECTION_MEDIA_TYPE,
                       data: selection,
                       taskId: parsed.taskId,
+                      state: 'completed',
                     }),
                   ),
                 );
               }
             } else {
+              // session-tokens (COMMIT) — completes the lifecycle
               const result = this.config.responder.handleCommit(parsed.data);
               const status = result.ok ? 200 : 400;
+              // If this task was tracked in-flight, remove it
+              if (parsed.taskId && this._inFlightTasks.has(parsed.taskId)) {
+                this._inFlightTasks.delete(parsed.taskId);
+              }
               res.writeHead(status, { 'Content-Type': 'application/json' });
               res.end(
                 JSON.stringify(
@@ -279,6 +332,7 @@ export class AfalHttpServer {
                     mediaType: AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
                     data: result,
                     taskId: parsed.taskId,
+                    state: 'completed',
                   }),
                 ),
               );

@@ -345,6 +345,23 @@ export class DirectAfalTransport implements AfalTransport {
             `A2A task ID mismatch in propose response: expected=${proposeTaskId} got=${parsed.taskId}`,
           );
         }
+        // Validate task state when present
+        if (parsed.taskState !== undefined) {
+          if (parsed.mediaType === AGENTVAULT_ADMIT_MEDIA_TYPE) {
+            // ADMIT → expect 'working' (stateful) or 'completed' (old server / no task_id)
+            if (parsed.taskState !== 'working' && parsed.taskState !== 'completed') {
+              throw new Error(
+                `Unexpected task state for ADMIT response: expected working or completed, got ${parsed.taskState}`,
+              );
+            }
+          } else if (parsed.mediaType === AGENTVAULT_DENY_MEDIA_TYPE) {
+            if (parsed.taskState !== 'failed' && parsed.taskState !== 'completed') {
+              throw new Error(
+                `Unexpected task state for DENY response: expected failed or completed, got ${parsed.taskState}`,
+              );
+            }
+          }
+        }
         admitOrDeny = parsed.data as Record<string, unknown>;
       } else {
         admitOrDeny = payload as Record<string, unknown>;
@@ -539,6 +556,12 @@ export class DirectAfalTransport implements AfalTransport {
         (parsed.data as Record<string, unknown>)['ok'] !== true
       ) {
         throw new Error('A2A SendMessage session-token response did not acknowledge success');
+      }
+      // Validate task state: session-tokens completes the lifecycle
+      if (parsed.taskState !== undefined && parsed.taskState !== 'completed') {
+        throw new Error(
+          `Unexpected task state for session-tokens response: expected completed, got ${parsed.taskState}`,
+        );
       }
     }
 
