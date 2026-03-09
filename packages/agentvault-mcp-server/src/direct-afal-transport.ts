@@ -296,6 +296,7 @@ export class DirectAfalTransport implements AfalTransport {
     // Wrapped direct AFAL requests can negotiate before a relay session exists.
     const wrappedBody = params.relay ? { propose: signed, relay: params.relay } : { propose: signed };
 
+    const proposeTaskId = `task-propose-${params.propose.proposal_id}`;
     let response: Response;
     if (transportTarget.useA2ANative) {
       if (params.relay) {
@@ -311,6 +312,7 @@ export class DirectAfalTransport implements AfalTransport {
             mediaType: AGENTVAULT_PROPOSE_MEDIA_TYPE,
             data: signed,
             acceptedOutputModes: [AGENTVAULT_ADMIT_MEDIA_TYPE, AGENTVAULT_DENY_MEDIA_TYPE],
+            taskId: proposeTaskId,
           }),
         ),
       });
@@ -337,6 +339,11 @@ export class DirectAfalTransport implements AfalTransport {
         ]);
         if (!parsed || !parsed.data || typeof parsed.data !== 'object') {
           throw new Error('A2A SendMessage response did not contain an AgentVault admit/deny part');
+        }
+        if (parsed.taskId !== undefined && parsed.taskId !== proposeTaskId) {
+          throw new Error(
+            `A2A task ID mismatch in propose response: expected=${proposeTaskId} got=${parsed.taskId}`,
+          );
         }
         admitOrDeny = parsed.data as Record<string, unknown>;
       } else {
@@ -869,6 +876,7 @@ export class DirectAfalTransport implements AfalTransport {
     const target = this.resolvePeerNegotiationTarget(peer);
     if (!target) return null;
 
+    const negotiateTaskId = `task-negotiate-${proposal.negotiation_id}`;
     const response = await fetch(
       target.negotiateUrl,
       target.useA2ANative
@@ -880,6 +888,7 @@ export class DirectAfalTransport implements AfalTransport {
                 mediaType: AGENTVAULT_CONTRACT_OFFER_PROPOSAL_MEDIA_TYPE,
                 data: proposal,
                 acceptedOutputModes: [AGENTVAULT_CONTRACT_OFFER_SELECTION_MEDIA_TYPE],
+                taskId: negotiateTaskId,
               }),
             ),
           }
@@ -900,6 +909,11 @@ export class DirectAfalTransport implements AfalTransport {
       const parsed = parseA2ATaskPart(payload, [AGENTVAULT_CONTRACT_OFFER_SELECTION_MEDIA_TYPE]);
       if (!parsed) {
         throw new Error('A2A negotiation response did not contain a contract-offer selection part');
+      }
+      if (parsed.taskId !== undefined && parsed.taskId !== negotiateTaskId) {
+        throw new Error(
+          `A2A task ID mismatch in negotiation response: expected=${negotiateTaskId} got=${parsed.taskId}`,
+        );
       }
       selection = parseContractOfferSelection(parsed.data);
     } else {
