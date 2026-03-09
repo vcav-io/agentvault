@@ -75,6 +75,8 @@ export interface InviteDetailResponse {
   status: InviteStatus;
   purpose_code: string;
   contract_hash: string;
+  /** Full proposed contract — enables structured confirmation. */
+  contract_json: Record<string, unknown>;
   provider: string;
   created_at: string;
   updated_at: string;

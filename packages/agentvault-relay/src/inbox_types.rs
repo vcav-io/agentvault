@@ -3,12 +3,52 @@ use chrono::{DateTime, Utc};
 use crate::session::SessionTokens;
 use crate::types::Contract;
 
-// Re-export all protocol types from vault-family-types for use within this crate.
+// Re-export protocol types from vault-family-types for use within this crate.
+// InviteDetailResponse is defined locally (extended with contract_json).
 pub use vault_family_types::{
     AcceptInviteRequest, AcceptInviteResponse, CreateInviteRequest, CreateInviteResponse,
     DeclineInviteRequest, DeclineReasonCode, InboxEvent, InboxEventType, InboxQuery, InboxResponse,
-    InviteDetailResponse, InviteStatus, InviteSummary,
+    InviteStatus, InviteSummary,
 };
+
+/// Caller-dependent invite detail response (extended from vault-family-types).
+///
+/// Adds `contract_json` so the responder can confirm the exact proposed contract
+/// without rebuilding it locally (structured confirmation).
+///
+/// Token redaction rules:
+/// - Recipient sees everything EXCEPT initiator tokens
+/// - Sender sees everything EXCEPT responder tokens
+/// - Pre-accept: neither side sees any session tokens
+/// - Post-accept: each side sees only their own role's tokens
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct InviteDetailResponse {
+    pub invite_id: String,
+    pub from_agent_id: String,
+    pub to_agent_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from_agent_pubkey: Option<String>,
+    pub status: InviteStatus,
+    pub purpose_code: String,
+    pub contract_hash: String,
+    /// Full proposed contract — always present in invite detail responses.
+    /// Enables structured confirmation: responder validates and confirms
+    /// the exact proposed contract rather than rebuilding from purpose.
+    pub contract_json: serde_json::Value,
+    pub provider: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decline_reason_code: Option<DeclineReasonCode>,
+    // Session linkage (populated after accept, redacted per caller)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub submit_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_token: Option<String>,
+}
 
 // ============================================================================
 // Invite (internal)
@@ -82,6 +122,7 @@ impl Invite {
             status: self.status,
             purpose_code: self.purpose_code.clone(),
             contract_hash: self.contract_hash.clone(),
+            contract_json: serde_json::to_value(&self.contract).unwrap_or(serde_json::Value::Null),
             provider: self.provider.clone(),
             created_at: self.created_at,
             updated_at: self.updated_at,
@@ -413,5 +454,47 @@ mod tests {
                                                          // Must NOT contain responder tokens
         assert_ne!(detail.submit_token.as_deref(), Some("rs_secret"));
         assert_ne!(detail.read_token.as_deref(), Some("rr_secret"));
+    }
+
+    // ── Structured confirmation: contract_json ───────────────────────────
+
+    #[test]
+    fn test_detail_includes_contract_json() {
+        let invite = test_invite();
+        let detail = invite.to_detail_response("bob"); // recipient
+                                                       // contract_json must be a non-null object matching the contract
+        assert!(
+            detail.contract_json.is_object(),
+            "contract_json must be an object"
+        );
+        let obj = detail.contract_json.as_object().unwrap();
+        assert_eq!(obj["purpose_code"], "COMPATIBILITY");
+        assert!(obj["participants"].is_array());
+        let participants = obj["participants"].as_array().unwrap();
+        assert_eq!(participants.len(), 2);
+        assert_eq!(participants[0], "alice");
+        assert_eq!(participants[1], "bob");
+    }
+
+    #[test]
+    fn test_detail_contract_json_serialization_roundtrip() {
+        let invite = test_invite();
+        let detail = invite.to_detail_response("alice");
+        // Serialize to JSON string and back
+        let json_str = serde_json::to_string(&detail).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        // contract_json field must be present and be an object
+        assert!(parsed["contract_json"].is_object());
+        assert_eq!(parsed["contract_json"]["purpose_code"], "COMPATIBILITY");
+    }
+
+    #[test]
+    fn test_detail_contract_json_present_for_both_sender_and_recipient() {
+        let invite = test_invite();
+        let sender_detail = invite.to_detail_response("alice");
+        let recipient_detail = invite.to_detail_response("bob");
+        // Both should have the same contract_json
+        assert_eq!(sender_detail.contract_json, recipient_detail.contract_json);
+        assert!(sender_detail.contract_json.is_object());
     }
 }

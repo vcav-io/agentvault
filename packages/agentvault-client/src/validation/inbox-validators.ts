@@ -86,6 +86,12 @@ export function validateInviteDetail(obj: unknown): asserts obj is InviteDetailR
   validateInviteStatus(r.status);
   requireString(r, 'purpose_code', 'InviteDetailResponse');
   requireString(r, 'contract_hash', 'InviteDetailResponse');
+  // contract_json: must be a non-null object (the full proposed contract)
+  if (r.contract_json === null || r.contract_json === undefined || typeof r.contract_json !== 'object' || Array.isArray(r.contract_json)) {
+    throw new RelayValidationError(
+      `InviteDetailResponse: field "contract_json" must be an object, got ${r.contract_json === null ? 'null' : Array.isArray(r.contract_json) ? 'array' : typeof r.contract_json}`,
+    );
+  }
   requireString(r, 'provider', 'InviteDetailResponse');
   requireTimestamp(r, 'created_at', 'InviteDetailResponse');
   requireTimestamp(r, 'updated_at', 'InviteDetailResponse');

@@ -3187,3 +3187,132 @@ async fn test_failure_receipt_uses_resolved_schema_hash() {
 
     std::fs::remove_dir_all(&prompt_dir).ok();
 }
+
+// ============================================================================
+// Structured confirmation: invite detail includes contract_json
+// ============================================================================
+
+#[tokio::test]
+async fn test_invite_detail_includes_contract_json() {
+    let state = Arc::new(inbox_test_app_state());
+
+    // Create invite (alice → bob)
+    let app = build_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/invites")
+                .header("content-type", "application/json")
+                .header("authorization", "Bearer alice_token_123")
+                .body(Body::from(inbox_create_body()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let create_body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1024 * 64)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let invite_id = create_body["invite_id"].as_str().unwrap();
+    let contract_hash = create_body["contract_hash"].as_str().unwrap();
+
+    // Fetch invite detail as recipient (bob)
+    let app = build_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/invites/{invite_id}"))
+                .header("authorization", "Bearer bob_token_456")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let detail: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1024 * 64)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+
+    // contract_json must be present and be an object
+    assert!(
+        detail["contract_json"].is_object(),
+        "invite detail must include contract_json as object"
+    );
+    // contract_hash must match what was returned on creation
+    assert_eq!(detail["contract_hash"].as_str().unwrap(), contract_hash);
+    // contract_json must contain the contract fields
+    assert_eq!(detail["contract_json"]["purpose_code"], "COMPATIBILITY");
+    let participants = detail["contract_json"]["participants"].as_array().unwrap();
+    assert_eq!(participants.len(), 2);
+    assert_eq!(participants[0], "alice");
+    assert_eq!(participants[1], "bob");
+}
+
+#[tokio::test]
+async fn test_invite_detail_contract_json_hash_matches() {
+    use agentvault_relay::relay::compute_contract_hash;
+    use vault_family_types::Contract;
+
+    let state = Arc::new(inbox_test_app_state());
+
+    // Create invite
+    let app = build_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/invites")
+                .header("content-type", "application/json")
+                .header("authorization", "Bearer alice_token_123")
+                .body(Body::from(inbox_create_body()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let create_body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1024 * 64)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let invite_id = create_body["invite_id"].as_str().unwrap();
+
+    // Fetch invite detail
+    let app = build_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/invites/{invite_id}"))
+                .header("authorization", "Bearer bob_token_456")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let detail: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1024 * 64)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+
+    // Parse contract_json back to Contract and compute its hash
+    let contract: Contract = serde_json::from_value(detail["contract_json"].clone()).unwrap();
+    let computed_hash = compute_contract_hash(&contract).unwrap();
+
+    // Must match the advertised contract_hash
+    assert_eq!(
+        computed_hash,
+        detail["contract_hash"].as_str().unwrap(),
+        "contract_json must hash to contract_hash"
+    );
+}
