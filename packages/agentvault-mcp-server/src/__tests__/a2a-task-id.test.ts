@@ -219,6 +219,30 @@ describe('A2A task ID — unit', () => {
       expect(parsed!.taskId).toBeDefined();
       expect(parsed!.taskId!.startsWith('task-')).toBe(true);
     });
+
+    it('extracts taskState from status.state', () => {
+      const resp = buildA2ATaskResponse({
+        mediaType: AGENTVAULT_ADMIT_MEDIA_TYPE,
+        data: { outcome: 'ADMIT' },
+        taskId: 'task-propose-xyz',
+        state: 'working',
+      });
+      const parsed = parseA2ATaskPart(resp, [AGENTVAULT_ADMIT_MEDIA_TYPE]);
+      expect(parsed).not.toBeNull();
+      expect(parsed!.taskState).toBe('working');
+    });
+
+    it('returns undefined taskState when status is absent', () => {
+      const resp = {
+        id: 'task-123',
+        history: [
+          { role: 'agent', parts: [{ data: {}, media_type: AGENTVAULT_ADMIT_MEDIA_TYPE }] },
+        ],
+      };
+      const parsed = parseA2ATaskPart(resp, [AGENTVAULT_ADMIT_MEDIA_TYPE]);
+      expect(parsed).not.toBeNull();
+      expect(parsed!.taskState).toBeUndefined();
+    });
   });
 });
 
@@ -271,8 +295,8 @@ describe('A2A task ID — server echo', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body['id']).toBe(taskId);
-    // Status should still be completed
-    expect((body['status'] as Record<string, unknown>)['state']).toBe('completed');
+    // With task_id present, ADMIT propose → working state (stateful lifecycle)
+    expect((body['status'] as Record<string, unknown>)['state']).toBe('working');
   });
 
   it('generates random task ID when no task_id in request (backward compat)', async () => {

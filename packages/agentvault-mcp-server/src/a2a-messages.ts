@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
+export type A2ATaskState = 'submitted' | 'working' | 'completed' | 'failed';
+
 export const A2A_SEND_MESSAGE_PATH = '/a2a/send-message';
 export const AGENTVAULT_PROPOSE_MEDIA_TYPE = 'application/vnd.agentvault.propose+json';
 export const AGENTVAULT_ADMIT_MEDIA_TYPE = 'application/vnd.agentvault.admit+json';
@@ -70,10 +72,11 @@ export function buildA2ATaskResponse(params: {
   mediaType: string;
   data: unknown;
   taskId?: string;
+  state?: A2ATaskState;
 }): Record<string, unknown> {
   return {
     id: params.taskId ?? `task-${randomUUID()}`,
-    status: { state: 'completed' },
+    status: { state: params.state ?? 'completed' },
     history: [
       {
         role: 'agent',
@@ -123,11 +126,18 @@ export function parseA2ASendMessagePart(
 export function parseA2ATaskPart(
   value: unknown,
   allowedMediaTypes: string[],
-): { mediaType: string; data: unknown; taskId?: string } | null {
+): { mediaType: string; data: unknown; taskId?: string; taskState?: string } | null {
   if (!value || typeof value !== 'object') return null;
   const taskRecord = value as Record<string, unknown>;
   const taskId =
     typeof taskRecord['id'] === 'string' ? taskRecord['id'] : undefined;
+  const statusObj = taskRecord['status'];
+  const taskState =
+    statusObj &&
+    typeof statusObj === 'object' &&
+    typeof (statusObj as Record<string, unknown>)['state'] === 'string'
+      ? ((statusObj as Record<string, unknown>)['state'] as string)
+      : undefined;
   const history = taskRecord['history'];
   if (!Array.isArray(history)) return null;
   for (const entry of history) {
@@ -145,6 +155,7 @@ export function parseA2ATaskPart(
           mediaType: (part as Record<string, unknown>)['media_type'] as string,
           data: (part as Record<string, unknown>)['data'],
           ...(taskId ? { taskId } : {}),
+          ...(taskState ? { taskState } : {}),
         };
       }
     }
