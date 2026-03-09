@@ -722,6 +722,9 @@ interface SessionStateFile {
   counterparty: string;
   purpose?: string;
   session_id?: string;
+  /** Full confirmed contract (structured confirmation). */
+  contract_json?: Record<string, unknown>;
+  contract_hash?: string;
   resume_strategy: ResumeStrategy;
   next_update_seconds: number;
   due_at: string;
@@ -844,6 +847,8 @@ function writeSessionStateFile(
       counterparty: handle.counterparty,
       purpose: handle.purpose,
       session_id: handle.sessionId,
+      contract_json: handle.contract,
+      contract_hash: handle.contractHash,
       resume_strategy: strategy,
       next_update_seconds: nextUpdateSeconds,
       due_at: dueAt.toISOString(),
@@ -1125,6 +1130,7 @@ async function phaseInvite(
 
     handle.inviteId = resp.invite_id;
     handle.contractHash = resp.contract_hash;
+    handle.contract = contract as Record<string, unknown>;
     handle.relayUrl = transport.relayUrl;
     handle.purpose = purposeHint ?? undefined;
     handle.myInput = args.my_input;
@@ -1670,47 +1676,83 @@ async function phaseDiscover(
         }
       }
 
-      // Compute relay contract hash for binding into the handle (used by phaseJoin
-      // for expected_contract_hash verification at the relay).
-      let relayContractHash: string | undefined;
-      if (handle.expectedPurpose) {
-        const myId = handle.agentId;
+      // ── Structured confirmation: fetch full contract from invite detail ──
+      // For relay inbox invites, fetch the invite detail to get the full
+      // proposed contract (contract_json). The responder confirms or rejects
+      // this exact contract rather than rebuilding one locally from purpose.
+      if (isRelayInbox && transport instanceof RelayInboxTransport) {
+        let detail;
         try {
-          let relayContract = buildRelayContract(handle.expectedPurpose, [
-            handle.counterparty,
-            myId,
-          ]);
-          if (relayContract && invite.afalPropose?.model_profile_hash) {
-            relayContract = withRelayContractModelProfile(relayContract, {
-              id: invite.afalPropose.model_profile_id,
-              hash: invite.afalPropose.model_profile_hash,
-              version: invite.afalPropose.model_profile_version,
-            });
-          }
-          if (relayContract) relayContractHash = computeRelayContractHash(relayContract);
+          detail = await transport.getInviteDetail(invite.invite_id);
         } catch (err) {
-          // Non-fatal — relay will verify on submit, but log for diagnostics
           console.error(
-            `phaseDiscover: failed to compute relay contract hash for purpose=${handle.expectedPurpose}: ` +
+            `phaseDiscover: failed to fetch invite detail for ${invite.invite_id}: ` +
               `${err instanceof Error ? err.message : String(err)}`,
           );
+          continue;
         }
-      }
 
-      // Bind invite to handle (stops scanning for different invites)
-      handle.inviteId = invite.invite_id;
-      handle.contractHash = relayContractHash ?? invite.contract_hash;
-      handle.proposalId = invite.afalPropose?.proposal_id;
-
-      if (isRelayInbox) {
-        // Relay inbox: tokens come from acceptInvite in phaseJoin.
-        // Set relayUrl from transport if available.
-        if (transport instanceof RelayInboxTransport) {
-          handle.relayUrl = handle.relayUrl ?? transport.relayUrl;
+        // Validate: contract_json must be present
+        if (!detail.contract_json || typeof detail.contract_json !== 'object') {
+          console.error(
+            `phaseDiscover: invite ${invite.invite_id} missing contract_json — cannot confirm`,
+          );
+          foundSenderInviteWithContractMismatch = true;
+          continue;
         }
+
+        // Validate: contract_json must hash to the advertised contract_hash
+        const computedHash = computeRelayContractHash(detail.contract_json);
+        if (computedHash !== detail.contract_hash) {
+          console.error(
+            `phaseDiscover: invite ${invite.invite_id} contract_json hash mismatch: ` +
+              `computed=${computedHash} advertised=${detail.contract_hash}`,
+          );
+          foundSenderInviteWithContractMismatch = true;
+          continue;
+        }
+
+        // Validate: participant list must be exactly [initiator, responder]
+        // Exact shape check — rejects duplicates, wrong ordering, extra entries.
+        const participants: unknown[] = Array.isArray(detail.contract_json.participants)
+          ? detail.contract_json.participants
+          : [];
+        const expectedParticipants = [handle.counterparty, handle.agentId];
+        if (
+          participants.length !== 2 ||
+          participants[0] !== expectedParticipants[0] ||
+          participants[1] !== expectedParticipants[1]
+        ) {
+          console.error(
+            `phaseDiscover: invite ${invite.invite_id} participant mismatch: ` +
+              `expected=[${expectedParticipants}] got=[${participants}]`,
+          );
+          foundSenderInviteWithContractMismatch = true;
+          continue;
+        }
+
+        // Validate: purpose compatibility (if caller supplied expected_purpose)
+        if (handle.expectedPurpose) {
+          const contractPurpose = detail.contract_json.purpose_code;
+          if (typeof contractPurpose === 'string' && contractPurpose !== handle.expectedPurpose) {
+            foundSenderInviteWithContractMismatch = true;
+            continue;
+          }
+        }
+
+        // Bind confirmed contract to handle
+        handle.inviteId = invite.invite_id;
+        handle.contractHash = detail.contract_hash;
+        handle.contract = detail.contract_json;
+        handle.proposalId = invite.afalPropose?.proposal_id;
+        handle.relayUrl = handle.relayUrl ?? transport.relayUrl;
       } else {
-        // Legacy: extract session tokens from invite payload.
+        // Legacy path: extract session tokens from invite payload.
         // (payload was validated by the filter above — this guard is defensive)
+        handle.inviteId = invite.invite_id;
+        handle.contractHash = invite.contract_hash;
+        handle.proposalId = invite.afalPropose?.proposal_id;
+
         const payload = invite.payload;
         if (!payload || typeof payload !== 'object' || !isRelayInvitePayload(payload)) continue;
         handle.sessionId = payload.session_id;

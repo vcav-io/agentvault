@@ -31,6 +31,8 @@ export interface RelayHandle {
   counterparty: string;
   purpose?: string;
   contractHash?: string;
+  /** Full confirmed contract object (structured confirmation). */
+  contract?: Record<string, unknown>;
   sessionId?: string;
   relayUrl?: string;
   tokens?: { submit: string; read: string; initiatorRead?: string };

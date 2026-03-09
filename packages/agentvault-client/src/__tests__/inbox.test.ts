@@ -51,6 +51,7 @@ const validInviteDetail = {
   status: 'PENDING',
   purpose_code: 'COMPATIBILITY',
   contract_hash: 'hash123',
+  contract_json: { purpose_code: 'COMPATIBILITY', participants: ['alice', 'bob'] },
   provider: 'anthropic',
   created_at: '2026-03-01T00:00:00Z',
   updated_at: '2026-03-01T00:00:00Z',

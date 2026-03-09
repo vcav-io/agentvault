@@ -28,6 +28,7 @@ const validSummary = {
 const validDetail = {
   ...validSummary,
   to_agent_id: 'bob',
+  contract_json: { purpose_code: 'COMPATIBILITY', participants: ['alice', 'bob'] },
   provider: 'anthropic',
   updated_at: '2026-03-01T00:00:00Z',
 };
@@ -184,6 +185,30 @@ describe('validateInviteDetail', () => {
 
   it('rejects null', () => {
     expect(() => validateInviteDetail(null)).toThrow(RelayValidationError);
+  });
+
+  it('rejects missing contract_json', () => {
+    const { contract_json, ...rest } = validDetail;
+    expect(() => validateInviteDetail(rest)).toThrow('contract_json');
+  });
+
+  it('rejects null contract_json', () => {
+    expect(() => validateInviteDetail({ ...validDetail, contract_json: null })).toThrow('contract_json');
+  });
+
+  it('rejects non-object contract_json', () => {
+    expect(() => validateInviteDetail({ ...validDetail, contract_json: 'string' })).toThrow('contract_json');
+  });
+
+  it('rejects array contract_json', () => {
+    expect(() => validateInviteDetail({ ...validDetail, contract_json: [1, 2] })).toThrow('contract_json');
+  });
+
+  it('accepts valid contract_json object', () => {
+    expect(() => validateInviteDetail({
+      ...validDetail,
+      contract_json: { purpose_code: 'MEDIATION', participants: ['a', 'b'] },
+    })).not.toThrow();
   });
 });
 
