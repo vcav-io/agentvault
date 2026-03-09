@@ -283,6 +283,10 @@ var VaultCardManager = (function () {
 
         // get_identity — show once per agent
         if (call.tool.indexOf('get_identity') >= 0) {
+          if (prev.identified) {
+            agentState[agent] = prev;
+            break;
+          }
           var idData = result.data || result;
           var card = addCard(label + ' identified');
           if (idData.agent_id) addLine(card, 'agent_id', idData.agent_id);
@@ -293,6 +297,7 @@ var VaultCardManager = (function () {
             }
           }
           addStatus(card, true, 'Ready');
+          agentState[agent] = Object.assign({}, prev, { identified: true });
           break;
         }
 
@@ -727,6 +732,10 @@ var VaultCardManager = (function () {
           var who = agentLabel(event.agent);
           var card = addCard(who + ' finished');
           addStatus(card, true, 'Agent done');
+        } else if (event.payload.status === 'failed') {
+          var who = agentLabel(event.agent);
+          var failCard = addCard(who + ' failed', 'vault-card--error vault-card--expanded');
+          addLine(failCard, 'detail', String(event.payload.detail || 'Session failed'));
         }
         break;
       }

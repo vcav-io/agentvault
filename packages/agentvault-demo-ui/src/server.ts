@@ -248,8 +248,8 @@ HEARTBEAT:
 
 const events = new EventBus();
 
-const aliceState: AgentState = { name: 'alice', status: 'idle', messages: [], turnCount: 0, started: false };
-const bobState: AgentState = { name: 'bob', status: 'idle', messages: [], turnCount: 0, started: false };
+const aliceState: AgentState = { name: 'alice', status: 'idle', messages: [], turnCount: 0, started: false, generation: 0 };
+const bobState: AgentState = { name: 'bob', status: 'idle', messages: [], turnCount: 0, started: false, generation: 0 };
 
 const aliceQueue = createQueue();
 const bobQueue = createQueue();
@@ -395,13 +395,13 @@ app.use(express.static(PUBLIC_DIR));
 
 // Config endpoint — available providers and models for UI selectors
 app.get('/api/config', (_req, res) => {
-  const providers: Array<{ name: string; models: Array<{ id: string; tier: string; profileId: string; default?: boolean }> }> = [];
+  const providers: Array<{ name: string; models: Array<{ id: string; tier: string; profileId?: string; default?: boolean }> }> = [];
   if (process.env['GEMINI_API_KEY']) {
     providers.push({
       name: 'gemini',
       models: [
-        { id: 'gemini-3-flash', tier: 'mid', profileId: 'api-gemini3flash-v1', default: true },
-        { id: 'gemini-3-flash-lite', tier: 'budget', profileId: 'api-gemini3flash-lite-v1' },
+        { id: 'gemini-2.5-flash', tier: 'mid', default: true },
+        { id: 'gemini-2.5-flash-lite', tier: 'budget' },
       ],
     });
   }
@@ -435,8 +435,10 @@ app.get('/api/events', (_req, res) => {
 
 // Status endpoint
 app.get('/api/status', (_req, res) => {
+  const aliceTerminal = aliceState.status === 'completed' || aliceState.status === 'failed';
+  const bobTerminal = bobState.status === 'completed' || bobState.status === 'failed';
   res.json({
-    started: aliceState.started || bobState.started,
+    started: (aliceState.started || bobState.started) && !(aliceTerminal && bobTerminal),
     alice: { status: aliceState.status, turnCount: aliceState.turnCount },
     bob: { status: bobState.status, turnCount: bobState.turnCount },
     sseClients: events.clientCount,
@@ -728,6 +730,8 @@ app.post('/api/stop', async (_req, res) => {
     bobState.status = 'idle';
     aliceState.started = false;
     bobState.started = false;
+    aliceState.generation++;
+    bobState.generation++;
     aliceQueue.reset();
     bobQueue.reset();
 
@@ -766,10 +770,12 @@ app.post('/api/reset', async (_req, res) => {
     aliceState.started = false;
     aliceState.turnCount = 0;
     aliceState.status = 'idle';
+    aliceState.generation++;
     bobState.messages = [];
     bobState.started = false;
     bobState.turnCount = 0;
     bobState.status = 'idle';
+    bobState.generation++;
 
     // Reset queues
     aliceQueue.reset();

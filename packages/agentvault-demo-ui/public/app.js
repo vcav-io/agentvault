@@ -63,6 +63,7 @@
   var eventSource = null;
   var totalEvents = 0;
   var reconnectNotice = null;
+  var terminalAgents = {};
 
   // ── Init vault card manager ────────────────────────────────
   VaultCardManager.init(els.vaultEvents);
@@ -285,6 +286,16 @@
     setChatInputsEnabled(false);
   }
 
+  function showFailed() {
+    clearReconnectNotice();
+    els.stopBtn.style.display = 'none';
+    els.newRunBtn.style.display = '';
+    els.resetBtn.style.display = '';
+    els.statusText.textContent = 'Failed';
+    els.statusChip.className = 'status-chip error';
+    setChatInputsEnabled(false);
+  }
+
   function clearReconnectNotice() {
     if (reconnectNotice && reconnectNotice.parentNode) {
       reconnectNotice.parentNode.removeChild(reconnectNotice);
@@ -302,9 +313,21 @@
   var completedAgents = {};
 
   function checkCompletion(event) {
-    if (event.type === 'agent_status' && event.payload.status === 'completed' && event.agent) {
-      completedAgents[event.agent] = true;
-      if (completedAgents.alice && completedAgents.bob) {
+    if (event.type === 'agent_status' && event.agent) {
+      if (event.payload.status === 'completed') {
+        completedAgents[event.agent] = true;
+        terminalAgents[event.agent] = 'completed';
+      } else if (event.payload.status === 'failed') {
+        terminalAgents[event.agent] = 'failed';
+      } else {
+        return;
+      }
+
+      if (terminalAgents.alice && terminalAgents.bob) {
+        if (terminalAgents.alice === 'failed' || terminalAgents.bob === 'failed') {
+          showFailed();
+          return;
+        }
         showCompleted();
       }
     }
@@ -408,6 +431,7 @@
     els.vaultEvents.textContent = '';
     totalEvents = 0;
     completedAgents = {};
+    terminalAgents = {};
     resultCardRendered = false;
     localMessageIds = {};
     nextLocalMsgId = 1;
@@ -435,13 +459,13 @@
         // Split mode: coordination model drives relay, agent model drives agent LLM
         startBody.agentProvider = els.providerSelect.value || undefined;
         startBody.agentModel = els.modelSelect.value || undefined;
-        if (coord) startBody.relayProfileId = coord.profileId;
+        if (coord && coord.profileId) startBody.relayProfileId = coord.profileId;
       } else {
         // Unified mode: coordination model drives both
         if (coord) {
           startBody.agentProvider = coord.provider;
           startBody.agentModel = coord.model;
-          startBody.relayProfileId = coord.profileId;
+          if (coord.profileId) startBody.relayProfileId = coord.profileId;
         }
       }
       var res = await fetch('/api/start', {
@@ -577,6 +601,16 @@
 
   // If server has a running session (e.g. browser refresh), switch to protocol view
   fetch('/api/status').then(function (res) { return res.json(); }).then(function (data) {
+    var aliceDone = data.alice && (data.alice.status === 'completed' || data.alice.status === 'failed');
+    var bobDone = data.bob && (data.bob.status === 'completed' || data.bob.status === 'failed');
+    if (aliceDone && bobDone) {
+      if (data.alice.status === 'failed' || data.bob.status === 'failed') {
+        showFailed();
+      } else {
+        showCompleted();
+      }
+      return;
+    }
     if (data.started) {
       showProtocol();
       VaultCardManager.setOutputSignalCallback(makeOutputCallback(activeScenario, false));
