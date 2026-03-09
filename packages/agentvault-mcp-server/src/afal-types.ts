@@ -39,6 +39,11 @@ export interface AfalPropose {
   signature?: string;
 }
 
+export interface RelayPreference {
+  relay_url: string;
+  policy: 'REQUIRED' | 'PREFERRED';
+}
+
 export interface AfalAdmit {
   admission_version: string;
   proposal_id: string;
@@ -47,6 +52,7 @@ export interface AfalAdmit {
   admission_tier: string;
   expires_at: string;
   selected_model_profile?: ModelProfileRef;
+  relay_preference?: RelayPreference;
   signature?: string;
 }
 

@@ -12,7 +12,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import type { AfalPropose, RelaySessionBinding } from './afal-types.js';
+import type { AfalPropose, RelayPreference, RelaySessionBinding } from './afal-types.js';
 import { computeProposalId } from './afal-types.js';
 import { signMessage, verifyMessage, DOMAIN_PREFIXES, contentHash } from './afal-signing.js';
 import type { ModelProfileRef } from './model-profiles.js';
@@ -33,6 +33,7 @@ export interface AdmissionPolicy {
   maxEntropyBits: number;
   /** In M4, LOW_TRUST behaves as DENY unless proposer is in trustedAgents. */
   defaultTier: 'DENY' | 'LOW_TRUST';
+  relayPreference?: RelayPreference;
 }
 
 export interface AdmittedProposal {
@@ -43,6 +44,7 @@ export interface AdmittedProposal {
   proposerPublicKeyHex: string;
   expiresAt: number;
   selectedModelProfile?: ModelProfileRef;
+  admittedRelayPreference?: RelayPreference;
 }
 
 // ── NonceCache ───────────────────────────────────────────────────────────────
@@ -210,6 +212,8 @@ export class AfalResponder {
     const expiresAt = now + ADMIT_TTL_MS;
     const expiresAtIso = new Date(expiresAt).toISOString();
 
+    const relayPreference = this.config.policy.relayPreference;
+
     const admitUnsigned: Record<string, unknown> = {
       admission_version: '1',
       proposal_id: proposalId,
@@ -218,6 +222,7 @@ export class AfalResponder {
       admission_tier: propose.admission_tier_requested,
       expires_at: expiresAtIso,
       ...(selectedModelProfile ? { selected_model_profile: selectedModelProfile } : {}),
+      ...(relayPreference ? { relay_preference: relayPreference } : {}),
     };
 
     const signedAdmit = signMessage(DOMAIN_PREFIXES.ADMIT, admitUnsigned, this.config.seedHex);
@@ -229,6 +234,7 @@ export class AfalResponder {
       proposerPublicKeyHex: trustedAgent.publicKeyHex,
       expiresAt,
       selectedModelProfile: selectedModelProfile ?? undefined,
+      admittedRelayPreference: relayPreference,
     };
 
     this.admitStore.set(admitTokenId, admitted);
@@ -271,6 +277,30 @@ export class AfalResponder {
 
     if (!verifyMessage(DOMAIN_PREFIXES.COMMIT, commit, admitted.proposerPublicKeyHex)) {
       return { ok: false, error: 'COMMIT signature verification failed' };
+    }
+
+    // Enforce relay preference from the ADMIT
+    const chosenRelayUrl = commit['chosen_relay_url'];
+    if (admitted.admittedRelayPreference) {
+      const { relay_url: preferredUrl, policy: prefPolicy } = admitted.admittedRelayPreference;
+      if (typeof chosenRelayUrl !== 'string' || !chosenRelayUrl) {
+        if (prefPolicy === 'REQUIRED') {
+          return { ok: false, error: 'COMMIT missing chosen_relay_url; responder relay preference is REQUIRED' };
+        }
+        console.warn(
+          `AfalResponder: COMMIT missing chosen_relay_url but relay preference is PREFERRED (preferred=${preferredUrl})`,
+        );
+      } else if (chosenRelayUrl !== preferredUrl) {
+        if (prefPolicy === 'REQUIRED') {
+          return {
+            ok: false,
+            error: `COMMIT chosen_relay_url "${chosenRelayUrl}" does not match required relay "${preferredUrl}"`,
+          };
+        }
+        console.warn(
+          `AfalResponder: COMMIT chosen_relay_url "${chosenRelayUrl}" differs from preferred relay "${preferredUrl}" (PREFERRED policy — allowing)`,
+        );
+      }
     }
 
     const relaySession = parseRelaySession(commit['relay_session']);
