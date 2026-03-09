@@ -48,6 +48,7 @@ export interface AfalHttpServerConfig {
   relayUrl?: string;
   supportedPurposes?: string[];
   advertiseAfalEndpoint?: boolean;
+  seedHex?: string;
 }
 
 export class AfalHttpServer {
@@ -117,6 +118,7 @@ export class AfalHttpServer {
       relayUrl: this.config.relayUrl,
       includeAfalEndpoint: this.config.advertiseAfalEndpoint,
       supportedContractOffers,
+      seedHex: this.config.seedHex,
     });
   }
 

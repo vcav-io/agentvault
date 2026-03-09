@@ -15,7 +15,8 @@ import { signMessage, verifyMessage, DOMAIN_PREFIXES, contentHash } from './afal
 import { AfalResponder } from './afal-responder.js';
 import type { AdmissionPolicy, AdmittedProposal } from './afal-responder.js';
 import { AfalHttpServer } from './afal-http-server.js';
-import { AGENTVAULT_A2A_EXTENSION_URI } from './a2a-agent-card.js';
+import { AGENTVAULT_A2A_EXTENSION_URI, verifyAgentCardSignature } from './a2a-agent-card.js';
+import type { AgentVaultA2AExtensionParams } from './a2a-agent-card.js';
 import type { ModelProfileRef } from './model-profiles.js';
 import {
   A2A_SEND_MESSAGE_PATH,
@@ -118,6 +119,7 @@ export interface DirectAfalTransportConfig {
   localDescriptor: AgentDescriptor;
   relayUrl?: string;
   peerDescriptorUrl?: string;
+  requireSignedCards?: boolean;
   respondMode?: {
     httpPort: number;
     bindAddress?: string;
@@ -180,6 +182,7 @@ export class DirectAfalTransport implements AfalTransport {
         relayUrl: config.relayUrl,
         supportedPurposes: config.respondMode.policy.allowedPurposeCodes,
         advertiseAfalEndpoint: config.respondMode.advertiseAfalEndpoint,
+        seedHex: config.seedHex,
       });
     } else {
       this.responder = null;
@@ -695,12 +698,70 @@ export class DirectAfalTransport implements AfalTransport {
     const publicKeyHex = params['public_key_hex'];
     const afalEndpoint =
       typeof params['afal_endpoint'] === 'string' ? params['afal_endpoint'] : undefined;
+    const cardSignature =
+      typeof params['card_signature'] === 'string' ? params['card_signature'] : undefined;
+
+    const strictMode = this.config.requireSignedCards === true;
+
+    // Verify card_signature if present; enforce in strict mode
+    if (cardSignature) {
+      // Reconstruct the extension params for verification (without card_signature itself)
+      const verifyParams: AgentVaultA2AExtensionParams = {
+        public_key_hex: publicKeyHex as string,
+        supported_purposes: Array.isArray(params['supported_purposes'])
+          ? params['supported_purposes'].filter((item): item is string => typeof item === 'string')
+          : [],
+      };
+      if (typeof params['relay_url'] === 'string') {
+        verifyParams.relay_url = params['relay_url'];
+      }
+      if (typeof params['a2a_send_message_url'] === 'string') {
+        verifyParams.a2a_send_message_url = params['a2a_send_message_url'];
+      }
+      if (typeof params['afal_endpoint'] === 'string') {
+        verifyParams.afal_endpoint = params['afal_endpoint'];
+      }
+
+      // Use the agent_id from the signed payload reconstruction (card.name)
+      const cardAgentId = typeof card.name === 'string' ? card.name : undefined;
+      if (!cardAgentId) {
+        throw new Error('Signed agent card has no agent identity (card.name missing)');
+      }
+
+      const valid = verifyAgentCardSignature(
+        cardAgentId,
+        verifyParams,
+        cardSignature,
+        publicKeyHex as string,
+      );
+      if (!valid) {
+        throw new Error('Agent card signature verification failed — card may have been tampered with');
+      }
+
+      // agent_id verification: the signed payload's agent_id must equal card.name
+      // (This is inherently true since we use card.name as the agent_id for verification,
+      // but if expectedPeerAgentId differs, that's caught below.)
+    } else if (strictMode) {
+      throw new Error(
+        'Agent card is unsigned but requireSignedCards is enabled — rejecting unsigned card',
+      );
+    } else {
+      console.warn(
+        'Peer agent card is unsigned — proceeding in lenient mode. ' +
+        'Set requireSignedCards=true to enforce card signatures.',
+      );
+    }
+
+    // In strict mode, a2a_send_message_url must be explicit in the signed payload —
+    // fallback derivation from card.url is forbidden.
     const a2aSendMessageUrl =
       typeof params['a2a_send_message_url'] === 'string'
         ? params['a2a_send_message_url']
-        : typeof card.url === 'string'
-          ? deriveA2ASendMessageUrl(card.url)
-          : null;
+        : strictMode
+          ? null
+          : typeof card.url === 'string'
+            ? deriveA2ASendMessageUrl(card.url)
+            : null;
     if (typeof publicKeyHex !== 'string' || (!afalEndpoint && !a2aSendMessageUrl)) {
       return null;
     }
@@ -721,8 +782,8 @@ export class DirectAfalTransport implements AfalTransport {
     }
 
     // Agent Card discovery synthesizes a short-lived unsigned descriptor.
-    // In this phase the trust anchor is the fetched A2A document itself, not
-    // an Ed25519 AFAL descriptor signature.
+    // When signed, the trust anchor is the Ed25519 card_signature. When unsigned,
+    // the trust anchor is the fetched A2A document itself.
     return {
       descriptor: {
         descriptor_version: '1',

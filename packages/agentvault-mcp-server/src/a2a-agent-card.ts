@@ -1,5 +1,6 @@
 import type { AgentDescriptor } from './direct-afal-transport.js';
 import type { SupportedContractOffer } from './contract-negotiation.js';
+import { sign, verify, DOMAIN_PREFIXES } from './afal-signing.js';
 
 export const AGENTVAULT_A2A_EXTENSION_URI = 'urn:agentvault:bounded-disclosure:v1';
 
@@ -11,6 +12,7 @@ export interface AgentVaultA2AExtensionParams {
   a2a_send_message_url?: string;
   supports_precontract_negotiation?: boolean;
   supported_contract_offers?: SupportedContractOffer[];
+  card_signature?: string;
 }
 
 export interface AgentCardExtension {
@@ -40,6 +42,90 @@ export interface AgentCard {
   skills: AgentCardSkill[];
 }
 
+/**
+ * Canonical signed object for agent card verification.
+ *
+ * Includes all trust-relevant fields that the resolver uses for trust decisions.
+ * Fields are sorted alphabetically for deterministic canonicalization.
+ */
+export interface AgentCardSignedPayload {
+  a2a_send_message_url?: string;
+  afal_endpoint?: string;
+  agent_id: string;
+  extension_uri: string;
+  extension_version: string;
+  public_key_hex: string;
+  relay_url?: string;
+  supported_purposes: string[];
+}
+
+/**
+ * Build the canonical signed object from a card and its extension params.
+ *
+ * Only includes optional fields when they are present — the verifier must
+ * reconstruct the same object from the card it receives.
+ */
+export function buildCardSignedPayload(
+  agentId: string,
+  extensionParams: AgentVaultA2AExtensionParams,
+): AgentCardSignedPayload {
+  const payload: AgentCardSignedPayload = {
+    agent_id: agentId,
+    extension_uri: AGENTVAULT_A2A_EXTENSION_URI,
+    extension_version: '1',
+    public_key_hex: extensionParams.public_key_hex,
+    supported_purposes: extensionParams.supported_purposes,
+  };
+
+  if (extensionParams.relay_url !== undefined) {
+    payload.relay_url = extensionParams.relay_url;
+  }
+  if (extensionParams.a2a_send_message_url !== undefined) {
+    payload.a2a_send_message_url = extensionParams.a2a_send_message_url;
+  }
+  if (extensionParams.afal_endpoint !== undefined) {
+    payload.afal_endpoint = extensionParams.afal_endpoint;
+  }
+
+  return payload;
+}
+
+/**
+ * Sign the canonical agent card payload, returning the hex signature.
+ */
+export function signAgentCard(
+  agentId: string,
+  extensionParams: AgentVaultA2AExtensionParams,
+  seedHex: string,
+): string {
+  const payload = buildCardSignedPayload(agentId, extensionParams);
+  return sign(
+    DOMAIN_PREFIXES.AGENT_CARD,
+    payload as unknown as Record<string, unknown>,
+    seedHex,
+  );
+}
+
+/**
+ * Verify an agent card signature.
+ *
+ * Returns true if the signature is valid for the given canonical payload.
+ */
+export function verifyAgentCardSignature(
+  agentId: string,
+  extensionParams: AgentVaultA2AExtensionParams,
+  signatureHex: string,
+  publicKeyHex: string,
+): boolean {
+  const payload = buildCardSignedPayload(agentId, extensionParams);
+  return verify(
+    DOMAIN_PREFIXES.AGENT_CARD,
+    payload as unknown as Record<string, unknown>,
+    signatureHex,
+    publicKeyHex,
+  );
+}
+
 export function buildAgentCard(params: {
   baseUrl: string;
   descriptor: AgentDescriptor;
@@ -47,6 +133,7 @@ export function buildAgentCard(params: {
   relayUrl?: string;
   includeAfalEndpoint?: boolean;
   supportedContractOffers?: SupportedContractOffer[];
+  seedHex?: string;
 }): AgentCard {
   const extensionParams: AgentVaultA2AExtensionParams = {
     public_key_hex: params.descriptor.identity_key.public_key_hex,
@@ -61,6 +148,14 @@ export function buildAgentCard(params: {
         }
       : {}),
   };
+
+  if (params.seedHex) {
+    extensionParams.card_signature = signAgentCard(
+      params.descriptor.agent_id,
+      extensionParams,
+      params.seedHex,
+    );
+  }
 
   return {
     name: params.descriptor.agent_id,
