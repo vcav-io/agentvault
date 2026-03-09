@@ -914,6 +914,88 @@ describe('DirectAfalTransport', () => {
       expect(parts[0]?.['media_type']).toBe(AGENTVAULT_CONTRACT_OFFER_PROPOSAL_MEDIA_TYPE);
     });
 
+    it('falls back to signed descriptor capabilities and POST /afal/negotiate for direct peers', async () => {
+      const freshPeerDescriptor = makePeerDescriptor({
+        endpoints: {
+          propose: 'http://peer.example.com/afal/propose',
+          commit: 'http://peer.example.com/afal/commit',
+          negotiate: 'http://peer.example.com/afal/negotiate',
+        },
+        capabilities: {
+          supported_contract_offers: [
+            {
+              contract_offer_id: 'agentvault.mediation.v1.standard',
+              supported_model_profiles: [
+                {
+                  id: 'api-claude-sonnet-v1',
+                  version: '1',
+                  hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
+                },
+              ],
+            },
+          ],
+        },
+      });
+      const fresh = new DirectAfalTransport({
+        agentId: 'alice-test',
+        seedHex: TEST_SEED,
+        localDescriptor,
+        peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-descriptor.json',
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        json: () => Promise.resolve({}),
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(freshPeerDescriptor),
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            negotiation_id: 'neg-123',
+            state: 'AGREED',
+            selected_contract_offer_id: 'agentvault.mediation.v1.standard',
+            selected_model_profile: {
+              id: 'api-claude-sonnet-v1',
+              version: '1',
+              hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
+            },
+          }),
+      });
+
+      const discovery = await fresh.discoverPeerAgentCard('bob-test');
+      expect(discovery?.supportsPrecontractNegotiation).toBe(true);
+
+      const selection = await fresh.negotiateContractOffer({
+        negotiation_id: 'neg-123',
+        acceptable_offers: [
+          {
+            contract_offer_id: 'agentvault.mediation.v1.standard',
+            acceptable_model_profiles: [
+              {
+                id: 'api-claude-sonnet-v1',
+                version: '1',
+                hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
+              },
+            ],
+          },
+        ],
+        expected_counterparty: 'bob-test',
+      });
+
+      expect(selection?.state).toBe('AGREED');
+      const [url, init] = mockFetch.mock.calls[2] as [string, RequestInit];
+      expect(url).toBe('http://peer.example.com/afal/negotiate');
+      expect(init.method).toBe('POST');
+      expect(JSON.parse(init.body as string)).toMatchObject({
+        negotiation_id: 'neg-123',
+      });
+    });
+
     it('rejects mismatched negotiation_id echoes from A2A negotiation responses', async () => {
       const fresh = new DirectAfalTransport({
         agentId: 'alice-test',

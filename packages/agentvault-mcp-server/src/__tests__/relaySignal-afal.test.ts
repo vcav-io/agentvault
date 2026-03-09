@@ -366,6 +366,85 @@ describe('INITIATE with AFAL', () => {
     );
   });
 
+  it('negotiates over direct AFAL when the peer advertises negotiation via signed descriptor', async () => {
+    const mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+
+    const transport = new DirectAfalTransport({
+      agentId: 'alice-demo',
+      seedHex: TEST_SEED,
+      localDescriptor: makeLocalDescriptor(),
+      peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-descriptor.json',
+    });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      json: () => Promise.resolve({}),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve(
+          makeDescriptor('bob-demo', PEER_PUBKEY, PEER_SEED, {
+            endpoints: {
+              propose: 'http://peer.example.com/afal/propose',
+              commit: 'http://peer.example.com/afal/commit',
+              negotiate: 'http://peer.example.com/afal/negotiate',
+            },
+            capabilities: {
+              supported_contract_offers: [
+                {
+                  contract_offer_id: 'agentvault.mediation.v1.standard',
+                  supported_model_profiles: [
+                    {
+                      id: 'api-claude-sonnet-v1',
+                      version: '1',
+                      hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
+                    },
+                  ],
+                },
+              ],
+            },
+          }),
+        ),
+    });
+    mockFetch.mockImplementationOnce(async (_url, init) => {
+      const proposal = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return {
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            negotiation_id: proposal['negotiation_id'],
+            state: 'AGREED',
+            selected_contract_offer_id: 'agentvault.mediation.v1.standard',
+            selected_model_profile: {
+              id: 'api-claude-sonnet-v1',
+              version: '1',
+              hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
+            },
+          }),
+      };
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(makeSignedAdmit('d'.repeat(64))),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      text: () => Promise.resolve('ok'),
+    });
+
+    await handleRelaySignal(
+      { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'hello' },
+      transport,
+    );
+
+    const calledUrls = mockFetch.mock.calls.map((call) => call[0]);
+    expect(calledUrls).toContain('http://peer.example.com/afal/negotiate');
+    expect(vi.mocked(createAndSubmit)).toHaveBeenCalledOnce();
+  });
+
   it('fails cleanly when pre-contract negotiation returns NO_COMMON_CONTRACT', async () => {
     const mockFetch = vi.fn();
     vi.stubGlobal('fetch', mockFetch);
