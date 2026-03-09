@@ -13,6 +13,7 @@ dist/
 .agentvault/
 
 .playwright-mcp/
+.playwright-cli/
 
 # Demo run recordings (contain session data)
 packages/agentvault-demo-ui/runs/

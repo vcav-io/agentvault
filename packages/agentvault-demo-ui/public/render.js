@@ -75,7 +75,7 @@ function createResultCard(output, receipt) {
 
   var label = document.createElement('div');
   label.className = 'chat-result-card__label';
-  label.textContent = 'Vault Result';
+  label.textContent = 'Bounded Output';
   card.appendChild(label);
 
   // Render output fields as readable lines
@@ -164,6 +164,12 @@ var VaultCardManager = (function () {
   // Callback for result cards in chat panels
   var onOutputSignal = null;
 
+  function scrollVaultIntoView() {
+    if (!container) return;
+    var scrollHost = container.closest ? container.closest('.sim-panel__vault-scroll') : null;
+    scrollToBottom(scrollHost || container.parentElement);
+  }
+
   function init(el) {
     container = el;
     stepCount = 0;
@@ -222,7 +228,7 @@ var VaultCardManager = (function () {
     var card = buildCard(title, extraClass || '');
     if (container) {
       container.appendChild(card);
-      scrollToBottom(container.parentElement);
+      scrollVaultIntoView();
     }
     return card;
   }
@@ -288,7 +294,7 @@ var VaultCardManager = (function () {
             break;
           }
           var idData = result.data || result;
-          var card = addCard(label + ' identified');
+          var card = addCard(label + ' ready');
           if (idData.agent_id) addLine(card, 'agent_id', idData.agent_id);
           if (idData.known_agents) {
             var peers = idData.known_agents;
@@ -686,7 +692,7 @@ var VaultCardManager = (function () {
 
           // INITIATE mode first call — session starting
           if (call.args.mode === 'INITIATE' && !prev.initiated) {
-            var card = addCard(label + ' starting session');
+            var card = addCard(label + ' opened session');
             addStatus(card, true, 'Initiating');
             agentState[agent] = Object.assign({}, prev, { initiated: true });
             break;
@@ -694,7 +700,7 @@ var VaultCardManager = (function () {
 
           // RESPOND mode first call — responding to invite
           if (call.args.mode === 'RESPOND' && !prev.responding) {
-            var card = addCard(label + ' responding to invite');
+            var card = addCard(label + ' joined invite flow');
             addStatus(card, true, 'Listening');
             agentState[agent] = Object.assign({}, prev, { responding: true });
             break;
@@ -702,7 +708,7 @@ var VaultCardManager = (function () {
 
           // Session created (POLL_RELAY phase, first time)
           if (phase === 'POLL_RELAY' && !prev.sessionCreated) {
-            var card = addCard('Session created');
+            var card = addCard('Relay session opened');
             if (data.session_id) addLine(card, 'session', truncate(data.session_id, 16));
             addStatus(card, true, 'Waiting for counterparty');
             agentState[agent] = Object.assign({}, prev, { sessionCreated: true });
@@ -847,7 +853,7 @@ var VaultCardManager = (function () {
     card.appendChild(header);
     addStatus(card, false, detail);
     container.appendChild(card);
-    card.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    scrollVaultIntoView();
   }
 
   return {

@@ -362,6 +362,18 @@ body {
   font-weight: 600;
 }
 
+.sim-panel__vault-header-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sim-panel__vault-caption {
+  font-size: 10px;
+  color: var(--color-text-dim);
+  letter-spacing: 0.02em;
+}
+
 /* ── Chat messages area ─────────────────────────────────────── */
 .sim-panel__messages {
   flex: 1;
@@ -1012,6 +1024,7 @@ body {
 }
 
 .setup.hidden { display: none; }
+.hidden { display: none !important; }
 
 .setup-header {
   display: flex;
@@ -1024,6 +1037,45 @@ body {
   font-size: 15px;
   font-weight: 600;
   color: var(--color-text);
+}
+
+.setup-note {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+  max-width: none;
+}
+
+.setup-meta {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(280px, 0.9fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.setup-note-panel,
+.setup-options {
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: rgba(19, 19, 32, 0.52);
+  padding: 14px 16px;
+}
+
+.setup-note-panel__label,
+.setup-options__label {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+  margin-bottom: 8px;
+}
+
+.setup-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .setup-selectors {
@@ -1041,12 +1093,12 @@ body {
 .canary-toggle {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 6px;
   font-size: 12px;
   color: var(--color-text-secondary);
   cursor: pointer;
-  padding: 4px 0 0;
+  padding: 0;
 }
 
 .canary-toggle input[type="checkbox"] {
@@ -1157,6 +1209,12 @@ body {
 }
 
 .protocol-view.hidden { display: none; }
+
+@media (max-width: 900px) {
+  .setup-meta {
+    grid-template-columns: 1fr;
+  }
+}
 
 /* ── Empty state ────────────────────────────────────────────── */
 .empty-state {

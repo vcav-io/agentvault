@@ -68,9 +68,13 @@
           </div>
         </div>
       </div>
+      <p class="setup-note">
+        Use ordinary participant messages. The centre column shows protocol milestones,
+        bounded output, and receipts. The lower panel shows raw runtime events.
+      </p>
       <label class="canary-toggle" id="canary-toggle-wrap">
         <input type="checkbox" id="canary-check-toggle">
-        <span>Run canary checks after session</span>
+        <span>Check bounded output for canary leaks</span>
       </label>
       <div class="prompt-editors">
         <div class="prompt-editor alice">
@@ -119,7 +123,10 @@
         <!-- Centre panel: The Vault -->
         <div class="sim-panel sim-panel--vault" id="panel-centre">
           <div class="sim-panel__header">
-            <span class="sim-panel__vault-label">Session</span>
+            <div class="sim-panel__vault-header-text">
+              <span class="sim-panel__vault-label">Protocol Milestones</span>
+              <span class="sim-panel__vault-caption">Bounded output, receipts, and terminal state</span>
+            </div>
           </div>
           <div class="sim-panel__vault-scroll" id="vault-scroll">
             <div class="sim-panel__vault-events" id="vault-events"></div>
@@ -153,7 +160,7 @@
         <div class="log-bar" id="log-bar">
           <div class="log-title">
             <span class="log-icon">&#9642;</span>
-            <h3>Protocol Events</h3>
+            <h3>Raw Runtime Events</h3>
           </div>
           <div style="display:flex;align-items:center;gap:10px">
             <span class="log-count" id="event-count">0 events</span>
