@@ -28,6 +28,8 @@ import {
   AGENTVAULT_DENY_MEDIA_TYPE,
   AGENTVAULT_PROPOSE_MEDIA_TYPE,
   AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
+  AGENTVAULT_TOPIC_ALIGNMENT_PROPOSAL_MEDIA_TYPE,
+  AGENTVAULT_TOPIC_ALIGNMENT_SELECTION_MEDIA_TYPE,
   buildA2ATaskResponse,
   parseA2ASendMessagePart,
 } from './a2a-messages.js';
@@ -42,6 +44,11 @@ import {
   validateBespokeContractSelection,
 } from './bespoke-contracts.js';
 import { listKnownModelProfiles } from './model-profiles.js';
+import { listSupportedTopicCodes } from './topic-codes.js';
+import {
+  parseTopicAlignmentProposal,
+  selectAlignedTopic,
+} from './topic-alignment.js';
 
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_CONCURRENT = 16;
@@ -152,6 +159,7 @@ export class AfalHttpServer {
       supportedPurposes: this.config.supportedPurposes ?? [],
       relayUrl: this.config.relayUrl,
       includeAfalEndpoint: this.config.advertiseAfalEndpoint,
+      supportedTopicCodes: listSupportedTopicCodes(),
       supportedContractOffers,
       seedHex: this.config.seedHex,
       supportsBespokeContractNegotiation: supportsBespokePrecontractNegotiation(),
@@ -222,27 +230,44 @@ export class AfalHttpServer {
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(result.response));
           } else if (url === '/afal/negotiate') {
-            const proposal = parseContractOfferProposal(body);
-            if (!proposal) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ error: 'Invalid contract-offer proposal body' }));
-            } else {
-              const supportedContractOffers =
-                parseSupportedContractOffers(
-                  this._localDescriptor.capabilities['supported_contract_offers'],
-                ) ?? [];
-              const selection = await selectNegotiatedContractOffer(
-                proposal,
-                {
-                  supportedOffers: supportedContractOffers,
-                  localAgentId: this._localDescriptor.agent_id,
-                  supportsBespoke: supportsBespokePrecontractNegotiation(),
-                  supportedModelProfiles: listKnownModelProfiles(),
-                  validateBespokeContract: validateBespokeContractSelection,
-                },
+            // Topic alignment and contract negotiation intentionally share the
+            // same bounded negotiation endpoint. The payload shapes are
+            // disjoint: topic alignment requires `alignment_id` +
+            // `acceptable_topic_codes`, while contract negotiation requires
+            // `negotiation_id` + `acceptable_offers`. That invariant lets us
+            // route by parsing without ambiguity.
+            const topicProposal = parseTopicAlignmentProposal(body);
+            if (topicProposal) {
+              const selection = selectAlignedTopic(
+                topicProposal,
+                listSupportedTopicCodes(),
+                this._localDescriptor.agent_id,
               );
               res.writeHead(200, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify(selection));
+            } else {
+              const proposal = parseContractOfferProposal(body);
+              if (!proposal) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Invalid negotiation proposal body' }));
+              } else {
+                const supportedContractOffers =
+                  parseSupportedContractOffers(
+                    this._localDescriptor.capabilities['supported_contract_offers'],
+                  ) ?? [];
+                const selection = await selectNegotiatedContractOffer(
+                  proposal,
+                  {
+                    supportedOffers: supportedContractOffers,
+                    localAgentId: this._localDescriptor.agent_id,
+                    supportsBespoke: supportsBespokePrecontractNegotiation(),
+                    supportedModelProfiles: listKnownModelProfiles(),
+                    validateBespokeContract: validateBespokeContractSelection,
+                  },
+                );
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify(selection));
+              }
             }
           } else if (url === A2A_SEND_MESSAGE_PATH) {
             this.gcInFlightTasks();
@@ -250,6 +275,7 @@ export class AfalHttpServer {
               AGENTVAULT_PROPOSE_MEDIA_TYPE,
               AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
               AGENTVAULT_CONTRACT_OFFER_PROPOSAL_MEDIA_TYPE,
+              AGENTVAULT_TOPIC_ALIGNMENT_PROPOSAL_MEDIA_TYPE,
             ]);
             if (!parsed) {
               res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -290,6 +316,27 @@ export class AfalHttpServer {
                   }),
                 ),
               );
+            } else if (parsed.mediaType === AGENTVAULT_TOPIC_ALIGNMENT_PROPOSAL_MEDIA_TYPE) {
+              const proposal = parseTopicAlignmentProposal(parsed.data);
+              if (!proposal) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Invalid topic-alignment proposal body' }));
+              } else {
+                const selection = selectAlignedTopic(
+                  proposal,
+                  listSupportedTopicCodes(),
+                  this._localDescriptor.agent_id,
+                );
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(
+                  JSON.stringify(
+                    buildA2ATaskResponse({
+                      mediaType: AGENTVAULT_TOPIC_ALIGNMENT_SELECTION_MEDIA_TYPE,
+                      data: selection,
+                    }),
+                  ),
+                );
+              }
             } else if (parsed.mediaType === AGENTVAULT_CONTRACT_OFFER_PROPOSAL_MEDIA_TYPE) {
               const proposal = parseContractOfferProposal(parsed.data);
               if (!proposal) {

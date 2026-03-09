@@ -10,6 +10,8 @@ export interface AgentVaultA2AExtensionParams {
   supported_purposes: string[];
   afal_endpoint?: string;
   a2a_send_message_url?: string;
+  supports_topic_alignment?: boolean;
+  supported_topic_codes?: string[];
   supports_precontract_negotiation?: boolean;
   supports_bespoke_contract_negotiation?: boolean;
   supported_contract_offers?: SupportedContractOffer[];
@@ -59,8 +61,10 @@ export interface AgentCardSignedPayload {
   relay_url?: string;
   supported_contract_offers?: SupportedContractOffer[];
   supported_purposes: string[];
+  supported_topic_codes?: string[];
   supports_bespoke_contract_negotiation?: boolean;
   supports_precontract_negotiation?: boolean;
+  supports_topic_alignment?: boolean;
 }
 
 /**
@@ -90,14 +94,21 @@ export function buildCardSignedPayload(
   if (extensionParams.afal_endpoint !== undefined) {
     payload.afal_endpoint = extensionParams.afal_endpoint;
   }
+  if (extensionParams.supports_topic_alignment !== undefined) {
+    payload.supports_topic_alignment = extensionParams.supports_topic_alignment;
+  }
+  if (extensionParams.supported_topic_codes !== undefined) {
+    payload.supported_topic_codes = extensionParams.supported_topic_codes;
+  }
   if (extensionParams.supports_precontract_negotiation !== undefined) {
     payload.supports_precontract_negotiation = extensionParams.supports_precontract_negotiation;
   }
-  if (extensionParams.supports_bespoke_contract_negotiation !== undefined) {
-    payload.supports_bespoke_contract_negotiation = extensionParams.supports_bespoke_contract_negotiation;
-  }
   if (extensionParams.supported_contract_offers !== undefined) {
     payload.supported_contract_offers = extensionParams.supported_contract_offers;
+  }
+  if (extensionParams.supports_bespoke_contract_negotiation !== undefined) {
+    payload.supports_bespoke_contract_negotiation =
+      extensionParams.supports_bespoke_contract_negotiation;
   }
 
   return payload;
@@ -145,6 +156,7 @@ export function buildAgentCard(params: {
   supportedPurposes: string[];
   relayUrl?: string;
   includeAfalEndpoint?: boolean;
+  supportedTopicCodes?: string[];
   supportedContractOffers?: SupportedContractOffer[];
   seedHex?: string;
   supportsBespokeContractNegotiation?: boolean;
@@ -155,6 +167,12 @@ export function buildAgentCard(params: {
     ...(params.relayUrl ? { relay_url: params.relayUrl } : {}),
     a2a_send_message_url: `${params.baseUrl}/a2a/send-message`,
     ...(params.includeAfalEndpoint === false ? {} : { afal_endpoint: `${params.baseUrl}/afal` }),
+    ...(params.supportedTopicCodes?.length
+      ? {
+          supports_topic_alignment: true,
+          supported_topic_codes: params.supportedTopicCodes,
+        }
+      : {}),
     ...(params.supportedContractOffers?.length
       ? {
           supports_precontract_negotiation: true,

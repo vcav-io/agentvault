@@ -45,6 +45,7 @@ export interface RelayHandle {
   myInput?: string;
   expectedPurpose?: string;
   expectedContractHash?: string;
+  alignedTopicCode?: string;
   negotiatedContract?: {
     kind: 'offer' | 'bespoke';
     contractOfferId?: string;
