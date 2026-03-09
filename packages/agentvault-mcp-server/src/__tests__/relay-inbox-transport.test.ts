@@ -186,6 +186,10 @@ describe('RelayInboxTransport', () => {
           status: 'ACCEPTED',
           purpose_code: 'COMPATIBILITY',
           contract_hash: 'hash123',
+          contract_json: {
+            purpose_code: 'COMPATIBILITY',
+            participants: ['alice', 'bob'],
+          },
           provider: 'anthropic',
           created_at: '2025-01-15T10:00:00Z',
           updated_at: '2025-01-15T10:00:00Z',
