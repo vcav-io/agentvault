@@ -302,6 +302,7 @@ export class DirectAfalTransport implements AfalTransport {
     // Wrapped direct AFAL requests can negotiate before a relay session exists.
     const wrappedBody = params.relay ? { propose: signed, relay: params.relay } : { propose: signed };
 
+    const proposeTaskId = `task-propose-${params.propose.proposal_id}`;
     let response: Response;
     if (transportTarget.useA2ANative) {
       if (params.relay) {
@@ -317,6 +318,7 @@ export class DirectAfalTransport implements AfalTransport {
             mediaType: AGENTVAULT_PROPOSE_MEDIA_TYPE,
             data: signed,
             acceptedOutputModes: [AGENTVAULT_ADMIT_MEDIA_TYPE, AGENTVAULT_DENY_MEDIA_TYPE],
+            taskId: proposeTaskId,
           }),
         ),
       });
@@ -343,6 +345,28 @@ export class DirectAfalTransport implements AfalTransport {
         ]);
         if (!parsed || !parsed.data || typeof parsed.data !== 'object') {
           throw new Error('A2A SendMessage response did not contain an AgentVault admit/deny part');
+        }
+        if (parsed.taskId !== undefined && parsed.taskId !== proposeTaskId) {
+          throw new Error(
+            `A2A task ID mismatch in propose response: expected=${proposeTaskId} got=${parsed.taskId}`,
+          );
+        }
+        // Validate task state when present
+        if (parsed.taskState !== undefined) {
+          if (parsed.mediaType === AGENTVAULT_ADMIT_MEDIA_TYPE) {
+            // ADMIT → expect 'working' (stateful) or 'completed' (old server / no task_id)
+            if (parsed.taskState !== 'working' && parsed.taskState !== 'completed') {
+              throw new Error(
+                `Unexpected task state for ADMIT response: expected working or completed, got ${parsed.taskState}`,
+              );
+            }
+          } else if (parsed.mediaType === AGENTVAULT_DENY_MEDIA_TYPE) {
+            if (parsed.taskState !== 'failed' && parsed.taskState !== 'completed') {
+              throw new Error(
+                `Unexpected task state for DENY response: expected failed or completed, got ${parsed.taskState}`,
+              );
+            }
+          }
         }
         admitOrDeny = parsed.data as Record<string, unknown>;
       } else {
@@ -503,6 +527,7 @@ export class DirectAfalTransport implements AfalTransport {
     const transportTarget = this.resolvePeerTransportTarget(peer);
 
     let response: Response;
+    const commitTaskId = `task-propose-${inviteId}`;
     if (transportTarget.useA2ANative) {
       response = await fetch(transportTarget.commitUrl, {
         method: 'POST',
@@ -512,6 +537,7 @@ export class DirectAfalTransport implements AfalTransport {
             mediaType: AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
             data: signedCommit,
             acceptedOutputModes: [AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE],
+            taskId: commitTaskId,
           }),
         ),
       });
@@ -538,6 +564,12 @@ export class DirectAfalTransport implements AfalTransport {
         (parsed.data as Record<string, unknown>)['ok'] !== true
       ) {
         throw new Error('A2A SendMessage session-token response did not acknowledge success');
+      }
+      // Validate task state: session-tokens completes the lifecycle
+      if (parsed.taskState !== undefined && parsed.taskState !== 'completed') {
+        throw new Error(
+          `Unexpected task state for session-tokens response: expected completed, got ${parsed.taskState}`,
+        );
       }
     }
 
@@ -904,6 +936,7 @@ export class DirectAfalTransport implements AfalTransport {
     const target = this.resolvePeerNegotiationTarget(peer);
     if (!target) return null;
 
+    const negotiateTaskId = `task-negotiate-${proposal.negotiation_id}`;
     const response = await fetch(
       target.negotiateUrl,
       target.useA2ANative
@@ -915,6 +948,7 @@ export class DirectAfalTransport implements AfalTransport {
                 mediaType: AGENTVAULT_CONTRACT_OFFER_PROPOSAL_MEDIA_TYPE,
                 data: proposal,
                 acceptedOutputModes: [AGENTVAULT_CONTRACT_OFFER_SELECTION_MEDIA_TYPE],
+                taskId: negotiateTaskId,
               }),
             ),
           }
@@ -935,6 +969,11 @@ export class DirectAfalTransport implements AfalTransport {
       const parsed = parseA2ATaskPart(payload, [AGENTVAULT_CONTRACT_OFFER_SELECTION_MEDIA_TYPE]);
       if (!parsed) {
         throw new Error('A2A negotiation response did not contain a contract-offer selection part');
+      }
+      if (parsed.taskId !== undefined && parsed.taskId !== negotiateTaskId) {
+        throw new Error(
+          `A2A task ID mismatch in negotiation response: expected=${negotiateTaskId} got=${parsed.taskId}`,
+        );
       }
       selection = parseContractOfferSelection(parsed.data);
     } else {

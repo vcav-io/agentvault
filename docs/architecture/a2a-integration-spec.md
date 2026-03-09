@@ -1,7 +1,8 @@
 # A2A Integration Spec: AgentVault as an A2A Extension
 
-> Status: Implemented bootstrap design
+> Status: Implemented (bootstrap + maturity cluster)
 > Related: agentvault #214, VFC #15 (AFAL discovery)
+> Extension spec: [a2a-extension-spec.md](./a2a-extension-spec.md) — canonical reference for `urn:agentvault:bounded-disclosure:v1`
 
 ## Context
 
@@ -154,6 +155,8 @@ AgentVault-specific message parts.
 | `application/vnd.agentvault.admit+json` | Responder → Initiator | AfalAdmit equivalent |
 | `application/vnd.agentvault.deny+json` | Responder → Initiator | AfalDeny equivalent |
 | `application/vnd.agentvault.session-tokens+json` | Initiator → Responder | Relay session credentials |
+| `application/vnd.agentvault.contract-offer-proposal+json` | Initiator → Responder | Pre-contract negotiation proposal |
+| `application/vnd.agentvault.contract-offer-selection+json` | Responder → Initiator | Contract offer selection response |
 
 ### Proposal via A2A SendMessage
 
@@ -236,4 +239,9 @@ pre-session governance messages.
 | Phase | What | AFAL Status | A2A Status |
 |-------|------|-------------|------------|
 | Current | Discovery + dual-stack bootstrap + A2A-native bootstrap | Supported | Supported |
-| Follow-up | Fuller task lifecycle, signed cards, relay arbitration | Supported | Tracked in #308-#311 |
+| Current | Signed agent cards (#308), relay arbitration (#310), task ID plumbing (#311a), stateful task lifecycle (#311b) | Supported | Implemented |
+
+For full details on extension parameters, media types, task lifecycle states,
+relay arbitration semantics, signed card verification, and backward
+compatibility guarantees, see the
+[A2A Extension Spec](./a2a-extension-spec.md).

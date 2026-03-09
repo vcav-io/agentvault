@@ -748,6 +748,7 @@ describe('DirectAfalTransport', () => {
             buildA2ATaskResponse({
               mediaType: AGENTVAULT_ADMIT_MEDIA_TYPE,
               data: admit,
+              taskId: `task-propose-${propose.proposal_id}`,
             }),
           ),
       });
@@ -936,6 +937,7 @@ describe('DirectAfalTransport', () => {
                   hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
                 },
               },
+              taskId: 'task-negotiate-neg-123',
             }),
           ),
       });
@@ -1153,6 +1155,7 @@ describe('DirectAfalTransport', () => {
                   hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
                 },
               },
+              taskId: 'task-negotiate-neg-123',
             }),
           ),
       });
@@ -1217,6 +1220,7 @@ describe('DirectAfalTransport', () => {
             buildA2ATaskResponse({
               mediaType: AGENTVAULT_ADMIT_MEDIA_TYPE,
               data: admit,
+              taskId: `task-propose-${propose.proposal_id}`,
             }),
           ),
       });
