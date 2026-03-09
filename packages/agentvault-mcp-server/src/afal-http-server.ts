@@ -5,6 +5,7 @@
  *   GET  /afal/descriptor → agent descriptor
  *   POST /afal/propose    → AfalResponder.handlePropose
  *   POST /afal/commit     → AfalResponder.handleCommit
+ *   POST /afal/negotiate  → bounded contract-offer selection
  *   POST /a2a/send-message → minimal A2A wrapper for propose/session tokens
  *
  * Guards:
@@ -155,7 +156,10 @@ export class AfalHttpServer {
 
     if (
       method === 'POST' &&
-      (url === '/afal/propose' || url === '/afal/commit' || url === A2A_SEND_MESSAGE_PATH)
+      (url === '/afal/propose' ||
+        url === '/afal/commit' ||
+        url === '/afal/negotiate' ||
+        url === A2A_SEND_MESSAGE_PATH)
     ) {
       const contentType = req.headers['content-type'] ?? '';
       if (!contentType.startsWith('application/json')) {
@@ -179,6 +183,24 @@ export class AfalHttpServer {
             const result = this.config.responder.handlePropose(body);
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(result.response));
+          } else if (url === '/afal/negotiate') {
+            const proposal = parseContractOfferProposal(body);
+            if (!proposal) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Invalid contract-offer proposal body' }));
+            } else {
+              const supportedContractOffers =
+                parseSupportedContractOffers(
+                  this._localDescriptor.capabilities['supported_contract_offers'],
+                ) ?? [];
+              const selection = selectNegotiatedContractOffer(
+                proposal,
+                supportedContractOffers,
+                this._localDescriptor.agent_id,
+              );
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify(selection));
+            }
           } else if (url === A2A_SEND_MESSAGE_PATH) {
             const parsed = parseA2ASendMessagePart(body, [
               AGENTVAULT_PROPOSE_MEDIA_TYPE,

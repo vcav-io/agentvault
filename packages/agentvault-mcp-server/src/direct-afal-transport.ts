@@ -49,6 +49,7 @@ export interface AgentDescriptor {
   endpoints: {
     propose: string;
     commit: string;
+    negotiate?: string;
     message?: string;
     receipts?: string;
   };
@@ -104,6 +105,11 @@ interface PeerTransportTarget {
   useA2ANative: boolean;
 }
 
+interface PeerNegotiationTarget {
+  negotiateUrl: string;
+  useA2ANative: boolean;
+}
+
 // ── DirectAfalTransport ────────────────────────────────────────────────────
 
 export interface DirectAfalTransportConfig {
@@ -153,6 +159,7 @@ export class DirectAfalTransport implements AfalTransport {
           ...unsignedDescriptor.endpoints,
           propose: `${base}/afal/propose`,
           commit: `${base}/afal/commit`,
+          negotiate: `${base}/afal/negotiate`,
         },
       };
       const signedDescriptorRaw = signMessage(
@@ -202,6 +209,7 @@ export class DirectAfalTransport implements AfalTransport {
           ...unsigned.endpoints,
           propose: `${base}/afal/propose`,
           commit: `${base}/afal/commit`,
+          negotiate: `${base}/afal/negotiate`,
         },
       };
       const reSignedRaw = signMessage(
@@ -524,16 +532,32 @@ export class DirectAfalTransport implements AfalTransport {
       this.config.peerDescriptorUrl,
       expectedPeerAgentId,
     );
-    if (!a2aDescriptor) {
-      return null;
+    if (a2aDescriptor) {
+      this.peerDescriptor = a2aDescriptor.descriptor;
+      this.peerDiscovery = a2aDescriptor.discovery;
+      return {
+        ...a2aDescriptor.discovery,
+        supportedPurposes: [...a2aDescriptor.discovery.supportedPurposes],
+      };
     }
 
-    this.peerDescriptor = a2aDescriptor.descriptor;
-    this.peerDiscovery = a2aDescriptor.discovery;
-    return {
-      ...a2aDescriptor.discovery,
-      supportedPurposes: [...a2aDescriptor.discovery.supportedPurposes],
-    };
+    try {
+      const descriptor = await this.fetchSignedPeerDescriptor(
+        this.config.peerDescriptorUrl,
+        expectedPeerAgentId,
+      );
+      const discovery = parseDescriptorPeerDiscovery(descriptor);
+      this.peerDescriptor = descriptor;
+      this.peerDiscovery = discovery;
+      return discovery
+        ? {
+            ...discovery,
+            supportedPurposes: [...discovery.supportedPurposes],
+          }
+        : null;
+    } catch {
+      return null;
+    }
   }
 
   private resolvePeerTransportTarget(peer: AgentDescriptor): PeerTransportTarget {
@@ -551,6 +575,40 @@ export class DirectAfalTransport implements AfalTransport {
       commitUrl: peer.endpoints.commit,
       useA2ANative: false,
     };
+  }
+
+  private resolvePeerNegotiationTarget(peer: AgentDescriptor): PeerNegotiationTarget | null {
+    const a2aSendMessageUrl = this.peerDiscovery?.a2aSendMessageUrl;
+    const afalEndpoint = this.peerDiscovery?.afalEndpoint;
+    if (a2aSendMessageUrl) {
+      return {
+        negotiateUrl: a2aSendMessageUrl,
+        useA2ANative: true,
+      };
+    }
+
+    if (typeof peer.endpoints.negotiate === 'string' && peer.endpoints.negotiate) {
+      return {
+        negotiateUrl: peer.endpoints.negotiate,
+        useA2ANative: false,
+      };
+    }
+
+    if (afalEndpoint) {
+      return {
+        negotiateUrl: `${afalEndpoint}/negotiate`,
+        useA2ANative: false,
+      };
+    }
+
+    if (peer.endpoints.propose.endsWith('/propose')) {
+      return {
+        negotiateUrl: `${peer.endpoints.propose.slice(0, -'/propose'.length)}/negotiate`,
+        useA2ANative: false,
+      };
+    }
+
+    return null;
   }
 
   private async resolvePeerDescriptor(expectedPeerAgentId?: string): Promise<AgentDescriptor> {
@@ -600,7 +658,7 @@ export class DirectAfalTransport implements AfalTransport {
       expectedPeerAgentId,
     );
     this.peerDescriptor = descriptor;
-    this.peerDiscovery = null;
+    this.peerDiscovery = parseDescriptorPeerDiscovery(descriptor);
     return descriptor;
   }
 
@@ -682,6 +740,7 @@ export class DirectAfalTransport implements AfalTransport {
         endpoints: {
           propose: afalEndpoint ? `${afalEndpoint}/propose` : '',
           commit: afalEndpoint ? `${afalEndpoint}/commit` : '',
+          ...(afalEndpoint ? { negotiate: `${afalEndpoint}/negotiate` } : {}),
           ...(a2aSendMessageUrl ? { message: a2aSendMessageUrl } : {}),
         },
         capabilities: {},
@@ -705,39 +764,55 @@ export class DirectAfalTransport implements AfalTransport {
   async negotiateContractOffer(
     proposal: ContractOfferProposal,
   ): Promise<ContractOfferSelection | null> {
-    await this.resolvePeerDescriptor(proposal.expected_counterparty);
-    if (!this.peerDiscovery?.a2aSendMessageUrl || !this.peerDiscovery.supportsPrecontractNegotiation) {
+    const peer = await this.resolvePeerDescriptor(proposal.expected_counterparty);
+    if (!this.peerDiscovery?.supportsPrecontractNegotiation) {
       return null;
     }
+    const target = this.resolvePeerNegotiationTarget(peer);
+    if (!target) return null;
 
-    const response = await fetch(this.peerDiscovery.a2aSendMessageUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(
-        buildA2ASendMessageRequest({
-          mediaType: AGENTVAULT_CONTRACT_OFFER_PROPOSAL_MEDIA_TYPE,
-          data: proposal,
-          acceptedOutputModes: [AGENTVAULT_CONTRACT_OFFER_SELECTION_MEDIA_TYPE],
-        }),
-      ),
-    });
+    const response = await fetch(
+      target.negotiateUrl,
+      target.useA2ANative
+        ? {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(
+              buildA2ASendMessageRequest({
+                mediaType: AGENTVAULT_CONTRACT_OFFER_PROPOSAL_MEDIA_TYPE,
+                data: proposal,
+                acceptedOutputModes: [AGENTVAULT_CONTRACT_OFFER_SELECTION_MEDIA_TYPE],
+              }),
+            ),
+          }
+        : {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(proposal),
+          },
+    );
 
     if (!response.ok) {
-      throw new Error(`A2A negotiation request failed: ${response.status}`);
+      throw new Error(`Contract negotiation request failed: ${response.status}`);
     }
 
     const payload = (await response.json()) as unknown;
-    const parsed = parseA2ATaskPart(payload, [AGENTVAULT_CONTRACT_OFFER_SELECTION_MEDIA_TYPE]);
-    if (!parsed) {
-      throw new Error('A2A negotiation response did not contain a contract-offer selection part');
+    let selection: ContractOfferSelection | null;
+    if (target.useA2ANative) {
+      const parsed = parseA2ATaskPart(payload, [AGENTVAULT_CONTRACT_OFFER_SELECTION_MEDIA_TYPE]);
+      if (!parsed) {
+        throw new Error('A2A negotiation response did not contain a contract-offer selection part');
+      }
+      selection = parseContractOfferSelection(parsed.data);
+    } else {
+      selection = parseContractOfferSelection(payload);
     }
-    const selection = parseContractOfferSelection(parsed.data);
     if (!selection) {
-      throw new Error('A2A negotiation response carried an invalid contract-offer selection body');
+      throw new Error('Contract negotiation response carried an invalid selection body');
     }
     if (selection.negotiation_id !== proposal.negotiation_id) {
       throw new Error(
-        `A2A negotiation response carried mismatched negotiation_id: ` +
+        `Contract negotiation response carried mismatched negotiation_id: ` +
           `expected=${proposal.negotiation_id} got=${selection.negotiation_id}`,
       );
     }
@@ -875,4 +950,37 @@ function parseSupportedModelProfiles(descriptor: AgentDescriptor): ModelProfileR
     }
     return [];
   });
+}
+
+function parseDescriptorPeerDiscovery(descriptor: AgentDescriptor): AgentVaultPeerDiscovery | null {
+  const supportedContractOffers = parseSupportedContractOffers(
+    descriptor.capabilities['supported_contract_offers'],
+  );
+  const supportedPurposes = Array.isArray(descriptor.capabilities['supported_purposes'])
+    ? descriptor.capabilities['supported_purposes'].filter(
+        (item): item is string => typeof item === 'string',
+      )
+    : [];
+  const afalEndpoint = descriptor.endpoints.propose.endsWith('/propose')
+    ? descriptor.endpoints.propose.slice(0, -'/propose'.length)
+    : undefined;
+  const a2aSendMessageUrl =
+    typeof descriptor.endpoints.message === 'string' ? descriptor.endpoints.message : undefined;
+
+  if (
+    !supportedContractOffers &&
+    supportedPurposes.length === 0 &&
+    !afalEndpoint &&
+    !a2aSendMessageUrl
+  ) {
+    return null;
+  }
+
+  return {
+    ...(afalEndpoint ? { afalEndpoint } : {}),
+    ...(a2aSendMessageUrl ? { a2aSendMessageUrl } : {}),
+    supportedPurposes,
+    supportsPrecontractNegotiation: supportedContractOffers !== null,
+    ...(supportedContractOffers ? { supportedContractOffers } : {}),
+  };
 }

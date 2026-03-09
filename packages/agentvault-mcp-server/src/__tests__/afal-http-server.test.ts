@@ -320,6 +320,63 @@ describe('AfalHttpServer', () => {
     expect((parts[0]?.['data'] as Record<string, unknown>)['state']).toBe('AGREED');
   });
 
+  it('POST /afal/negotiate returns a direct contract-offer selection for negotiation proposals', async () => {
+    const descriptor = makeDescriptor();
+    (descriptor.capabilities as Record<string, unknown>)['supported_contract_offers'] = [
+      {
+        contract_offer_id: 'agentvault.mediation.v1.standard',
+        supported_model_profiles: [
+          {
+            id: 'api-claude-sonnet-v1',
+            version: '1',
+            hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
+          },
+        ],
+      },
+    ];
+    const responder = new AfalResponder({
+      agentId: 'bob-test',
+      seedHex: RESPONDER_SEED,
+      policy: makePolicy(),
+    });
+    await server.stop();
+    server = new AfalHttpServer({
+      port: 0,
+      responder,
+      localDescriptor: descriptor,
+      relayUrl: 'http://relay.example.com',
+      supportedPurposes: ['MEDIATION'],
+    });
+    await server.start();
+    const addr = (server as unknown as { server: { address(): { port: number } } }).server.address();
+    baseUrl = `http://127.0.0.1:${addr.port}`;
+
+    const res = await fetch(`${baseUrl}/afal/negotiate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        negotiation_id: 'neg-123',
+        acceptable_offers: [
+          {
+            contract_offer_id: 'agentvault.mediation.v1.standard',
+            acceptable_model_profiles: [
+              {
+                id: 'api-claude-sonnet-v1',
+                version: '1',
+                hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
+              },
+            ],
+          },
+        ],
+        expected_counterparty: 'bob-test',
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body['state']).toBe('AGREED');
+    expect(body['selected_contract_offer_id']).toBe('agentvault.mediation.v1.standard');
+  });
+
   it('POST /afal/commit returns 200 for valid COMMIT', async () => {
     // First admit a proposal
     const wrapped = makeWrappedBody();
