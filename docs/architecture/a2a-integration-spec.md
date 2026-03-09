@@ -12,8 +12,9 @@ exchange, streaming, and authentication. AgentVault's current agent-to-agent
 transport (AFAL) is a custom protocol that duplicates some of this infrastructure.
 
 This document specifies how AgentVault integrates with A2A: using A2A for
-discovery and transport while preserving AgentVault's bounded-disclosure
-semantics, bilateral consent, and receipt-verified governance.
+discovery and, when useful, transport while preserving AgentVault's
+bounded-disclosure semantics, bilateral consent, and receipt-verified
+governance. AFAL remains the native AgentVault transport throughout.
 
 ## Design Principles
 
@@ -26,8 +27,10 @@ semantics, bilateral consent, and receipt-verified governance.
    AgentVault requires bilateral consent before private context is exchanged.
    The integration must preserve this property within A2A's request/response
    model.
-4. **Incremental adoption.** AFAL continues to work alongside A2A. Agents can
-   support both. The integration does not deprecate AFAL immediately.
+4. **Dual transport, shared semantics.** AFAL remains AgentVault's native
+   transport. A2A is an interoperability bridge that carries the same bounded
+   bootstrap semantics into the wider A2A ecosystem. Agents may support either
+   transport or both; neither transport is deprecated in favor of the other.
 
 ## Architecture
 
@@ -144,8 +147,8 @@ This phase requires minimal code changes:
 
 ## Phase 3: A2A-Native Transport
 
-Replace AFAL's custom HTTP endpoints with A2A `SendMessage` carrying
-AgentVault-specific message parts.
+Offer an A2A-native bootstrap path alongside AFAL's HTTP endpoints by carrying
+AgentVault-specific message parts over A2A `SendMessage`.
 
 ### Media Types
 
@@ -155,6 +158,8 @@ AgentVault-specific message parts.
 | `application/vnd.agentvault.admit+json` | Responder → Initiator | AfalAdmit equivalent |
 | `application/vnd.agentvault.deny+json` | Responder → Initiator | AfalDeny equivalent |
 | `application/vnd.agentvault.session-tokens+json` | Initiator → Responder | Relay session credentials |
+| `application/vnd.agentvault.topic-alignment-proposal+json` | Initiator → Responder | Bounded topic-alignment proposal |
+| `application/vnd.agentvault.topic-alignment-selection+json` | Responder → Initiator | Topic-alignment response |
 | `application/vnd.agentvault.contract-offer-proposal+json` | Initiator → Responder | Pre-contract negotiation proposal |
 | `application/vnd.agentvault.contract-offer-selection+json` | Responder → Initiator | Contract offer selection response |
 
@@ -197,9 +202,11 @@ After creating the relay session, the initiator sends a follow-up
 `SendMessage` with the session tokens.
 
 Current implementation note:
-- AgentVault currently uses a narrow `SendMessage`/completed-Task wrapper for
-  bootstrap only
-- it does not yet implement a broader A2A task lifecycle beyond that exchange
+- AgentVault implements a narrow A2A task lifecycle for bootstrap:
+  proposal admission/denial, bounded topic alignment, bounded contract
+  negotiation, and session-token delivery
+- AFAL and A2A-native bootstrap carry the same AgentVault concepts; A2A is not
+  the canonical source of those semantics
 
 ### Bilateral Consent in A2A's Asymmetric Model
 
@@ -240,6 +247,7 @@ pre-session governance messages.
 |-------|------|-------------|------------|
 | Current | Discovery + dual-stack bootstrap + A2A-native bootstrap | Supported | Supported |
 | Current | Signed agent cards (#308), relay arbitration (#310), task ID plumbing (#311a), stateful task lifecycle (#311b) | Supported | Implemented |
+| Current | Bounded topic alignment + bounded pre-contract negotiation | Supported | Supported |
 
 For full details on extension parameters, media types, task lifecycle states,
 relay arbitration semantics, signed card verification, and backward

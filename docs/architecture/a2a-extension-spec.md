@@ -26,9 +26,11 @@ interface:
 | `relay_url` | `string` | No | Preferred relay URL for sessions with this agent |
 | `afal_endpoint` | `string` | No | AFAL HTTP base endpoint (e.g. `https://agent.example.com/afal`). Omit for A2A-only agents |
 | `a2a_send_message_url` | `string` | No | Explicit A2A SendMessage endpoint URL |
+| `supports_topic_alignment` | `boolean` | No | `true` if the agent supports bounded topic alignment before session formation |
+| `supported_topic_codes` | `string[]` | No | Fixed ontology of topic codes accepted for bounded topic alignment |
 | `supports_precontract_negotiation` | `boolean` | No | `true` if the agent supports pre-contract offer negotiation |
 | `supports_bespoke_contract_negotiation` | `boolean` | No | `true` if the agent supports bespoke (custom) contract negotiation |
-| `supported_contract_offers` | `SupportedContractOffer[]` | No | List of contract offers this agent can fulfill (see section 7) |
+| `supported_contract_offers` | `SupportedContractOffer[]` | No | List of contract offers this agent can fulfill (see section 8) |
 | `card_signature` | `string` | No | Ed25519 signature (hex) over the canonical card payload (see section 3) |
 
 JSON Schema: [`schemas/a2a-extension-params.schema.json`](../../schemas/a2a-extension-params.schema.json)
@@ -54,11 +56,16 @@ deterministic canonicalization):
 | `relay_url` | `string` | From extension params (omitted if absent) |
 | `a2a_send_message_url` | `string` | From extension params (omitted if absent) |
 | `afal_endpoint` | `string` | From extension params (omitted if absent) |
+| `supports_topic_alignment` | `boolean` | From extension params (omitted if absent) |
+| `supported_topic_codes` | `string[]` | From extension params (omitted if absent) |
+| `supports_precontract_negotiation` | `boolean` | From extension params (omitted if absent) |
+| `supports_bespoke_contract_negotiation` | `boolean` | From extension params (omitted if absent) |
+| `supported_contract_offers` | `SupportedContractOffer[]` | From extension params (omitted if absent) |
 
-Optional fields (`relay_url`, `a2a_send_message_url`, `afal_endpoint`) are
-included in the signed payload only when present in the extension params.
-The verifier must reconstruct the same object from the received card —
-omitting absent fields, not setting them to `null` or empty string.
+Optional fields are included in the signed payload only when present in the
+extension params. The verifier must reconstruct the same object from the
+received card — omitting absent fields, not setting them to `null` or empty
+string.
 
 ### 3.2 Verification
 
@@ -66,8 +73,7 @@ To verify a card signature:
 
 1. Extract `card.name` as `agent_id`
 2. Build the `AgentCardSignedPayload` from the extension params (excluding
-   `card_signature` itself, `supports_precontract_negotiation`,
-   `supports_bespoke_contract_negotiation`, and `supported_contract_offers`)
+   `card_signature` itself)
 3. JCS-canonicalize the payload
 4. Verify the Ed25519 signature using `VCAV-AGENT-CARD-V1:` domain prefix
    and the `public_key_hex` from the extension params
@@ -97,7 +103,7 @@ Implementers should begin signing cards now.
 
 ## 4. Media Types
 
-Six media types are defined for A2A message parts:
+Eight media types are defined for A2A message parts:
 
 | Media Type | Direction | Content | Task State |
 |------------|-----------|---------|------------|
@@ -105,6 +111,8 @@ Six media types are defined for A2A message parts:
 | `application/vnd.agentvault.admit+json` | Responder -> Initiator | Signed AFAL admit envelope | `working` (with task_id) or `completed` (without) |
 | `application/vnd.agentvault.deny+json` | Responder -> Initiator | Signed AFAL deny envelope | `failed` |
 | `application/vnd.agentvault.session-tokens+json` | Initiator -> Responder (commit) / Responder -> Initiator (ack) | Signed COMMIT with relay session binding / acknowledgment | `completed` |
+| `application/vnd.agentvault.topic-alignment-proposal+json` | Initiator -> Responder | Bounded topic-alignment proposal | n/a (request) |
+| `application/vnd.agentvault.topic-alignment-selection+json` | Responder -> Initiator | Topic-alignment selection response | `completed` |
 | `application/vnd.agentvault.contract-offer-proposal+json` | Initiator -> Responder | Pre-contract negotiation proposal | n/a (request) |
 | `application/vnd.agentvault.contract-offer-selection+json` | Responder -> Initiator | Contract offer selection response | `completed` |
 
@@ -156,8 +164,9 @@ the in-flight map and the response carries state `completed`.
 
 Task IDs are provided by the initiator in `configuration.task_id`. The
 implementation uses the convention `task-propose-{proposal_id}` for bootstrap
-tasks and `task-negotiate-{negotiation_id}` for contract negotiation tasks,
-but the format is not normative — any string is accepted.
+tasks, `task-align-{alignment_id}` for topic-alignment tasks, and
+`task-negotiate-{negotiation_id}` for contract negotiation tasks, but the
+format is not normative — any string is accepted.
 
 ## 6. Relay Preference Arbitration
 
@@ -217,12 +226,50 @@ On receiving an ADMIT with `relay_preference`:
    - If initiator has an explicit different relay: use initiator's relay (override)
 3. If `relay_preference` is absent: initiator chooses freely
 
-## 7. Pre-Contract Negotiation
+## 7. Bounded Topic Alignment
+
+Agents that advertise `supports_topic_alignment: true` and publish at least one
+entry in `supported_topic_codes` accept bounded topic-alignment proposals before
+pre-contract negotiation or PROPOSE/ADMIT.
+
+### 7.1 Topic Alignment Proposal
+
+```typescript
+interface TopicAlignmentProposal {
+  alignment_id: string;
+  acceptable_topic_codes: string[];
+  expected_counterparty?: string;
+}
+```
+
+### 7.2 Topic Alignment Selection
+
+```typescript
+type TopicAlignmentState = 'ALIGNED' | 'NOT_ALIGNED';
+
+interface TopicAlignmentSelection {
+  alignment_id: string;
+  state: TopicAlignmentState;
+  selected_topic_code?: string; // present when state=ALIGNED
+}
+```
+
+### 7.3 Topic Alignment Semantics
+
+- Alignment uses a fixed topic ontology, not open-ended semantic similarity
+- The responder selects only from the intersection of `acceptable_topic_codes`
+  and its own `supported_topic_codes`
+- `selected_topic_code` is returned only on a bounded match; otherwise the
+  result is `NOT_ALIGNED`
+- Topic alignment is optional and may be skipped entirely when either side does
+  not advertise support
+
+## 8. Pre-Contract Negotiation
 
 Agents that advertise `supports_precontract_negotiation: true` accept contract
 offer proposals before the PROPOSE/ADMIT handshake.
 
-### 7.1 Contract Offer Proposal
+### 8.1 Contract Offer Proposal
 
 ```typescript
 interface ContractOfferProposal {
@@ -249,7 +296,7 @@ interface NegotiableBespokeContract {
 }
 ```
 
-### 7.2 Contract Offer Selection
+### 8.2 Contract Offer Selection
 
 ```typescript
 type ContractOfferSelectionState = 'AGREED' | 'NO_COMMON_CONTRACT' | 'REJECTED';
@@ -263,7 +310,7 @@ interface ContractOfferSelection {
 }
 ```
 
-### 7.3 Supported Contract Offers (Card Params)
+### 8.3 Supported Contract Offers (Card Params)
 
 ```typescript
 interface SupportedContractOffer {
@@ -272,7 +319,7 @@ interface SupportedContractOffer {
 }
 ```
 
-### 7.4 Model Profile References
+### 8.4 Model Profile References
 
 ```typescript
 interface ModelProfileRef {
@@ -282,40 +329,46 @@ interface ModelProfileRef {
 }
 ```
 
-## 8. Backward Compatibility
+## 9. Backward Compatibility
 
-### 8.1 Unsigned Cards
+### 9.1 Unsigned Cards
 
 Agents that do not include `card_signature` are accepted in lenient mode
 (the default). See section 3.3 for the transition policy.
 
-### 8.2 Missing relay_preference
+### 9.2 Missing relay_preference
 
 When `AfalAdmit.relay_preference` is absent, the initiator uses its own
 relay configuration (initiator-chooses). This is the pre-arbitration default
 and matches the behavior of agents that predate relay preference support.
 
-### 8.3 Missing task_id
+### 9.3 Missing task_id
 
 When `configuration.task_id` is absent in a SendMessage request, the server
 falls back to stateless single-shot semantics: ADMIT responses carry state
 `completed` instead of `working`, and no in-flight task tracking occurs.
 This is backward compatible with clients that predate task lifecycle support.
 
-### 8.4 Missing Pre-Contract Negotiation Fields
+### 9.4 Missing Topic Alignment Fields
+
+Agents that do not advertise `supports_topic_alignment` or
+`supported_topic_codes` simply skip bounded topic alignment. The initiator may
+proceed directly to pre-contract negotiation or PROPOSE/ADMIT.
+
+### 9.5 Missing Pre-Contract Negotiation Fields
 
 Agents that do not advertise `supports_precontract_negotiation` or
 `supported_contract_offers` simply skip pre-contract negotiation. The
 initiator proceeds directly to PROPOSE/ADMIT.
 
-### 8.5 A2A Send Message URL Derivation
+### 9.6 A2A Send Message URL Derivation
 
 When `a2a_send_message_url` is not present in the extension params and strict
 mode is disabled, the client derives the endpoint from `card.url` by appending
 `/a2a/send-message`. In strict mode, this fallback is forbidden — the URL must
 be explicitly present in the signed params.
 
-## 9. Domain Prefixes
+## 10. Domain Prefixes
 
 All Ed25519 signatures use domain-separated signing with a prefix string
 prepended to the JCS-canonicalized message before signing:
@@ -329,7 +382,7 @@ prepended to the JCS-canonicalized message before signing:
 | `VCAV-DENY-V1:` | AFAL deny message |
 | `VCAV-COMMIT-V1:` | AFAL commit message |
 
-## 10. HTTP Server Routes
+## 11. HTTP Server Routes
 
 The AFAL HTTP server exposes the following routes:
 
@@ -339,8 +392,8 @@ The AFAL HTTP server exposes the following routes:
 | `GET` | `/afal/descriptor` | Agent descriptor (AFAL legacy) |
 | `POST` | `/afal/propose` | Direct AFAL propose |
 | `POST` | `/afal/commit` | Direct AFAL commit |
-| `POST` | `/afal/negotiate` | Contract offer negotiation (direct) |
-| `POST` | `/a2a/send-message` | A2A-native message endpoint (propose, session-tokens, contract-offer-proposal) |
+| `POST` | `/afal/negotiate` | Shared bounded negotiation endpoint (topic alignment or contract-offer negotiation) |
+| `POST` | `/a2a/send-message` | A2A-native message endpoint (propose, session-tokens, topic-alignment-proposal, contract-offer-proposal) |
 
 Guards: 64 KB body limit, `Content-Type: application/json` enforcement on POST,
 16 max concurrent requests (503 if exceeded), loopback binding by default.
