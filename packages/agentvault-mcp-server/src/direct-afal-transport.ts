@@ -454,7 +454,32 @@ export class DirectAfalTransport implements AfalTransport {
       throw new Error(`No stored ADMIT for proposal_id: ${inviteId}`);
     }
 
+    // Apply relay preference arbitration:
+    // - REQUIRED: use responder's relay or abort
+    // - PREFERRED: use responder's relay unless initiator has explicit override
+    // - Absent: initiator-chooses (backward compat)
+    let chosenRelayUrl = relaySession.relay_url;
+    const relayPref = admit.relay_preference;
+    if (relayPref) {
+      if (relayPref.policy === 'REQUIRED') {
+        chosenRelayUrl = relayPref.relay_url;
+      } else if (relayPref.policy === 'PREFERRED') {
+        // Use responder's relay unless the initiator has an explicit override
+        if (!this.config.relayUrl || this.config.relayUrl === relayPref.relay_url) {
+          chosenRelayUrl = relayPref.relay_url;
+        }
+        // else: initiator's explicit relayUrl overrides PREFERRED
+      }
+    }
+
     const peer = await this.resolvePeerDescriptor();
+
+    // Ensure the relay_session uses the arbitrated relay URL so the
+    // committed session actually routes through the selected relay.
+    const committedRelaySession =
+      relaySession.relay_url === chosenRelayUrl
+        ? relaySession
+        : { ...relaySession, relay_url: chosenRelayUrl };
 
     const commitMessage: Record<string, unknown> = {
       commit_version: '1',
@@ -463,7 +488,8 @@ export class DirectAfalTransport implements AfalTransport {
       admit_token_id: admit.admit_token_id,
       encrypted_input_hash: contentHash({}),
       agent_descriptor_hash: contentHash(this.config.localDescriptor),
-      relay_session: relaySession,
+      relay_session: committedRelaySession,
+      chosen_relay_url: chosenRelayUrl,
     };
 
     const signedCommit = signMessage(DOMAIN_PREFIXES.COMMIT, commitMessage, this.config.seedHex);
