@@ -37,7 +37,7 @@
 
 | Repo | Issue | Description | Size | Notes |
 |------|-------|-------------|------|-------|
-| agentvault | [#214](https://github.com/vcav-io/agentvault/issues/214) | A2A integration: AgentVault as an A2A extension | L | Complete; follow-up work split into #308-#311 |
+| agentvault | [#214](https://github.com/vcav-io/agentvault/issues/214) | A2A integration: AgentVault as an A2A extension | L | Complete; #308-#311 maturity cluster done (signed cards, relay arbitration, task lifecycle, extension docs) |
 
 ### Tier 2 — Backlog
 
