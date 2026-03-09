@@ -28,7 +28,6 @@ import {
   AGENTVAULT_ADMIT_MEDIA_TYPE,
   AGENTVAULT_CONTRACT_OFFER_PROPOSAL_MEDIA_TYPE,
   AGENTVAULT_CONTRACT_OFFER_SELECTION_MEDIA_TYPE,
-  AGENTVAULT_DENY_MEDIA_TYPE,
   AGENTVAULT_PROPOSE_MEDIA_TYPE,
   AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
   buildA2ASendMessageRequest,
@@ -416,6 +415,11 @@ describe('A2A task ID — server echo', () => {
     );
 
     const taskId = 'task-commit-test-echo';
+    // Register as in-flight (as if propose came via A2A with this task_id)
+    (server as unknown as { _inFlightTasks: Map<string, unknown> })._inFlightTasks.set(taskId, {
+      state: 'working',
+      expiresAt: Date.now() + 600_000,
+    });
     const res = await fetch(`${baseUrl}${A2A_SEND_MESSAGE_PATH}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

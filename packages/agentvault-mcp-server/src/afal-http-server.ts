@@ -319,10 +319,26 @@ export class AfalHttpServer {
               }
             } else {
               // session-tokens (COMMIT) — completes the lifecycle
+              // Enforce task correlation: if client sends a task_id, it must match
+              // an in-flight task from a prior propose. Reject mismatches.
+              if (parsed.taskId && !this._inFlightTasks.has(parsed.taskId)) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(
+                  JSON.stringify(
+                    buildA2ATaskResponse({
+                      mediaType: AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
+                      data: { ok: false, error: 'Unknown task_id — no matching in-flight propose' },
+                      taskId: parsed.taskId,
+                      state: 'failed',
+                    }),
+                  ),
+                );
+                return;
+              }
               const result = this.config.responder.handleCommit(parsed.data);
               const status = result.ok ? 200 : 400;
-              // If this task was tracked in-flight, remove it
-              if (parsed.taskId && this._inFlightTasks.has(parsed.taskId)) {
+              // Remove the completed in-flight task
+              if (parsed.taskId) {
                 this._inFlightTasks.delete(parsed.taskId);
               }
               res.writeHead(status, { 'Content-Type': 'application/json' });

@@ -57,7 +57,10 @@ export interface AgentCardSignedPayload {
   extension_version: string;
   public_key_hex: string;
   relay_url?: string;
+  supported_contract_offers?: SupportedContractOffer[];
   supported_purposes: string[];
+  supports_bespoke_contract_negotiation?: boolean;
+  supports_precontract_negotiation?: boolean;
 }
 
 /**
@@ -86,6 +89,15 @@ export function buildCardSignedPayload(
   }
   if (extensionParams.afal_endpoint !== undefined) {
     payload.afal_endpoint = extensionParams.afal_endpoint;
+  }
+  if (extensionParams.supports_precontract_negotiation !== undefined) {
+    payload.supports_precontract_negotiation = extensionParams.supports_precontract_negotiation;
+  }
+  if (extensionParams.supports_bespoke_contract_negotiation !== undefined) {
+    payload.supports_bespoke_contract_negotiation = extensionParams.supports_bespoke_contract_negotiation;
+  }
+  if (extensionParams.supported_contract_offers !== undefined) {
+    payload.supported_contract_offers = extensionParams.supported_contract_offers;
   }
 
   return payload;
