@@ -78,6 +78,10 @@ function emitNegotiationEventIfPresent(
   if (toolName !== 'agentvault.relay_signal' || !result || typeof result !== 'object') return;
   const data = (result as Record<string, unknown>)['data'];
   if (!data || typeof data !== 'object') return;
+  const alignedTopicCode = (data as Record<string, unknown>)['aligned_topic_code'];
+  if (typeof alignedTopicCode === 'string') {
+    events.emitSystem(`${agentName} aligned on topic ${alignedTopicCode}`);
+  }
   const negotiated = (data as Record<string, unknown>)['negotiated_contract'];
   if (!negotiated || typeof negotiated !== 'object') return;
 

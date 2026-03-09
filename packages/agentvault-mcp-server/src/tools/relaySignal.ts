@@ -46,6 +46,7 @@ import type { ContractOfferProposal } from '../contract-negotiation.js';
 import {
   resolveBespokeContractToContract,
 } from '../bespoke-contracts.js';
+import type { TopicAlignmentProposal } from '../topic-alignment.js';
 import {
   encodeRelayToken,
   decodeRelayToken,
@@ -158,6 +159,7 @@ export interface RelaySignalArgs {
   counterparty?: string;
   purpose?: string;
   contract?: object;
+  acceptable_topic_codes?: string[];
   acceptable_contracts?: Array<{
     purpose_code: string;
     schema_ref: string;
@@ -237,6 +239,7 @@ export interface RelaySignalOutput {
   display: DisplayDirective;
   interpretation_context?: InterpretationContext;
   resume_token_display?: string | null;
+  aligned_topic_code?: string;
   negotiated_contract?: {
     kind: 'offer' | 'bespoke';
     contract_offer_id?: string;
@@ -935,6 +938,10 @@ function mapNegotiatedContract(
   };
 }
 
+function mapAlignedTopicCode(handle: RelayHandle): string | undefined {
+  return handle.alignedTopicCode;
+}
+
 function awaitingResponse(
   handle: RelayHandle,
   userMessage: string,
@@ -962,6 +969,7 @@ function awaitingResponse(
     next_update_seconds: seconds,
     resume_strategy: strategy,
     user_message: userMessage,
+    aligned_topic_code: mapAlignedTopicCode(handle),
     negotiated_contract: mapNegotiatedContract(handle),
     display: {
       forbidden: ['PRINT_RESUME_TOKEN', 'CLAIM_COUNTERPARTY_KNOWLEDGE'],
@@ -994,6 +1002,7 @@ function completedResponse(
     next_args_patch: null,
     next_update_seconds: null,
     user_message: 'Relay session complete.',
+    aligned_topic_code: mapAlignedTopicCode(handle),
     negotiated_contract: mapNegotiatedContract(handle),
     output,
     display: {
@@ -1036,6 +1045,7 @@ function failedResponse(
     next_update_seconds: null,
     user_message: userMessage,
     error_code: errorCode,
+    aligned_topic_code: mapAlignedTopicCode(handle),
     negotiated_contract: mapNegotiatedContract(handle),
     output,
     display: {
@@ -1201,6 +1211,45 @@ async function phaseInvite(
       `Counterparty Agent Card does not advertise support for purpose "${purposeHint}". ` +
         `Advertised purposes: ${peerDiscovery.supportedPurposes.join(', ')}`,
     );
+  }
+
+  if (args.acceptable_topic_codes?.length) {
+    if (!(transport instanceof DirectAfalTransport)) {
+      return buildError(
+        'SESSION_ERROR',
+        'Bounded topic alignment requires direct bilateral transport.',
+      );
+    }
+    if (!peerDiscovery?.supportsTopicAlignment || !peerDiscovery.supportedTopicCodes?.length) {
+      return buildError(
+        'SESSION_ERROR',
+        'Counterparty does not advertise support for bounded topic alignment.',
+      );
+    }
+    const acceptableTopicCodes = args.acceptable_topic_codes.filter(
+      (code): code is string => typeof code === 'string' && /^[a-z0-9_]+$/.test(code),
+    );
+    if (!acceptableTopicCodes.length) {
+      return buildError(
+        'INVALID_INPUT',
+        'acceptable_topic_codes must contain at least one lowercase topic code.',
+      );
+    }
+    const alignmentProposal: TopicAlignmentProposal = {
+      alignment_id: randomUUID(),
+      acceptable_topic_codes: acceptableTopicCodes,
+      expected_counterparty: counterparty,
+    };
+    const alignment = await transport.alignTopic(alignmentProposal);
+    if (alignment?.state === 'REJECTED') {
+      return buildError('SESSION_ERROR', 'Counterparty rejected bounded topic alignment.');
+    }
+    if (alignment?.state === 'NOT_ALIGNED') {
+      return buildError('SESSION_ERROR', 'No common bounded topic code was available.');
+    }
+    if (alignment?.state === 'ALIGNED' && alignment.selected_topic_code) {
+      handle.alignedTopicCode = alignment.selected_topic_code;
+    }
   }
 
   let negotiatedSelection: RelayHandle['negotiatedContract'] | null = null;

@@ -377,6 +377,147 @@ describe('INITIATE with AFAL', () => {
     });
   });
 
+  it('aligns on a bounded topic code before contract negotiation when requested', async () => {
+    const mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+
+    const transport = new DirectAfalTransport({
+      agentId: 'alice-demo',
+      seedHex: TEST_SEED,
+      localDescriptor: makeLocalDescriptor(),
+      peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
+    });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          name: 'bob-demo',
+          capabilities: {
+            extensions: [
+              {
+                uri: AGENTVAULT_A2A_EXTENSION_URI,
+                params: {
+                  public_key_hex: PEER_PUBKEY,
+                  relay_url: 'http://relay.from.card',
+                  supported_purposes: ['MEDIATION'],
+                  supported_topic_codes: ['salary_alignment', 'reference_check'],
+                  supports_topic_alignment: true,
+                  a2a_send_message_url: 'http://peer.example.com/a2a/send-message',
+                  afal_endpoint: 'http://peer.example.com/afal',
+                  supports_precontract_negotiation: true,
+                  supported_contract_offers: [
+                    {
+                      contract_offer_id: 'agentvault.mediation.v1.standard',
+                      supported_model_profiles: [
+                        {
+                          id: 'api-claude-sonnet-v1',
+                          version: '1',
+                          hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
+                        },
+                      ],
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        }),
+    });
+    mockFetch.mockImplementationOnce(async (_url, init) => {
+      const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+      const params = body['params'] as Record<string, unknown>;
+      const message = params['message'] as Record<string, unknown>;
+      const parts = message['parts'] as Array<Record<string, unknown>>;
+      const proposal = parts[0]?.['data'] as Record<string, unknown>;
+      return {
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            history: [
+              {
+                role: 'agent',
+                parts: [
+                  {
+                    media_type: 'application/vnd.agentvault.topic-alignment-selection+json',
+                    data: {
+                      alignment_id: proposal['alignment_id'],
+                      state: 'ALIGNED',
+                      selected_topic_code: 'salary_alignment',
+                    },
+                  },
+                ],
+              },
+            ],
+          }),
+      };
+    });
+    mockFetch.mockImplementationOnce(async (_url, init) => {
+      const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+      const params = body['params'] as Record<string, unknown>;
+      const message = params['message'] as Record<string, unknown>;
+      const parts = message['parts'] as Array<Record<string, unknown>>;
+      const proposal = parts[0]?.['data'] as Record<string, unknown>;
+      return {
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            history: [
+              {
+                role: 'agent',
+                parts: [
+                  {
+                    media_type: 'application/vnd.agentvault.contract-offer-selection+json',
+                    data: {
+                      negotiation_id: proposal['negotiation_id'],
+                      state: 'AGREED',
+                      selected_contract_offer_id: 'agentvault.mediation.v1.standard',
+                      selected_model_profile: {
+                        id: 'api-claude-sonnet-v1',
+                        version: '1',
+                        hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
+                      },
+                    },
+                  },
+                ],
+              },
+            ],
+          }),
+      };
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(makeSignedAdmit('d'.repeat(64))),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      text: () => Promise.resolve('ok'),
+    });
+
+    const result = await handleRelaySignal(
+      {
+        mode: 'INITIATE',
+        counterparty: 'bob-demo',
+        purpose: 'MEDIATION',
+        acceptable_topic_codes: ['salary_alignment', 'reference_check'],
+        my_input: 'hello',
+      },
+      transport,
+    );
+
+    const alignmentCall = mockFetch.mock.calls[1] as [string, RequestInit];
+    expect(alignmentCall[0]).toBe('http://peer.example.com/a2a/send-message');
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        aligned_topic_code: 'salary_alignment',
+        negotiated_contract: {
+          contract_offer_id: 'agentvault.mediation.v1.standard',
+        },
+      },
+    });
+  });
+
   it('negotiates over direct AFAL when the peer advertises negotiation via signed descriptor', async () => {
     const mockFetch = vi.fn();
     vi.stubGlobal('fetch', mockFetch);
@@ -544,6 +685,89 @@ describe('INITIATE with AFAL', () => {
       error: expect.objectContaining({
         code: 'SESSION_ERROR',
         detail: expect.stringContaining('No common bounded contract and model profile combination'),
+      }),
+    });
+    expect(vi.mocked(createAndSubmit)).not.toHaveBeenCalled();
+  });
+
+  it('fails cleanly when bounded topic alignment returns NOT_ALIGNED', async () => {
+    const mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+
+    const transport = new DirectAfalTransport({
+      agentId: 'alice-demo',
+      seedHex: TEST_SEED,
+      localDescriptor: makeLocalDescriptor(),
+      peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
+    });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          name: 'bob-demo',
+          capabilities: {
+            extensions: [
+              {
+                uri: AGENTVAULT_A2A_EXTENSION_URI,
+                params: {
+                  public_key_hex: PEER_PUBKEY,
+                  relay_url: 'http://relay.from.card',
+                  supported_purposes: ['MEDIATION'],
+                  supported_topic_codes: ['technical_architecture'],
+                  supports_topic_alignment: true,
+                  a2a_send_message_url: 'http://peer.example.com/a2a/send-message',
+                  afal_endpoint: 'http://peer.example.com/afal',
+                },
+              },
+            ],
+          },
+        }),
+    });
+    mockFetch.mockImplementationOnce(async (_url, init) => {
+      const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+      const params = body['params'] as Record<string, unknown>;
+      const message = params['message'] as Record<string, unknown>;
+      const parts = message['parts'] as Array<Record<string, unknown>>;
+      const proposal = parts[0]?.['data'] as Record<string, unknown>;
+      return {
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            history: [
+              {
+                role: 'agent',
+                parts: [
+                  {
+                    media_type: 'application/vnd.agentvault.topic-alignment-selection+json',
+                    data: {
+                      alignment_id: proposal['alignment_id'],
+                      state: 'NOT_ALIGNED',
+                    },
+                  },
+                ],
+              },
+            ],
+          }),
+      };
+    });
+
+    await expect(
+      handleRelaySignal(
+        {
+          mode: 'INITIATE',
+          counterparty: 'bob-demo',
+          purpose: 'MEDIATION',
+          acceptable_topic_codes: ['salary_alignment'],
+          my_input: 'hello',
+        },
+        transport,
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.objectContaining({
+        code: 'SESSION_ERROR',
+        detail: expect.stringContaining('No common bounded topic code'),
       }),
     });
     expect(vi.mocked(createAndSubmit)).not.toHaveBeenCalled();

@@ -28,7 +28,9 @@ import {
   AfalHttpServer,
   listKnownModelProfiles,
   listSupportedContractOffers,
+  listSupportedTopicCodes,
   supportsBespokePrecontractNegotiation,
+  supportsTopicAlignment,
 } from 'agentvault-mcp-server';
 import type {
   DirectAfalTransportConfig,
@@ -200,6 +202,8 @@ function buildDescriptor(agentId: string, seedHex: string, pubKeyHex: string, ht
       supported_body_formats: ['wrapped_v1'],
       supports_commit: true,
       supported_model_profiles: listKnownModelProfiles(),
+      supported_topic_codes: listSupportedTopicCodes(),
+      supports_topic_alignment: supportsTopicAlignment(),
       supported_contract_offers: listSupportedContractOffers(),
       supports_bespoke_contract_negotiation: supportsBespokePrecontractNegotiation(),
     },
