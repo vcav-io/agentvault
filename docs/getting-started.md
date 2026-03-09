@@ -148,4 +148,5 @@ See [demo/README.md](../demo/README.md) for details.
 - [API Reference](api-reference.md) — full endpoint documentation
 - [Run the Relay from Source](relay-dev-setup.md) — build and run the relay locally for development
 - [Protocol Specification](protocol-spec.md) — formal protocol definition
+- [Demo Integrity Rules](architecture/demo-integrity-rules.md) — constraints for demo prompts, system prompts, and UI behavior
 - [Roadmap](roadmap.md) — design principles and what is coming next
