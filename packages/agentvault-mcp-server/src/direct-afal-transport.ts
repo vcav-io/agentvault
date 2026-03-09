@@ -521,6 +521,7 @@ export class DirectAfalTransport implements AfalTransport {
     const transportTarget = this.resolvePeerTransportTarget(peer);
 
     let response: Response;
+    const commitTaskId = `task-propose-${inviteId}`;
     if (transportTarget.useA2ANative) {
       response = await fetch(transportTarget.commitUrl, {
         method: 'POST',
@@ -530,6 +531,7 @@ export class DirectAfalTransport implements AfalTransport {
             mediaType: AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
             data: signedCommit,
             acceptedOutputModes: [AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE],
+            taskId: commitTaskId,
           }),
         ),
       });
