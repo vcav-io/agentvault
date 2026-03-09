@@ -601,6 +601,69 @@ describe('A2A task lifecycle (#311b)', () => {
       // Task A should NOT be removed (mismatch was rejected)
       expect(server._hasInFlightTask(taskIdA)).toBe(true);
     });
+
+    it('failed handleCommit returns failed state and preserves in-flight task for retry', async () => {
+      // Admit a real proposal
+      const relay = makeRelay();
+      const propose = makePropose({ relay_binding_hash: contentHash(relay) });
+      const signed = signMessage(
+        DOMAIN_PREFIXES.PROPOSE,
+        propose as unknown as Record<string, unknown>,
+        PROPOSER_SEED,
+      );
+      const admitRes = await fetch(`${baseUrl}/afal/propose`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ propose: signed, relay }),
+      });
+      const admitBody = (await admitRes.json()) as Record<string, unknown>;
+      const proposalId = admitBody['proposal_id'] as string;
+
+      // Register in-flight task bound to this proposal
+      const taskId = 'task-propose-bad-commit';
+      (server as unknown as { _inFlightTasks: Map<string, unknown> })._inFlightTasks.set(taskId, {
+        state: 'working',
+        proposalId,
+        expiresAt: Date.now() + 600_000,
+      });
+
+      // Send a semantically invalid commit (wrong admit_token_id) — correlation
+      // passes (proposal_id matches) but handleCommit returns { ok: false }.
+      const badCommitMsg = signMessage(
+        DOMAIN_PREFIXES.COMMIT,
+        {
+          commit_version: '1',
+          proposal_id: proposalId,
+          from: 'alice-test',
+          admit_token_id: 'bogus-admit-token',
+          relay_session: {
+            ...relay,
+            contract_hash: 'c'.repeat(64),
+          },
+        },
+        PROPOSER_SEED,
+      );
+
+      const res = await fetch(`${baseUrl}${A2A_SEND_MESSAGE_PATH}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          buildA2ASendMessageRequest({
+            mediaType: AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
+            data: badCommitMsg,
+            acceptedOutputModes: [AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE],
+            taskId,
+          }),
+        ),
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body['id']).toBe(taskId);
+      expect((body['status'] as Record<string, unknown>)['state']).toBe('failed');
+
+      // In-flight task should be preserved so the client can retry
+      expect(server._hasInFlightTask(taskId)).toBe(true);
+    });
   });
 
   describe('in-flight task TTL expiry', () => {

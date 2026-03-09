@@ -368,8 +368,9 @@ export class AfalHttpServer {
               }
               const result = this.config.responder.handleCommit(parsed.data);
               const status = result.ok ? 200 : 400;
-              // Remove the completed in-flight task
-              if (parsed.taskId) {
+              // Only remove the in-flight task on success; on failure the
+              // client may retry with the same task_id.
+              if (result.ok && parsed.taskId) {
                 this._inFlightTasks.delete(parsed.taskId);
               }
               res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -379,7 +380,7 @@ export class AfalHttpServer {
                     mediaType: AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
                     data: result,
                     taskId: parsed.taskId,
-                    state: 'completed',
+                    state: result.ok ? 'completed' : 'failed',
                   }),
                 ),
               );
