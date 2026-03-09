@@ -10,6 +10,10 @@ export const AGENTVAULT_CONTRACT_OFFER_PROPOSAL_MEDIA_TYPE =
   'application/vnd.agentvault.contract-offer-proposal+json';
 export const AGENTVAULT_CONTRACT_OFFER_SELECTION_MEDIA_TYPE =
   'application/vnd.agentvault.contract-offer-selection+json';
+export const AGENTVAULT_TOPIC_ALIGNMENT_PROPOSAL_MEDIA_TYPE =
+  'application/vnd.agentvault.topic-alignment-proposal+json';
+export const AGENTVAULT_TOPIC_ALIGNMENT_SELECTION_MEDIA_TYPE =
+  'application/vnd.agentvault.topic-alignment-selection+json';
 
 interface A2AMessagePart {
   data: unknown;

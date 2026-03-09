@@ -119,6 +119,16 @@ export const RELAY_TOOLS = [
           description:
             'Full contract JSON for custom contracts (INITIATE and CREATE modes). Overrides purpose.',
         },
+        acceptable_topic_codes: {
+          type: 'array',
+          description:
+            'Optional bounded topic codes to align on before contract negotiation (INITIATE mode). ' +
+            'Use lowercase fixed codes like salary_alignment or reference_check. ' +
+            'If no common topic code is available, session creation stops before the relay session is created.',
+          items: {
+            type: 'string',
+          },
+        },
         acceptable_contracts: {
           type: 'array',
           description:

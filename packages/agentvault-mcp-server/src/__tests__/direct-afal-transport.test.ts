@@ -76,6 +76,8 @@ function makeAgentCard(overrides: Record<string, unknown> = {}): Record<string, 
             public_key_hex: PEER_PUBKEY,
             relay_url: 'http://relay.example.com',
             supported_purposes: ['MEDIATION'],
+            supports_topic_alignment: true,
+            supported_topic_codes: ['salary_alignment', 'reference_check'],
             a2a_send_message_url: 'http://peer.example.com/a2a/send-message',
             afal_endpoint: 'http://peer.example.com/afal',
             supports_precontract_negotiation: true,
@@ -793,6 +795,8 @@ describe('DirectAfalTransport', () => {
         afalEndpoint: 'http://peer.example.com/afal',
         relayUrl: 'http://relay.example.com',
         supportedPurposes: ['MEDIATION'],
+        supportedTopicCodes: ['salary_alignment', 'reference_check'],
+        supportsTopicAlignment: true,
         supportsPrecontractNegotiation: true,
         supportedContractOffers: [
           {
@@ -854,6 +858,54 @@ describe('DirectAfalTransport', () => {
       expect(discovery?.supportedContractOffers?.[0]?.contract_offer_id).toBe(
         'agentvault.mediation.v1.standard',
       );
+      expect(discovery?.supportsTopicAlignment).toBe(true);
+      expect(discovery?.supportedTopicCodes).toEqual(['salary_alignment', 'reference_check']);
+    });
+
+    it('sends topic-alignment proposals over A2A and parses aligned selections', async () => {
+      const fresh = new DirectAfalTransport({
+        agentId: 'alice-test',
+        seedHex: TEST_SEED,
+        localDescriptor,
+        peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-card.json',
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(makeAgentCard()),
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve(
+            buildA2ATaskResponse({
+              mediaType: 'application/vnd.agentvault.topic-alignment-selection+json',
+              data: {
+                alignment_id: 'align-123',
+                state: 'ALIGNED',
+                selected_topic_code: 'salary_alignment',
+              },
+            }),
+          ),
+      });
+
+      const selection = await fresh.alignTopic({
+        alignment_id: 'align-123',
+        acceptable_topic_codes: ['salary_alignment', 'reference_check'],
+        expected_counterparty: 'bob-test',
+      });
+
+      expect(selection).toEqual({
+        alignment_id: 'align-123',
+        state: 'ALIGNED',
+        selected_topic_code: 'salary_alignment',
+      });
+      const [, init] = mockFetch.mock.calls[1] as [string, RequestInit];
+      const body = JSON.parse(init.body as string) as Record<string, unknown>;
+      const params = body['params'] as Record<string, unknown>;
+      const message = params['message'] as Record<string, unknown>;
+      const parts = message['parts'] as Array<Record<string, unknown>>;
+      expect(parts[0]?.['media_type']).toBe('application/vnd.agentvault.topic-alignment-proposal+json');
     });
 
     it('sends contract-offer proposals over A2A and parses agreed selections', async () => {

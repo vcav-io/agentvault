@@ -26,11 +26,15 @@ import {
   AGENTVAULT_DENY_MEDIA_TYPE,
   AGENTVAULT_PROPOSE_MEDIA_TYPE,
   AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
+  AGENTVAULT_TOPIC_ALIGNMENT_PROPOSAL_MEDIA_TYPE,
+  AGENTVAULT_TOPIC_ALIGNMENT_SELECTION_MEDIA_TYPE,
   buildA2ASendMessageRequest,
   parseA2ATaskPart,
 } from './a2a-messages.js';
 import type { ContractOfferProposal, ContractOfferSelection, SupportedContractOffer } from './contract-negotiation.js';
 import { parseContractOfferSelection, parseSupportedContractOffers } from './contract-negotiation.js';
+import type { TopicAlignmentProposal, TopicAlignmentSelection } from './topic-alignment.js';
+import { parseTopicAlignmentSelection } from './topic-alignment.js';
 
 // ── AgentDescriptor ────────────────────────────────────────────────────────
 
@@ -96,6 +100,8 @@ export interface AgentVaultPeerDiscovery {
   supportedPurposes: string[];
   afalEndpoint?: string;
   a2aSendMessageUrl?: string;
+  supportsTopicAlignment?: boolean;
+  supportedTopicCodes?: string[];
   supportsPrecontractNegotiation?: boolean;
   supportsBespokeContractNegotiation?: boolean;
   supportedContractOffers?: SupportedContractOffer[];
@@ -748,6 +754,24 @@ export class DirectAfalTransport implements AfalTransport {
       if (typeof params['afal_endpoint'] === 'string') {
         verifyParams.afal_endpoint = params['afal_endpoint'];
       }
+      if (params['supports_topic_alignment'] === true) {
+        verifyParams.supports_topic_alignment = true;
+      }
+      if (Array.isArray(params['supported_topic_codes'])) {
+        verifyParams.supported_topic_codes = params['supported_topic_codes'].filter(
+          (item): item is string => typeof item === 'string',
+        );
+      }
+      if (params['supports_precontract_negotiation'] === true) {
+        verifyParams.supports_precontract_negotiation = true;
+      }
+      const verifySupportedContractOffers = parseSupportedContractOffers(params['supported_contract_offers']);
+      if (verifySupportedContractOffers) {
+        verifyParams.supported_contract_offers = verifySupportedContractOffers;
+      }
+      if (params['supports_bespoke_contract_negotiation'] === true) {
+        verifyParams.supports_bespoke_contract_negotiation = true;
+      }
 
       // Use the agent_id from the signed payload reconstruction (card.name)
       const cardAgentId = typeof card.name === 'string' ? card.name : undefined;
@@ -796,7 +820,12 @@ export class DirectAfalTransport implements AfalTransport {
     const supportedPurposes = Array.isArray(params['supported_purposes'])
       ? params['supported_purposes'].filter((item): item is string => typeof item === 'string')
       : [];
+    const supportedTopicCodes = Array.isArray(params['supported_topic_codes'])
+      ? params['supported_topic_codes'].filter((item): item is string => typeof item === 'string')
+      : [];
     const supportedContractOffers = parseSupportedContractOffers(params['supported_contract_offers']);
+    const supportsTopicAlignment =
+      params['supports_topic_alignment'] === true && supportedTopicCodes.length > 0;
     const supportsPrecontractNegotiation =
       params['supports_precontract_negotiation'] === true && supportedContractOffers !== null;
     const supportsBespokeContractNegotiation =
@@ -841,6 +870,12 @@ export class DirectAfalTransport implements AfalTransport {
         ...(afalEndpoint ? { afalEndpoint } : {}),
         ...(a2aSendMessageUrl ? { a2aSendMessageUrl } : {}),
         supportedPurposes,
+        ...(supportsTopicAlignment
+          ? {
+              supportsTopicAlignment: true,
+              supportedTopicCodes,
+            }
+          : {}),
         ...(supportsPrecontractNegotiation
           ? {
               supportsPrecontractNegotiation: true,
@@ -912,6 +947,62 @@ export class DirectAfalTransport implements AfalTransport {
       throw new Error(
         `Contract negotiation response carried mismatched negotiation_id: ` +
           `expected=${proposal.negotiation_id} got=${selection.negotiation_id}`,
+      );
+    }
+    return selection;
+  }
+
+  async alignTopic(proposal: TopicAlignmentProposal): Promise<TopicAlignmentSelection | null> {
+    const peer = await this.resolvePeerDescriptor(proposal.expected_counterparty);
+    if (!this.peerDiscovery?.supportsTopicAlignment || !this.peerDiscovery.supportedTopicCodes?.length) {
+      return null;
+    }
+    const target = this.resolvePeerNegotiationTarget(peer);
+    if (!target) return null;
+
+    const response = await fetch(
+      target.negotiateUrl,
+      target.useA2ANative
+        ? {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(
+              buildA2ASendMessageRequest({
+                mediaType: AGENTVAULT_TOPIC_ALIGNMENT_PROPOSAL_MEDIA_TYPE,
+                data: proposal,
+                acceptedOutputModes: [AGENTVAULT_TOPIC_ALIGNMENT_SELECTION_MEDIA_TYPE],
+              }),
+            ),
+          }
+        : {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(proposal),
+          },
+    );
+
+    if (!response.ok) {
+      throw new Error(`Topic alignment request failed: ${response.status}`);
+    }
+
+    const payload = (await response.json()) as unknown;
+    let selection: TopicAlignmentSelection | null;
+    if (target.useA2ANative) {
+      const parsed = parseA2ATaskPart(payload, [AGENTVAULT_TOPIC_ALIGNMENT_SELECTION_MEDIA_TYPE]);
+      if (!parsed) {
+        throw new Error('A2A topic alignment response did not contain a topic-alignment selection part');
+      }
+      selection = parseTopicAlignmentSelection(parsed.data);
+    } else {
+      selection = parseTopicAlignmentSelection(payload);
+    }
+    if (!selection) {
+      throw new Error('Topic alignment response carried an invalid selection body');
+    }
+    if (selection.alignment_id !== proposal.alignment_id) {
+      throw new Error(
+        `Topic alignment response carried mismatched alignment_id: ` +
+          `expected=${proposal.alignment_id} got=${selection.alignment_id}`,
       );
     }
     return selection;
@@ -1059,6 +1150,11 @@ function parseDescriptorPeerDiscovery(descriptor: AgentDescriptor): AgentVaultPe
         (item): item is string => typeof item === 'string',
       )
     : [];
+  const supportedTopicCodes = Array.isArray(descriptor.capabilities['supported_topic_codes'])
+    ? descriptor.capabilities['supported_topic_codes'].filter(
+        (item): item is string => typeof item === 'string',
+      )
+    : [];
   const afalEndpoint = descriptor.endpoints.propose.endsWith('/propose')
     ? descriptor.endpoints.propose.slice(0, -'/propose'.length)
     : undefined;
@@ -1067,6 +1163,7 @@ function parseDescriptorPeerDiscovery(descriptor: AgentDescriptor): AgentVaultPe
 
   if (
     !supportedContractOffers &&
+    supportedTopicCodes.length === 0 &&
     supportedPurposes.length === 0 &&
     !afalEndpoint &&
     !a2aSendMessageUrl
@@ -1078,6 +1175,12 @@ function parseDescriptorPeerDiscovery(descriptor: AgentDescriptor): AgentVaultPe
     ...(afalEndpoint ? { afalEndpoint } : {}),
     ...(a2aSendMessageUrl ? { a2aSendMessageUrl } : {}),
     supportedPurposes,
+    ...(supportedTopicCodes.length
+      ? {
+          supportsTopicAlignment: descriptor.capabilities['supports_topic_alignment'] === true,
+          supportedTopicCodes,
+        }
+      : {}),
     supportsPrecontractNegotiation: supportedContractOffers !== null,
     supportsBespokeContractNegotiation:
       descriptor.capabilities['supports_bespoke_contract_negotiation'] === true,

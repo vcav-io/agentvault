@@ -16,6 +16,8 @@ import {
   AGENTVAULT_CONTRACT_OFFER_SELECTION_MEDIA_TYPE,
   AGENTVAULT_PROPOSE_MEDIA_TYPE,
   AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
+  AGENTVAULT_TOPIC_ALIGNMENT_PROPOSAL_MEDIA_TYPE,
+  AGENTVAULT_TOPIC_ALIGNMENT_SELECTION_MEDIA_TYPE,
   buildA2ASendMessageRequest,
 } from '../a2a-messages.js';
 
@@ -198,10 +200,34 @@ describe('AfalHttpServer', () => {
     const capabilities = body['capabilities'] as Record<string, unknown>;
     const extensions = capabilities['extensions'] as Array<Record<string, unknown>>;
     const params = extensions[0]['params'] as Record<string, unknown>;
+    expect(params['supports_topic_alignment']).toBe(true);
+    expect(params['supported_topic_codes']).toEqual([
+      'company_strategy',
+      'salary_alignment',
+      'acquisition_fit',
+      'technical_architecture',
+      'reference_check',
+    ]);
     expect(params['supports_precontract_negotiation']).toBe(true);
     expect(params['supported_contract_offers']).toEqual(
       (descriptor.capabilities as Record<string, unknown>)['supported_contract_offers'],
     );
+  });
+
+  it('POST /afal/negotiate returns a direct topic-alignment selection', async () => {
+    const res = await fetch(`${baseUrl}/afal/negotiate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        alignment_id: 'align-123',
+        acceptable_topic_codes: ['salary_alignment', 'reference_check'],
+        expected_counterparty: 'bob-test',
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body['state']).toBe('ALIGNED');
+    expect(body['selected_topic_code']).toBe('salary_alignment');
   });
 
   it('POST /afal/propose returns ADMIT for valid body', async () => {
@@ -318,6 +344,33 @@ describe('AfalHttpServer', () => {
     const parts = history[0]?.['parts'] as Array<Record<string, unknown>>;
     expect(parts[0]?.['media_type']).toBe(AGENTVAULT_CONTRACT_OFFER_SELECTION_MEDIA_TYPE);
     expect((parts[0]?.['data'] as Record<string, unknown>)['state']).toBe('AGREED');
+  });
+
+  it('POST /a2a/send-message returns a topic-alignment selection task for alignment proposals', async () => {
+    const res = await fetch(`${baseUrl}${A2A_SEND_MESSAGE_PATH}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(
+        buildA2ASendMessageRequest({
+          mediaType: AGENTVAULT_TOPIC_ALIGNMENT_PROPOSAL_MEDIA_TYPE,
+          data: {
+            alignment_id: 'align-123',
+            acceptable_topic_codes: ['salary_alignment', 'reference_check'],
+            expected_counterparty: 'bob-test',
+          },
+          acceptedOutputModes: [AGENTVAULT_TOPIC_ALIGNMENT_SELECTION_MEDIA_TYPE],
+        }),
+      ),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    const history = body['history'] as Array<Record<string, unknown>>;
+    const parts = history[0]?.['parts'] as Array<Record<string, unknown>>;
+    expect(parts[0]?.['media_type']).toBe(AGENTVAULT_TOPIC_ALIGNMENT_SELECTION_MEDIA_TYPE);
+    expect((parts[0]?.['data'] as Record<string, unknown>)['state']).toBe('ALIGNED');
+    expect((parts[0]?.['data'] as Record<string, unknown>)['selected_topic_code']).toBe(
+      'salary_alignment',
+    );
   });
 
   it('POST /afal/negotiate returns a direct contract-offer selection for negotiation proposals', async () => {
