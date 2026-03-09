@@ -735,6 +735,12 @@ export class DirectAfalTransport implements AfalTransport {
     if (!selection) {
       throw new Error('A2A negotiation response carried an invalid contract-offer selection body');
     }
+    if (selection.negotiation_id !== proposal.negotiation_id) {
+      throw new Error(
+        `A2A negotiation response carried mismatched negotiation_id: ` +
+          `expected=${proposal.negotiation_id} got=${selection.negotiation_id}`,
+      );
+    }
     return selection;
   }
 

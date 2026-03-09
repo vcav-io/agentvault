@@ -4,6 +4,7 @@ import {
   type RelayContract,
 } from 'agentvault-client/contracts';
 import { listKnownModelProfiles, type ModelProfileRef } from './model-profiles.js';
+import type { SupportedContractOffer } from './contract-negotiation.js';
 
 export interface ContractOfferDefinition {
   offer_version: string;
@@ -16,13 +17,11 @@ export interface ContractOfferDefinition {
   metadata_defaults?: Record<string, unknown>;
 }
 
-export interface SupportedContractOffer {
-  contract_offer_id: string;
-  supported_model_profiles: ModelProfileRef[];
-}
-
 const KNOWN_PROFILES = listKnownModelProfiles();
 
+// TODO(#338): Load named contract offers from the admitted registry index
+// instead of this static v1 catalogue once bespoke/registry-backed offer
+// negotiation is implemented end-to-end.
 const CONTRACT_OFFERS: readonly ContractOfferDefinition[] = [
   {
     offer_version: '1',

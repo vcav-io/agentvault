@@ -128,6 +128,7 @@ beforeEach(() => {
   _setDiscoverPollConfigForTesting(0, 0);
   process.env['AV_RELAY_URL'] = 'http://relay.test';
   process.env['AV_AGENT_ID'] = 'alice-demo';
+  vi.mocked(createAndSubmit).mockClear();
 });
 
 afterEach(() => {
@@ -294,31 +295,38 @@ describe('INITIATE with AFAL', () => {
           },
         }),
     });
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () =>
-        Promise.resolve({
-          history: [
-            {
-              role: 'agent',
-              parts: [
-                {
-                  media_type: 'application/vnd.agentvault.contract-offer-selection+json',
-                  data: {
-                    negotiation_id: 'neg-123',
-                    state: 'AGREED',
-                    selected_contract_offer_id: 'agentvault.mediation.v1.standard',
-                    selected_model_profile: {
-                      id: 'api-claude-sonnet-v1',
-                      version: '1',
-                      hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
+    mockFetch.mockImplementationOnce(async (_url, init) => {
+      const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+      const params = body['params'] as Record<string, unknown>;
+      const message = params['message'] as Record<string, unknown>;
+      const parts = message['parts'] as Array<Record<string, unknown>>;
+      const proposal = parts[0]?.['data'] as Record<string, unknown>;
+      return {
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            history: [
+              {
+                role: 'agent',
+                parts: [
+                  {
+                    media_type: 'application/vnd.agentvault.contract-offer-selection+json',
+                    data: {
+                      negotiation_id: proposal['negotiation_id'],
+                      state: 'AGREED',
+                      selected_contract_offer_id: 'agentvault.mediation.v1.standard',
+                      selected_model_profile: {
+                        id: 'api-claude-sonnet-v1',
+                        version: '1',
+                        hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
+                      },
                     },
                   },
-                },
-              ],
-            },
-          ],
-        }),
+                ],
+              },
+            ],
+          }),
+      };
     });
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -347,7 +355,7 @@ describe('INITIATE with AFAL', () => {
     expect(proposal['acceptable_offers']).toBeDefined();
 
     expect(vi.mocked(createAndSubmit)).toHaveBeenCalledWith(
-      { relay_url: 'http://relay.from.card' },
+      { relay_url: 'http://relay.test' },
       expect.objectContaining({
         purpose_code: 'MEDIATION',
         model_profile_id: 'api-claude-sonnet-v1',
@@ -356,6 +364,176 @@ describe('INITIATE with AFAL', () => {
       'hello',
       'initiator',
     );
+  });
+
+  it('fails cleanly when pre-contract negotiation returns NO_COMMON_CONTRACT', async () => {
+    const mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+
+    const transport = new DirectAfalTransport({
+      agentId: 'alice-demo',
+      seedHex: TEST_SEED,
+      localDescriptor: makeLocalDescriptor(),
+      peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
+    });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          name: 'bob-demo',
+          capabilities: {
+            extensions: [
+              {
+                uri: AGENTVAULT_A2A_EXTENSION_URI,
+                params: {
+                  public_key_hex: PEER_PUBKEY,
+                  relay_url: 'http://relay.from.card',
+                  supported_purposes: ['MEDIATION'],
+                  a2a_send_message_url: 'http://peer.example.com/a2a/send-message',
+                  afal_endpoint: 'http://peer.example.com/afal',
+                  supports_precontract_negotiation: true,
+                  supported_contract_offers: [
+                    {
+                      contract_offer_id: 'agentvault.mediation.v1.standard',
+                      supported_model_profiles: [],
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        }),
+    });
+    mockFetch.mockImplementationOnce(async (_url, init) => {
+      const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+      const params = body['params'] as Record<string, unknown>;
+      const message = params['message'] as Record<string, unknown>;
+      const parts = message['parts'] as Array<Record<string, unknown>>;
+      const proposal = parts[0]?.['data'] as Record<string, unknown>;
+      return {
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            history: [
+              {
+                role: 'agent',
+                parts: [
+                  {
+                    media_type: 'application/vnd.agentvault.contract-offer-selection+json',
+                    data: {
+                      negotiation_id: proposal['negotiation_id'],
+                      state: 'NO_COMMON_CONTRACT',
+                    },
+                  },
+                ],
+              },
+            ],
+          }),
+      };
+    });
+
+    await expect(
+      handleRelaySignal(
+        { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'hello' },
+        transport,
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.objectContaining({
+        code: 'SESSION_ERROR',
+        detail: expect.stringContaining('No common prebuilt contract offer'),
+      }),
+    });
+    expect(vi.mocked(createAndSubmit)).not.toHaveBeenCalled();
+  });
+
+  it('fails cleanly when pre-contract negotiation is rejected', async () => {
+    const mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+
+    const transport = new DirectAfalTransport({
+      agentId: 'alice-demo',
+      seedHex: TEST_SEED,
+      localDescriptor: makeLocalDescriptor(),
+      peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
+    });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          name: 'bob-demo',
+          capabilities: {
+            extensions: [
+              {
+                uri: AGENTVAULT_A2A_EXTENSION_URI,
+                params: {
+                  public_key_hex: PEER_PUBKEY,
+                  relay_url: 'http://relay.from.card',
+                  supported_purposes: ['MEDIATION'],
+                  a2a_send_message_url: 'http://peer.example.com/a2a/send-message',
+                  afal_endpoint: 'http://peer.example.com/afal',
+                  supports_precontract_negotiation: true,
+                  supported_contract_offers: [
+                    {
+                      contract_offer_id: 'agentvault.mediation.v1.standard',
+                      supported_model_profiles: [
+                        {
+                          id: 'api-claude-sonnet-v1',
+                          version: '1',
+                          hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
+                        },
+                      ],
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        }),
+    });
+    mockFetch.mockImplementationOnce(async (_url, init) => {
+      const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+      const params = body['params'] as Record<string, unknown>;
+      const message = params['message'] as Record<string, unknown>;
+      const parts = message['parts'] as Array<Record<string, unknown>>;
+      const proposal = parts[0]?.['data'] as Record<string, unknown>;
+      return {
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            history: [
+              {
+                role: 'agent',
+                parts: [
+                  {
+                    media_type: 'application/vnd.agentvault.contract-offer-selection+json',
+                    data: {
+                      negotiation_id: proposal['negotiation_id'],
+                      state: 'REJECTED',
+                    },
+                  },
+                ],
+              },
+            ],
+          }),
+      };
+    });
+
+    await expect(
+      handleRelaySignal(
+        { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'hello' },
+        transport,
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.objectContaining({
+        code: 'SESSION_ERROR',
+        detail: expect.stringContaining('rejected pre-contract negotiation'),
+      }),
+    });
+    expect(vi.mocked(createAndSubmit)).not.toHaveBeenCalled();
   });
 });
 
