@@ -45,6 +45,7 @@ vi.mock('agentvault-client/contracts', () => ({
         participants,
         entropy_budget_bits: 12,
         model_profile_id: 'api-claude-sonnet-v1',
+        model_profile_hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
         metadata: { scenario: 'cofounder-mediation', version: '3' },
       };
     }
@@ -52,6 +53,11 @@ vi.mock('agentvault-client/contracts', () => ({
   }),
   listRelayPurposes: vi.fn().mockReturnValue(['MEDIATION', 'COMPATIBILITY']),
   computeRelayContractHash: vi.fn().mockReturnValue('relay-hash-mock'),
+  withRelayContractModelProfile: vi.fn().mockImplementation((contract, profile) => ({
+    ...contract,
+    model_profile_id: profile.id,
+    model_profile_hash: profile.hash,
+  })),
 }));
 
 function createMockAfalTransport(invites: AfalInviteMessage[] = []): AfalTransport {
@@ -238,6 +244,115 @@ describe('INITIATE with AFAL', () => {
     expect(vi.mocked(createAndSubmit)).toHaveBeenCalledWith(
       { relay_url: 'http://relay.from.card' },
       expect.any(Object),
+      'hello',
+      'initiator',
+    );
+  });
+
+  it('negotiates a contract offer before bootstrap when the peer advertises negotiation', async () => {
+    const mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+
+    const transport = new DirectAfalTransport({
+      agentId: 'alice-demo',
+      seedHex: TEST_SEED,
+      localDescriptor: makeLocalDescriptor(),
+      peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
+    });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          name: 'bob-demo',
+          capabilities: {
+            extensions: [
+              {
+                uri: AGENTVAULT_A2A_EXTENSION_URI,
+                params: {
+                  public_key_hex: PEER_PUBKEY,
+                  relay_url: 'http://relay.from.card',
+                  supported_purposes: ['MEDIATION'],
+                  a2a_send_message_url: 'http://peer.example.com/a2a/send-message',
+                  afal_endpoint: 'http://peer.example.com/afal',
+                  supports_precontract_negotiation: true,
+                  supported_contract_offers: [
+                    {
+                      contract_offer_id: 'agentvault.mediation.v1.standard',
+                      supported_model_profiles: [
+                        {
+                          id: 'api-claude-sonnet-v1',
+                          version: '1',
+                          hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
+                        },
+                      ],
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        }),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          history: [
+            {
+              role: 'agent',
+              parts: [
+                {
+                  media_type: 'application/vnd.agentvault.contract-offer-selection+json',
+                  data: {
+                    negotiation_id: 'neg-123',
+                    state: 'AGREED',
+                    selected_contract_offer_id: 'agentvault.mediation.v1.standard',
+                    selected_model_profile: {
+                      id: 'api-claude-sonnet-v1',
+                      version: '1',
+                      hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
+                    },
+                  },
+                },
+              ],
+            },
+          ],
+        }),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(makeSignedAdmit('d'.repeat(64))),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      text: () => Promise.resolve('ok'),
+    });
+
+    await handleRelaySignal(
+      { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'hello' },
+      transport,
+    );
+
+    const negotiateCall = mockFetch.mock.calls[1] as [string, RequestInit];
+    expect(negotiateCall[0]).toBe('http://peer.example.com/a2a/send-message');
+    const negotiateBody = JSON.parse(negotiateCall[1].body as string) as Record<string, unknown>;
+    const params = negotiateBody['params'] as Record<string, unknown>;
+    const message = params['message'] as Record<string, unknown>;
+    const parts = message['parts'] as Array<Record<string, unknown>>;
+    const proposal = parts[0]?.['data'] as Record<string, unknown>;
+    expect(parts[0]?.['media_type']).toBe(
+      'application/vnd.agentvault.contract-offer-proposal+json',
+    );
+    expect(proposal['acceptable_offers']).toBeDefined();
+
+    expect(vi.mocked(createAndSubmit)).toHaveBeenCalledWith(
+      { relay_url: 'http://relay.from.card' },
+      expect.objectContaining({
+        purpose_code: 'MEDIATION',
+        model_profile_id: 'api-claude-sonnet-v1',
+        model_profile_hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
+      }),
       'hello',
       'initiator',
     );

@@ -12,7 +12,7 @@
  * CREATE/JOIN modes: legacy manual token exchange (backward compat).
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { buildSuccess, buildError, type ToolResponse, type ErrorCode } from '../envelope.js';
@@ -37,6 +37,12 @@ import { computeProposalId, generateNonce } from '../afal-types.js';
 import type { AfalPropose, RelayInvitePayload, RelaySessionBinding } from '../afal-types.js';
 import { DirectAfalTransport } from '../direct-afal-transport.js';
 import { resolveModelProfileRefs, type ModelProfileRef } from '../model-profiles.js';
+import {
+  purposeToContractOfferIds,
+  resolveContractOfferToContract,
+  listSupportedContractOffers,
+} from '../contract-offers.js';
+import type { ContractOfferProposal } from '../contract-negotiation.js';
 import {
   encodeRelayToken,
   decodeRelayToken,
@@ -1157,12 +1163,84 @@ async function phaseInvite(
     );
   }
 
+  let negotiatedSelection: { contractOfferId: string; selectedModelProfile: ModelProfileRef } | null = null;
+  if (
+    transport instanceof DirectAfalTransport &&
+    !args.contract &&
+    purposeHint &&
+    peerDiscovery?.supportsPrecontractNegotiation &&
+    peerDiscovery.supportedContractOffers?.length
+  ) {
+    const offerIds = purposeToContractOfferIds(purposeHint);
+    const localSupportedOffers = listSupportedContractOffers();
+    const allowedOfferIds = new Set(peerDiscovery.supportedContractOffers.map((offer) => offer.contract_offer_id));
+    const acceptableOffers = localSupportedOffers
+      .filter(
+        (offer) =>
+          offerIds.includes(offer.contract_offer_id) && allowedOfferIds.has(offer.contract_offer_id),
+      )
+      .map((offer) => ({
+        contract_offer_id: offer.contract_offer_id,
+        acceptable_model_profiles: (
+          args.acceptable_model_profiles?.length
+            ? resolveModelProfileRefs(args.acceptable_model_profiles)
+            : offer.supported_model_profiles
+        ).filter((profile) =>
+          offer.supported_model_profiles.some(
+            (candidate) =>
+              candidate.id === profile.id &&
+              candidate.version === profile.version &&
+              candidate.hash === profile.hash,
+          ),
+        ),
+      }))
+      .filter((offer) => offer.acceptable_model_profiles.length > 0);
+
+    if (acceptableOffers.length) {
+      const negotiationProposal: ContractOfferProposal = {
+        negotiation_id: randomUUID(),
+        acceptable_offers: acceptableOffers,
+        expected_counterparty: counterparty,
+      };
+      const selection = await transport.negotiateContractOffer(negotiationProposal);
+      if (selection?.state === 'REJECTED') {
+        return buildError('SESSION_ERROR', 'Counterparty rejected pre-contract negotiation.');
+      }
+      if (selection?.state === 'NO_COMMON_CONTRACT') {
+        return buildError(
+          'SESSION_ERROR',
+          'No common prebuilt contract offer and model profile combination was available.',
+        );
+      }
+      if (
+        selection?.state === 'AGREED' &&
+        selection.selected_contract_offer_id &&
+        selection.selected_model_profile
+      ) {
+        negotiatedSelection = {
+          contractOfferId: selection.selected_contract_offer_id,
+          selectedModelProfile: selection.selected_model_profile,
+        };
+        contract = resolveContractOfferToContract({
+          contractOfferId: negotiatedSelection.contractOfferId,
+          participants: [agentId, counterparty],
+          selectedModelProfile: negotiatedSelection.selectedModelProfile,
+        });
+        relayContract = contract as RelayContract;
+        purposeHint = relayContract.purpose_code;
+      }
+    }
+  }
+
   const relayUrl = resolveRelayUrl(args.relay_url, peerDiscovery?.relayUrl);
   // 1. Build AfalPropose from purpose and contract template.
   const templateId = purposeHint
     ? (PURPOSE_TO_TEMPLATE[purposeHint] ?? 'mediation-demo.v1.standard')
     : 'mediation-demo.v1.standard';
-  const preferredProfile = negotiatedProfiles?.[0] ?? preferredModelProfileRef(relayContract);
+  const preferredProfile =
+    negotiatedSelection?.selectedModelProfile ??
+    negotiatedProfiles?.[0] ??
+    preferredModelProfileRef(relayContract);
 
   const proposeFields: Omit<AfalPropose, 'proposal_id'> = {
     proposal_version: '1',
@@ -1180,7 +1258,9 @@ async function phaseInvite(
     model_profile_version: preferredProfile?.version ?? '1',
     admission_tier_requested: 'DEFAULT',
     ...(preferredProfile?.hash ? { model_profile_hash: preferredProfile.hash } : {}),
-    ...(negotiatedProfiles ? { acceptable_model_profiles: negotiatedProfiles } : {}),
+    ...(!negotiatedSelection && negotiatedProfiles
+      ? { acceptable_model_profiles: negotiatedProfiles }
+      : {}),
   };
 
   const proposalId = computeProposalId(proposeFields);

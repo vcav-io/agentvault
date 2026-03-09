@@ -12,6 +12,8 @@ import type { AfalPropose, RelayInvitePayload } from '../afal-types.js';
 import {
   A2A_SEND_MESSAGE_PATH,
   AGENTVAULT_ADMIT_MEDIA_TYPE,
+  AGENTVAULT_CONTRACT_OFFER_PROPOSAL_MEDIA_TYPE,
+  AGENTVAULT_CONTRACT_OFFER_SELECTION_MEDIA_TYPE,
   AGENTVAULT_PROPOSE_MEDIA_TYPE,
   AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
   buildA2ASendMessageRequest,
@@ -160,6 +162,48 @@ describe('AfalHttpServer', () => {
     expect(params['afal_endpoint']).toBe(`${baseUrl}/afal`);
   });
 
+  it('GET /.well-known/agent-card.json advertises negotiation capabilities when present', async () => {
+    const descriptor = makeDescriptor();
+    (descriptor.capabilities as Record<string, unknown>)['supported_contract_offers'] = [
+      {
+        contract_offer_id: 'agentvault.mediation.v1.standard',
+        supported_model_profiles: [
+          {
+            id: 'api-claude-sonnet-v1',
+            version: '1',
+            hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
+          },
+        ],
+      },
+    ];
+    const responder = new AfalResponder({
+      agentId: 'bob-test',
+      seedHex: RESPONDER_SEED,
+      policy: makePolicy(),
+    });
+    await server.stop();
+    server = new AfalHttpServer({
+      port: 0,
+      responder,
+      localDescriptor: descriptor,
+      relayUrl: 'http://relay.example.com',
+      supportedPurposes: ['MEDIATION'],
+    });
+    await server.start();
+    const addr = (server as unknown as { server: { address(): { port: number } } }).server.address();
+    baseUrl = `http://127.0.0.1:${addr.port}`;
+
+    const res = await fetch(`${baseUrl}/.well-known/agent-card.json`);
+    const body = (await res.json()) as Record<string, unknown>;
+    const capabilities = body['capabilities'] as Record<string, unknown>;
+    const extensions = capabilities['extensions'] as Array<Record<string, unknown>>;
+    const params = extensions[0]['params'] as Record<string, unknown>;
+    expect(params['supports_precontract_negotiation']).toBe(true);
+    expect(params['supported_contract_offers']).toEqual(
+      (descriptor.capabilities as Record<string, unknown>)['supported_contract_offers'],
+    );
+  });
+
   it('POST /afal/propose returns ADMIT for valid body', async () => {
     const res = await fetch(`${baseUrl}/afal/propose`, {
       method: 'POST',
@@ -209,6 +253,71 @@ describe('AfalHttpServer', () => {
     const parts = history[0]?.['parts'] as Array<Record<string, unknown>>;
     expect(parts[0]?.['media_type']).toBe(AGENTVAULT_ADMIT_MEDIA_TYPE);
     expect((parts[0]?.['data'] as Record<string, unknown>)['outcome']).toBe('ADMIT');
+  });
+
+  it('POST /a2a/send-message returns a contract-offer selection task for negotiation proposals', async () => {
+    const descriptor = makeDescriptor();
+    (descriptor.capabilities as Record<string, unknown>)['supported_contract_offers'] = [
+      {
+        contract_offer_id: 'agentvault.mediation.v1.standard',
+        supported_model_profiles: [
+          {
+            id: 'api-claude-sonnet-v1',
+            version: '1',
+            hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
+          },
+        ],
+      },
+    ];
+    const responder = new AfalResponder({
+      agentId: 'bob-test',
+      seedHex: RESPONDER_SEED,
+      policy: makePolicy(),
+    });
+    await server.stop();
+    server = new AfalHttpServer({
+      port: 0,
+      responder,
+      localDescriptor: descriptor,
+      relayUrl: 'http://relay.example.com',
+      supportedPurposes: ['MEDIATION'],
+    });
+    await server.start();
+    const addr = (server as unknown as { server: { address(): { port: number } } }).server.address();
+    baseUrl = `http://127.0.0.1:${addr.port}`;
+
+    const res = await fetch(`${baseUrl}${A2A_SEND_MESSAGE_PATH}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(
+        buildA2ASendMessageRequest({
+          mediaType: AGENTVAULT_CONTRACT_OFFER_PROPOSAL_MEDIA_TYPE,
+          data: {
+            negotiation_id: 'neg-123',
+            acceptable_offers: [
+              {
+                contract_offer_id: 'agentvault.mediation.v1.standard',
+                acceptable_model_profiles: [
+                  {
+                    id: 'api-claude-sonnet-v1',
+                    version: '1',
+                    hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
+                  },
+                ],
+              },
+            ],
+            expected_counterparty: 'bob-test',
+          },
+          acceptedOutputModes: [AGENTVAULT_CONTRACT_OFFER_SELECTION_MEDIA_TYPE],
+        }),
+      ),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    const history = body['history'] as Array<Record<string, unknown>>;
+    const parts = history[0]?.['parts'] as Array<Record<string, unknown>>;
+    expect(parts[0]?.['media_type']).toBe(AGENTVAULT_CONTRACT_OFFER_SELECTION_MEDIA_TYPE);
+    expect((parts[0]?.['data'] as Record<string, unknown>)['state']).toBe('AGREED');
   });
 
   it('POST /afal/commit returns 200 for valid COMMIT', async () => {
