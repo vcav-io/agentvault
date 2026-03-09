@@ -543,6 +543,8 @@ describe('Relay Preference Arbitration — Initiator E2E', () => {
     const inbox = await transportB.checkInbox();
     expect(inbox.invites).toHaveLength(1);
     expect(inbox.invites[0].from_agent_id).toBe('alice-test');
+    // The committed relay_session.relay_url must be rewritten to the responder's relay
+    expect(inbox.invites[0].payload['relay_url']).toBe(RESPONDER_RELAY);
   });
 
   it('PREFERRED: initiator overrides with explicit relayUrl config', async () => {

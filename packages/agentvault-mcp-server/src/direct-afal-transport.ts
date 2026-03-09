@@ -474,6 +474,13 @@ export class DirectAfalTransport implements AfalTransport {
 
     const peer = await this.resolvePeerDescriptor();
 
+    // Ensure the relay_session uses the arbitrated relay URL so the
+    // committed session actually routes through the selected relay.
+    const committedRelaySession =
+      relaySession.relay_url === chosenRelayUrl
+        ? relaySession
+        : { ...relaySession, relay_url: chosenRelayUrl };
+
     const commitMessage: Record<string, unknown> = {
       commit_version: '1',
       proposal_id: inviteId,
@@ -481,7 +488,7 @@ export class DirectAfalTransport implements AfalTransport {
       admit_token_id: admit.admit_token_id,
       encrypted_input_hash: contentHash({}),
       agent_descriptor_hash: contentHash(this.config.localDescriptor),
-      relay_session: relaySession,
+      relay_session: committedRelaySession,
       chosen_relay_url: chosenRelayUrl,
     };
 
