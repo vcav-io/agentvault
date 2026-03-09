@@ -11,13 +11,15 @@
  * - Initiator detects mismatched task_id in response
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ed25519 } from '@noble/curves/ed25519';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
 import { AfalHttpServer } from '../afal-http-server.js';
 import { AfalResponder } from '../afal-responder.js';
 import type { AdmissionPolicy } from '../afal-responder.js';
+import { DirectAfalTransport } from '../direct-afal-transport.js';
 import type { AgentDescriptor } from '../direct-afal-transport.js';
+import { AGENTVAULT_A2A_EXTENSION_URI } from '../a2a-agent-card.js';
 import { signMessage, DOMAIN_PREFIXES, contentHash } from '../afal-signing.js';
 import { computeProposalId } from '../afal-types.js';
 import type { AfalPropose, RelayInvitePayload } from '../afal-types.js';
@@ -422,5 +424,118 @@ describe('A2A task ID — client validation', () => {
     expect(parsed!.taskId).toBe('task-propose-wrong');
     // Client code would check: parsed.taskId !== expectedTaskId → throw
     expect(parsed!.taskId).not.toBe('task-propose-expected');
+  });
+});
+
+// ── Transport-layer helpers ──────────────────────────────────────────────────
+
+function makeTransportDescriptor(
+  agentId: string,
+  pubkeyHex: string,
+  seedHex: string,
+): AgentDescriptor {
+  const unsigned: Omit<AgentDescriptor, 'signature'> = {
+    descriptor_version: '1',
+    agent_id: agentId,
+    issued_at: '2026-01-01T00:00:00Z',
+    expires_at: '2099-12-31T23:59:59Z',
+    identity_key: { algorithm: 'ed25519', public_key_hex: pubkeyHex },
+    envelope_key: { algorithm: 'ed25519', public_key_hex: pubkeyHex },
+    endpoints: { propose: '', commit: '' },
+    capabilities: {},
+    policy_commitments: {},
+  };
+  return signMessage(
+    DOMAIN_PREFIXES.DESCRIPTOR,
+    unsigned as Record<string, unknown>,
+    seedHex,
+  ) as unknown as AgentDescriptor;
+}
+
+function makeTransportSignedAdmit(proposalId: string): Record<string, unknown> {
+  return signMessage(
+    DOMAIN_PREFIXES.ADMIT,
+    {
+      admission_version: '1',
+      outcome: 'ADMIT',
+      proposal_id: proposalId,
+      admit_token_id: 'a'.repeat(64),
+      admission_tier: 'DEFAULT',
+      expires_at: '2026-01-01T00:15:00Z',
+    },
+    RESPONDER_SEED,
+  );
+}
+
+// ── Transport-layer task ID mismatch ─────────────────────────────────────────
+
+describe('A2A task ID — transport mismatch throws', () => {
+  let mockFetch: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('sendPropose throws on task ID mismatch from A2A-only peer', async () => {
+    const localDescriptor = makeTransportDescriptor('alice-test', PROPOSER_PUBKEY, PROPOSER_SEED);
+    const transport = new DirectAfalTransport({
+      agentId: 'alice-test',
+      seedHex: PROPOSER_SEED,
+      localDescriptor,
+      peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-card.json',
+    });
+
+    const propose = makePropose();
+    const admit = makeTransportSignedAdmit(propose.proposal_id);
+
+    // First call: agent card discovery (A2A-only peer — no afal_endpoint)
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          name: 'bob-test',
+          url: 'http://peer.example.com',
+          capabilities: {
+            extensions: [
+              {
+                uri: AGENTVAULT_A2A_EXTENSION_URI,
+                params: {
+                  public_key_hex: RESPONDER_PUBKEY,
+                  relay_url: 'http://relay.example.com',
+                  supported_purposes: ['MEDIATION'],
+                  a2a_send_message_url: 'http://peer.example.com/a2a/send-message',
+                },
+              },
+            ],
+          },
+          skills: [],
+        }),
+    });
+
+    // Second call: sendPropose response — returns a WRONG task ID
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve(
+          buildA2ATaskResponse({
+            mediaType: AGENTVAULT_ADMIT_MEDIA_TYPE,
+            data: admit,
+            taskId: 'task-propose-wrong-id',
+          }),
+        ),
+    });
+
+    await expect(
+      transport.sendPropose({
+        propose,
+        templateId: 't',
+        budgetTier: 'SMALL',
+      }),
+    ).rejects.toThrow('A2A task ID mismatch');
   });
 });
