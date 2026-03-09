@@ -227,6 +227,10 @@ export interface RelaySignalOutput {
   display: DisplayDirective;
   interpretation_context?: InterpretationContext;
   resume_token_display?: string | null;
+  negotiated_contract?: {
+    contract_offer_id: string;
+    selected_model_profile: ModelProfileRef;
+  };
 }
 
 // Legacy data types (kept for CREATE/JOIN backward compat)
@@ -925,6 +929,12 @@ function awaitingResponse(
     next_update_seconds: seconds,
     resume_strategy: strategy,
     user_message: userMessage,
+    negotiated_contract: handle.negotiatedContract
+      ? {
+          contract_offer_id: handle.negotiatedContract.contractOfferId,
+          selected_model_profile: handle.negotiatedContract.selectedModelProfile,
+        }
+      : undefined,
     display: {
       forbidden: ['PRINT_RESUME_TOKEN', 'CLAIM_COUNTERPARTY_KNOWLEDGE'],
       redact: ['resume_token'],
@@ -956,6 +966,12 @@ function completedResponse(
     next_args_patch: null,
     next_update_seconds: null,
     user_message: 'Relay session complete.',
+    negotiated_contract: handle.negotiatedContract
+      ? {
+          contract_offer_id: handle.negotiatedContract.contractOfferId,
+          selected_model_profile: handle.negotiatedContract.selectedModelProfile,
+        }
+      : undefined,
     output,
     display: {
       forbidden: [
@@ -997,6 +1013,12 @@ function failedResponse(
     next_update_seconds: null,
     user_message: userMessage,
     error_code: errorCode,
+    negotiated_contract: handle.negotiatedContract
+      ? {
+          contract_offer_id: handle.negotiatedContract.contractOfferId,
+          selected_model_profile: handle.negotiatedContract.selectedModelProfile,
+        }
+      : undefined,
     output,
     display: {
       forbidden: ['PRINT_RESUME_TOKEN'],
@@ -1221,6 +1243,7 @@ async function phaseInvite(
           contractOfferId: selection.selected_contract_offer_id,
           selectedModelProfile: selection.selected_model_profile,
         };
+        handle.negotiatedContract = negotiatedSelection;
         contract = resolveContractOfferToContract({
           contractOfferId: negotiatedSelection.contractOfferId,
           participants: [agentId, counterparty],

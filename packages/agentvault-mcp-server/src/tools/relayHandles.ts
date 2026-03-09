@@ -45,6 +45,14 @@ export interface RelayHandle {
   myInput?: string;
   expectedPurpose?: string;
   expectedContractHash?: string;
+  negotiatedContract?: {
+    contractOfferId: string;
+    selectedModelProfile: {
+      id: string;
+      version: string;
+      hash: string;
+    };
+  };
   /** Opaque retry state for PROPOSE_RETRY phase (stored by relaySignal). */
   retryState?: unknown;
   createdAt: number;

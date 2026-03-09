@@ -337,7 +337,7 @@ describe('INITIATE with AFAL', () => {
       text: () => Promise.resolve('ok'),
     });
 
-    await handleRelaySignal(
+    const result = await handleRelaySignal(
       { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'hello' },
       transport,
     );
@@ -364,6 +364,17 @@ describe('INITIATE with AFAL', () => {
       'hello',
       'initiator',
     );
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        negotiated_contract: {
+          contract_offer_id: 'agentvault.mediation.v1.standard',
+          selected_model_profile: {
+            id: 'api-claude-sonnet-v1',
+          },
+        },
+      },
+    });
   });
 
   it('negotiates over direct AFAL when the peer advertises negotiation via signed descriptor', async () => {
@@ -435,7 +446,7 @@ describe('INITIATE with AFAL', () => {
       text: () => Promise.resolve('ok'),
     });
 
-    await handleRelaySignal(
+    const result = await handleRelaySignal(
       { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'hello' },
       transport,
     );
@@ -443,6 +454,17 @@ describe('INITIATE with AFAL', () => {
     const calledUrls = mockFetch.mock.calls.map((call) => call[0]);
     expect(calledUrls).toContain('http://peer.example.com/afal/negotiate');
     expect(vi.mocked(createAndSubmit)).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        negotiated_contract: {
+          contract_offer_id: 'agentvault.mediation.v1.standard',
+          selected_model_profile: {
+            id: 'api-claude-sonnet-v1',
+          },
+        },
+      },
+    });
   });
 
   it('fails cleanly when pre-contract negotiation returns NO_COMMON_CONTRACT', async () => {

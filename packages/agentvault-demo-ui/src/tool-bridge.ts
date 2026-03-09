@@ -47,6 +47,7 @@ export async function executeToolCalls(
       const resultStr = JSON.stringify(result, null, 2);
 
       events.emitToolResult(agentName, tu.name, redactSensitive(result));
+      emitNegotiationEventIfPresent(agentName, tu.name, result, events);
 
       results.push({
         type: 'tool_result',
@@ -66,4 +67,30 @@ export async function executeToolCalls(
   }
 
   return results;
+}
+
+function emitNegotiationEventIfPresent(
+  agentName: string,
+  toolName: string,
+  result: unknown,
+  events: EventBus,
+): void {
+  if (!toolName.includes('relay_signal') || !result || typeof result !== 'object') return;
+  const data = (result as Record<string, unknown>)['data'];
+  if (!data || typeof data !== 'object') return;
+  const negotiated = (data as Record<string, unknown>)['negotiated_contract'];
+  if (!negotiated || typeof negotiated !== 'object') return;
+
+  const contractOfferId = (negotiated as Record<string, unknown>)['contract_offer_id'];
+  const selectedModelProfile = (negotiated as Record<string, unknown>)['selected_model_profile'];
+  const profileId =
+    selectedModelProfile && typeof selectedModelProfile === 'object'
+      ? (selectedModelProfile as Record<string, unknown>)['id']
+      : undefined;
+
+  if (typeof contractOfferId !== 'string' || typeof profileId !== 'string') return;
+
+  events.emitSystem(
+    `${agentName} negotiated contract offer ${contractOfferId} with model profile ${profileId}`,
+  );
 }
