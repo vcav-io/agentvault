@@ -400,8 +400,8 @@ app.get('/api/config', (_req, res) => {
     providers.push({
       name: 'gemini',
       models: [
-        { id: 'gemini-2.5-flash', tier: 'mid', default: true },
-        { id: 'gemini-2.5-flash-lite', tier: 'budget' },
+        { id: 'gemini-2.5-flash', tier: 'mid', profileId: 'api-gemini3flash-v1', default: true },
+        { id: 'gemini-2.5-flash-lite', tier: 'budget', profileId: 'api-gemini3flash-lite-v1' },
       ],
     });
   }

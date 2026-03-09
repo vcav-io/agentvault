@@ -728,12 +728,11 @@ var VaultCardManager = (function () {
       }
 
       case 'agent_status': {
+        var who = agentLabel(event.agent);
         if (event.payload.status === 'completed') {
-          var who = agentLabel(event.agent);
           var card = addCard(who + ' finished');
           addStatus(card, true, 'Agent done');
         } else if (event.payload.status === 'failed') {
-          var who = agentLabel(event.agent);
           var failCard = addCard(who + ' failed', 'vault-card--error vault-card--expanded');
           addLine(failCard, 'detail', String(event.payload.detail || 'Session failed'));
         }
