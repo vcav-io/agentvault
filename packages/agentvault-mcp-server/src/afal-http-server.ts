@@ -36,6 +36,11 @@ import {
   parseSupportedContractOffers,
   selectNegotiatedContractOffer,
 } from './contract-negotiation.js';
+import {
+  supportsBespokePrecontractNegotiation,
+  validateBespokeContractSelection,
+} from './bespoke-contracts.js';
+import { listKnownModelProfiles } from './model-profiles.js';
 
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_CONCURRENT = 16;
@@ -119,6 +124,7 @@ export class AfalHttpServer {
       includeAfalEndpoint: this.config.advertiseAfalEndpoint,
       supportedContractOffers,
       seedHex: this.config.seedHex,
+      supportsBespokeContractNegotiation: supportsBespokePrecontractNegotiation(),
     });
   }
 
@@ -180,7 +186,7 @@ export class AfalHttpServer {
           return;
         }
 
-        try {
+        void (async () => {
           if (url === '/afal/propose') {
             const result = this.config.responder.handlePropose(body);
             res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -195,10 +201,15 @@ export class AfalHttpServer {
                 parseSupportedContractOffers(
                   this._localDescriptor.capabilities['supported_contract_offers'],
                 ) ?? [];
-              const selection = selectNegotiatedContractOffer(
+              const selection = await selectNegotiatedContractOffer(
                 proposal,
-                supportedContractOffers,
-                this._localDescriptor.agent_id,
+                {
+                  supportedOffers: supportedContractOffers,
+                  localAgentId: this._localDescriptor.agent_id,
+                  supportsBespoke: supportsBespokePrecontractNegotiation(),
+                  supportedModelProfiles: listKnownModelProfiles(),
+                  validateBespokeContract: validateBespokeContractSelection,
+                },
               );
               res.writeHead(200, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify(selection));
@@ -236,10 +247,15 @@ export class AfalHttpServer {
                   parseSupportedContractOffers(
                     this._localDescriptor.capabilities['supported_contract_offers'],
                   ) ?? [];
-                const selection = selectNegotiatedContractOffer(
+                const selection = await selectNegotiatedContractOffer(
                   proposal,
-                  supportedContractOffers,
-                  this._localDescriptor.agent_id,
+                  {
+                    supportedOffers: supportedContractOffers,
+                    localAgentId: this._localDescriptor.agent_id,
+                    supportsBespoke: supportsBespokePrecontractNegotiation(),
+                    supportedModelProfiles: listKnownModelProfiles(),
+                    validateBespokeContract: validateBespokeContractSelection,
+                  },
                 );
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(
@@ -270,15 +286,15 @@ export class AfalHttpServer {
             res.writeHead(status, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(result));
           }
-        } catch (e) {
+        })().catch((e) => {
           console.error(`AFAL ${url} handler threw:`, e);
           if (!res.headersSent) {
             res.writeHead(500, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Internal server error' }));
           }
-        } finally {
+        }).finally(() => {
           done();
-        }
+        });
       });
       return;
     }

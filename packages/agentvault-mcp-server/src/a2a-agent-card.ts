@@ -11,6 +11,7 @@ export interface AgentVaultA2AExtensionParams {
   afal_endpoint?: string;
   a2a_send_message_url?: string;
   supports_precontract_negotiation?: boolean;
+  supports_bespoke_contract_negotiation?: boolean;
   supported_contract_offers?: SupportedContractOffer[];
   card_signature?: string;
 }
@@ -134,6 +135,7 @@ export function buildAgentCard(params: {
   includeAfalEndpoint?: boolean;
   supportedContractOffers?: SupportedContractOffer[];
   seedHex?: string;
+  supportsBespokeContractNegotiation?: boolean;
 }): AgentCard {
   const extensionParams: AgentVaultA2AExtensionParams = {
     public_key_hex: params.descriptor.identity_key.public_key_hex,
@@ -145,6 +147,11 @@ export function buildAgentCard(params: {
       ? {
           supports_precontract_negotiation: true,
           supported_contract_offers: params.supportedContractOffers,
+        }
+      : {}),
+    ...(params.supportsBespokeContractNegotiation
+      ? {
+          supports_bespoke_contract_negotiation: true,
         }
       : {}),
   };

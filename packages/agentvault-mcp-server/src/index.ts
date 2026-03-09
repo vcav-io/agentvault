@@ -45,6 +45,7 @@ import { signMessage, DOMAIN_PREFIXES } from './afal-signing.js';
 import type { AdmissionPolicy, TrustedAgent } from './afal-responder.js';
 import { listKnownModelProfiles } from './model-profiles.js';
 import { listSupportedContractOffers } from './contract-offers.js';
+import { supportsBespokePrecontractNegotiation } from './bespoke-contracts.js';
 import { ed25519 } from '@noble/curves/ed25519';
 import { hexToBytes, bytesToHex } from '@noble/hashes/utils';
 
@@ -163,6 +164,7 @@ function buildDirectTransportFromEnv(): DirectAfalTransport | null {
       supports_commit: true,
       supported_model_profiles: listKnownModelProfiles(),
       supported_contract_offers: listSupportedContractOffers(),
+      supports_bespoke_contract_negotiation: supportsBespokePrecontractNegotiation(),
     },
     policy_commitments: {},
   };
@@ -387,3 +389,4 @@ export type { ModelProfileRef } from './model-profiles.js';
 export { listSupportedContractOffers } from './contract-offers.js';
 export { buildAgentCard, buildCardSignedPayload, signAgentCard, verifyAgentCardSignature, AGENTVAULT_A2A_EXTENSION_URI } from './a2a-agent-card.js';
 export type { AgentCard, AgentCardSignedPayload, AgentVaultA2AExtensionParams } from './a2a-agent-card.js';
+export { supportsBespokePrecontractNegotiation } from './bespoke-contracts.js';

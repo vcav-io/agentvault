@@ -81,16 +81,32 @@ function emitNegotiationEventIfPresent(
   const negotiated = (data as Record<string, unknown>)['negotiated_contract'];
   if (!negotiated || typeof negotiated !== 'object') return;
 
+  const kind = (negotiated as Record<string, unknown>)['kind'];
   const contractOfferId = (negotiated as Record<string, unknown>)['contract_offer_id'];
+  const bespokeContract = (negotiated as Record<string, unknown>)['bespoke_contract'];
   const selectedModelProfile = (negotiated as Record<string, unknown>)['selected_model_profile'];
   const profileId =
     selectedModelProfile && typeof selectedModelProfile === 'object'
       ? (selectedModelProfile as Record<string, unknown>)['id']
       : undefined;
 
-  if (typeof contractOfferId !== 'string' || typeof profileId !== 'string') return;
+  if (typeof profileId !== 'string') return;
 
-  events.emitSystem(
-    `${agentName} negotiated contract offer ${contractOfferId} with model profile ${profileId}`,
-  );
+  if (kind === 'offer' && typeof contractOfferId === 'string') {
+    events.emitSystem(
+      `${agentName} negotiated contract offer ${contractOfferId} with model profile ${profileId}`,
+    );
+    return;
+  }
+
+  if (
+    kind === 'bespoke' &&
+    bespokeContract &&
+    typeof bespokeContract === 'object' &&
+    typeof (bespokeContract as Record<string, unknown>)['purpose_code'] === 'string'
+  ) {
+    events.emitSystem(
+      `${agentName} negotiated bespoke ${String((bespokeContract as Record<string, unknown>)['purpose_code'])} contract with model profile ${profileId}`,
+    );
+  }
 }
