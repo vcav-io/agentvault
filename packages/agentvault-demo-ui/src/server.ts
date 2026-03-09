@@ -216,16 +216,16 @@ function loadPrompt(name: string): string {
   if (fs.existsSync(promptPath)) return fs.readFileSync(promptPath, 'utf-8');
   console.warn(`Prompt file not found at ${promptPath}, using built-in fallback for ${name}`);
   if (name === 'alice') {
-    return 'I need your help with a private mediation. I co-founded a startup with Bob 18 months ago and we\'re growing apart on strategy. I believe we need to pivot toward enterprise sales — revenue is flat despite developer community traction. I\'m worried Bob is too emotionally attached to the community to see the business reality. I want to find a compromise, not blow up the partnership. Please start a private mediation with Bob.';
+    return 'I need help handling a difficult conversation with my co-founder, Bob. We started this company together 18 months ago and we are pulling in different directions. I think we need to move toward enterprise sales because revenue is flat even though the developer community likes the product. I am worried Bob is too attached to that community strategy to see the commercial reality. I do not want to blow up the partnership, but I do want to find out whether there is a workable compromise.';
   }
-  return 'I\'m really struggling with where my startup is heading. Alice and I co-founded it together 18 months ago and I feel like we\'re pulling in completely different directions now. She keeps pushing for enterprise sales but I think that would kill everything that makes the product good. The developer community we\'ve built is real — people genuinely love what we\'re making — but Alice treats that like it doesn\'t matter if it\'s not converting to revenue. I don\'t know what to do.\n\nAlice mentioned she might set up a private mediation for us. When her invite arrives in your inbox, accept it using mode: RESPOND (not INITIATE — she is the one starting the session). Include your private perspective as my_input.';
+  return 'I\'m really struggling with where my startup is heading. Alice and I co-founded it together 18 months ago and I feel like we\'re pulling in completely different directions now. She keeps pushing for enterprise sales, but I think that would damage the product and culture we have built. The developer community around the product is real and valuable, and I do not think Alice takes that seriously enough. If Alice reaches out to try to work through this, help me engage honestly without giving away more than I need to.';
 }
 
 // Behavioural mitigation for weaker models (e.g. Haiku) that tend to ask for
 // confirmation instead of acting. Not an architectural guarantee — the relay
 // contract and tool schemas are the real enforcement boundary.
 const SYSTEM_PROMPT = `You are a helpful AI assistant acting on behalf of your user.
-You have access to AgentVault tools for secure bounded-disclosure communication with other agents.
+You have access to secure coordination tools that can compare positions and exchange bounded signals without exposing one participant's raw private context directly to the other.
 
 ACTING ON BEHALF OF YOUR USER:
 - Your user's message contains their private context and instructions. Your FIRST response MUST be a tool call. Do not produce text before calling a tool. NEVER ask for confirmation.
@@ -233,6 +233,7 @@ ACTING ON BEHALF OF YOUR USER:
 - Do not ask your user to repeat or clarify information they already provided.
 - The other agent is always the one returned by get_identity. Do not ask the user to confirm the agent name — there is only one counterparty.
 - This applies to all scenario types: mediation, compatibility, reference, submission, or any other relay session.
+- Do not mention internal tool names, protocol modes, or system mechanics to the user unless they explicitly ask.
 
 HEARTBEAT:
 - When you receive a [Heartbeat] message, run this checklist:
