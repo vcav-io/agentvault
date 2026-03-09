@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { ed25519 } from '@noble/curves/ed25519';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
 import {
@@ -9,15 +9,19 @@ import {
   AGENTVAULT_A2A_EXTENSION_URI,
 } from '../a2a-agent-card.js';
 import type { AgentVaultA2AExtensionParams } from '../a2a-agent-card.js';
+import { DirectAfalTransport } from '../direct-afal-transport.js';
 import type { AgentDescriptor } from '../direct-afal-transport.js';
+import { signMessage, DOMAIN_PREFIXES } from '../afal-signing.js';
 
-// Test keypair — same pattern as existing tests
+// ── Test keypairs ────────────────────────────────────────────────────────────
+
 const TEST_SEED_HEX = '0101010101010101010101010101010101010101010101010101010101010101';
 const TEST_PUBLIC_KEY_HEX = bytesToHex(ed25519.getPublicKey(hexToBytes(TEST_SEED_HEX)));
 
-// A second keypair for tampering tests
-const OTHER_SEED_HEX = '0202020202020202020202020202020202020202020202020202020202020202';
-const OTHER_PUBLIC_KEY_HEX = bytesToHex(ed25519.getPublicKey(hexToBytes(OTHER_SEED_HEX)));
+const PEER_SEED_HEX = '0202020202020202020202020202020202020202020202020202020202020202';
+const PEER_PUBLIC_KEY_HEX = bytesToHex(ed25519.getPublicKey(hexToBytes(PEER_SEED_HEX)));
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function makeDescriptor(agentId: string, publicKeyHex: string): AgentDescriptor {
   return {
@@ -33,6 +37,19 @@ function makeDescriptor(agentId: string, publicKeyHex: string): AgentDescriptor 
   };
 }
 
+function makeSignedDescriptor(
+  agentId: string,
+  publicKeyHex: string,
+  seedHex: string,
+): AgentDescriptor {
+  const unsigned = makeDescriptor(agentId, publicKeyHex);
+  return signMessage(
+    DOMAIN_PREFIXES.DESCRIPTOR,
+    unsigned as unknown as Record<string, unknown>,
+    seedHex,
+  ) as unknown as AgentDescriptor;
+}
+
 function makeExtensionParams(overrides?: Partial<AgentVaultA2AExtensionParams>): AgentVaultA2AExtensionParams {
   return {
     public_key_hex: TEST_PUBLIC_KEY_HEX,
@@ -43,6 +60,8 @@ function makeExtensionParams(overrides?: Partial<AgentVaultA2AExtensionParams>):
     ...overrides,
   };
 }
+
+// ── Pure function tests ──────────────────────────────────────────────────────
 
 describe('buildCardSignedPayload', () => {
   it('includes all trust-relevant fields', () => {
@@ -103,8 +122,8 @@ describe('signAgentCard / verifyAgentCardSignature round-trip', () => {
   });
 
   it('rejects signature from wrong key', () => {
-    const params = makeExtensionParams({ public_key_hex: OTHER_PUBLIC_KEY_HEX });
-    const signature = signAgentCard('test-agent', params, OTHER_SEED_HEX);
+    const params = makeExtensionParams({ public_key_hex: PEER_PUBLIC_KEY_HEX });
+    const signature = signAgentCard('test-agent', params, PEER_SEED_HEX);
 
     // Try to verify with a different key
     const valid = verifyAgentCardSignature('test-agent', params, signature, TEST_PUBLIC_KEY_HEX);
@@ -159,62 +178,196 @@ describe('buildAgentCard with seedHex', () => {
   });
 });
 
-describe('tryResolvePeerViaAgentCard card signature verification', () => {
-  // These tests exercise the verification path in DirectAfalTransport.
-  // We import DirectAfalTransport and use its internal method via a test subclass.
+// ── Transport-level tests ────────────────────────────────────────────────────
 
-  // Since tryResolvePeerViaAgentCard is private and involves fetch, we test
-  // the verification logic through the public functions and buildAgentCard
-  // integration, then verify the DirectAfalTransport integration via the
-  // existing e2e test infrastructure.
+describe('tryResolvePeerViaAgentCard card signature verification (transport-level)', () => {
+  let responderTransport: DirectAfalTransport;
+  let initiatorTransport: DirectAfalTransport;
 
-  // The core verification logic is tested above via signAgentCard/verifyAgentCardSignature.
-  // Here we test the specific failure behaviors described in the spec.
-
-  it('signed + valid card verifies successfully', () => {
-    const params = makeExtensionParams();
-    const signature = signAgentCard('test-agent', params, TEST_SEED_HEX);
-    const valid = verifyAgentCardSignature('test-agent', params, signature, TEST_PUBLIC_KEY_HEX);
-    expect(valid).toBe(true);
+  afterEach(async () => {
+    if (responderTransport) await responderTransport.stop();
   });
 
-  it('signed + invalid card (tampered a2a_send_message_url) rejects', () => {
-    const params = makeExtensionParams();
-    const signature = signAgentCard('test-agent', params, TEST_SEED_HEX);
+  /**
+   * Start a responder transport that serves an agent card.
+   * Returns the agent card URL for the initiator to discover.
+   */
+  async function startResponder(opts?: {
+    seedHex?: string;
+    advertiseAfalEndpoint?: boolean;
+  }): Promise<string> {
+    const peerDescriptor = makeSignedDescriptor('peer-agent', PEER_PUBLIC_KEY_HEX, PEER_SEED_HEX);
 
-    const tampered = makeExtensionParams({
-      a2a_send_message_url: 'https://evil.example.com/a2a/send-message',
+    responderTransport = new DirectAfalTransport({
+      agentId: 'peer-agent',
+      seedHex: PEER_SEED_HEX,
+      localDescriptor: peerDescriptor,
+      respondMode: {
+        httpPort: 0,
+        bindAddress: '127.0.0.1',
+        policy: {
+          trustedAgents: [],
+          allowedPurposeCodes: ['COMPATIBILITY'],
+          allowedLaneIds: ['API_MEDIATED'],
+          maxEntropyBits: 256,
+          defaultTier: 'DENY',
+        },
+        advertiseAfalEndpoint: opts?.advertiseAfalEndpoint,
+      },
     });
-    const valid = verifyAgentCardSignature('test-agent', tampered, signature, TEST_PUBLIC_KEY_HEX);
-    expect(valid).toBe(false);
-  });
 
-  it('signed + invalid card (tampered supported_purposes) rejects', () => {
-    const params = makeExtensionParams();
-    const signature = signAgentCard('test-agent', params, TEST_SEED_HEX);
+    // Patch the seedHex onto the HTTP server config so the agent card is signed
+    // (or not, depending on the test). The constructor always passes the
+    // transport's seedHex; override it here for control.
+    const httpServer = (responderTransport as unknown as { httpServer: { config: { seedHex?: string } } }).httpServer;
+    if (opts && 'seedHex' in opts) {
+      httpServer.config.seedHex = opts.seedHex;
+    }
 
-    const tampered = makeExtensionParams({
-      supported_purposes: ['COMPATIBILITY', 'MEDIATION'],
+    await responderTransport.start();
+
+    const server = responderTransport as unknown as { httpServer: { port: number } };
+    return `http://127.0.0.1:${server.httpServer.port}`;
+  }
+
+  it('accepts unsigned card in lenient mode (default)', async () => {
+    // Start responder WITHOUT seedHex — card will be unsigned
+    const baseUrl = await startResponder({ seedHex: undefined });
+
+    const localDescriptor = makeSignedDescriptor('local-agent', TEST_PUBLIC_KEY_HEX, TEST_SEED_HEX);
+    initiatorTransport = new DirectAfalTransport({
+      agentId: 'local-agent',
+      seedHex: TEST_SEED_HEX,
+      localDescriptor,
+      peerDescriptorUrl: `${baseUrl}/.well-known/agent-card.json`,
+      // requireSignedCards defaults to false (lenient mode)
     });
-    const valid = verifyAgentCardSignature('test-agent', tampered, signature, TEST_PUBLIC_KEY_HEX);
-    expect(valid).toBe(false);
+
+    const discovery = await initiatorTransport.discoverPeerAgentCard();
+    expect(discovery).not.toBeNull();
+    expect(discovery!.supportedPurposes).toContain('COMPATIBILITY');
   });
 
-  it('strict mode rejects card missing a2a_send_message_url from signed payload', () => {
-    // When a2a_send_message_url is absent from extension params,
-    // the signed payload won't include it. In strict mode the resolver
-    // must not fall back to card.url derivation.
-    const params = makeExtensionParams();
-    delete params.a2a_send_message_url;
-    const signature = signAgentCard('test-agent', params, TEST_SEED_HEX);
+  it('rejects unsigned card in strict mode', async () => {
+    // Start responder WITHOUT seedHex — card will be unsigned
+    const baseUrl = await startResponder({ seedHex: undefined });
 
-    // Signature is valid for this payload (without a2a_send_message_url)
-    const valid = verifyAgentCardSignature('test-agent', params, signature, TEST_PUBLIC_KEY_HEX);
-    expect(valid).toBe(true);
+    const localDescriptor = makeSignedDescriptor('local-agent', TEST_PUBLIC_KEY_HEX, TEST_SEED_HEX);
+    initiatorTransport = new DirectAfalTransport({
+      agentId: 'local-agent',
+      seedHex: TEST_SEED_HEX,
+      localDescriptor,
+      peerDescriptorUrl: `${baseUrl}/.well-known/agent-card.json`,
+      requireSignedCards: true,
+    });
 
-    // But the signed payload does NOT include a2a_send_message_url.
-    // In strict mode, the resolver must not derive it from card.url.
-    const payload = buildCardSignedPayload('test-agent', params);
-    expect(payload).not.toHaveProperty('a2a_send_message_url');
+    await expect(initiatorTransport.discoverPeerAgentCard()).rejects.toThrow(
+      'unsigned',
+    );
+  });
+
+  it('accepts signed card with valid signature', async () => {
+    // Start responder WITH seedHex — card will be signed
+    const baseUrl = await startResponder({ seedHex: PEER_SEED_HEX });
+
+    const localDescriptor = makeSignedDescriptor('local-agent', TEST_PUBLIC_KEY_HEX, TEST_SEED_HEX);
+    initiatorTransport = new DirectAfalTransport({
+      agentId: 'local-agent',
+      seedHex: TEST_SEED_HEX,
+      localDescriptor,
+      peerDescriptorUrl: `${baseUrl}/.well-known/agent-card.json`,
+      requireSignedCards: true,
+    });
+
+    const discovery = await initiatorTransport.discoverPeerAgentCard();
+    expect(discovery).not.toBeNull();
+    expect(discovery!.supportedPurposes).toContain('COMPATIBILITY');
+  });
+
+  it('strict mode rejects card that omits a2a_send_message_url from signed payload even if card.url is present', async () => {
+    // Start responder WITH seedHex but WITHOUT afal_endpoint — this means
+    // the card has a2a_send_message_url in it (set by buildAgentCard).
+    // We need to test: signed card where a2a_send_message_url is NOT in the
+    // extension params, but card.url IS present. In strict mode, the resolver
+    // must not fall back to deriving a2a_send_message_url from card.url.
+    //
+    // To achieve this, we start a normal responder, then intercept the agent
+    // card serving to strip a2a_send_message_url from the params (while keeping
+    // the card.url and re-signing without it).
+    const peerDescriptor = makeSignedDescriptor('peer-agent', PEER_PUBLIC_KEY_HEX, PEER_SEED_HEX);
+
+    responderTransport = new DirectAfalTransport({
+      agentId: 'peer-agent',
+      seedHex: PEER_SEED_HEX,
+      localDescriptor: peerDescriptor,
+      respondMode: {
+        httpPort: 0,
+        bindAddress: '127.0.0.1',
+        policy: {
+          trustedAgents: [],
+          allowedPurposeCodes: ['COMPATIBILITY'],
+          allowedLaneIds: ['API_MEDIATED'],
+          maxEntropyBits: 256,
+          defaultTier: 'DENY',
+        },
+        // No afal_endpoint either — so the only way to get an endpoint
+        // would be fallback from card.url
+        advertiseAfalEndpoint: false,
+      },
+    });
+
+    await responderTransport.start();
+
+    const server = responderTransport as unknown as { httpServer: { port: number; config: { seedHex?: string } } };
+    const baseUrl = `http://127.0.0.1:${server.httpServer.port}`;
+
+    // The card built by buildAgentCard always includes a2a_send_message_url.
+    // We need to override the agentCard getter to produce a card where
+    // a2a_send_message_url is absent from extension params but card.url
+    // is present, and the card is signed over that (no a2a_send_message_url).
+    //
+    // We do this by building a custom card and overriding the getter.
+    const httpServerObj = (responderTransport as unknown as { httpServer: { agentCard: unknown } }).httpServer;
+    const customExtParams: AgentVaultA2AExtensionParams = {
+      public_key_hex: PEER_PUBLIC_KEY_HEX,
+      supported_purposes: ['COMPATIBILITY'],
+      // NO a2a_send_message_url
+      // NO afal_endpoint
+    };
+    const cardSig = signAgentCard('peer-agent', customExtParams, PEER_SEED_HEX);
+    const customCard = {
+      name: 'peer-agent',
+      description: 'Test card',
+      version: '1.0.0',
+      url: baseUrl, // card.url IS present
+      capabilities: {
+        extensions: [{
+          uri: AGENTVAULT_A2A_EXTENSION_URI,
+          description: 'Test',
+          required: false,
+          params: {
+            ...customExtParams,
+            card_signature: cardSig,
+          },
+        }],
+      },
+      skills: [],
+    };
+    Object.defineProperty(httpServerObj, 'agentCard', { get: () => customCard });
+
+    const localDescriptor = makeSignedDescriptor('local-agent', TEST_PUBLIC_KEY_HEX, TEST_SEED_HEX);
+    initiatorTransport = new DirectAfalTransport({
+      agentId: 'local-agent',
+      seedHex: TEST_SEED_HEX,
+      localDescriptor,
+      peerDescriptorUrl: `${baseUrl}/.well-known/agent-card.json`,
+      requireSignedCards: true,
+    });
+
+    // In strict mode, since a2a_send_message_url is not in extension params,
+    // the resolver must NOT fall back to deriving from card.url.
+    // Without either a2a_send_message_url or afal_endpoint, discovery returns null.
+    const discovery = await initiatorTransport.discoverPeerAgentCard();
+    expect(discovery).toBeNull();
   });
 });
