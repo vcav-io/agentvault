@@ -200,6 +200,12 @@ export class AfalHttpServer {
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(result.response));
           } else if (url === '/afal/negotiate') {
+            // Topic alignment and contract negotiation intentionally share the
+            // same bounded negotiation endpoint. The payload shapes are
+            // disjoint: topic alignment requires `alignment_id` +
+            // `acceptable_topic_codes`, while contract negotiation requires
+            // `negotiation_id` + `acceptable_offers`. That invariant lets us
+            // route by parsing without ambiguity.
             const topicProposal = parseTopicAlignmentProposal(body);
             if (topicProposal) {
               const selection = selectAlignedTopic(
