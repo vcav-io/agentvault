@@ -902,6 +902,16 @@ function removeSessionStateFile(handle: RelayHandle): void {
 
 // ── Response Builders ───────────────────────────────────────────────────
 
+function mapNegotiatedContract(
+  handle: RelayHandle,
+): RelaySignalOutput['negotiated_contract'] | undefined {
+  if (!handle.negotiatedContract) return undefined;
+  return {
+    contract_offer_id: handle.negotiatedContract.contractOfferId,
+    selected_model_profile: handle.negotiatedContract.selectedModelProfile,
+  };
+}
+
 function awaitingResponse(
   handle: RelayHandle,
   userMessage: string,
@@ -929,12 +939,7 @@ function awaitingResponse(
     next_update_seconds: seconds,
     resume_strategy: strategy,
     user_message: userMessage,
-    negotiated_contract: handle.negotiatedContract
-      ? {
-          contract_offer_id: handle.negotiatedContract.contractOfferId,
-          selected_model_profile: handle.negotiatedContract.selectedModelProfile,
-        }
-      : undefined,
+    negotiated_contract: mapNegotiatedContract(handle),
     display: {
       forbidden: ['PRINT_RESUME_TOKEN', 'CLAIM_COUNTERPARTY_KNOWLEDGE'],
       redact: ['resume_token'],
@@ -966,12 +971,7 @@ function completedResponse(
     next_args_patch: null,
     next_update_seconds: null,
     user_message: 'Relay session complete.',
-    negotiated_contract: handle.negotiatedContract
-      ? {
-          contract_offer_id: handle.negotiatedContract.contractOfferId,
-          selected_model_profile: handle.negotiatedContract.selectedModelProfile,
-        }
-      : undefined,
+    negotiated_contract: mapNegotiatedContract(handle),
     output,
     display: {
       forbidden: [
@@ -1013,12 +1013,7 @@ function failedResponse(
     next_update_seconds: null,
     user_message: userMessage,
     error_code: errorCode,
-    negotiated_contract: handle.negotiatedContract
-      ? {
-          contract_offer_id: handle.negotiatedContract.contractOfferId,
-          selected_model_profile: handle.negotiatedContract.selectedModelProfile,
-        }
-      : undefined,
+    negotiated_contract: mapNegotiatedContract(handle),
     output,
     display: {
       forbidden: ['PRINT_RESUME_TOKEN'],

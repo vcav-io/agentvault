@@ -75,7 +75,7 @@ function emitNegotiationEventIfPresent(
   result: unknown,
   events: EventBus,
 ): void {
-  if (!toolName.includes('relay_signal') || !result || typeof result !== 'object') return;
+  if (toolName !== 'agentvault.relay_signal' || !result || typeof result !== 'object') return;
   const data = (result as Record<string, unknown>)['data'];
   if (!data || typeof data !== 'object') return;
   const negotiated = (data as Record<string, unknown>)['negotiated_contract'];
