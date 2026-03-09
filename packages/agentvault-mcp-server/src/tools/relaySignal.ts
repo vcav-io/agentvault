@@ -1692,16 +1692,20 @@ async function phaseDiscover(
           continue;
         }
 
-        // Validate: participant list must contain the expected bilateral pair
+        // Validate: participant list must be exactly [initiator, responder]
+        // Exact shape check — rejects duplicates, wrong ordering, extra entries.
         const participants: unknown[] = Array.isArray(detail.contract_json.participants)
           ? detail.contract_json.participants
           : [];
-        const expectedPair = new Set([handle.agentId, handle.counterparty]);
-        const actualPair = new Set(participants.filter((p): p is string => typeof p === 'string'));
-        if (expectedPair.size !== actualPair.size || ![...expectedPair].every(id => actualPair.has(id))) {
+        const expectedParticipants = [handle.counterparty, handle.agentId];
+        if (
+          participants.length !== 2 ||
+          participants[0] !== expectedParticipants[0] ||
+          participants[1] !== expectedParticipants[1]
+        ) {
           console.error(
             `phaseDiscover: invite ${invite.invite_id} participant mismatch: ` +
-              `expected=[${[...expectedPair]}] got=[${[...actualPair]}]`,
+              `expected=[${expectedParticipants}] got=[${participants}]`,
           );
           foundSenderInviteWithContractMismatch = true;
           continue;
