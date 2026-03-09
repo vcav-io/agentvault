@@ -26,6 +26,7 @@ export const DOMAIN_PREFIXES = {
   COMMIT: 'VCAV-COMMIT-V1:',
   MESSAGE: 'VCAV-MESSAGE-V1:',
   REQUEST: 'VCAV-REQUEST-V1:',
+  AGENT_CARD: 'VCAV-AGENT-CARD-V1:',
 } as const;
 
 export type DomainPrefix = (typeof DOMAIN_PREFIXES)[keyof typeof DOMAIN_PREFIXES];

@@ -172,12 +172,15 @@ function buildDirectTransportFromEnv(): DirectAfalTransport | null {
   }
   const localDescriptor = localDescriptorRaw;
 
+  const requireSignedCards = process.env['AV_AFAL_REQUIRE_SIGNED_CARDS'] === 'true';
+
   const config: DirectAfalTransportConfig = {
     agentId,
     seedHex,
     localDescriptor,
     relayUrl: process.env['AV_RELAY_URL'],
     peerDescriptorUrl,
+    requireSignedCards,
   };
 
   // RESPOND mode if HTTP port is configured
@@ -382,5 +385,5 @@ export { isAgentDescriptor } from './direct-afal-transport.js';
 export { listKnownModelProfiles, resolveModelProfileRefs } from './model-profiles.js';
 export type { ModelProfileRef } from './model-profiles.js';
 export { listSupportedContractOffers } from './contract-offers.js';
-export { buildAgentCard, AGENTVAULT_A2A_EXTENSION_URI } from './a2a-agent-card.js';
-export type { AgentCard } from './a2a-agent-card.js';
+export { buildAgentCard, buildCardSignedPayload, signAgentCard, verifyAgentCardSignature, AGENTVAULT_A2A_EXTENSION_URI } from './a2a-agent-card.js';
+export type { AgentCard, AgentCardSignedPayload, AgentVaultA2AExtensionParams } from './a2a-agent-card.js';
