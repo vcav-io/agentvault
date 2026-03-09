@@ -254,7 +254,8 @@ function resolveModelProfileHash(modelProfileId: string): string {
 /**
  * Build a full relay contract from a bundled template and participant list.
  * Returns undefined for unknown purpose codes.
- * Throws on invalid participant IDs (empty or contains whitespace).
+ * Throws on invalid participant IDs (empty or contains whitespace) or an
+ * unknown model profile override.
  *
  * @deprecated Use `buildContract` from `./contract-builder.js` with a registry
  * index for composable contract construction.

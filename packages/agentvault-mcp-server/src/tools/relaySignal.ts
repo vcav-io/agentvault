@@ -1255,10 +1255,11 @@ async function phaseInvite(
   let negotiatedSelection: RelayHandle['negotiatedContract'] | null = null;
   if (transport instanceof DirectAfalTransport && !args.contract) {
     const negotiationCandidates: ContractOfferProposal['acceptable_offers'] = [];
+    const preferredProfile = preferredModelProfileRef(relayContract);
     const defaultNegotiationProfiles = args.acceptable_model_profiles?.length
       ? resolveModelProfileRefs(args.acceptable_model_profiles)
-      : preferredModelProfileRef(relayContract)
-        ? [preferredModelProfileRef(relayContract) as ModelProfileRef]
+      : preferredProfile
+        ? [preferredProfile]
         : undefined;
 
     if (purposeHint && peerDiscovery?.supportsPrecontractNegotiation && peerDiscovery.supportedContractOffers?.length) {
