@@ -705,8 +705,19 @@ mod tests {
             policy_version: "1".to_string(),
             policy_id: "compatibility_safe_v1".to_string(),
             policy_scope: "RELAY_GLOBAL".to_string(),
-            model_profile_allowlist: vec!["api-claude-sonnet-v1".to_string()],
-            provider_allowlist: vec!["anthropic".to_string(), "openai".to_string()],
+            model_profile_allowlist: vec![
+                "api-claude-sonnet-v1".to_string(),
+                "api-claude-haiku-v1".to_string(),
+                "api-gpt5-v1".to_string(),
+                "api-gpt41mini-v1".to_string(),
+                "api-gemini3flash-v1".to_string(),
+                "api-gemini3flash-lite-v1".to_string(),
+            ],
+            provider_allowlist: vec![
+                "anthropic".to_string(),
+                "openai".to_string(),
+                "gemini".to_string(),
+            ],
             max_output_tokens: None,
             rules: vec![
                 EnforcementRule {

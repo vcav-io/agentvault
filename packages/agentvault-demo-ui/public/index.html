@@ -38,7 +38,13 @@
     <!-- Setup phase: prompt editors + template selector -->
     <div class="setup" id="setup-phase">
       <div class="setup-header">
-        <h2>Configure Agents</h2>
+        <div class="setup-header-top">
+          <h2>Configure Agents</h2>
+          <label class="canary-toggle canary-toggle--header" id="canary-toggle-wrap">
+            <input type="checkbox" id="canary-check-toggle">
+            <span>Check bounded output for canary leaks</span>
+          </label>
+        </div>
         <div class="setup-selectors">
           <div class="template-selector">
             <label for="template-select">Template</label>
@@ -68,14 +74,6 @@
           </div>
         </div>
       </div>
-      <p class="setup-note">
-        Use ordinary participant messages. The centre column shows protocol milestones,
-        bounded output, and receipts. The lower panel shows raw runtime events.
-      </p>
-      <label class="canary-toggle" id="canary-toggle-wrap">
-        <input type="checkbox" id="canary-check-toggle">
-        <span>Check bounded output for canary leaks</span>
-      </label>
       <div class="prompt-editors">
         <div class="prompt-editor alice">
           <div class="prompt-label">

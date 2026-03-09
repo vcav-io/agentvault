@@ -1255,6 +1255,12 @@ async function phaseInvite(
   let negotiatedSelection: RelayHandle['negotiatedContract'] | null = null;
   if (transport instanceof DirectAfalTransport && !args.contract) {
     const negotiationCandidates: ContractOfferProposal['acceptable_offers'] = [];
+    const preferredProfile = preferredModelProfileRef(relayContract);
+    const defaultNegotiationProfiles = args.acceptable_model_profiles?.length
+      ? resolveModelProfileRefs(args.acceptable_model_profiles)
+      : preferredProfile
+        ? [preferredProfile]
+        : undefined;
 
     if (purposeHint && peerDiscovery?.supportsPrecontractNegotiation && peerDiscovery.supportedContractOffers?.length) {
       const offerIds = purposeToContractOfferIds(purposeHint);
@@ -1271,8 +1277,8 @@ async function phaseInvite(
           kind: 'offer' as const,
           contract_offer_id: offer.contract_offer_id,
           acceptable_model_profiles: (
-            args.acceptable_model_profiles?.length
-              ? resolveModelProfileRefs(args.acceptable_model_profiles)
+            defaultNegotiationProfiles?.length
+              ? defaultNegotiationProfiles
               : offer.supported_model_profiles
           ).filter((profile) =>
             offer.supported_model_profiles.some(
@@ -1298,7 +1304,9 @@ async function phaseInvite(
       for (const candidate of args.acceptable_contracts) {
         const acceptableProfiles = candidate.acceptable_model_profiles?.length
           ? resolveModelProfileRefs(candidate.acceptable_model_profiles)
-          : localProfiles;
+          : defaultNegotiationProfiles?.length
+            ? defaultNegotiationProfiles
+            : localProfiles;
         if (acceptableProfiles.length === 0) continue;
         negotiationCandidates.push({
           kind: 'bespoke',
@@ -2341,7 +2349,7 @@ export async function handleRelaySignal(
         if (existingInvite) {
           console.info(
             `relay_signal INITIATE: ${agentId} found existing invite from ${counterparty} — ` +
-            `redirecting to RESPOND (auto-collision-resolve).`,
+              `redirecting to RESPOND (auto-collision-resolve).`,
           );
           const respondIdempotencyKey = computeRelayIdempotencyKey(agentId, [
             counterparty,
@@ -2358,8 +2366,9 @@ export async function handleRelaySignal(
           });
           respondHandle.expectedPurpose = args.purpose;
           respondHandle.myInput = args.my_input;
-          respondHandle.contractHash = contractHashForKey;
-          respondHandle.expectedContractHash = contractHashForKey;
+          // Do not bind collision redirects to a locally precomputed contract hash.
+          // On the direct AFAL path, pre-session negotiation can legitimately pick a
+          // different final contract/model profile than the caller's default build.
           return await phaseDiscover(respondHandle, transport);
         }
 

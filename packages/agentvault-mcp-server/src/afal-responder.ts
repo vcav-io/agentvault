@@ -540,6 +540,24 @@ function selectModelProfile(
     return acceptable[0] ?? null;
   }
 
+  const preferred = acceptable.find(
+    (candidate) =>
+      candidate.id === propose.model_profile_id &&
+      candidate.version === propose.model_profile_version &&
+      candidate.hash === propose.model_profile_hash,
+  );
+  if (
+    preferred &&
+    supportedProfiles.some(
+      (supported) =>
+        supported.id === preferred.id &&
+        supported.version === preferred.version &&
+        supported.hash === preferred.hash,
+    )
+  ) {
+    return preferred;
+  }
+
   for (const supported of supportedProfiles) {
     const match = acceptable.find(
       (candidate) =>

@@ -12,7 +12,7 @@ services:
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - AV_MODEL_ID=${AV_MODEL_ID:-claude-haiku-4-5-20251001}
       - AV_OPENAI_MODEL_ID=${AV_OPENAI_MODEL_ID:-gpt-4.1-mini}
-      - AV_GEMINI_MODEL_ID=${AV_GEMINI_MODEL_ID:-gemini-2.5-flash}
+      - AV_GEMINI_MODEL_ID=${AV_GEMINI_MODEL_ID:-gemini-3-flash-preview}
       - AV_ENV=dev
       - AV_INBOX_AUTH=off
       - AV_HEALTH_EXPOSE_MODEL=true

@@ -5,6 +5,7 @@
  * compute_contract_hash (RFC 8785 JCS + SHA-256).
  */
 
+import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import {
   buildRelayContract,
@@ -61,6 +62,20 @@ describe('buildRelayContract', () => {
 
   it('returns undefined for unknown purpose', () => {
     expect(buildRelayContract('UNKNOWN', ['a', 'b'])).toBeUndefined();
+  });
+
+  it('binds the selected model profile hash when overriding the template profile', () => {
+    const contract = buildRelayContract('COMPATIBILITY', ['alice-demo', 'bob-demo'], 'api-gpt41mini-v1');
+    expect(contract!.model_profile_id).toBe('api-gpt41mini-v1');
+    expect(contract!.model_profile_hash).toBe(
+      '2d7127751173337c405be23a99219db2179024c3447ff6f05b0de3cfdd741e96',
+    );
+  });
+
+  it('rejects unknown model profile overrides', () => {
+    expect(() =>
+      buildRelayContract('COMPATIBILITY', ['alice-demo', 'bob-demo'], 'api-unknown-v1'),
+    ).toThrow('Unknown model profile');
   });
 
   it('rejects empty participant ID', () => {
@@ -173,13 +188,45 @@ describe('golden hash vectors (cross-language parity)', () => {
   it('mediation contract hash matches Rust relay', () => {
     const contract = buildRelayContract('MEDIATION', ['alice-demo', 'bob-demo'])!;
     const hash = computeRelayContractHash(contract);
-    expect(hash).toBe('dc670f0ed3a547f6225c88ff7cb44ab9e2b4b537b7beb32d8e524ec7c9012bc7');
+    expect(hash).toBe('945c35e38865653c9edbb976fb8c55a6d6715e91df9dd3eaf06a29470bb23622');
   });
 
   it('compatibility contract hash matches Rust relay', () => {
     const contract = buildRelayContract('COMPATIBILITY', ['alice-demo', 'bob-demo'])!;
     const hash = computeRelayContractHash(contract);
-    expect(hash).toBe('be46b9fec14485d80cde37cb616429db414dd2a5f93b895db81af30863976874');
+    expect(hash).toBe('9b763505b3ce2569b064a05d42abce7242d377be410ad16b57ae3ffc04e9c4fd');
+  });
+});
+
+describe('bundled profile hashes', () => {
+  it('stay in sync with the relay model profile lockfile', () => {
+    const mediation = buildRelayContract('MEDIATION', ['alice-demo', 'bob-demo'])!;
+    const compatibility = buildRelayContract('COMPATIBILITY', ['alice-demo', 'bob-demo'])!;
+    const lockfilePath = new URL(
+      '../../../agentvault-relay/prompt_programs/model_profiles.lock',
+      import.meta.url,
+    );
+    const lockfile = JSON.parse(readFileSync(lockfilePath, 'utf8')) as Record<string, string>;
+
+    expect(mediation.model_profile_hash).toBe(lockfile[mediation.model_profile_id!]);
+    expect(compatibility.model_profile_hash).toBe(lockfile[compatibility.model_profile_id!]);
+
+    expect(
+      buildRelayContract('COMPATIBILITY', ['alice-demo', 'bob-demo'], 'api-gpt5-v1')!
+        .model_profile_hash,
+    ).toBe(lockfile['api-gpt5-v1']);
+    expect(
+      buildRelayContract('COMPATIBILITY', ['alice-demo', 'bob-demo'], 'api-gpt41mini-v1')!
+        .model_profile_hash,
+    ).toBe(lockfile['api-gpt41mini-v1']);
+    expect(
+      buildRelayContract('MEDIATION', ['alice-demo', 'bob-demo'], 'api-gemini3flash-v1')!
+        .model_profile_hash,
+    ).toBe(lockfile['api-gemini3flash-v1']);
+    expect(
+      buildRelayContract('MEDIATION', ['alice-demo', 'bob-demo'], 'api-gemini3flash-lite-v1')!
+        .model_profile_hash,
+    ).toBe(lockfile['api-gemini3flash-lite-v1']);
   });
 });
 

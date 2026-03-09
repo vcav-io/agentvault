@@ -41,7 +41,6 @@ import { signMessage, DOMAIN_PREFIXES } from 'agentvault-mcp-server';
 import {
   buildRelayContract,
   computeRelayContractHash,
-  computeOutputSchemaHash,
 } from 'agentvault-client/contracts';
 
 import { EventBus } from './events.js';
@@ -108,7 +107,7 @@ function createProviderFromSpec(providerName: string, model?: string): LLMProvid
   if (providerName === 'gemini') {
     const apiKey = process.env['GEMINI_API_KEY'];
     if (!apiKey) throw new Error('GEMINI_API_KEY is required when provider=gemini');
-    console.log(`Using Gemini provider, model: ${model ?? 'gemini-2.5-flash (default)'}`);
+    console.log(`Using Gemini provider, model: ${model ?? 'gemini-3-flash-preview (default)'}`);
     return new GeminiProvider(apiKey, model);
   }
 
@@ -137,7 +136,7 @@ function createProvider(): LLMProvider {
 
 /** Default heartbeat models per provider — cheapest with tool use support. */
 const HEARTBEAT_DEFAULTS: Record<string, string> = {
-  gemini: 'gemini-2.5-flash-lite',
+  gemini: 'gemini-3.1-flash-lite-preview',
   openai: 'gpt-4.1-nano',
   anthropic: 'claude-haiku-4-5-20251001',
 };
@@ -409,8 +408,8 @@ app.get('/api/config', (_req, res) => {
     providers.push({
       name: 'gemini',
       models: [
-        { id: 'gemini-2.5-flash', tier: 'mid', profileId: 'api-gemini3flash-v1', default: true },
-        { id: 'gemini-2.5-flash-lite', tier: 'budget', profileId: 'api-gemini3flash-lite-v1' },
+        { id: 'gemini-3-flash-preview', tier: 'flagship', profileId: 'api-gemini3flash-v1', default: true },
+        { id: 'gemini-3.1-flash-lite-preview', tier: 'budget', profileId: 'api-gemini3flash-lite-v1' },
       ],
     });
   }
@@ -418,8 +417,8 @@ app.get('/api/config', (_req, res) => {
     providers.push({
       name: 'openai',
       models: [
-        { id: 'gpt-5', tier: 'flagship', profileId: 'api-gpt5-v1' },
-        { id: 'gpt-4.1-mini', tier: 'mid', profileId: 'api-gpt41mini-v1', default: true },
+        { id: 'gpt-5', tier: 'flagship', profileId: 'api-gpt5-v1', default: true },
+        { id: 'gpt-4.1-mini', tier: 'mid', profileId: 'api-gpt41mini-v1' },
       ],
     });
   }
@@ -503,6 +502,20 @@ app.post('/api/start', async (req, res) => {
     const agentProvider = req.body?.agentProvider as string | undefined;
     const agentModel = req.body?.agentModel as string | undefined;
     const relayProfileId = req.body?.relayProfileId as string | undefined;
+    const policySummary = relayHealth?.policy_summary as Record<string, unknown> | undefined;
+    const allowedProfiles = Array.isArray(policySummary?.model_profile_allowlist)
+      ? policySummary.model_profile_allowlist.filter(
+          (profileId): profileId is string => typeof profileId === 'string',
+        )
+      : [];
+    if (relayProfileId && allowedProfiles.length > 0 && !allowedProfiles.includes(relayProfileId)) {
+      res.status(400).json({
+        error:
+          `Relay policy ${String(policySummary?.policy_id ?? 'unknown')} does not admit ` +
+          `model profile ${relayProfileId}. Admitted profiles: ${allowedProfiles.join(', ')}`,
+      });
+      return;
+    }
     if (agentProvider) {
       provider = createProviderFromSpec(agentProvider, agentModel);
       events.emitSystem(`Agent provider overridden: ${agentProvider}/${agentModel ?? 'default'}`);
@@ -522,72 +535,6 @@ app.post('/api/start', async (req, res) => {
     // Start JSONL recording
     const runFile = events.startRecording(RUNS_DIR);
     events.emitSystem(`Recording to ${runFile}`);
-
-    // Emit contract enforcement parameters for the default MEDIATION contract
-    try {
-      const mediationContract = buildRelayContract('MEDIATION', ['alice', 'bob'], relayProfileId);
-      if (mediationContract) {
-        const schemaHash = computeOutputSchemaHash(mediationContract.output_schema);
-        events.emit({
-          ts: new Date().toISOString(),
-          type: 'system',
-          agent: 'contract_enforcement',
-          payload: {
-            purpose_code: mediationContract.purpose_code,
-            output_schema_id: mediationContract.output_schema_id,
-            output_schema_hash: schemaHash,
-            enforcement_policy_hash: mediationContract.enforcement_policy_hash ?? null,
-            entropy_enforcement: mediationContract.entropy_enforcement ?? 'Advisory',
-            entropy_budget_bits: mediationContract.entropy_budget_bits,
-            max_completion_tokens: mediationContract.max_completion_tokens ?? null,
-            model_constraints: mediationContract.model_constraints ?? null,
-            session_ttl_secs: mediationContract.session_ttl_secs ?? null,
-            invite_ttl_secs: mediationContract.invite_ttl_secs ?? null,
-            model_profile_id: mediationContract.model_profile_id,
-          },
-        });
-      }
-    } catch (err) {
-      console.warn('Failed to emit contract enforcement event:', err instanceof Error ? err.message : String(err));
-    }
-
-    // Fetch relay health — shows the relay's identity (signing key) and which
-    // policies/models it has admitted. The contract's enforcement_policy_hash
-    // must be in this set for the relay to accept the session.
-    try {
-      const healthRes = await fetch(`${RELAY_URL}/health`);
-      if (healthRes.ok) {
-        relayHealth = await healthRes.json() as Record<string, unknown>;
-        const policySummary = relayHealth.policy_summary as Record<string, unknown> | undefined;
-        events.emit({
-          ts: new Date().toISOString(),
-          type: 'system',
-          agent: 'relay_policy',
-          payload: {
-            policy_id: policySummary?.policy_id ?? 'unknown',
-            policy_hash: policySummary?.policy_hash ?? 'unknown',
-            model_profile_allowlist: policySummary?.model_profile_allowlist ?? [],
-            provider_allowlist: policySummary?.provider_allowlist ?? [],
-            enforcement_rules: policySummary?.enforcement_rules ?? [],
-            entropy_constraints: policySummary?.entropy_constraints ?? null,
-            verifying_key_hex: relayHealth.verifying_key_hex ?? 'unknown',
-            model_id: relayHealth.model_id ?? 'unknown',
-          },
-        });
-      }
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      console.warn('Failed to fetch relay health for policy event:', detail);
-      events.emit({
-        ts: new Date().toISOString(),
-        type: 'system',
-        agent: 'relay_unreachable',
-        payload: { relay_url: RELAY_URL, detail },
-      });
-      events.emitSystem('Session aborted — relay is not reachable');
-      res.json({ ok: false, error: `Relay unreachable at ${RELAY_URL}: ${detail}` });
-      return;
-    }
 
     if (!relayHealth) {
       events.emit({

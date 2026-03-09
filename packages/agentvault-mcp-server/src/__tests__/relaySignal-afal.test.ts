@@ -37,15 +37,24 @@ vi.mock('agentvault-client/http', () => ({
 }));
 
 vi.mock('agentvault-client/contracts', () => ({
-  buildRelayContract: vi.fn().mockImplementation((purpose: string, participants: string[]) => {
+  buildRelayContract: vi.fn().mockImplementation((
+    purpose: string,
+    participants: string[],
+    modelProfileId?: string,
+  ) => {
     if (purpose === 'MEDIATION') {
       return {
         purpose_code: 'MEDIATION',
         output_schema_id: 'vcav_e_mediation_signal_v2',
         participants,
         entropy_budget_bits: 12,
-        model_profile_id: 'api-claude-sonnet-v1',
-        model_profile_hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
+        model_profile_id: modelProfileId ?? 'api-claude-sonnet-v1',
+        model_profile_hash:
+          modelProfileId === 'api-gpt41mini-v1'
+            ? 'gpt41mini-hash'
+            : modelProfileId === 'api-gemini3flash-v1'
+              ? 'gemini3flash-hash'
+              : '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
         metadata: { scenario: 'cofounder-mediation', version: '3' },
       };
     }
@@ -107,7 +116,10 @@ function makeLocalDescriptor(): AgentDescriptor {
   return makeDescriptor('alice-demo', TEST_PUBKEY, TEST_SEED);
 }
 
-function makeSignedAdmit(proposalId: string): Record<string, unknown> {
+function makeSignedAdmit(
+  proposalId: string,
+  selectedModelProfile?: { id: string; version: string; hash: string },
+): Record<string, unknown> {
   return signMessage(
     DOMAIN_PREFIXES.ADMIT,
     {
@@ -117,6 +129,7 @@ function makeSignedAdmit(proposalId: string): Record<string, unknown> {
       admit_token_id: 'a'.repeat(64),
       admission_tier: 'DEFAULT',
       expires_at: '2026-01-01T00:15:00Z',
+      ...(selectedModelProfile ? { selected_model_profile: selectedModelProfile } : {}),
     },
     PEER_SEED,
   );
@@ -248,6 +261,38 @@ describe('INITIATE with AFAL', () => {
       'hello',
       'initiator',
     );
+  });
+
+  it('does not reject collision redirect against a stale pre-negotiation contract hash', async () => {
+    const transport = createMockAfalTransport([
+      {
+        invite_id: 'inv-1',
+        from_agent_id: 'bob-demo',
+        template_id: 'compatibility-demo.v1.standard',
+        contract_hash: 'negotiated-hash-from-peer',
+        payload_type: 'VCAV_E_INVITE_V1',
+        payload: {
+          session_id: 'sess-123',
+          responder_submit_token: 'resp-submit',
+          responder_read_token: 'resp-read',
+          relay_url: 'http://relay.test',
+        },
+        afalPropose: {
+          purpose_code: 'MEDIATION',
+        } as AfalPropose,
+      },
+    ]);
+
+    const result = await handleRelaySignal(
+      { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'hello' },
+      transport,
+    );
+    const data = result.data as unknown as Record<string, unknown>;
+
+    expect(result.status).toBe('PENDING');
+    expect(data['phase']).toBe('JOIN');
+    expect(data['from']).toBe('bob-demo');
+    expect(data['contract_hash']).toBe('negotiated-hash-from-peer');
   });
 
   it('negotiates a contract offer before bootstrap when the peer advertises negotiation', async () => {

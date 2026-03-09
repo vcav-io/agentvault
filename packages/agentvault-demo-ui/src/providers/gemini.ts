@@ -58,7 +58,7 @@ export class GeminiProvider implements LLMProvider {
 
   readonly name = 'gemini';
 
-  constructor(apiKey: string, model = 'gemini-2.5-flash', baseUrl?: string) {
+  constructor(apiKey: string, model = 'gemini-3-flash-preview', baseUrl?: string) {
     this.apiKey = apiKey;
     this.model = model;
     this.baseUrl = baseUrl ?? DEFAULT_BASE_URL;

@@ -163,6 +163,7 @@ var VaultCardManager = (function () {
   var pendingCalls = [];
   // Callback for result cards in chat panels
   var onOutputSignal = null;
+  var seenSystemCards = {};
 
   function scrollVaultIntoView() {
     if (!container) return;
@@ -175,12 +176,14 @@ var VaultCardManager = (function () {
     stepCount = 0;
     agentState = {};
     pendingCalls = [];
+    seenSystemCards = {};
   }
 
   function reset() {
     stepCount = 0;
     agentState = {};
     pendingCalls = [];
+    seenSystemCards = {};
   }
 
   function setOutputSignalCallback(cb) {
@@ -759,6 +762,15 @@ var VaultCardManager = (function () {
         // 1. Contract — specifies what the session must enforce
         if (event.agent === 'contract_enforcement') {
           var c = event.payload;
+          var contractKey = 'contract:' + JSON.stringify([
+            c.contract_hash || '',
+            c.purpose_code || '',
+            c.output_schema_id || '',
+            c.model_profile_hash || '',
+            c.model_profile_id || ''
+          ]);
+          if (seenSystemCards[contractKey]) break;
+          seenSystemCards[contractKey] = true;
           var card = addCard('Contract Parameters', 'vault-card--contract vault-card--expanded');
           addLine(card, 'version', 'v2');
           addLine(card, 'purpose', String(c.purpose_code || 'unknown'));
@@ -766,7 +778,11 @@ var VaultCardManager = (function () {
           if (c.enforcement_policy_hash) addLine(card, 'required policy', truncate(String(c.enforcement_policy_hash), 16));
           if (c.output_schema_hash) addLine(card, 'schema hash', truncate(String(c.output_schema_hash), 16));
           if (c.entropy_enforcement) addLine(card, 'entropy mode', String(c.entropy_enforcement));
+          if (c.entropy_budget_bits !== undefined && c.entropy_budget_bits !== null) {
+            addLine(card, 'entropy budget', String(c.entropy_budget_bits) + ' bits');
+          }
           if (c.max_completion_tokens) addLine(card, 'max tokens', String(c.max_completion_tokens));
+          if (c.model_profile_id) addLine(card, 'model profile', String(c.model_profile_id));
           var modelConstraints = c.model_constraints;
           if (modelConstraints) {
             if (modelConstraints.allowed_providers) addLine(card, 'allowed providers', modelConstraints.allowed_providers.join(', '));
@@ -790,6 +806,14 @@ var VaultCardManager = (function () {
         //    its identity (signing key, model, admitted capabilities)
         if (event.agent === 'relay_policy') {
           var p = event.payload;
+          var policyKey = 'policy:' + JSON.stringify([
+            p.policy_id || '',
+            p.policy_hash || '',
+            p.verifying_key_hex || '',
+            p.model_id || ''
+          ]);
+          if (seenSystemCards[policyKey]) break;
+          seenSystemCards[policyKey] = true;
           var card = addCard('Relay Identity & Policy', 'vault-card--policy vault-card--expanded');
           addLine(card, 'signing key', truncate(String(p.verifying_key_hex || ''), 20));
           addLine(card, 'model', String(p.model_id || 'unknown'));

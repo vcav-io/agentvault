@@ -56,8 +56,8 @@ async fn main() {
     let openai_base_url = std::env::var("OPENAI_BASE_URL").ok();
 
     let gemini_api_key = std::env::var("GEMINI_API_KEY").ok();
-    let gemini_model_id =
-        std::env::var("AV_GEMINI_MODEL_ID").unwrap_or_else(|_| "gemini-2.5-flash".to_string());
+    let gemini_model_id = std::env::var("AV_GEMINI_MODEL_ID")
+        .unwrap_or_else(|_| "gemini-3-flash-preview".to_string());
     let gemini_base_url = std::env::var("GEMINI_BASE_URL").ok();
 
     // ========================================================================

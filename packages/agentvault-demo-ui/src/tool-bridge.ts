@@ -15,6 +15,8 @@ const REDACTED_KEYS = new Set([
   'my_input',
 ]);
 
+const emittedContractEvents = new WeakMap<EventBus, Set<string>>();
+
 /** Deep-clone an object, replacing sensitive fields with '[REDACTED]'. */
 function redactSensitive(obj: unknown): unknown {
   if (obj === null || obj === undefined || typeof obj !== 'object') return obj;
@@ -82,6 +84,28 @@ function emitNegotiationEventIfPresent(
   if (typeof alignedTopicCode === 'string') {
     events.emitSystem(`${agentName} aligned on topic ${alignedTopicCode}`);
   }
+
+  const output = (data as Record<string, unknown>)['output'];
+  if (output && typeof output === 'object') {
+    const receipt = (output as Record<string, unknown>)['receipt'];
+    if (receipt && typeof receipt === 'object') {
+      const seen = emittedContractEvents.get(events) ?? new Set<string>();
+      emittedContractEvents.set(events, seen);
+      const sessionId = (receipt as Record<string, unknown>)['session_id'];
+      const contractHash = (receipt as Record<string, unknown>)['contract_hash'];
+      const eventKey = JSON.stringify([sessionId ?? '', contractHash ?? '']);
+      if (!seen.has(eventKey)) {
+        seen.add(eventKey);
+        events.emit({
+          ts: new Date().toISOString(),
+          type: 'system',
+          agent: 'contract_enforcement',
+          payload: receipt as Record<string, unknown>,
+        });
+      }
+    }
+  }
+
   const negotiated = (data as Record<string, unknown>)['negotiated_contract'];
   if (!negotiated || typeof negotiated !== 'object') return;
 
