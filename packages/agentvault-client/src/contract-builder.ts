@@ -18,7 +18,7 @@ import type { RelayContract } from './relay-contracts.js';
 // Types
 // ---------------------------------------------------------------------------
 
-export type ArtefactKind = 'schema' | 'policy' | 'profile' | 'program';
+export type ArtefactKind = 'schema' | 'policy' | 'profile' | 'program' | 'contract_offer';
 
 export interface ArtefactEntry {
   id: string;
@@ -165,7 +165,7 @@ class RegistryIndexImpl implements RegistryIndex {
 // Registry loading
 // ---------------------------------------------------------------------------
 
-const VALID_KINDS: ArtefactKind[] = ['schema', 'policy', 'profile', 'program'];
+const VALID_KINDS: ArtefactKind[] = ['schema', 'policy', 'profile', 'program', 'contract_offer'];
 
 function isValidKind(kind: string): kind is ArtefactKind {
   return (VALID_KINDS as string[]).includes(kind);

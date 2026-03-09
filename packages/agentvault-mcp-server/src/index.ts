@@ -44,6 +44,7 @@ import { RelayInboxTransport } from './relay-inbox-transport.js';
 import { signMessage, DOMAIN_PREFIXES } from './afal-signing.js';
 import type { AdmissionPolicy, TrustedAgent } from './afal-responder.js';
 import { listKnownModelProfiles } from './model-profiles.js';
+import { listSupportedContractOffers } from './contract-offers.js';
 import { ed25519 } from '@noble/curves/ed25519';
 import { hexToBytes, bytesToHex } from '@noble/hashes/utils';
 
@@ -161,6 +162,7 @@ function buildDirectTransportFromEnv(): DirectAfalTransport | null {
       supported_body_formats: ['wrapped_v1'],
       supports_commit: true,
       supported_model_profiles: listKnownModelProfiles(),
+      supported_contract_offers: listSupportedContractOffers(),
     },
     policy_commitments: {},
   };

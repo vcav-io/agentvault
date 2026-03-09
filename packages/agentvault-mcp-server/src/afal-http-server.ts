@@ -22,12 +22,19 @@ import { buildAgentCard } from './a2a-agent-card.js';
 import {
   A2A_SEND_MESSAGE_PATH,
   AGENTVAULT_ADMIT_MEDIA_TYPE,
+  AGENTVAULT_CONTRACT_OFFER_PROPOSAL_MEDIA_TYPE,
+  AGENTVAULT_CONTRACT_OFFER_SELECTION_MEDIA_TYPE,
   AGENTVAULT_DENY_MEDIA_TYPE,
   AGENTVAULT_PROPOSE_MEDIA_TYPE,
   AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
   buildA2ATaskResponse,
   parseA2ASendMessagePart,
 } from './a2a-messages.js';
+import {
+  parseContractOfferProposal,
+  parseSupportedContractOffers,
+  selectNegotiatedContractOffer,
+} from './contract-negotiation.js';
 
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_CONCURRENT = 16;
@@ -99,12 +106,16 @@ export class AfalHttpServer {
   }
 
   get agentCard() {
+    const supportedContractOffers = parseSupportedContractOffers(
+      this._localDescriptor.capabilities['supported_contract_offers'],
+    ) ?? undefined;
     return buildAgentCard({
       baseUrl: this.baseUrl,
       descriptor: this._localDescriptor,
       supportedPurposes: this.config.supportedPurposes ?? [],
       relayUrl: this.config.relayUrl,
       includeAfalEndpoint: this.config.advertiseAfalEndpoint,
+      supportedContractOffers,
     });
   }
 
@@ -172,6 +183,7 @@ export class AfalHttpServer {
             const parsed = parseA2ASendMessagePart(body, [
               AGENTVAULT_PROPOSE_MEDIA_TYPE,
               AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
+              AGENTVAULT_CONTRACT_OFFER_PROPOSAL_MEDIA_TYPE,
             ]);
             if (!parsed) {
               res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -190,6 +202,31 @@ export class AfalHttpServer {
                   }),
                 ),
               );
+            } else if (parsed.mediaType === AGENTVAULT_CONTRACT_OFFER_PROPOSAL_MEDIA_TYPE) {
+              const proposal = parseContractOfferProposal(parsed.data);
+              if (!proposal) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Invalid contract-offer proposal body' }));
+              } else {
+                const supportedContractOffers =
+                  parseSupportedContractOffers(
+                    this._localDescriptor.capabilities['supported_contract_offers'],
+                  ) ?? [];
+                const selection = selectNegotiatedContractOffer(
+                  proposal,
+                  supportedContractOffers,
+                  this._localDescriptor.agent_id,
+                );
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(
+                  JSON.stringify(
+                    buildA2ATaskResponse({
+                      mediaType: AGENTVAULT_CONTRACT_OFFER_SELECTION_MEDIA_TYPE,
+                      data: selection,
+                    }),
+                  ),
+                );
+              }
             } else {
               const result = this.config.responder.handleCommit(parsed.data);
               const status = result.ok ? 200 : 400;

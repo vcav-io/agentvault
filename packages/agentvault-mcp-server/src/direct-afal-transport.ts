@@ -20,12 +20,16 @@ import type { ModelProfileRef } from './model-profiles.js';
 import {
   A2A_SEND_MESSAGE_PATH,
   AGENTVAULT_ADMIT_MEDIA_TYPE,
+  AGENTVAULT_CONTRACT_OFFER_PROPOSAL_MEDIA_TYPE,
+  AGENTVAULT_CONTRACT_OFFER_SELECTION_MEDIA_TYPE,
   AGENTVAULT_DENY_MEDIA_TYPE,
   AGENTVAULT_PROPOSE_MEDIA_TYPE,
   AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
   buildA2ASendMessageRequest,
   parseA2ATaskPart,
 } from './a2a-messages.js';
+import type { ContractOfferProposal, ContractOfferSelection, SupportedContractOffer } from './contract-negotiation.js';
+import { parseContractOfferSelection, parseSupportedContractOffers } from './contract-negotiation.js';
 
 // ── AgentDescriptor ────────────────────────────────────────────────────────
 
@@ -90,6 +94,8 @@ export interface AgentVaultPeerDiscovery {
   supportedPurposes: string[];
   afalEndpoint?: string;
   a2aSendMessageUrl?: string;
+  supportsPrecontractNegotiation?: boolean;
+  supportedContractOffers?: SupportedContractOffer[];
 }
 
 interface PeerTransportTarget {
@@ -644,6 +650,9 @@ export class DirectAfalTransport implements AfalTransport {
     const supportedPurposes = Array.isArray(params['supported_purposes'])
       ? params['supported_purposes'].filter((item): item is string => typeof item === 'string')
       : [];
+    const supportedContractOffers = parseSupportedContractOffers(params['supported_contract_offers']);
+    const supportsPrecontractNegotiation =
+      params['supports_precontract_negotiation'] === true && supportedContractOffers !== null;
 
     const agentId = typeof card.name === 'string' ? card.name : expectedPeerAgentId;
     if (!agentId) return null;
@@ -683,8 +692,56 @@ export class DirectAfalTransport implements AfalTransport {
         ...(afalEndpoint ? { afalEndpoint } : {}),
         ...(a2aSendMessageUrl ? { a2aSendMessageUrl } : {}),
         supportedPurposes,
+        ...(supportsPrecontractNegotiation
+          ? {
+              supportsPrecontractNegotiation: true,
+              supportedContractOffers: supportedContractOffers ?? [],
+            }
+          : {}),
       },
     };
+  }
+
+  async negotiateContractOffer(
+    proposal: ContractOfferProposal,
+  ): Promise<ContractOfferSelection | null> {
+    await this.resolvePeerDescriptor(proposal.expected_counterparty);
+    if (!this.peerDiscovery?.a2aSendMessageUrl || !this.peerDiscovery.supportsPrecontractNegotiation) {
+      return null;
+    }
+
+    const response = await fetch(this.peerDiscovery.a2aSendMessageUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(
+        buildA2ASendMessageRequest({
+          mediaType: AGENTVAULT_CONTRACT_OFFER_PROPOSAL_MEDIA_TYPE,
+          data: proposal,
+          acceptedOutputModes: [AGENTVAULT_CONTRACT_OFFER_SELECTION_MEDIA_TYPE],
+        }),
+      ),
+    });
+
+    if (!response.ok) {
+      throw new Error(`A2A negotiation request failed: ${response.status}`);
+    }
+
+    const payload = (await response.json()) as unknown;
+    const parsed = parseA2ATaskPart(payload, [AGENTVAULT_CONTRACT_OFFER_SELECTION_MEDIA_TYPE]);
+    if (!parsed) {
+      throw new Error('A2A negotiation response did not contain a contract-offer selection part');
+    }
+    const selection = parseContractOfferSelection(parsed.data);
+    if (!selection) {
+      throw new Error('A2A negotiation response carried an invalid contract-offer selection body');
+    }
+    if (selection.negotiation_id !== proposal.negotiation_id) {
+      throw new Error(
+        `A2A negotiation response carried mismatched negotiation_id: ` +
+          `expected=${proposal.negotiation_id} got=${selection.negotiation_id}`,
+      );
+    }
+    return selection;
   }
 
   private async fetchSignedPeerDescriptor(

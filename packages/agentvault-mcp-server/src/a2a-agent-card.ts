@@ -1,4 +1,5 @@
 import type { AgentDescriptor } from './direct-afal-transport.js';
+import type { SupportedContractOffer } from './contract-negotiation.js';
 
 export const AGENTVAULT_A2A_EXTENSION_URI = 'urn:agentvault:bounded-disclosure:v1';
 
@@ -8,6 +9,8 @@ export interface AgentVaultA2AExtensionParams {
   supported_purposes: string[];
   afal_endpoint?: string;
   a2a_send_message_url?: string;
+  supports_precontract_negotiation?: boolean;
+  supported_contract_offers?: SupportedContractOffer[];
 }
 
 export interface AgentCardExtension {
@@ -43,6 +46,7 @@ export function buildAgentCard(params: {
   supportedPurposes: string[];
   relayUrl?: string;
   includeAfalEndpoint?: boolean;
+  supportedContractOffers?: SupportedContractOffer[];
 }): AgentCard {
   const extensionParams: AgentVaultA2AExtensionParams = {
     public_key_hex: params.descriptor.identity_key.public_key_hex,
@@ -50,6 +54,12 @@ export function buildAgentCard(params: {
     ...(params.relayUrl ? { relay_url: params.relayUrl } : {}),
     a2a_send_message_url: `${params.baseUrl}/a2a/send-message`,
     ...(params.includeAfalEndpoint === false ? {} : { afal_endpoint: `${params.baseUrl}/afal` }),
+    ...(params.supportedContractOffers?.length
+      ? {
+          supports_precontract_negotiation: true,
+          supported_contract_offers: params.supportedContractOffers,
+        }
+      : {}),
   };
 
   return {

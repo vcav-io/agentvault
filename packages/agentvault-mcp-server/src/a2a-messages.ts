@@ -6,6 +6,10 @@ export const AGENTVAULT_ADMIT_MEDIA_TYPE = 'application/vnd.agentvault.admit+jso
 export const AGENTVAULT_DENY_MEDIA_TYPE = 'application/vnd.agentvault.deny+json';
 export const AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE =
   'application/vnd.agentvault.session-tokens+json';
+export const AGENTVAULT_CONTRACT_OFFER_PROPOSAL_MEDIA_TYPE =
+  'application/vnd.agentvault.contract-offer-proposal+json';
+export const AGENTVAULT_CONTRACT_OFFER_SELECTION_MEDIA_TYPE =
+  'application/vnd.agentvault.contract-offer-selection+json';
 
 interface A2AMessagePart {
   data: unknown;
