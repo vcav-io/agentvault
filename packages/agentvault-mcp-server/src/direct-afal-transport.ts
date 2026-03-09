@@ -557,7 +557,7 @@ export class DirectAfalTransport implements AfalTransport {
         : null;
     } catch {
       return null;
-    };
+    }
   }
 
   private resolvePeerTransportTarget(peer: AgentDescriptor): PeerTransportTarget {
@@ -797,17 +797,16 @@ export class DirectAfalTransport implements AfalTransport {
     }
 
     const payload = (await response.json()) as unknown;
-    const selection = target.useA2ANative
-      ? (() => {
-          const parsed = parseA2ATaskPart(payload, [AGENTVAULT_CONTRACT_OFFER_SELECTION_MEDIA_TYPE]);
-          if (!parsed) {
-            throw new Error(
-              'A2A negotiation response did not contain a contract-offer selection part',
-            );
-          }
-          return parseContractOfferSelection(parsed.data);
-        })()
-      : parseContractOfferSelection(payload);
+    let selection: ContractOfferSelection | null;
+    if (target.useA2ANative) {
+      const parsed = parseA2ATaskPart(payload, [AGENTVAULT_CONTRACT_OFFER_SELECTION_MEDIA_TYPE]);
+      if (!parsed) {
+        throw new Error('A2A negotiation response did not contain a contract-offer selection part');
+      }
+      selection = parseContractOfferSelection(parsed.data);
+    } else {
+      selection = parseContractOfferSelection(payload);
+    }
     if (!selection) {
       throw new Error('Contract negotiation response carried an invalid selection body');
     }
@@ -981,11 +980,7 @@ function parseDescriptorPeerDiscovery(descriptor: AgentDescriptor): AgentVaultPe
     ...(afalEndpoint ? { afalEndpoint } : {}),
     ...(a2aSendMessageUrl ? { a2aSendMessageUrl } : {}),
     supportedPurposes,
-    ...(supportedContractOffers
-      ? {
-          supportsPrecontractNegotiation: true,
-          supportedContractOffers,
-        }
-      : {}),
+    supportsPrecontractNegotiation: supportedContractOffers !== null,
+    ...(supportedContractOffers ? { supportedContractOffers } : {}),
   };
 }

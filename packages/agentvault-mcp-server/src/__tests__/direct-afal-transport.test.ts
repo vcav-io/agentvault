@@ -996,6 +996,80 @@ describe('DirectAfalTransport', () => {
       });
     });
 
+    it('derives /afal/negotiate from the propose endpoint when no explicit negotiate endpoint is present', async () => {
+      const freshPeerDescriptor = makePeerDescriptor({
+        endpoints: {
+          propose: 'http://peer.example.com/afal/propose',
+          commit: 'http://peer.example.com/afal/commit',
+        },
+        capabilities: {
+          supported_contract_offers: [
+            {
+              contract_offer_id: 'agentvault.mediation.v1.standard',
+              supported_model_profiles: [
+                {
+                  id: 'api-claude-sonnet-v1',
+                  version: '1',
+                  hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
+                },
+              ],
+            },
+          ],
+        },
+      });
+      const fresh = new DirectAfalTransport({
+        agentId: 'alice-test',
+        seedHex: TEST_SEED,
+        localDescriptor,
+        peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-descriptor.json',
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        json: () => Promise.resolve({}),
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(freshPeerDescriptor),
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            negotiation_id: 'neg-124',
+            state: 'AGREED',
+            selected_contract_offer_id: 'agentvault.mediation.v1.standard',
+            selected_model_profile: {
+              id: 'api-claude-sonnet-v1',
+              version: '1',
+              hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
+            },
+          }),
+      });
+
+      const selection = await fresh.negotiateContractOffer({
+        negotiation_id: 'neg-124',
+        acceptable_offers: [
+          {
+            contract_offer_id: 'agentvault.mediation.v1.standard',
+            acceptable_model_profiles: [
+              {
+                id: 'api-claude-sonnet-v1',
+                version: '1',
+                hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
+              },
+            ],
+          },
+        ],
+        expected_counterparty: 'bob-test',
+      });
+
+      expect(selection?.state).toBe('AGREED');
+      const [url] = mockFetch.mock.calls[2] as [string, RequestInit];
+      expect(url).toBe('http://peer.example.com/afal/negotiate');
+    });
+
     it('rejects mismatched negotiation_id echoes from A2A negotiation responses', async () => {
       const fresh = new DirectAfalTransport({
         agentId: 'alice-test',
