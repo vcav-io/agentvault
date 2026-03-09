@@ -223,6 +223,7 @@ export class AfalHttpServer {
                         ? AGENTVAULT_ADMIT_MEDIA_TYPE
                         : AGENTVAULT_DENY_MEDIA_TYPE,
                     data: result.response,
+                    taskId: parsed.taskId,
                   }),
                 ),
               );
@@ -247,6 +248,7 @@ export class AfalHttpServer {
                     buildA2ATaskResponse({
                       mediaType: AGENTVAULT_CONTRACT_OFFER_SELECTION_MEDIA_TYPE,
                       data: selection,
+                      taskId: parsed.taskId,
                     }),
                   ),
                 );
@@ -260,6 +262,7 @@ export class AfalHttpServer {
                   buildA2ATaskResponse({
                     mediaType: AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
                     data: result,
+                    taskId: parsed.taskId,
                   }),
                 ),
               );
