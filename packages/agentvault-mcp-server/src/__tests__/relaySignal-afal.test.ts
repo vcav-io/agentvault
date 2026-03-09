@@ -543,7 +543,7 @@ describe('INITIATE with AFAL', () => {
       ok: false,
       error: expect.objectContaining({
         code: 'SESSION_ERROR',
-        detail: expect.stringContaining('No common prebuilt contract offer'),
+        detail: expect.stringContaining('No common bounded contract and model profile combination'),
       }),
     });
     expect(vi.mocked(createAndSubmit)).not.toHaveBeenCalled();

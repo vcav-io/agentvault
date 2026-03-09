@@ -19,15 +19,17 @@ const PROFILE_B = {
 };
 
 describe('contract negotiation', () => {
-  it('selects the first initiator-preferred offer/profile match', () => {
+  it('selects the first initiator-preferred offer/profile match', async () => {
     const proposal: ContractOfferProposal = {
       negotiation_id: 'neg-123',
       acceptable_offers: [
         {
+          kind: 'offer',
           contract_offer_id: 'agentvault.mediation.v1.standard',
           acceptable_model_profiles: [PROFILE_A, PROFILE_B],
         },
         {
+          kind: 'offer',
           contract_offer_id: 'agentvault.compatibility.v1.standard',
           acceptable_model_profiles: [PROFILE_B],
         },
@@ -44,7 +46,9 @@ describe('contract negotiation', () => {
       },
     ];
 
-    expect(selectNegotiatedContractOffer(proposal, supported)).toEqual({
+    await expect(
+      selectNegotiatedContractOffer(proposal, { supportedOffers: supported }),
+    ).resolves.toEqual({
       negotiation_id: 'neg-123',
       state: 'AGREED',
       selected_contract_offer_id: 'agentvault.mediation.v1.standard',
@@ -52,11 +56,12 @@ describe('contract negotiation', () => {
     });
   });
 
-  it('returns NO_COMMON_CONTRACT when offers overlap but profiles do not', () => {
+  it('returns NO_COMMON_CONTRACT when offers overlap but profiles do not', async () => {
     const proposal: ContractOfferProposal = {
       negotiation_id: 'neg-123',
       acceptable_offers: [
         {
+          kind: 'offer',
           contract_offer_id: 'agentvault.mediation.v1.standard',
           acceptable_model_profiles: [PROFILE_A],
         },
@@ -69,17 +74,20 @@ describe('contract negotiation', () => {
       },
     ];
 
-    expect(selectNegotiatedContractOffer(proposal, supported)).toEqual({
+    await expect(
+      selectNegotiatedContractOffer(proposal, { supportedOffers: supported }),
+    ).resolves.toEqual({
       negotiation_id: 'neg-123',
       state: 'NO_COMMON_CONTRACT',
     });
   });
 
-  it('returns REJECTED when expected_counterparty does not match the local agent id', () => {
+  it('returns REJECTED when expected_counterparty does not match the local agent id', async () => {
     const proposal: ContractOfferProposal = {
       negotiation_id: 'neg-123',
       acceptable_offers: [
         {
+          kind: 'offer',
           contract_offer_id: 'agentvault.mediation.v1.standard',
           acceptable_model_profiles: [PROFILE_A],
         },
@@ -87,9 +95,48 @@ describe('contract negotiation', () => {
       expected_counterparty: 'bob-demo',
     };
 
-    expect(selectNegotiatedContractOffer(proposal, [], 'alice-demo')).toEqual({
+    await expect(
+      selectNegotiatedContractOffer(proposal, { supportedOffers: [], localAgentId: 'alice-demo' }),
+    ).resolves.toEqual({
       negotiation_id: 'neg-123',
       state: 'REJECTED',
+    });
+  });
+
+  it('selects a bespoke contract when locally validated', async () => {
+    const proposal: ContractOfferProposal = {
+      negotiation_id: 'neg-123',
+      acceptable_offers: [
+        {
+          kind: 'bespoke',
+          purpose_code: 'MEDIATION',
+          schema_ref: 'vcav_e_mediation_signal_v2',
+          policy_ref: 'agentvault.default.policy@active',
+          program_ref: 'agentvault.mediation.program@active',
+          acceptable_model_profiles: [PROFILE_A],
+        },
+      ],
+    };
+
+    await expect(
+      selectNegotiatedContractOffer(proposal, {
+        supportedOffers: [],
+        supportsBespoke: true,
+        supportedModelProfiles: [PROFILE_A],
+        validateBespokeContract: async () => true,
+      }),
+    ).resolves.toEqual({
+      negotiation_id: 'neg-123',
+      state: 'AGREED',
+      selected_bespoke_contract: {
+        kind: 'bespoke',
+        purpose_code: 'MEDIATION',
+        schema_ref: 'vcav_e_mediation_signal_v2',
+        policy_ref: 'agentvault.default.policy@active',
+        program_ref: 'agentvault.mediation.program@active',
+        acceptable_model_profiles: [],
+      },
+      selected_model_profile: PROFILE_A,
     });
   });
 
@@ -99,6 +146,7 @@ describe('contract negotiation', () => {
         negotiation_id: 'neg-123',
         acceptable_offers: [
           {
+            kind: 'offer',
             contract_offer_id: 'agentvault.mediation.v1.standard',
             acceptable_model_profiles: ['bad'],
           },

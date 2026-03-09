@@ -46,7 +46,14 @@ export interface RelayHandle {
   expectedPurpose?: string;
   expectedContractHash?: string;
   negotiatedContract?: {
-    contractOfferId: string;
+    kind: 'offer' | 'bespoke';
+    contractOfferId?: string;
+    bespokeContract?: {
+      purpose_code: string;
+      schema_ref: string;
+      policy_ref: string;
+      program_ref: string;
+    };
     selectedModelProfile: {
       id: string;
       version: string;

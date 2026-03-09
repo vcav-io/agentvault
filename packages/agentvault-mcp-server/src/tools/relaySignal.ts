@@ -36,13 +36,16 @@ import { RelayInboxTransport, RELAY_INBOX_PAYLOAD_TYPE } from '../relay-inbox-tr
 import { computeProposalId, generateNonce } from '../afal-types.js';
 import type { AfalPropose, RelayInvitePayload, RelaySessionBinding } from '../afal-types.js';
 import { DirectAfalTransport } from '../direct-afal-transport.js';
-import { resolveModelProfileRefs, type ModelProfileRef } from '../model-profiles.js';
+import { listKnownModelProfiles, resolveModelProfileRefs, type ModelProfileRef } from '../model-profiles.js';
 import {
   purposeToContractOfferIds,
   resolveContractOfferToContract,
   listSupportedContractOffers,
 } from '../contract-offers.js';
 import type { ContractOfferProposal } from '../contract-negotiation.js';
+import {
+  resolveBespokeContractToContract,
+} from '../bespoke-contracts.js';
 import {
   encodeRelayToken,
   decodeRelayToken,
@@ -155,6 +158,13 @@ export interface RelaySignalArgs {
   counterparty?: string;
   purpose?: string;
   contract?: object;
+  acceptable_contracts?: Array<{
+    purpose_code: string;
+    schema_ref: string;
+    policy_ref: string;
+    program_ref: string;
+    acceptable_model_profiles?: string[];
+  }>;
   acceptable_model_profiles?: string[];
   my_input?: string;
   relay_url?: string;
@@ -228,7 +238,14 @@ export interface RelaySignalOutput {
   interpretation_context?: InterpretationContext;
   resume_token_display?: string | null;
   negotiated_contract?: {
-    contract_offer_id: string;
+    kind: 'offer' | 'bespoke';
+    contract_offer_id?: string;
+    bespoke_contract?: {
+      purpose_code: string;
+      schema_ref: string;
+      policy_ref: string;
+      program_ref: string;
+    };
     selected_model_profile: ModelProfileRef;
   };
 }
@@ -907,7 +924,13 @@ function mapNegotiatedContract(
 ): RelaySignalOutput['negotiated_contract'] | undefined {
   if (!handle.negotiatedContract) return undefined;
   return {
-    contract_offer_id: handle.negotiatedContract.contractOfferId,
+    kind: handle.negotiatedContract.kind,
+    ...(handle.negotiatedContract.contractOfferId
+      ? { contract_offer_id: handle.negotiatedContract.contractOfferId }
+      : {}),
+    ...(handle.negotiatedContract.bespokeContract
+      ? { bespoke_contract: handle.negotiatedContract.bespokeContract }
+      : {}),
     selected_model_profile: handle.negotiatedContract.selectedModelProfile,
   };
 }
@@ -1180,43 +1203,69 @@ async function phaseInvite(
     );
   }
 
-  let negotiatedSelection: { contractOfferId: string; selectedModelProfile: ModelProfileRef } | null = null;
-  if (
-    transport instanceof DirectAfalTransport &&
-    !args.contract &&
-    purposeHint &&
-    peerDiscovery?.supportsPrecontractNegotiation &&
-    peerDiscovery.supportedContractOffers?.length
-  ) {
-    const offerIds = purposeToContractOfferIds(purposeHint);
-    const localSupportedOffers = listSupportedContractOffers();
-    const allowedOfferIds = new Set(peerDiscovery.supportedContractOffers.map((offer) => offer.contract_offer_id));
-    const acceptableOffers = localSupportedOffers
-      .filter(
-        (offer) =>
-          offerIds.includes(offer.contract_offer_id) && allowedOfferIds.has(offer.contract_offer_id),
-      )
-      .map((offer) => ({
-        contract_offer_id: offer.contract_offer_id,
-        acceptable_model_profiles: (
-          args.acceptable_model_profiles?.length
-            ? resolveModelProfileRefs(args.acceptable_model_profiles)
-            : offer.supported_model_profiles
-        ).filter((profile) =>
-          offer.supported_model_profiles.some(
-            (candidate) =>
-              candidate.id === profile.id &&
-              candidate.version === profile.version &&
-              candidate.hash === profile.hash,
-          ),
-        ),
-      }))
-      .filter((offer) => offer.acceptable_model_profiles.length > 0);
+  let negotiatedSelection: RelayHandle['negotiatedContract'] | null = null;
+  if (transport instanceof DirectAfalTransport && !args.contract) {
+    const negotiationCandidates: ContractOfferProposal['acceptable_offers'] = [];
 
-    if (acceptableOffers.length) {
+    if (purposeHint && peerDiscovery?.supportsPrecontractNegotiation && peerDiscovery.supportedContractOffers?.length) {
+      const offerIds = purposeToContractOfferIds(purposeHint);
+      const localSupportedOffers = listSupportedContractOffers();
+      const allowedOfferIds = new Set(
+        peerDiscovery.supportedContractOffers.map((offer) => offer.contract_offer_id),
+      );
+      const acceptableOffers = localSupportedOffers
+        .filter(
+          (offer) =>
+            offerIds.includes(offer.contract_offer_id) && allowedOfferIds.has(offer.contract_offer_id),
+        )
+        .map((offer) => ({
+          kind: 'offer' as const,
+          contract_offer_id: offer.contract_offer_id,
+          acceptable_model_profiles: (
+            args.acceptable_model_profiles?.length
+              ? resolveModelProfileRefs(args.acceptable_model_profiles)
+              : offer.supported_model_profiles
+          ).filter((profile) =>
+            offer.supported_model_profiles.some(
+              (candidate) =>
+                candidate.id === profile.id &&
+                candidate.version === profile.version &&
+                candidate.hash === profile.hash,
+            ),
+          ),
+        }))
+        .filter((offer) => offer.acceptable_model_profiles.length > 0);
+      negotiationCandidates.push(...acceptableOffers);
+    }
+
+    if (args.acceptable_contracts?.length) {
+      if (!peerDiscovery?.supportsBespokeContractNegotiation) {
+        return buildError(
+          'SESSION_ERROR',
+          'Counterparty does not advertise support for bespoke pre-contract negotiation.',
+        );
+      }
+      const localProfiles = listKnownModelProfiles();
+      for (const candidate of args.acceptable_contracts) {
+        const acceptableProfiles = candidate.acceptable_model_profiles?.length
+          ? resolveModelProfileRefs(candidate.acceptable_model_profiles)
+          : localProfiles;
+        if (acceptableProfiles.length === 0) continue;
+        negotiationCandidates.push({
+          kind: 'bespoke',
+          purpose_code: candidate.purpose_code,
+          schema_ref: candidate.schema_ref,
+          policy_ref: candidate.policy_ref,
+          program_ref: candidate.program_ref,
+          acceptable_model_profiles: acceptableProfiles,
+        });
+      }
+    }
+
+    if (negotiationCandidates.length) {
       const negotiationProposal: ContractOfferProposal = {
         negotiation_id: randomUUID(),
-        acceptable_offers: acceptableOffers,
+        acceptable_offers: negotiationCandidates,
         expected_counterparty: counterparty,
       };
       const selection = await transport.negotiateContractOffer(negotiationProposal);
@@ -1226,26 +1275,43 @@ async function phaseInvite(
       if (selection?.state === 'NO_COMMON_CONTRACT') {
         return buildError(
           'SESSION_ERROR',
-          'No common prebuilt contract offer and model profile combination was available.',
+          'No common bounded contract and model profile combination was available.',
         );
       }
-      if (
-        selection?.state === 'AGREED' &&
-        selection.selected_contract_offer_id &&
-        selection.selected_model_profile
-      ) {
-        negotiatedSelection = {
-          contractOfferId: selection.selected_contract_offer_id,
-          selectedModelProfile: selection.selected_model_profile,
-        };
-        handle.negotiatedContract = negotiatedSelection;
-        contract = resolveContractOfferToContract({
-          contractOfferId: negotiatedSelection.contractOfferId,
-          participants: [agentId, counterparty],
-          selectedModelProfile: negotiatedSelection.selectedModelProfile,
-        });
-        relayContract = contract as RelayContract;
-        purposeHint = relayContract.purpose_code;
+      if (selection?.state === 'AGREED' && selection.selected_model_profile) {
+        if (selection.selected_contract_offer_id) {
+          negotiatedSelection = {
+            kind: 'offer',
+            contractOfferId: selection.selected_contract_offer_id,
+            selectedModelProfile: selection.selected_model_profile,
+          };
+          contract = resolveContractOfferToContract({
+            contractOfferId: selection.selected_contract_offer_id,
+            participants: [agentId, counterparty],
+            selectedModelProfile: selection.selected_model_profile,
+          });
+        } else if (selection.selected_bespoke_contract) {
+          negotiatedSelection = {
+            kind: 'bespoke',
+            bespokeContract: {
+              purpose_code: selection.selected_bespoke_contract.purpose_code,
+              schema_ref: selection.selected_bespoke_contract.schema_ref,
+              policy_ref: selection.selected_bespoke_contract.policy_ref,
+              program_ref: selection.selected_bespoke_contract.program_ref,
+            },
+            selectedModelProfile: selection.selected_model_profile,
+          };
+          contract = await resolveBespokeContractToContract({
+            contract: selection.selected_bespoke_contract,
+            participants: [agentId, counterparty],
+            selectedModelProfile: selection.selected_model_profile,
+          });
+        }
+        if (negotiatedSelection && contract) {
+          handle.negotiatedContract = negotiatedSelection;
+          relayContract = contract as RelayContract;
+          purposeHint = relayContract.purpose_code;
+        }
       }
     }
   }

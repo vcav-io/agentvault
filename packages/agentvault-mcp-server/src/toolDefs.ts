@@ -119,6 +119,16 @@ export const RELAY_TOOLS = [
           description:
             'Full contract JSON for custom contracts (INITIATE and CREATE modes). Overrides purpose.',
         },
+        acceptable_contracts: {
+          type: 'array',
+          description:
+            'Bounded bespoke contract candidates for pre-contract negotiation (INITIATE mode). ' +
+            'Each item must provide purpose_code plus explicit schema/policy/program refs. ' +
+            'Use this instead of full custom contract JSON when you want deterministic bespoke negotiation.',
+          items: {
+            type: 'object',
+          },
+        },
         my_input: {
           type: 'string',
           description:

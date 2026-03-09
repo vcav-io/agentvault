@@ -542,9 +542,12 @@ describe('Relay Preference Arbitration — Initiator E2E', () => {
     // Verify the responder queued the proposal.
     const inbox = await transportB.checkInbox();
     expect(inbox.invites).toHaveLength(1);
-    expect(inbox.invites[0].from_agent_id).toBe('alice-test');
+    const invite = inbox.invites[0];
+    expect(invite).toBeDefined();
+    expect(invite!.from_agent_id).toBe('alice-test');
+    expect(invite!.payload).toBeDefined();
     // The committed relay_session.relay_url must be rewritten to the responder's relay
-    expect(inbox.invites[0].payload['relay_url']).toBe(RESPONDER_RELAY);
+    expect(invite!.payload!['relay_url']).toBe(RESPONDER_RELAY);
   });
 
   it('PREFERRED: initiator overrides with explicit relayUrl config', async () => {
@@ -577,8 +580,10 @@ describe('Relay Preference Arbitration — Initiator E2E', () => {
 
     const inbox = await transportB.checkInbox();
     expect(inbox.invites).toHaveLength(1);
+    const invite = inbox.invites[0];
+    expect(invite).toBeDefined();
+    expect(invite!.payload).toBeDefined();
     // The relay_url in the invite should be the session's original relay_url
-    expect(inbox.invites[0].payload['relay_url']).toBe(sessionRelay);
+    expect(invite!.payload!['relay_url']).toBe(sessionRelay);
   });
 });
-

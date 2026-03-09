@@ -97,6 +97,7 @@ export interface AgentVaultPeerDiscovery {
   afalEndpoint?: string;
   a2aSendMessageUrl?: string;
   supportsPrecontractNegotiation?: boolean;
+  supportsBespokeContractNegotiation?: boolean;
   supportedContractOffers?: SupportedContractOffer[];
 }
 
@@ -798,6 +799,8 @@ export class DirectAfalTransport implements AfalTransport {
     const supportedContractOffers = parseSupportedContractOffers(params['supported_contract_offers']);
     const supportsPrecontractNegotiation =
       params['supports_precontract_negotiation'] === true && supportedContractOffers !== null;
+    const supportsBespokeContractNegotiation =
+      params['supports_bespoke_contract_negotiation'] === true;
 
     const agentId = typeof card.name === 'string' ? card.name : expectedPeerAgentId;
     if (!agentId) return null;
@@ -844,6 +847,11 @@ export class DirectAfalTransport implements AfalTransport {
               supportedContractOffers: supportedContractOffers ?? [],
             }
           : {}),
+        ...(supportsBespokeContractNegotiation
+          ? {
+              supportsBespokeContractNegotiation: true,
+            }
+          : {}),
       },
     };
   }
@@ -852,7 +860,10 @@ export class DirectAfalTransport implements AfalTransport {
     proposal: ContractOfferProposal,
   ): Promise<ContractOfferSelection | null> {
     const peer = await this.resolvePeerDescriptor(proposal.expected_counterparty);
-    if (!this.peerDiscovery?.supportsPrecontractNegotiation) {
+    if (
+      !this.peerDiscovery?.supportsPrecontractNegotiation &&
+      !this.peerDiscovery?.supportsBespokeContractNegotiation
+    ) {
       return null;
     }
     const target = this.resolvePeerNegotiationTarget(peer);
@@ -1068,6 +1079,8 @@ function parseDescriptorPeerDiscovery(descriptor: AgentDescriptor): AgentVaultPe
     ...(a2aSendMessageUrl ? { a2aSendMessageUrl } : {}),
     supportedPurposes,
     supportsPrecontractNegotiation: supportedContractOffers !== null,
+    supportsBespokeContractNegotiation:
+      descriptor.capabilities['supports_bespoke_contract_negotiation'] === true,
     ...(supportedContractOffers ? { supportedContractOffers } : {}),
   };
 }

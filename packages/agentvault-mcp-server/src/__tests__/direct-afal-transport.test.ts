@@ -892,6 +892,7 @@ describe('DirectAfalTransport', () => {
         negotiation_id: 'neg-123',
         acceptable_offers: [
           {
+            kind: 'offer',
             contract_offer_id: 'agentvault.mediation.v1.standard',
             acceptable_model_profiles: [
               {
@@ -974,6 +975,7 @@ describe('DirectAfalTransport', () => {
         negotiation_id: 'neg-123',
         acceptable_offers: [
           {
+            kind: 'offer',
             contract_offer_id: 'agentvault.mediation.v1.standard',
             acceptable_model_profiles: [
               {
@@ -1052,6 +1054,7 @@ describe('DirectAfalTransport', () => {
         negotiation_id: 'neg-124',
         acceptable_offers: [
           {
+            kind: 'offer',
             contract_offer_id: 'agentvault.mediation.v1.standard',
             acceptable_model_profiles: [
               {
@@ -1107,6 +1110,7 @@ describe('DirectAfalTransport', () => {
           negotiation_id: 'neg-123',
           acceptable_offers: [
             {
+              kind: 'offer',
               contract_offer_id: 'agentvault.mediation.v1.standard',
               acceptable_model_profiles: [
                 {
