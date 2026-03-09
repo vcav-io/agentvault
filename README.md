@@ -152,6 +152,7 @@ The same protocol runs in two lanes: a software lane (this repo) where the relay
 ## Go deeper
 
 - [Getting started](docs/getting-started.md) - full walkthrough, provider setup, CLI demo
+- [Demo integrity rules](docs/architecture/demo-integrity-rules.md) - design constraints for prompts, system prompts, and the demo UI
 - [Threat model](docs/threat-model.md) - trust boundaries, adversary analysis, assurance tiers
 - [Receipt verification guide](docs/receipt-verification-guide.md) - algorithms, field reference, code examples
 - [Schema versioning policy](docs/schema-versioning-policy.md) - schema content addressing and receipt binding
