@@ -63,6 +63,15 @@ export interface ModelProfileBinding {
 
 type ContractTemplate = Omit<RelayContract, 'participants'>;
 
+const MODEL_PROFILE_HASHES: Record<string, string> = {
+  'api-claude-sonnet-v1': '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
+  'api-gpt41mini-v1': '2d7127751173337c405be23a99219db2179024c3447ff6f05b0de3cfdd741e96',
+  'api-gpt5-v1': '81482874039ad812229e490460a917bddce9f4107758576be8914331d318fd4c',
+  'api-claude-haiku-v1': 'a83a4e7f43a595763fefdde31b9fae262b75130f623d17ed516c6cd18529c1a0',
+  'api-gemini3flash-lite-v1': 'e37aaa416750c494c35851531bc04de026f9ae6764382bc499f267f2dad9c1da',
+  'api-gemini3flash-v1': 'f41994d51d33c35583008606263c12a20ec2f1b8814694787f81645c730c6578',
+};
+
 /**
  * Bundled contract templates. Fields match the Rust `Contract` struct
  * serialization exactly — all Optional fields present as null when absent.
@@ -124,7 +133,7 @@ const TEMPLATES: Record<string, ContractTemplate> = {
     metadata: { scenario: 'cofounder-mediation', version: '3' },
     timing_class: null,
     // v2 fields — enforcement_policy_hash from relay_policies.lock
-    enforcement_policy_hash: 'b977379e7787cd2165e2dcf9d790ed339cbc90df481f343c3bd0fec4ec5fe459',
+    enforcement_policy_hash: 'fda48c90d65dc2f4a9d6bc6efc07026577f6a1df7043f59303d1d836e14cc64d',
     entropy_enforcement: 'Advisory',
   },
   COMPATIBILITY: {
@@ -215,7 +224,7 @@ const TEMPLATES: Record<string, ContractTemplate> = {
     metadata: { scenario: 'scheduling-compatibility', version: '2' },
     timing_class: null,
     // v2 fields — enforcement_policy_hash from relay_policies.lock
-    enforcement_policy_hash: 'b977379e7787cd2165e2dcf9d790ed339cbc90df481f343c3bd0fec4ec5fe459',
+    enforcement_policy_hash: 'fda48c90d65dc2f4a9d6bc6efc07026577f6a1df7043f59303d1d836e14cc64d',
     entropy_enforcement: 'Advisory',
   },
 };
@@ -232,6 +241,14 @@ function validateParticipantId(id: string): string | null {
   if (id.length === 0) return 'Participant ID must not be empty';
   if (WHITESPACE_RE.test(id)) return `Participant ID "${id}" contains whitespace`;
   return null;
+}
+
+function resolveModelProfileHash(modelProfileId: string): string {
+  const hash = MODEL_PROFILE_HASHES[modelProfileId];
+  if (!hash) {
+    throw new Error(`Unknown model profile "${modelProfileId}"`);
+  }
+  return hash;
 }
 
 /**
@@ -261,6 +278,7 @@ export function buildRelayContract(
   const contract = { ...template, participants };
   if (modelProfileId) {
     contract.model_profile_id = modelProfileId;
+    contract.model_profile_hash = resolveModelProfileHash(modelProfileId);
   }
   return contract;
 }

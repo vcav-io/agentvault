@@ -63,6 +63,14 @@ describe('buildRelayContract', () => {
     expect(buildRelayContract('UNKNOWN', ['a', 'b'])).toBeUndefined();
   });
 
+  it('binds the selected model profile hash when overriding the template profile', () => {
+    const contract = buildRelayContract('COMPATIBILITY', ['alice-demo', 'bob-demo'], 'api-gpt41mini-v1');
+    expect(contract!.model_profile_id).toBe('api-gpt41mini-v1');
+    expect(contract!.model_profile_hash).toBe(
+      '2d7127751173337c405be23a99219db2179024c3447ff6f05b0de3cfdd741e96',
+    );
+  });
+
   it('rejects empty participant ID', () => {
     expect(() => buildRelayContract('MEDIATION', ['', 'bob'])).toThrow('must not be empty');
   });
@@ -173,13 +181,13 @@ describe('golden hash vectors (cross-language parity)', () => {
   it('mediation contract hash matches Rust relay', () => {
     const contract = buildRelayContract('MEDIATION', ['alice-demo', 'bob-demo'])!;
     const hash = computeRelayContractHash(contract);
-    expect(hash).toBe('dc670f0ed3a547f6225c88ff7cb44ab9e2b4b537b7beb32d8e524ec7c9012bc7');
+    expect(hash).toBe('945c35e38865653c9edbb976fb8c55a6d6715e91df9dd3eaf06a29470bb23622');
   });
 
   it('compatibility contract hash matches Rust relay', () => {
     const contract = buildRelayContract('COMPATIBILITY', ['alice-demo', 'bob-demo'])!;
     const hash = computeRelayContractHash(contract);
-    expect(hash).toBe('be46b9fec14485d80cde37cb616429db414dd2a5f93b895db81af30863976874');
+    expect(hash).toBe('9b763505b3ce2569b064a05d42abce7242d377be410ad16b57ae3ffc04e9c4fd');
   });
 });
 

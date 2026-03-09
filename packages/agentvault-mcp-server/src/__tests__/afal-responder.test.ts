@@ -193,6 +193,27 @@ describe('AfalResponder', () => {
       expect(result.response['selected_model_profile']).toEqual(PROFILE_B);
     });
 
+    it('prefers the proposed model profile when it is also acceptable and supported', () => {
+      responder = new AfalResponder({
+        agentId: 'bob-test',
+        seedHex: RESPONDER_SEED,
+        policy: makePolicy(),
+        supportedModelProfiles: [PROFILE_B, PROFILE_A],
+      });
+
+      const result = responder.handlePropose(
+        makeWrappedBody({
+          model_profile_id: PROFILE_A.id,
+          model_profile_version: PROFILE_A.version,
+          model_profile_hash: PROFILE_A.hash,
+          acceptable_model_profiles: [PROFILE_A, PROFILE_B],
+        }),
+      );
+
+      expect(result.outcome).toBe('ADMIT');
+      expect(result.response['selected_model_profile']).toEqual(PROFILE_A);
+    });
+
     it('purges expired proposals from both admitStore and queue', () => {
       const body = makeWrappedBody();
       responder.handlePropose(body);
