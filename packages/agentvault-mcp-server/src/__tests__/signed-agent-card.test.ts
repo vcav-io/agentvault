@@ -131,6 +131,79 @@ describe('signAgentCard / verifyAgentCardSignature round-trip', () => {
   });
 });
 
+describe('negotiation fields in signed payload', () => {
+  it('includes precontract negotiation fields when present', () => {
+    const contractOffers = [
+      {
+        contract_offer_id: 'agentvault.mediation.v1.standard',
+        supported_model_profiles: [
+          { id: 'api-claude-sonnet-v1', version: '1', hash: 'abc123' },
+        ],
+      },
+    ];
+    const params = makeExtensionParams({
+      supports_precontract_negotiation: true,
+      supports_bespoke_contract_negotiation: true,
+      supported_contract_offers: contractOffers,
+    });
+    const payload = buildCardSignedPayload('test-agent', params);
+
+    expect(payload.supports_precontract_negotiation).toBe(true);
+    expect(payload.supports_bespoke_contract_negotiation).toBe(true);
+    expect(payload.supported_contract_offers).toEqual(contractOffers);
+  });
+
+  it('round-trips signature with negotiation fields', () => {
+    const contractOffers = [
+      {
+        contract_offer_id: 'agentvault.mediation.v1.standard',
+        supported_model_profiles: [
+          { id: 'api-claude-sonnet-v1', version: '1', hash: 'abc123' },
+        ],
+      },
+    ];
+    const params = makeExtensionParams({
+      supports_precontract_negotiation: true,
+      supports_bespoke_contract_negotiation: true,
+      supported_contract_offers: contractOffers,
+    });
+    const signature = signAgentCard('test-agent', params, TEST_SEED_HEX);
+    const valid = verifyAgentCardSignature('test-agent', params, signature, TEST_PUBLIC_KEY_HEX);
+    expect(valid).toBe(true);
+  });
+
+  it('rejects tampered negotiation fields', () => {
+    const params = makeExtensionParams({
+      supports_precontract_negotiation: true,
+      supported_contract_offers: [
+        {
+          contract_offer_id: 'agentvault.mediation.v1.standard',
+          supported_model_profiles: [
+            { id: 'api-claude-sonnet-v1', version: '1', hash: 'abc123' },
+          ],
+        },
+      ],
+    });
+    const signature = signAgentCard('test-agent', params, TEST_SEED_HEX);
+
+    // Tamper: change supports_bespoke to true (was absent in original)
+    const tampered = makeExtensionParams({
+      supports_precontract_negotiation: true,
+      supports_bespoke_contract_negotiation: true,
+      supported_contract_offers: [
+        {
+          contract_offer_id: 'agentvault.mediation.v1.standard',
+          supported_model_profiles: [
+            { id: 'api-claude-sonnet-v1', version: '1', hash: 'abc123' },
+          ],
+        },
+      ],
+    });
+    const valid = verifyAgentCardSignature('test-agent', tampered, signature, TEST_PUBLIC_KEY_HEX);
+    expect(valid).toBe(false);
+  });
+});
+
 describe('buildAgentCard with seedHex', () => {
   it('includes card_signature in extension params when seedHex is provided', () => {
     const descriptor = makeDescriptor('test-agent', TEST_PUBLIC_KEY_HEX);
@@ -248,7 +321,7 @@ describe('tryResolvePeerViaAgentCard card signature verification (transport-leve
     expect(discovery!.supportedPurposes).toContain('COMPATIBILITY');
   });
 
-  it('rejects unsigned card in strict mode', async () => {
+  it('rejects unsigned card in strict mode (falls back to descriptor, returns null)', async () => {
     // Start responder WITHOUT seedHex — card will be unsigned
     const baseUrl = await startResponder({ seedHex: undefined });
 
@@ -261,9 +334,10 @@ describe('tryResolvePeerViaAgentCard card signature verification (transport-leve
       requireSignedCards: true,
     });
 
-    await expect(initiatorTransport.discoverPeerAgentCard()).rejects.toThrow(
-      'unsigned',
-    );
+    // Strict mode returns null (card rejected, descriptor fallback also fails
+    // because the URL points to an agent card endpoint, not an AFAL descriptor)
+    const discovery = await initiatorTransport.discoverPeerAgentCard();
+    expect(discovery).toBeNull();
   });
 
   it('accepts signed card with valid signature', async () => {

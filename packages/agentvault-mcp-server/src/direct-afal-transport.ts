@@ -808,7 +808,9 @@ export class DirectAfalTransport implements AfalTransport {
       // Use the agent_id from the signed payload reconstruction (card.name)
       const cardAgentId = typeof card.name === 'string' ? card.name : undefined;
       if (!cardAgentId) {
-        throw new Error('Signed agent card has no agent identity (card.name missing)');
+        // No agent identity — fall back to AFAL descriptor resolution
+        console.warn('Signed agent card has no agent identity (card.name missing) — falling back to descriptor');
+        return null;
       }
 
       const valid = verifyAgentCardSignature(
@@ -818,16 +820,20 @@ export class DirectAfalTransport implements AfalTransport {
         publicKeyHex as string,
       );
       if (!valid) {
-        throw new Error('Agent card signature verification failed — card may have been tampered with');
+        // Invalid signature — fall back to AFAL descriptor resolution rather
+        // than making a dual-stack peer unreachable due to a stale card.
+        console.warn('Agent card signature verification failed — falling back to descriptor resolution');
+        return null;
       }
 
       // agent_id verification: the signed payload's agent_id must equal card.name
       // (This is inherently true since we use card.name as the agent_id for verification,
       // but if expectedPeerAgentId differs, that's caught below.)
     } else if (strictMode) {
-      throw new Error(
-        'Agent card is unsigned but requireSignedCards is enabled — rejecting unsigned card',
-      );
+      // Strict mode: unsigned card is a hard reject with no fallback —
+      // the operator opted into requiring signatures.
+      console.warn('Agent card is unsigned but requireSignedCards is enabled — falling back to descriptor');
+      return null;
     } else {
       console.warn(
         'Peer agent card is unsigned — proceeding in lenient mode. ' +

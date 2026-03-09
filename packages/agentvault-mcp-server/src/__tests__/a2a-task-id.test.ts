@@ -415,6 +415,12 @@ describe('A2A task ID — server echo', () => {
     );
 
     const taskId = 'task-commit-test-echo';
+    // Register as in-flight (as if propose came via A2A with this task_id)
+    (server as unknown as { _inFlightTasks: Map<string, unknown> })._inFlightTasks.set(taskId, {
+      state: 'working',
+      proposalId,
+      expiresAt: Date.now() + 600_000,
+    });
     const res = await fetch(`${baseUrl}${A2A_SEND_MESSAGE_PATH}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
