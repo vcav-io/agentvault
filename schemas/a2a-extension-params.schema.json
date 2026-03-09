@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agentvault:schema:a2a-extension-params:v1",
+  "title": "AgentVaultA2AExtensionParams",
+  "description": "Extension parameters for the urn:agentvault:bounded-disclosure:v1 A2A extension.",
+  "type": "object",
+  "required": ["public_key_hex", "supported_purposes"],
+  "additionalProperties": false,
+  "properties": {
+    "public_key_hex": {
+      "type": "string",
+      "description": "Ed25519 public key in hex encoding for signature verification.",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "supported_purposes": {
+      "type": "array",
+      "description": "Purpose codes this agent accepts (e.g. COMPATIBILITY, MEDIATION).",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1
+    },
+    "relay_url": {
+      "type": "string",
+      "description": "Preferred relay URL for sessions initiated with this agent.",
+      "format": "uri"
+    },
+    "afal_endpoint": {
+      "type": "string",
+      "description": "AFAL HTTP base endpoint. Omit for A2A-only agents.",
+      "format": "uri"
+    },
+    "a2a_send_message_url": {
+      "type": "string",
+      "description": "Explicit A2A SendMessage endpoint URL.",
+      "format": "uri"
+    },
+    "supports_precontract_negotiation": {
+      "type": "boolean",
+      "description": "True if the agent supports pre-contract offer negotiation."
+    },
+    "supports_bespoke_contract_negotiation": {
+      "type": "boolean",
+      "description": "True if the agent supports bespoke (custom) contract negotiation."
+    },
+    "supported_contract_offers": {
+      "type": "array",
+      "description": "Contract offers this agent can fulfill.",
+      "items": {
+        "$ref": "#/$defs/SupportedContractOffer"
+      }
+    },
+    "card_signature": {
+      "type": "string",
+      "description": "Ed25519 signature (hex) over the JCS-canonicalized AgentCardSignedPayload with VCAV-AGENT-CARD-V1: domain prefix.",
+      "pattern": "^[0-9a-f]{128}$"
+    }
+  },
+  "$defs": {
+    "ModelProfileRef": {
+      "type": "object",
+      "required": ["id", "version", "hash"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Model profile identifier."
+        },
+        "version": {
+          "type": "string",
+          "description": "Model profile version."
+        },
+        "hash": {
+          "type": "string",
+          "description": "Content hash of the model profile."
+        }
+      }
+    },
+    "SupportedContractOffer": {
+      "type": "object",
+      "required": ["contract_offer_id", "supported_model_profiles"],
+      "additionalProperties": false,
+      "properties": {
+        "contract_offer_id": {
+          "type": "string",
+          "description": "Identifier for the contract offer."
+        },
+        "supported_model_profiles": {
+          "type": "array",
+          "description": "Model profiles supported for this contract offer.",
+          "items": {
+            "$ref": "#/$defs/ModelProfileRef"
+          }
+        }
+      }
+    }
+  }
+}
