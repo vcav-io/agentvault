@@ -15,9 +15,11 @@ import { ed25519 } from '@noble/curves/ed25519';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
 import { AfalResponder } from '../afal-responder.js';
 import type { AdmissionPolicy } from '../afal-responder.js';
+import { DirectAfalTransport } from '../direct-afal-transport.js';
+import type { AgentDescriptor } from '../direct-afal-transport.js';
 import { signMessage, verifyMessage, DOMAIN_PREFIXES, contentHash } from '../afal-signing.js';
-import { computeProposalId } from '../afal-types.js';
-import type { AfalPropose, RelayInvitePayload, RelaySessionBinding } from '../afal-types.js';
+import { computeProposalId, generateNonce } from '../afal-types.js';
+import type { AfalPropose, RelayInvitePayload, RelayPreference, RelaySessionBinding } from '../afal-types.js';
 
 // ── Test keypairs ────────────────────────────────────────────────────────────
 
@@ -395,3 +397,186 @@ describe('Relay Preference Arbitration', () => {
     });
   });
 });
+
+// ── E2E Initiator-side tests ──────────────────────────────────────────────────
+//
+// These exercise the full flow through DirectAfalTransport.commitAdmit(),
+// verifying that the initiator correctly applies relay preference arbitration.
+
+function makeDescriptor(
+  agentId: string,
+  pubkeyHex: string,
+  seedHex: string,
+): AgentDescriptor {
+  const unsigned: Omit<AgentDescriptor, 'signature'> = {
+    descriptor_version: '1',
+    agent_id: agentId,
+    issued_at: '2026-01-01T00:00:00Z',
+    expires_at: '2099-12-31T23:59:59Z',
+    identity_key: { algorithm: 'ed25519', public_key_hex: pubkeyHex },
+    envelope_key: { algorithm: 'ed25519', public_key_hex: pubkeyHex },
+    endpoints: { propose: '', commit: '' },
+    capabilities: { supported_body_formats: ['wrapped_v1'], supports_commit: true },
+    policy_commitments: {},
+  };
+  return signMessage(
+    DOMAIN_PREFIXES.DESCRIPTOR,
+    unsigned as Record<string, unknown>,
+    seedHex,
+  ) as unknown as AgentDescriptor;
+}
+
+function makeFullPropose(localDescriptor: AgentDescriptor): AfalPropose {
+  const fields: Omit<AfalPropose, 'proposal_id'> = {
+    proposal_version: '1',
+    nonce: generateNonce(),
+    timestamp: new Date().toISOString(),
+    from: 'alice-test',
+    to: 'bob-test',
+    descriptor_hash: contentHash(localDescriptor),
+    purpose_code: 'MEDIATION',
+    lane_id: 'API_MEDIATED',
+    output_schema_id: 'vcav_e_mediation_signal_v2',
+    output_schema_version: '1',
+    model_profile_id: 'api-claude-sonnet-v1',
+    model_profile_version: '1',
+    model_profile_hash: '',
+    requested_entropy_bits: 12,
+    requested_budget_tier: 'SMALL',
+    admission_tier_requested: 'DEFAULT',
+  };
+  return { ...fields, proposal_id: computeProposalId(fields) };
+}
+
+describe('Relay Preference Arbitration — Initiator E2E', () => {
+  let transportA: DirectAfalTransport;
+  let transportB: DirectAfalTransport;
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    if (transportB) await transportB.stop();
+  });
+
+  async function startResponder(
+    relayPreference?: RelayPreference,
+  ): Promise<string> {
+    const bobDescriptor = makeDescriptor('bob-test', RESPONDER_PUBKEY, RESPONDER_SEED);
+
+    transportB = new DirectAfalTransport({
+      agentId: 'bob-test',
+      seedHex: RESPONDER_SEED,
+      localDescriptor: bobDescriptor,
+      respondMode: {
+        httpPort: 0,
+        bindAddress: '127.0.0.1',
+        policy: {
+          trustedAgents: [{ agentId: 'alice-test', publicKeyHex: PROPOSER_PUBKEY }],
+          allowedPurposeCodes: ['MEDIATION'],
+          allowedLaneIds: ['API_MEDIATED'],
+          maxEntropyBits: 256,
+          defaultTier: 'DENY',
+          ...(relayPreference ? { relayPreference } : {}),
+        },
+      },
+    });
+
+    await transportB.start();
+    const server = transportB as unknown as { httpServer: { port: number } };
+    return `http://127.0.0.1:${server.httpServer.port}/afal/descriptor`;
+  }
+
+  async function proposeAndCommit(
+    peerUrl: string,
+    initiatorRelayUrl?: string,
+    sessionRelayUrl = 'http://relay.example.com',
+  ): Promise<{ proposalId: string }> {
+    const aliceDescriptor = makeDescriptor('alice-test', PROPOSER_PUBKEY, PROPOSER_SEED);
+
+    transportA = new DirectAfalTransport({
+      agentId: 'alice-test',
+      seedHex: PROPOSER_SEED,
+      localDescriptor: aliceDescriptor,
+      peerDescriptorUrl: peerUrl,
+      ...(initiatorRelayUrl ? { relayUrl: initiatorRelayUrl } : {}),
+    });
+
+    const relay: RelayInvitePayload = {
+      session_id: 'sess-arb-001',
+      responder_submit_token: 'submit-tok',
+      responder_read_token: 'read-tok',
+      relay_url: sessionRelayUrl,
+    };
+
+    const propose = makeFullPropose(aliceDescriptor);
+    await transportA.sendPropose({
+      propose,
+      relay,
+      templateId: 'mediation-demo.v1.standard',
+      budgetTier: 'SMALL',
+    });
+
+    // Verify ADMIT was stored and relay_preference is visible
+    const storedAdmit = transportA._getStoredAdmit(propose.proposal_id);
+    expect(storedAdmit).toBeDefined();
+
+    await transportA.commitAdmit(propose.proposal_id, {
+      ...relay,
+      contract_hash: 'c'.repeat(64),
+    });
+
+    return { proposalId: propose.proposal_id };
+  }
+
+  it('REQUIRED: initiator uses responder relay even when session has different relay_url', async () => {
+    const peerUrl = await startResponder({
+      relay_url: RESPONDER_RELAY,
+      policy: 'REQUIRED',
+    });
+
+    // Initiator sends PROPOSE with a relay session pointing to a different URL.
+    // commitAdmit() should override chosen_relay_url to the responder's relay,
+    // so the responder accepts the COMMIT.
+    await proposeAndCommit(peerUrl, undefined, INITIATOR_RELAY);
+
+    // If we got here without throwing, the COMMIT was accepted.
+    // Verify the responder queued the proposal.
+    const inbox = await transportB.checkInbox();
+    expect(inbox.invites).toHaveLength(1);
+    expect(inbox.invites[0].from_agent_id).toBe('alice-test');
+  });
+
+  it('PREFERRED: initiator overrides with explicit relayUrl config', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const peerUrl = await startResponder({
+      relay_url: RESPONDER_RELAY,
+      policy: 'PREFERRED',
+    });
+
+    // Initiator has an explicit relayUrl that differs from responder's preference.
+    // With PREFERRED, the initiator's explicit config wins, and the responder
+    // logs a warning but accepts.
+    await proposeAndCommit(peerUrl, INITIATOR_RELAY, INITIATOR_RELAY);
+
+    const inbox = await transportB.checkInbox();
+    expect(inbox.invites).toHaveLength(1);
+
+    // Responder should have logged a warning about the override
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('differs from preferred relay'),
+    );
+  });
+
+  it('no relay_preference (old responder): initiator uses session relay_url', async () => {
+    const peerUrl = await startResponder(undefined);
+
+    const sessionRelay = 'http://initiator-chosen-relay.example.com';
+    await proposeAndCommit(peerUrl, undefined, sessionRelay);
+
+    const inbox = await transportB.checkInbox();
+    expect(inbox.invites).toHaveLength(1);
+    // The relay_url in the invite should be the session's original relay_url
+    expect(inbox.invites[0].payload['relay_url']).toBe(sessionRelay);
+  });
+});
+
