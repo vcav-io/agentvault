@@ -172,12 +172,15 @@ function buildDirectTransportFromEnv(): DirectAfalTransport | null {
   }
   const localDescriptor = localDescriptorRaw;
 
+  const requireSignedCards = process.env['AV_AFAL_REQUIRE_SIGNED_CARDS'] === 'true';
+
   const config: DirectAfalTransportConfig = {
     agentId,
     seedHex,
     localDescriptor,
     relayUrl: process.env['AV_RELAY_URL'],
     peerDescriptorUrl,
+    requireSignedCards,
   };
 
   // RESPOND mode if HTTP port is configured
