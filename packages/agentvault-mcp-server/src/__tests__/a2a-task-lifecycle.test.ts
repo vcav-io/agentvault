@@ -211,6 +211,7 @@ describe('A2A task lifecycle (#311b)', () => {
       const taskId = 'task-propose-lifecycle-complete';
       (server as unknown as { _inFlightTasks: Map<string, unknown> })._inFlightTasks.set(taskId, {
         state: 'working',
+        proposalId,
         expiresAt: Date.now() + 600_000,
       });
       expect(server._hasInFlightTask(taskId)).toBe(true);
@@ -400,6 +401,271 @@ describe('A2A task lifecycle (#311b)', () => {
     });
   });
 
+  describe('session-tokens task correlation enforcement', () => {
+    beforeEach(async () => {
+      const s = await startServer(makeAdmitPolicy());
+      server = s.server;
+      baseUrl = s.baseUrl;
+    });
+
+    it('rejects session-tokens with unknown task_id', async () => {
+      // Send session-tokens with a task_id that has no matching in-flight task
+      const relay = makeRelay();
+      const propose = makePropose({ relay_binding_hash: contentHash(relay) });
+      const signed = signMessage(
+        DOMAIN_PREFIXES.PROPOSE,
+        propose as unknown as Record<string, unknown>,
+        PROPOSER_SEED,
+      );
+
+      // First admit via direct AFAL to get valid commit data
+      const admitRes = await fetch(`${baseUrl}/afal/propose`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ propose: signed, relay }),
+      });
+      const admitBody = (await admitRes.json()) as Record<string, unknown>;
+      const admitTokenId = admitBody['admit_token_id'] as string;
+      const proposalId = admitBody['proposal_id'] as string;
+
+      const commitMsg = signMessage(
+        DOMAIN_PREFIXES.COMMIT,
+        {
+          commit_version: '1',
+          proposal_id: proposalId,
+          from: 'alice-test',
+          admit_token_id: admitTokenId,
+          relay_session: {
+            ...relay,
+            contract_hash: 'c'.repeat(64),
+          },
+        },
+        PROPOSER_SEED,
+      );
+
+      const bogusTaskId = 'task-propose-does-not-exist';
+      const res = await fetch(`${baseUrl}${A2A_SEND_MESSAGE_PATH}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          buildA2ASendMessageRequest({
+            mediaType: AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
+            data: commitMsg,
+            acceptedOutputModes: [AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE],
+            taskId: bogusTaskId,
+          }),
+        ),
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body['id']).toBe(bogusTaskId);
+      expect((body['status'] as Record<string, unknown>)['state']).toBe('failed');
+    });
+
+    it('allows session-tokens without task_id (old client backward compat)', async () => {
+      // Session-tokens with no task_id should proceed (no correlation check)
+      const relay = makeRelay();
+      const propose = makePropose({ relay_binding_hash: contentHash(relay) });
+      const signed = signMessage(
+        DOMAIN_PREFIXES.PROPOSE,
+        propose as unknown as Record<string, unknown>,
+        PROPOSER_SEED,
+      );
+
+      const admitRes = await fetch(`${baseUrl}/afal/propose`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ propose: signed, relay }),
+      });
+      const admitBody = (await admitRes.json()) as Record<string, unknown>;
+      const admitTokenId = admitBody['admit_token_id'] as string;
+      const proposalId = admitBody['proposal_id'] as string;
+
+      const commitMsg = signMessage(
+        DOMAIN_PREFIXES.COMMIT,
+        {
+          commit_version: '1',
+          proposal_id: proposalId,
+          from: 'alice-test',
+          admit_token_id: admitTokenId,
+          relay_session: {
+            ...relay,
+            contract_hash: 'c'.repeat(64),
+          },
+        },
+        PROPOSER_SEED,
+      );
+
+      // No taskId — old client
+      const res = await fetch(`${baseUrl}${A2A_SEND_MESSAGE_PATH}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          buildA2ASendMessageRequest({
+            mediaType: AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
+            data: commitMsg,
+            acceptedOutputModes: [AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE],
+          }),
+        ),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect((body['status'] as Record<string, unknown>)['state']).toBe('completed');
+    });
+
+    it('rejects session-tokens when task_id maps to a different proposal', async () => {
+      // Admit two proposals, then try to commit proposal A using proposal B's task_id
+      const relay = makeRelay();
+
+      // Proposal A
+      const proposeA = makePropose({
+        relay_binding_hash: contentHash(relay),
+        nonce: 'a'.repeat(64),
+      });
+      const signedA = signMessage(
+        DOMAIN_PREFIXES.PROPOSE,
+        proposeA as unknown as Record<string, unknown>,
+        PROPOSER_SEED,
+      );
+      const admitResA = await fetch(`${baseUrl}/afal/propose`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ propose: signedA, relay }),
+      });
+      const admitBodyA = (await admitResA.json()) as Record<string, unknown>;
+      const proposalIdA = admitBodyA['proposal_id'] as string;
+
+      // Proposal B (different nonce → different proposal_id)
+      const proposeB = makePropose({
+        relay_binding_hash: contentHash(relay),
+        nonce: 'b'.repeat(64),
+      });
+      const signedB = signMessage(
+        DOMAIN_PREFIXES.PROPOSE,
+        proposeB as unknown as Record<string, unknown>,
+        PROPOSER_SEED,
+      );
+      const admitResB = await fetch(`${baseUrl}/afal/propose`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ propose: signedB, relay }),
+      });
+      const admitBodyB = (await admitResB.json()) as Record<string, unknown>;
+      const admitTokenIdB = admitBodyB['admit_token_id'] as string;
+      const proposalIdB = admitBodyB['proposal_id'] as string;
+
+      // Sanity: proposals are different
+      expect(proposalIdA).not.toBe(proposalIdB);
+
+      // Register task A as in-flight (bound to proposal A)
+      const taskIdA = 'task-propose-A';
+      (server as unknown as { _inFlightTasks: Map<string, unknown> })._inFlightTasks.set(taskIdA, {
+        state: 'working',
+        proposalId: proposalIdA,
+        expiresAt: Date.now() + 600_000,
+      });
+
+      // Try to commit proposal B using task A's task_id → should be rejected
+      const commitMsgB = signMessage(
+        DOMAIN_PREFIXES.COMMIT,
+        {
+          commit_version: '1',
+          proposal_id: proposalIdB,
+          from: 'alice-test',
+          admit_token_id: admitTokenIdB,
+          relay_session: {
+            ...relay,
+            contract_hash: 'c'.repeat(64),
+          },
+        },
+        PROPOSER_SEED,
+      );
+
+      const res = await fetch(`${baseUrl}${A2A_SEND_MESSAGE_PATH}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          buildA2ASendMessageRequest({
+            mediaType: AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
+            data: commitMsgB,
+            acceptedOutputModes: [AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE],
+            taskId: taskIdA, // Wrong task — belongs to proposal A
+          }),
+        ),
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body['id']).toBe(taskIdA);
+      expect((body['status'] as Record<string, unknown>)['state']).toBe('failed');
+
+      // Task A should NOT be removed (mismatch was rejected)
+      expect(server._hasInFlightTask(taskIdA)).toBe(true);
+    });
+
+    it('failed handleCommit returns failed state and preserves in-flight task for retry', async () => {
+      // Admit a real proposal
+      const relay = makeRelay();
+      const propose = makePropose({ relay_binding_hash: contentHash(relay) });
+      const signed = signMessage(
+        DOMAIN_PREFIXES.PROPOSE,
+        propose as unknown as Record<string, unknown>,
+        PROPOSER_SEED,
+      );
+      const admitRes = await fetch(`${baseUrl}/afal/propose`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ propose: signed, relay }),
+      });
+      const admitBody = (await admitRes.json()) as Record<string, unknown>;
+      const proposalId = admitBody['proposal_id'] as string;
+
+      // Register in-flight task bound to this proposal
+      const taskId = 'task-propose-bad-commit';
+      (server as unknown as { _inFlightTasks: Map<string, unknown> })._inFlightTasks.set(taskId, {
+        state: 'working',
+        proposalId,
+        expiresAt: Date.now() + 600_000,
+      });
+
+      // Send a semantically invalid commit (wrong admit_token_id) — correlation
+      // passes (proposal_id matches) but handleCommit returns { ok: false }.
+      const badCommitMsg = signMessage(
+        DOMAIN_PREFIXES.COMMIT,
+        {
+          commit_version: '1',
+          proposal_id: proposalId,
+          from: 'alice-test',
+          admit_token_id: 'bogus-admit-token',
+          relay_session: {
+            ...relay,
+            contract_hash: 'c'.repeat(64),
+          },
+        },
+        PROPOSER_SEED,
+      );
+
+      const res = await fetch(`${baseUrl}${A2A_SEND_MESSAGE_PATH}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          buildA2ASendMessageRequest({
+            mediaType: AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
+            data: badCommitMsg,
+            acceptedOutputModes: [AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE],
+            taskId,
+          }),
+        ),
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body['id']).toBe(taskId);
+      expect((body['status'] as Record<string, unknown>)['state']).toBe('failed');
+
+      // In-flight task should be preserved so the client can retry
+      expect(server._hasInFlightTask(taskId)).toBe(true);
+    });
+  });
+
   describe('in-flight task TTL expiry', () => {
     beforeEach(async () => {
       const s = await startServer(makeAdmitPolicy());
@@ -414,6 +680,7 @@ describe('A2A task lifecycle (#311b)', () => {
         expiredTaskId,
         {
           state: 'working',
+          proposalId: 'expired-proposal',
           expiresAt: Date.now() - 1000, // already expired
         },
       );
@@ -443,6 +710,7 @@ describe('A2A task lifecycle (#311b)', () => {
         validTaskId,
         {
           state: 'working',
+          proposalId: 'valid-proposal',
           expiresAt: Date.now() + 600_000, // 10 minutes from now
         },
       );

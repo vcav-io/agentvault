@@ -49,6 +49,7 @@ const INFLIGHT_TASK_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 interface InFlightTask {
   state: 'working' | 'failed';
+  proposalId: string;
   expiresAt: number;
 }
 
@@ -262,8 +263,13 @@ export class AfalHttpServer {
               } else if (hasTaskId) {
                 // Stateful lifecycle: ADMIT → working (session tokens still needed)
                 taskState = 'working';
+                const admitProposalId =
+                  typeof result.response['proposal_id'] === 'string'
+                    ? result.response['proposal_id']
+                    : '';
                 this._inFlightTasks.set(parsed.taskId!, {
                   state: 'working',
+                  proposalId: admitProposalId,
                   expiresAt: Date.now() + INFLIGHT_TASK_TTL_MS,
                 });
               } else {
@@ -319,10 +325,52 @@ export class AfalHttpServer {
               }
             } else {
               // session-tokens (COMMIT) — completes the lifecycle
+              // Enforce task correlation: if client sends a task_id, it must match
+              // an in-flight task from a prior propose, and the proposal_id in the
+              // commit body must match the one stored at propose time.
+              if (parsed.taskId) {
+                const inFlight = this._inFlightTasks.get(parsed.taskId);
+                if (!inFlight) {
+                  res.writeHead(400, { 'Content-Type': 'application/json' });
+                  res.end(
+                    JSON.stringify(
+                      buildA2ATaskResponse({
+                        mediaType: AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
+                        data: { ok: false, error: 'Unknown task_id — no matching in-flight propose' },
+                        taskId: parsed.taskId,
+                        state: 'failed',
+                      }),
+                    ),
+                  );
+                  return;
+                }
+                // Verify the commit's proposal_id matches the one from the propose
+                const commitProposalId =
+                  parsed.data &&
+                  typeof parsed.data === 'object' &&
+                  typeof (parsed.data as Record<string, unknown>)['proposal_id'] === 'string'
+                    ? (parsed.data as Record<string, unknown>)['proposal_id']
+                    : undefined;
+                if (inFlight.proposalId && commitProposalId !== inFlight.proposalId) {
+                  res.writeHead(400, { 'Content-Type': 'application/json' });
+                  res.end(
+                    JSON.stringify(
+                      buildA2ATaskResponse({
+                        mediaType: AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
+                        data: { ok: false, error: 'task_id proposal_id mismatch — commit does not match the admitted propose' },
+                        taskId: parsed.taskId,
+                        state: 'failed',
+                      }),
+                    ),
+                  );
+                  return;
+                }
+              }
               const result = this.config.responder.handleCommit(parsed.data);
               const status = result.ok ? 200 : 400;
-              // If this task was tracked in-flight, remove it
-              if (parsed.taskId && this._inFlightTasks.has(parsed.taskId)) {
+              // Only remove the in-flight task on success; on failure the
+              // client may retry with the same task_id.
+              if (result.ok && parsed.taskId) {
                 this._inFlightTasks.delete(parsed.taskId);
               }
               res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -332,7 +380,7 @@ export class AfalHttpServer {
                     mediaType: AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
                     data: result,
                     taskId: parsed.taskId,
-                    state: 'completed',
+                    state: result.ok ? 'completed' : 'failed',
                   }),
                 ),
               );
