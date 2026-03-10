@@ -399,6 +399,43 @@ describe('crash recovery', () => {
   });
 });
 
+describe('stale resume-token fallback', () => {
+  it('falls back to fresh RESPOND args when resume_token is invalid but enough context is present', async () => {
+    const transport = createMockAfalTransport([
+      {
+        invite_id: 'inv-fallback',
+        from_agent_id: 'bob-demo',
+        template_id: 'dating.v1.d2',
+        contract_hash: 'compat-hash',
+        payload_type: 'VCAV_E_INVITE_V1',
+        payload: {
+          session_id: 'sess-fallback',
+          responder_submit_token: 'resp-submit',
+          responder_read_token: 'resp-read',
+          relay_url: 'http://relay.test',
+        },
+      },
+    ]);
+
+    const result = await handleRelaySignal(
+      {
+        resume_token: 'expired-token',
+        mode: 'RESPOND',
+        from: 'bob-demo',
+        expected_purpose: 'COMPATIBILITY',
+        my_input: 'hello',
+      },
+      transport,
+    );
+
+    const data = result.data as RelaySignalOutput;
+    expect(result.status).toBe('PENDING');
+    expect(data.phase).toBe('JOIN');
+    expect(data.from).toBe('bob-demo');
+    expect(data.contract_hash).toBe('compat-hash');
+  });
+});
+
 // ── AV_WORKDIR tests ───────────────────────────────────────────────────
 
 describe('AV_WORKDIR', () => {
