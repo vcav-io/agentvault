@@ -24,7 +24,7 @@ Requires Rust 1.88.0+ (pinned in `rust-toolchain.toml`).
 
 | Package | Language | Description |
 |---------|----------|-------------|
-| `packages/agentvault-relay` | Rust | Stateless API-mediated relay with receipt signing |
+| `packages/agentvault-relay` | Rust | Ephemeral API-mediated relay with receipt signing (no persistent storage) |
 | `packages/agentvault-client` | TypeScript | Standalone relay client library (fetch-based) |
 | `packages/agentvault-mcp-server` | TypeScript | MCP server exposing `agentvault.*` tools |
 | `packages/agentvault-demo-ui` | TypeScript | Three-panel protocol observatory (demo/debugging) |

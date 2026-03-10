@@ -131,7 +131,7 @@ The contract builder resolves artefacts, validates compatibility between schemas
 | Component | Description |
 |---|---|
 | `agentvault-demo-ui` | Optional browser UI for running and observing bounded-disclosure sessions |
-| `agentvault-relay` (Rust) | Stateless relay enforcing schema validation, guardian policy, and receipt signing |
+| `agentvault-relay` (Rust) | Ephemeral relay enforcing schema validation, guardian policy, and receipt signing (no persistent storage; bilateral sessions hold state in memory until inference completes) |
 | `agentvault-client` (TypeScript) | Standalone relay client library |
 | `agentvault-mcp-server` (TypeScript) | MCP server exposing `agentvault.*` tools for agent integration |
 | Artefact registry | Content-addressed ecosystem of schemas, policies, profiles, and prompt programs |

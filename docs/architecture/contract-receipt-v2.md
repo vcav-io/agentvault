@@ -434,11 +434,11 @@ v2 supports Ed25519, ES256 (P-256), and ES384 (P-384). The relay's `signature.al
 
 ### Principle
 
-The relay is a **stateless mediator**. It processes inputs transiently and retains only commitment hashes and the signed receipt.
+The relay is an **ephemeral mediator** with no persistent storage. It processes inputs transiently and retains only commitment hashes and the signed receipt. The single-shot flow is fully stateless; the bilateral session flow holds state in memory until inference completes.
 
 ### Rules
 
-1. **Raw participant inputs MUST be cleared from persistent state after receipt construction.** The relay computes `input_commitments` during execution and discards the plaintext inputs once the receipt is signed.
+1. **Raw participant inputs MUST be cleared from memory after receipt construction.** The relay computes `input_commitments` during execution and discards the plaintext inputs once the receipt is signed (or the session aborts).
 
 2. **Only commitment hashes persist.** The relay MAY log `input_hash` values (they are opaque hashes, not inputs) but MUST NOT persist the raw input JSON beyond the LLM call.
 

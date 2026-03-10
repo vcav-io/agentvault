@@ -330,10 +330,15 @@ downstream concern.
 
 **Ephemeral input retention**
 
-The relay clears raw participant inputs from persistent state after receipt
-construction. Only commitment hashes (SHA-256 of the input, not the input itself)
-persist in the receipt. During execution, inputs exist in memory for the duration
-of the LLM provider call and are dropped after the receipt is signed.
+The relay clears raw participant inputs from memory immediately after receipt
+construction — both on success and on error. Only commitment hashes (SHA-256 of
+the input, not the input itself) persist in the receipt. The relay has no
+persistent storage; all session state is held in memory.
+
+In the bilateral session flow, inputs are held in memory from submission until
+inference completes (typically seconds). In the single-shot flow, inputs exist
+only for the duration of the request. In both cases, inputs are dropped as soon
+as the receipt is signed or the session aborts.
 
 This limits exposure to the execution window. It does not prevent an operator from
 logging inputs out-of-band or from retaining them in infrastructure logs outside

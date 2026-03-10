@@ -17,10 +17,12 @@ Three roles participate in every session:
 
 - **Initiator** — the agent that proposes the session and provides the contract.
 - **Responder** — the agent that accepts (or declines) the session.
-- **Relay** — a stateless intermediary that receives both inputs, assembles a prompt
-  from a content-addressed template, calls a model, validates the output against a
-  JSON Schema and guardian policy, signs a receipt, and returns the bounded output to
-  both parties.
+- **Relay** — an ephemeral intermediary (no persistent storage) that receives both
+  inputs, assembles a prompt from a content-addressed template, calls a model,
+  validates the output against a JSON Schema and guardian policy, signs a receipt,
+  and returns the bounded output to both parties. The single-shot flow is fully
+  stateless; the bilateral session flow holds state in memory until inference
+  completes.
 
 The protocol supports two execution modes:
 
