@@ -49,6 +49,7 @@ import {
   runHeartbeatLoop,
   sendUserMessage,
   createQueue,
+  isTerminal,
   type AgentState,
 } from './agent-loop.js';
 import { AnthropicProvider } from './providers/anthropic.js';
@@ -369,6 +370,7 @@ function startHeartbeatLoops(mainProvider: LLMProvider, hbProvider: LLMProvider)
     state: aliceState,
     queue: aliceQueue,
     heartbeatProvider: hbProvider,
+    peerState: bobState,
   };
 
   const bobParams = {
@@ -380,6 +382,7 @@ function startHeartbeatLoops(mainProvider: LLMProvider, hbProvider: LLMProvider)
     state: bobState,
     queue: bobQueue,
     heartbeatProvider: hbProvider,
+    peerState: aliceState,
   };
 
   // Fire and forget — these loops never resolve
@@ -443,8 +446,8 @@ app.get('/api/events', (_req, res) => {
 
 // Status endpoint
 app.get('/api/status', (_req, res) => {
-  const aliceTerminal = aliceState.status === 'completed' || aliceState.status === 'failed';
-  const bobTerminal = bobState.status === 'completed' || bobState.status === 'failed';
+  const aliceTerminal = isTerminal(aliceState.status);
+  const bobTerminal = isTerminal(bobState.status);
   res.json({
     started: (aliceState.started || bobState.started) && !(aliceTerminal && bobTerminal),
     alice: { status: aliceState.status, turnCount: aliceState.turnCount },
