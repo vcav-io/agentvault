@@ -32,6 +32,11 @@ export type BurstResult = 'idle' | 'session_completed' | 'session_failed' | 'max
 
 export type AgentStatus = 'idle' | 'running' | 'completed' | 'failed' | 'error';
 
+/** True when the agent has reached a final state (no further LLM work). */
+export function isTerminal(status: AgentStatus): boolean {
+  return status === 'completed' || status === 'failed';
+}
+
 export interface AgentState {
   name: string;
   status: AgentStatus;
@@ -125,7 +130,7 @@ async function runLLMBurst(
 
   // Guard: if aborted or session already completed, exit immediately.
   if (isStale()) return 'idle';
-  if (state.status === 'completed' || state.status === 'failed') {
+  if (isTerminal(state.status)) {
     return 'idle';
   }
 
@@ -303,6 +308,7 @@ async function runLLMBurst(
 interface HeartbeatParams extends BurstParams {
   queue: ReturnType<typeof createQueue>;
   heartbeatProvider?: LLMProvider;
+  peerState: AgentState;
 }
 
 /**
@@ -313,7 +319,7 @@ export async function runHeartbeatLoop(
   params: HeartbeatParams,
   signal: AbortSignal,
 ): Promise<void> {
-  const { name, events, state, queue, heartbeatProvider } = params;
+  const { name, events, state, queue, heartbeatProvider, peerState } = params;
   let consecutiveErrors = 0;
 
   // Use cheap model for heartbeats (Haiku / gpt-4o-mini), main model for real work
@@ -325,7 +331,18 @@ export async function runHeartbeatLoop(
     // No-cost local tick after session completion — loop stays alive but
     // no LLM call. Prevents budget models from spinning on post-completion
     // heartbeats (get_identity loops, session restarts).
-    if (state.status === 'completed' || state.status === 'failed') {
+    if (isTerminal(state.status)) {
+      await delay(HEARTBEAT_INTERVAL_MS, signal);
+      continue;
+    }
+
+    // Propagate peer terminal failure — stop heartbeating if peer has
+    // terminally failed rather than spinning indefinitely (#361).
+    // Only checks 'failed', not 'error' — error has a retry/backoff path
+    // and the peer may recover.
+    if (peerState.status === 'failed') {
+      state.status = 'failed';
+      events.emitStatus(name, 'failed', 'Peer agent failed');
       await delay(HEARTBEAT_INTERVAL_MS, signal);
       continue;
     }
