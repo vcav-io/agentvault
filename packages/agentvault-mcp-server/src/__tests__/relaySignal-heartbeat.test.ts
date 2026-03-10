@@ -434,6 +434,45 @@ describe('stale resume-token fallback', () => {
     expect(data.from).toBe('bob-demo');
     expect(data.contract_hash).toBe('compat-hash');
   });
+
+  it('falls back to fresh INITIATE args when resume_token is invalid but enough context is present', async () => {
+    const transport = createMockAfalTransport();
+
+    const result = await handleRelaySignal(
+      {
+        resume_token: 'expired-token',
+        mode: 'INITIATE',
+        counterparty: 'bob-demo',
+        purpose: 'COMPATIBILITY',
+        my_input: 'I want to see if there is room to proceed.',
+      },
+      transport,
+    );
+
+    const data = result.data as RelaySignalOutput;
+    expect(result.status).toBe('PENDING');
+    expect(data.phase).toBe('POLL_RELAY');
+    expect(data.state).toBe('AWAITING');
+    expect(data.action_required).toBe('CALL_AGAIN');
+    expect(data.mode).toBe('INITIATE');
+  });
+
+  it('keeps resume-only invalid tokens on the strict INVALID_INPUT path', async () => {
+    const transport = createMockAfalTransport();
+
+    const result = await handleRelaySignal(
+      {
+        resume_token: 'expired-token',
+      },
+      transport,
+    );
+
+    expect(result.status).toBe('ERROR');
+    expect(result.error?.code).toBe('INVALID_INPUT');
+    expect(result.error?.detail).toContain(
+      'Invalid or expired resume_token',
+    );
+  });
 });
 
 // ── AV_WORKDIR tests ───────────────────────────────────────────────────

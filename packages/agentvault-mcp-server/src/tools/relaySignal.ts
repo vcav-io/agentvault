@@ -2326,6 +2326,8 @@ export async function handleRelaySignal(
           console.info(
             'relay_signal resume: resume_token invalid/expired; falling back to fresh call args.',
           );
+          // Fall through to the fresh-call path below with the caller's
+          // non-resume arguments restored.
           args = fallbackArgs;
         } else {
           return buildError(
