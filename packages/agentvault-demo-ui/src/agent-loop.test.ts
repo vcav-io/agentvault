@@ -10,7 +10,7 @@ import {
   type AgentState,
 } from './agent-loop.js';
 import type { EventBus } from './events.js';
-import type { LLMProvider } from './providers/types.js';
+import type { LLMProvider, ProviderResponse } from './providers/types.js';
 import type { ToolRegistry } from 'agentvault-mcp-server/tools';
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -31,12 +31,27 @@ function makeEvents(): EventBus {
   return {
     emitStatus: vi.fn(),
     emitSystem: vi.fn(),
+    emitLLMText: vi.fn(),
     emit: vi.fn(),
   } as unknown as EventBus;
 }
 
+/** A valid idle ProviderResponse — no tool calls, just text. */
+function idleResponse(): ProviderResponse {
+  return {
+    textBlocks: [{ type: 'text', text: 'No work to do.' }],
+    toolUseBlocks: [],
+    wantsToolUse: false,
+    contentBlocks: [{ type: 'text', text: 'No work to do.' }],
+  };
+}
+
 function makeProvider(): LLMProvider {
-  return { chat: vi.fn() } as unknown as LLMProvider;
+  return {
+    chat: vi.fn(),
+    buildToolResultMessage: vi.fn(),
+    name: 'mock',
+  } as unknown as LLMProvider;
 }
 
 function makeRegistry(): ToolRegistry {
@@ -104,10 +119,7 @@ describe('runHeartbeatLoop peer convergence', () => {
     const ac = new AbortController();
 
     const provider = makeProvider();
-    (provider.chat as ReturnType<typeof vi.fn>).mockResolvedValue({
-      role: 'assistant',
-      content: 'No work to do.',
-    });
+    (provider.chat as ReturnType<typeof vi.fn>).mockResolvedValue(idleResponse());
 
     const loopPromise = runHeartbeatLoop(
       {
@@ -127,8 +139,8 @@ describe('runHeartbeatLoop peer convergence', () => {
     ac.abort();
     await loopPromise;
 
-    // Peer error is retryable — alice should keep running, not force-fail
-    expect(alice.status).not.toBe('failed');
+    // Peer error is retryable — alice should stay idle, not force-fail
+    expect(alice.status).toBe('idle');
   });
 
   it('does not force-fail when peer completed normally', async () => {
@@ -137,11 +149,7 @@ describe('runHeartbeatLoop peer convergence', () => {
     const ac = new AbortController();
 
     const provider = makeProvider();
-    // Provider will be called for heartbeat burst — return idle text response
-    (provider.chat as ReturnType<typeof vi.fn>).mockResolvedValue({
-      role: 'assistant',
-      content: 'No work to do.',
-    });
+    (provider.chat as ReturnType<typeof vi.fn>).mockResolvedValue(idleResponse());
 
     const loopPromise = runHeartbeatLoop(
       {
@@ -162,8 +170,8 @@ describe('runHeartbeatLoop peer convergence', () => {
     ac.abort();
     await loopPromise;
 
-    // Alice should NOT have been forced to failed
-    expect(alice.status).not.toBe('failed');
+    // Alice completes a normal idle heartbeat — stays idle, not force-failed
+    expect(alice.status).toBe('idle');
   });
 
   it('self-terminal agent stays in no-cost tick regardless of peer', async () => {
