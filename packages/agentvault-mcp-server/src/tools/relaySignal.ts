@@ -240,6 +240,10 @@ export interface RelaySignalOutput {
   interpretation_context?: InterpretationContext;
   resume_token_display?: string | null;
   aligned_topic_code?: string;
+  purpose_override?: {
+    requested_purpose: string;
+    adopted_purpose: string;
+  };
   negotiated_contract?: {
     kind: 'offer' | 'bespoke';
     contract_offer_id?: string;
@@ -942,6 +946,16 @@ function mapAlignedTopicCode(handle: RelayHandle): string | undefined {
   return handle.alignedTopicCode;
 }
 
+function mapPurposeOverride(
+  handle: RelayHandle,
+): RelaySignalOutput['purpose_override'] | undefined {
+  if (!handle.purposeOverride) return undefined;
+  return {
+    requested_purpose: handle.purposeOverride.requestedPurpose,
+    adopted_purpose: handle.purposeOverride.adoptedPurpose,
+  };
+}
+
 function awaitingResponse(
   handle: RelayHandle,
   userMessage: string,
@@ -970,6 +984,7 @@ function awaitingResponse(
     resume_strategy: strategy,
     user_message: userMessage,
     aligned_topic_code: mapAlignedTopicCode(handle),
+    purpose_override: mapPurposeOverride(handle),
     negotiated_contract: mapNegotiatedContract(handle),
     display: {
       forbidden: ['PRINT_RESUME_TOKEN', 'CLAIM_COUNTERPARTY_KNOWLEDGE'],
@@ -1003,6 +1018,7 @@ function completedResponse(
     next_update_seconds: null,
     user_message: 'Relay session complete.',
     aligned_topic_code: mapAlignedTopicCode(handle),
+    purpose_override: mapPurposeOverride(handle),
     negotiated_contract: mapNegotiatedContract(handle),
     output,
     display: {
@@ -1046,6 +1062,7 @@ function failedResponse(
     user_message: userMessage,
     error_code: errorCode,
     aligned_topic_code: mapAlignedTopicCode(handle),
+    purpose_override: mapPurposeOverride(handle),
     negotiated_contract: mapNegotiatedContract(handle),
     output,
     display: {
@@ -1077,6 +1094,31 @@ function bindSelectedProfile(
     hash: selectedProfile.hash,
     version: selectedProfile.version,
   });
+}
+
+function tryAdoptPreferredPurpose(
+  handle: RelayHandle,
+  advertisedPurpose: string | undefined,
+): ToolResponse<RelaySignalOutput> | null {
+  if (!handle.preferredPurpose || !advertisedPurpose || advertisedPurpose === handle.preferredPurpose) {
+    return null;
+  }
+
+  const knownPurposes = listRelayPurposes();
+  if (!knownPurposes.includes(advertisedPurpose)) {
+    return failedResponse(
+      handle,
+      'PURPOSE_MISMATCH',
+      `Counterparty proposed unsupported purpose "${advertisedPurpose}".`,
+    );
+  }
+
+  handle.purposeOverride = {
+    requestedPurpose: handle.preferredPurpose,
+    adoptedPurpose: advertisedPurpose,
+  };
+  handle.purpose = advertisedPurpose;
+  return null;
 }
 
 async function createCommittedDirectSession(params: {
@@ -1702,10 +1744,12 @@ async function phasePollRelay(
             idempotencyKey: yieldIdempotencyKey,
             timeoutMs: HANDLE_TTL_MS,
           });
-          respondHandle.expectedPurpose = handle.purpose;
+          respondHandle.preferredPurpose = handle.purpose;
           respondHandle.myInput = handle.myInput;
           respondHandle.contractHash = handle.contractHash;
-          respondHandle.expectedContractHash = handle.expectedContractHash ?? handle.contractHash;
+          // Collision yields should adopt the live counterparty invite when it is
+          // locally supported, not enforce the abandoned local session as a hard
+          // contract requirement.
           // Mark old handle as abandoned
           handle.phase = 'FAILED';
           return await phaseDiscover(respondHandle, transport);
@@ -1871,6 +1915,16 @@ async function phaseDiscover(
           continue;
       }
 
+      const advertisedPurpose =
+        invite.afalPropose?.purpose_code ??
+        (invite.template_id
+          ? Object.entries(PURPOSE_TO_TEMPLATE).find(
+              // PURPOSE_TO_TEMPLATE is currently 1:1. If that changes, replace
+              // this reverse lookup with an explicit template->purpose map.
+              ([, templateId]) => templateId === invite.template_id,
+            )?.[0]
+          : undefined);
+
       // Check expected_contract_hash if provided (direct hash comparison)
       if (handle.expectedContractHash && invite.contract_hash !== handle.expectedContractHash) {
         foundSenderInviteWithContractMismatch = true;
@@ -1895,6 +1949,13 @@ async function phaseDiscover(
           foundSenderInviteWithContractMismatch = true;
           continue;
         }
+      } else if (
+        handle.preferredPurpose &&
+        advertisedPurpose &&
+        advertisedPurpose !== handle.preferredPurpose
+      ) {
+        const adoptionResult = tryAdoptPreferredPurpose(handle, advertisedPurpose);
+        if (adoptionResult) return adoptionResult;
       }
 
       // ── Structured confirmation: fetch full contract from invite detail ──
@@ -1958,6 +2019,12 @@ async function phaseDiscover(
           if (typeof contractPurpose === 'string' && contractPurpose !== handle.expectedPurpose) {
             foundSenderInviteWithContractMismatch = true;
             continue;
+          }
+        } else if (handle.preferredPurpose) {
+          const contractPurpose = detail.contract_json.purpose_code;
+          if (typeof contractPurpose === 'string' && contractPurpose !== handle.preferredPurpose) {
+            const adoptionResult = tryAdoptPreferredPurpose(handle, contractPurpose);
+            if (adoptionResult) return adoptionResult;
           }
         }
 
@@ -2364,7 +2431,7 @@ export async function handleRelaySignal(
             idempotencyKey: respondIdempotencyKey,
             timeoutMs: HANDLE_TTL_MS,
           });
-          respondHandle.expectedPurpose = args.purpose;
+          respondHandle.preferredPurpose = args.purpose;
           respondHandle.myInput = args.my_input;
           // Do not bind collision redirects to a locally precomputed contract hash.
           // On the direct AFAL path, pre-session negotiation can legitimately pick a
