@@ -44,6 +44,12 @@ export interface RelayHandle {
   /** Stored from first call for use on resume (responder only). */
   myInput?: string;
   expectedPurpose?: string;
+  /**
+   * Soft purpose preference used only for collision fallback. Unlike
+   * expectedPurpose, this does not force a mismatch if the incoming invite
+   * proposes a different supported purpose.
+   */
+  preferredPurpose?: string;
   expectedContractHash?: string;
   alignedTopicCode?: string;
   negotiatedContract?: {

@@ -295,6 +295,38 @@ describe('INITIATE with AFAL', () => {
     expect(data['contract_hash']).toBe('negotiated-hash-from-peer');
   });
 
+  it('adopts the counterparty purpose on collision redirect when the local purpose differs', async () => {
+    const transport = createMockAfalTransport([
+      {
+        invite_id: 'inv-2',
+        from_agent_id: 'bob-demo',
+        template_id: 'mediation-demo.v1.standard',
+        contract_hash: 'peer-mediation-hash',
+        payload_type: 'VCAV_E_INVITE_V1',
+        payload: {
+          session_id: 'sess-456',
+          responder_submit_token: 'resp-submit',
+          responder_read_token: 'resp-read',
+          relay_url: 'http://relay.test',
+        },
+        afalPropose: {
+          purpose_code: 'MEDIATION',
+        } as AfalPropose,
+      },
+    ]);
+
+    const result = await handleRelaySignal(
+      { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'COMPATIBILITY', my_input: 'hello' },
+      transport,
+    );
+    const data = result.data as unknown as Record<string, unknown>;
+
+    expect(result.status).toBe('PENDING');
+    expect(data['phase']).toBe('JOIN');
+    expect(data['from']).toBe('bob-demo');
+    expect(data['contract_hash']).toBe('peer-mediation-hash');
+  });
+
   it('negotiates a contract offer before bootstrap when the peer advertises negotiation', async () => {
     const mockFetch = vi.fn();
     vi.stubGlobal('fetch', mockFetch);

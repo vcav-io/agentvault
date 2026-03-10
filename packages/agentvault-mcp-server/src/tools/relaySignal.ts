@@ -1702,10 +1702,12 @@ async function phasePollRelay(
             idempotencyKey: yieldIdempotencyKey,
             timeoutMs: HANDLE_TTL_MS,
           });
-          respondHandle.expectedPurpose = handle.purpose;
+          respondHandle.preferredPurpose = handle.purpose;
           respondHandle.myInput = handle.myInput;
           respondHandle.contractHash = handle.contractHash;
-          respondHandle.expectedContractHash = handle.expectedContractHash ?? handle.contractHash;
+          // Collision yields should adopt the live counterparty invite when it is
+          // locally supported, not enforce the abandoned local session as a hard
+          // contract requirement.
           // Mark old handle as abandoned
           handle.phase = 'FAILED';
           return await phaseDiscover(respondHandle, transport);
@@ -1871,6 +1873,14 @@ async function phaseDiscover(
           continue;
       }
 
+      const advertisedPurpose =
+        invite.afalPropose?.purpose_code ??
+        (invite.template_id
+          ? Object.entries(PURPOSE_TO_TEMPLATE).find(
+              ([, templateId]) => templateId === invite.template_id,
+            )?.[0]
+          : undefined);
+
       // Check expected_contract_hash if provided (direct hash comparison)
       if (handle.expectedContractHash && invite.contract_hash !== handle.expectedContractHash) {
         foundSenderInviteWithContractMismatch = true;
@@ -1895,6 +1905,20 @@ async function phaseDiscover(
           foundSenderInviteWithContractMismatch = true;
           continue;
         }
+      } else if (
+        handle.preferredPurpose &&
+        advertisedPurpose &&
+        advertisedPurpose !== handle.preferredPurpose
+      ) {
+        const knownPurposes = listRelayPurposes();
+        if (!knownPurposes.includes(advertisedPurpose)) {
+          return failedResponse(
+            handle,
+            'PURPOSE_MISMATCH',
+            `Counterparty proposed unsupported purpose "${advertisedPurpose}".`,
+          );
+        }
+        handle.purpose = advertisedPurpose;
       }
 
       // ── Structured confirmation: fetch full contract from invite detail ──
@@ -1958,6 +1982,19 @@ async function phaseDiscover(
           if (typeof contractPurpose === 'string' && contractPurpose !== handle.expectedPurpose) {
             foundSenderInviteWithContractMismatch = true;
             continue;
+          }
+        } else if (handle.preferredPurpose) {
+          const contractPurpose = detail.contract_json.purpose_code;
+          if (typeof contractPurpose === 'string' && contractPurpose !== handle.preferredPurpose) {
+            const knownPurposes = listRelayPurposes();
+            if (!knownPurposes.includes(contractPurpose)) {
+              return failedResponse(
+                handle,
+                'PURPOSE_MISMATCH',
+                `Counterparty proposed unsupported purpose "${contractPurpose}".`,
+              );
+            }
+            handle.purpose = contractPurpose;
           }
         }
 
@@ -2364,7 +2401,7 @@ export async function handleRelaySignal(
             idempotencyKey: respondIdempotencyKey,
             timeoutMs: HANDLE_TTL_MS,
           });
-          respondHandle.expectedPurpose = args.purpose;
+          respondHandle.preferredPurpose = args.purpose;
           respondHandle.myInput = args.my_input;
           // Do not bind collision redirects to a locally precomputed contract hash.
           // On the direct AFAL path, pre-session negotiation can legitimately pick a
