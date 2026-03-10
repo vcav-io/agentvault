@@ -78,7 +78,7 @@ I0 and I1 are deferred to a future evaluation requiring a metadata observer endp
 
 ### 2.1 System Under Test
 
-**AgentVault** is a stateless API-mediated relay that accepts private inputs from
+**AgentVault** is an ephemeral API-mediated relay (no persistent storage) that accepts private inputs from
 two participants, passes both to a single LLM inference call, and returns a
 structured output visible to both participants. The relay enforces:
 
