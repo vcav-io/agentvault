@@ -50,6 +50,10 @@ export interface RelayHandle {
    * proposes a different supported purpose.
    */
   preferredPurpose?: string;
+  purposeOverride?: {
+    requestedPurpose: string;
+    adoptedPurpose: string;
+  };
   expectedContractHash?: string;
   alignedTopicCode?: string;
   negotiatedContract?: {

@@ -325,6 +325,10 @@ describe('INITIATE with AFAL', () => {
     expect(data['phase']).toBe('JOIN');
     expect(data['from']).toBe('bob-demo');
     expect(data['contract_hash']).toBe('peer-mediation-hash');
+    expect(data['purpose_override']).toEqual({
+      requested_purpose: 'COMPATIBILITY',
+      adopted_purpose: 'MEDIATION',
+    });
   });
 
   it('negotiates a contract offer before bootstrap when the peer advertises negotiation', async () => {
