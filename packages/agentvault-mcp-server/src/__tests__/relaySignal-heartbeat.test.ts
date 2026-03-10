@@ -399,6 +399,82 @@ describe('crash recovery', () => {
   });
 });
 
+describe('stale resume-token fallback', () => {
+  it('falls back to fresh RESPOND args when resume_token is invalid but enough context is present', async () => {
+    const transport = createMockAfalTransport([
+      {
+        invite_id: 'inv-fallback',
+        from_agent_id: 'bob-demo',
+        template_id: 'dating.v1.d2',
+        contract_hash: 'compat-hash',
+        payload_type: 'VCAV_E_INVITE_V1',
+        payload: {
+          session_id: 'sess-fallback',
+          responder_submit_token: 'resp-submit',
+          responder_read_token: 'resp-read',
+          relay_url: 'http://relay.test',
+        },
+      },
+    ]);
+
+    const result = await handleRelaySignal(
+      {
+        resume_token: 'expired-token',
+        mode: 'RESPOND',
+        from: 'bob-demo',
+        expected_purpose: 'COMPATIBILITY',
+        my_input: 'hello',
+      },
+      transport,
+    );
+
+    const data = result.data as RelaySignalOutput;
+    expect(result.status).toBe('PENDING');
+    expect(data.phase).toBe('JOIN');
+    expect(data.from).toBe('bob-demo');
+    expect(data.contract_hash).toBe('compat-hash');
+  });
+
+  it('falls back to fresh INITIATE args when resume_token is invalid but enough context is present', async () => {
+    const transport = createMockAfalTransport();
+
+    const result = await handleRelaySignal(
+      {
+        resume_token: 'expired-token',
+        mode: 'INITIATE',
+        counterparty: 'bob-demo',
+        purpose: 'COMPATIBILITY',
+        my_input: 'I want to see if there is room to proceed.',
+      },
+      transport,
+    );
+
+    const data = result.data as RelaySignalOutput;
+    expect(result.status).toBe('PENDING');
+    expect(data.phase).toBe('POLL_RELAY');
+    expect(data.state).toBe('AWAITING');
+    expect(data.action_required).toBe('CALL_AGAIN');
+    expect(data.mode).toBe('INITIATE');
+  });
+
+  it('keeps resume-only invalid tokens on the strict INVALID_INPUT path', async () => {
+    const transport = createMockAfalTransport();
+
+    const result = await handleRelaySignal(
+      {
+        resume_token: 'expired-token',
+      },
+      transport,
+    );
+
+    expect(result.status).toBe('ERROR');
+    expect(result.error?.code).toBe('INVALID_INPUT');
+    expect(result.error?.detail).toContain(
+      'Invalid or expired resume_token',
+    );
+  });
+});
+
 // ── AV_WORKDIR tests ───────────────────────────────────────────────────
 
 describe('AV_WORKDIR', () => {

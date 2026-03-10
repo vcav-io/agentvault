@@ -2307,6 +2307,9 @@ export async function handleRelaySignal(
     // ── Resume path ─────────────────────────────────────────────────
     if (args.resume_token) {
       const resumeToken: string = args.resume_token;
+      const fallbackArgs = hasExtraArgs(args)
+        ? { ...args, resume_token: undefined }
+        : null;
       // Budget models often include mode/counterparty alongside resume_token.
       // Instead of rejecting, strip extra args and proceed — the resume_token
       // carries all the state needed.
@@ -2319,56 +2322,65 @@ export async function handleRelaySignal(
       const agentId = transport?.agentId ?? process.env['AV_AGENT_ID'] ?? '';
       const handle = decodeRelayToken(resumeToken, agentId, getResumeTokenSecret());
       if (!handle) {
-        return buildError(
-          'INVALID_INPUT',
-          'Invalid or expired resume_token. Start a new relay_signal call.',
-        );
-      }
-
-      if (!transport) {
-        return buildError('SESSION_ERROR', 'Resume requires AfalTransport (agent mode only)');
-      }
-
-      // Route to the correct phase
-      switch (handle.phase) {
-        case 'PROPOSE_RETRY':
-          return await phaseRetryPropose(handle, transport);
-        case 'POLL_INVITE':
-          return await phasePollInvite(handle, transport);
-        case 'POLL_RELAY':
-          return await phasePollRelay(handle, transport);
-        case 'DISCOVER':
-          return await phaseDiscover(handle, transport);
-        case 'JOIN':
-          return await phaseJoin(handle, transport);
-        case 'COMPLETED':
-          // Session already finished — return success instead of error so
-          // the LLM doesn't waste a round-trip processing an error.
-          return buildSuccess('COMPLETE', {
-            mode: handle.role === 'INITIATOR' ? 'INITIATE' : 'RESPOND',
-            state: 'COMPLETED',
-            phase: 'COMPLETED',
-            resume_token: null,
-            resume_token_display: null,
-            session_id: handle.sessionId,
-            action_required: 'NONE',
-            next_tool: null,
-            next_args_patch: null,
-            next_update_seconds: null,
-            user_message: 'Session already complete. No further action needed.',
-            display: {
-              forbidden: ['PRINT_RESUME_TOKEN'],
-              redact: ['resume_token'],
-            },
-          });
-        case 'ABORTED':
-        case 'FAILED':
+        if (fallbackArgs) {
+          console.info(
+            'relay_signal resume: resume_token invalid/expired; falling back to fresh call args.',
+          );
+          // Fall through to the fresh-call path below with the caller's
+          // non-resume arguments restored.
+          args = fallbackArgs;
+        } else {
           return buildError(
             'INVALID_INPUT',
-            `Handle is in terminal state: ${handle.phase}. Start a new call.`,
+            'Invalid or expired resume_token. Start a new relay_signal call.',
           );
-        default:
-          return buildError('SESSION_ERROR', `Unexpected handle phase: ${handle.phase}`);
+        }
+      } else {
+        if (!transport) {
+          return buildError('SESSION_ERROR', 'Resume requires AfalTransport (agent mode only)');
+        }
+
+        // Route to the correct phase
+        switch (handle.phase) {
+          case 'PROPOSE_RETRY':
+            return await phaseRetryPropose(handle, transport);
+          case 'POLL_INVITE':
+            return await phasePollInvite(handle, transport);
+          case 'POLL_RELAY':
+            return await phasePollRelay(handle, transport);
+          case 'DISCOVER':
+            return await phaseDiscover(handle, transport);
+          case 'JOIN':
+            return await phaseJoin(handle, transport);
+          case 'COMPLETED':
+            // Session already finished — return success instead of error so
+            // the LLM doesn't waste a round-trip processing an error.
+            return buildSuccess('COMPLETE', {
+              mode: handle.role === 'INITIATOR' ? 'INITIATE' : 'RESPOND',
+              state: 'COMPLETED',
+              phase: 'COMPLETED',
+              resume_token: null,
+              resume_token_display: null,
+              session_id: handle.sessionId,
+              action_required: 'NONE',
+              next_tool: null,
+              next_args_patch: null,
+              next_update_seconds: null,
+              user_message: 'Session already complete. No further action needed.',
+              display: {
+                forbidden: ['PRINT_RESUME_TOKEN'],
+                redact: ['resume_token'],
+              },
+            });
+          case 'ABORTED':
+          case 'FAILED':
+            return buildError(
+              'INVALID_INPUT',
+              `Handle is in terminal state: ${handle.phase}. Start a new call.`,
+            );
+          default:
+            return buildError('SESSION_ERROR', `Unexpected handle phase: ${handle.phase}`);
+        }
       }
     }
 
