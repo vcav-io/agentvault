@@ -54,7 +54,6 @@
   ],
   "scripts": {
     "build": "tsc",
-    "prepare": "npm run build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
