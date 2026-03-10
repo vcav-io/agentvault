@@ -32,9 +32,9 @@ export type BurstResult = 'idle' | 'session_completed' | 'session_failed' | 'max
 
 export type AgentStatus = 'idle' | 'running' | 'completed' | 'failed' | 'error';
 
-/** True when the agent has reached a state that should not produce further LLM work. */
+/** True when the agent has reached a final state (no further LLM work). */
 export function isTerminal(status: AgentStatus): boolean {
-  return status === 'completed' || status === 'failed' || status === 'error';
+  return status === 'completed' || status === 'failed';
 }
 
 export interface AgentState {
@@ -336,11 +336,13 @@ export async function runHeartbeatLoop(
       continue;
     }
 
-    // Propagate peer terminal failure — stop heartbeating if peer is
-    // terminally failed/errored rather than spinning indefinitely (#361).
-    if (isTerminal(peerState.status) && peerState.status !== 'completed') {
+    // Propagate peer terminal failure — stop heartbeating if peer has
+    // terminally failed rather than spinning indefinitely (#361).
+    // Only checks 'failed', not 'error' — error has a retry/backoff path
+    // and the peer may recover.
+    if (peerState.status === 'failed') {
       state.status = 'failed';
-      events.emitStatus(name, 'failed', `Peer agent ${peerState.status}`);
+      events.emitStatus(name, 'failed', 'Peer agent failed');
       await delay(HEARTBEAT_INTERVAL_MS, signal);
       continue;
     }

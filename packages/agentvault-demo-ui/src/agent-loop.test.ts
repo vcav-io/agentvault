@@ -46,15 +46,16 @@ function makeRegistry(): ToolRegistry {
 // ── isTerminal ─────────────────────────────────────────────────────────
 
 describe('isTerminal', () => {
-  it('returns true for completed, failed, error', () => {
+  it('returns true for completed, failed', () => {
     expect(isTerminal('completed')).toBe(true);
     expect(isTerminal('failed')).toBe(true);
-    expect(isTerminal('error')).toBe(true);
   });
 
-  it('returns false for idle, running', () => {
+  it('returns false for idle, running, error', () => {
     expect(isTerminal('idle')).toBe(false);
     expect(isTerminal('running')).toBe(false);
+    // error is retryable (exponential backoff), not terminal
+    expect(isTerminal('error')).toBe(false);
   });
 });
 
@@ -97,15 +98,21 @@ describe('runHeartbeatLoop peer convergence', () => {
     expect(events.emitStatus).toHaveBeenCalledWith('alice', 'failed', 'Peer agent failed');
   });
 
-  it('propagates peer error to running agent', async () => {
+  it('does not propagate peer error (error is retryable)', async () => {
     const alice = makeState({ name: 'alice', started: true });
     const bob = makeState({ name: 'bob', status: 'error', started: true });
     const ac = new AbortController();
 
+    const provider = makeProvider();
+    (provider.chat as ReturnType<typeof vi.fn>).mockResolvedValue({
+      role: 'assistant',
+      content: 'No work to do.',
+    });
+
     const loopPromise = runHeartbeatLoop(
       {
         name: 'alice',
-        provider: makeProvider(),
+        provider,
         registry: makeRegistry(),
         systemPrompt: '',
         events,
@@ -116,12 +123,12 @@ describe('runHeartbeatLoop peer convergence', () => {
       ac.signal,
     );
 
-    await vi.advanceTimersByTimeAsync(100);
+    await vi.advanceTimersByTimeAsync(2500);
     ac.abort();
     await loopPromise;
 
-    expect(alice.status).toBe('failed');
-    expect(events.emitStatus).toHaveBeenCalledWith('alice', 'failed', 'Peer agent error');
+    // Peer error is retryable — alice should keep running, not force-fail
+    expect(alice.status).not.toBe('failed');
   });
 
   it('does not force-fail when peer completed normally', async () => {
