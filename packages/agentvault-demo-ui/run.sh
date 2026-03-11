@@ -15,6 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 DEMO_DIR="${SCRIPT_DIR}"
 MCP_SERVER_DIR="${REPO_ROOT}/packages/agentvault-mcp-server"
+CLIENT_DIR="${REPO_ROOT}/packages/agentvault-client"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -72,6 +73,13 @@ fi
 # ---------------------------------------------------------------------------
 # Build dependencies
 # ---------------------------------------------------------------------------
+
+# Build agentvault-client first — agentvault-mcp-server imports its subpath exports.
+if [[ ! -f "${CLIENT_DIR}/dist/index.js" ]]; then
+  log_info "Building agentvault-client..."
+  (cd "${CLIENT_DIR}" && npm install --silent && npm run build --silent)
+  log_success "agentvault-client built"
+fi
 
 # Build MCP server (required for tool registry)
 if [[ ! -f "${MCP_SERVER_DIR}/dist/tool-registry.js" ]]; then
