@@ -223,6 +223,10 @@ pub struct RelayResult {
     pub receipt_v2: ReceiptV2,
 }
 
+fn allowlist_matches_profile(entry: &str, profile_id: &str, profile_hash: &str) -> bool {
+    entry == profile_id || entry == profile_hash || entry.strip_prefix("sha256:") == Some(profile_hash)
+}
+
 /// Core relay logic: validate → assemble → call → check → sign → return.
 ///
 /// Extracted from the single-shot `relay()` function so it can be reused by
@@ -259,30 +263,35 @@ pub async fn relay_core(
         );
     }
 
-    // 2a. Enforce model profile allowlist
-    if !resolved_policy.model_profile_allowlist.is_empty() {
-        match &contract.model_profile_id {
-            Some(profile_id) if resolved_policy.model_profile_allowlist.contains(profile_id) => {}
-            Some(profile_id) => {
-                return Err(RelayError::ContractValidation(format!(
-                    "model_profile_id '{profile_id}' not in enforcement allowlist"
-                )));
-            }
-            None => {
-                return Err(RelayError::ContractValidation(
-                    "model_profile_id is required when enforcement policy specifies an allowlist"
-                        .to_string(),
-                ));
-            }
-        }
-    }
-
-    // 2b. Resolve runtime profile from contract's profile binding (fail-closed)
+    // 2a. Resolve runtime profile from contract's profile binding (fail-closed)
     let resolved_profile = resolve_runtime_profile(
         contract,
         &state.admitted_profiles,
         &state.prompt_program_dir,
     )?;
+
+    // 2b. Enforce model profile allowlist against the resolved profile.
+    if !resolved_policy.model_profile_allowlist.is_empty() {
+        match &resolved_profile {
+            Some(rt)
+                if resolved_policy
+                    .model_profile_allowlist
+                    .iter()
+                    .any(|entry| allowlist_matches_profile(entry, &rt.profile.profile_id, &rt.profile_hash)) => {}
+            Some(_) => {
+                let asserted_hash = contract.model_profile_hash.as_deref().unwrap_or("unknown");
+                return Err(RelayError::ContractValidation(format!(
+                    "model_profile_hash '{asserted_hash}' not in enforcement allowlist"
+                )));
+            }
+            None => {
+                return Err(RelayError::ContractValidation(
+                    "model_profile_hash is required when enforcement policy specifies an allowlist"
+                        .to_string(),
+                ));
+            }
+        }
+    }
 
     let (effective_provider, effective_model_id, model_profile_hash) = match &resolved_profile {
         Some(rt) => {
@@ -1422,6 +1431,29 @@ mod tests {
             contract_with_profile.model_profile_id,
             Some("api-claude-sonnet-v1".to_string())
         );
+    }
+
+    #[test]
+    fn test_allowlist_matches_profile_id_hash_and_qualified_hash() {
+        let profile_id = "api-claude-sonnet-v1";
+        let profile_hash = "5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8";
+
+        assert!(allowlist_matches_profile(
+            "api-claude-sonnet-v1",
+            profile_id,
+            profile_hash
+        ));
+        assert!(allowlist_matches_profile(profile_hash, profile_id, profile_hash));
+        assert!(allowlist_matches_profile(
+            "sha256:5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8",
+            profile_id,
+            profile_hash
+        ));
+        assert!(!allowlist_matches_profile(
+            "api-gpt5-v1",
+            profile_id,
+            profile_hash
+        ));
     }
 
     // ========================================================================

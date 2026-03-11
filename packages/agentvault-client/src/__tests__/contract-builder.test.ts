@@ -335,6 +335,16 @@ describe('buildContract', () => {
     expect(Object.isFrozen(contract)).toBe(true);
   });
 
+  it('accepts a profile digest as the contract selector', () => {
+    const { registry, profileDigest } = buildTestRegistry();
+    const contract = buildContract(
+      registry,
+      defaultOptions({ profile: profileDigest }),
+    ) as unknown as Record<string, unknown>;
+    expect(contract['model_profile_id']).toBe('api-claude-sonnet-v1');
+    expect(contract['model_profile_hash']).toBe(profileDigest.slice(7));
+  });
+
   it('omits entropy_enforcement when not provided', () => {
     const { registry } = buildTestRegistry();
     const contract = buildContract(
