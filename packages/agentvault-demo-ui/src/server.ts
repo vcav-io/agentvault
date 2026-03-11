@@ -41,9 +41,9 @@ import { signMessage, DOMAIN_PREFIXES } from 'agentvault-mcp-server';
 import {
   buildRelayContract,
   computeRelayContractHash,
-  computeOutputSchemaHash,
 } from 'agentvault-client/contracts';
 
+import { HEARTBEAT_DEFAULTS, getAvailableDemoProviders } from './demo-config.js';
 import { EventBus } from './events.js';
 import { replayToSSE, listRuns } from './replay.js';
 import {
@@ -53,6 +53,7 @@ import {
   isTerminal,
   type AgentState,
 } from './agent-loop.js';
+import { buildStartMilestoneEvents } from './start-milestones.js';
 import { AnthropicProvider } from './providers/anthropic.js';
 import { OpenAIProvider } from './providers/openai.js';
 import { GeminiProvider } from './providers/gemini.js';
@@ -135,13 +136,6 @@ function createProvider(): LLMProvider {
   const model = process.env['MODEL'];
   return createProviderFromSpec(provider, model);
 }
-
-/** Default heartbeat models per provider — cheapest with tool use support. */
-const HEARTBEAT_DEFAULTS: Record<string, string> = {
-  gemini: 'gemini-3.1-flash-lite-preview',
-  openai: 'gpt-4.1-nano',
-  anthropic: 'claude-haiku-4-5-20251001',
-};
 
 function createHeartbeatProvider(): LLMProvider {
   const provider = detectProvider();
@@ -407,34 +401,7 @@ app.use(express.static(PUBLIC_DIR));
 
 // Config endpoint — available providers and models for UI selectors
 app.get('/api/config', (_req, res) => {
-  const providers: Array<{ name: string; models: Array<{ id: string; tier: string; profileId?: string; default?: boolean }> }> = [];
-  if (process.env['GEMINI_API_KEY']) {
-    providers.push({
-      name: 'gemini',
-      models: [
-        { id: 'gemini-3-flash-preview', tier: 'flagship', profileId: 'api-gemini3flash-v1', default: true },
-        { id: 'gemini-3.1-flash-lite-preview', tier: 'budget', profileId: 'api-gemini3flash-lite-v1' },
-      ],
-    });
-  }
-  if (process.env['OPENAI_API_KEY']) {
-    providers.push({
-      name: 'openai',
-      models: [
-        { id: 'gpt-5', tier: 'flagship', profileId: 'api-gpt5-v1', default: true },
-        { id: 'gpt-4.1-mini', tier: 'mid', profileId: 'api-gpt41mini-v1' },
-      ],
-    });
-  }
-  if (process.env['ANTHROPIC_API_KEY']) {
-    providers.push({
-      name: 'anthropic',
-      models: [
-        { id: 'claude-sonnet-4-6', tier: 'flagship', profileId: 'api-claude-sonnet-v1', default: true },
-        { id: 'claude-haiku-4-5-20251001', tier: 'budget', profileId: 'api-claude-haiku-v1' },
-      ],
-    });
-  }
+  const providers = getAvailableDemoProviders(process.env);
   let defaultProvider: string | null = null;
   try { defaultProvider = detectProvider(); } catch { /* no keys configured */ }
   res.json({ providers, defaultProvider });
@@ -506,7 +473,7 @@ app.post('/api/start', async (req, res) => {
 
       // Restart heartbeat loops with the new provider
       abortController.abort();
-      const hbModel = HEARTBEAT_DEFAULTS[agentProvider];
+      const hbModel = HEARTBEAT_DEFAULTS[agentProvider as keyof typeof HEARTBEAT_DEFAULTS];
       const hbProvider = createProviderFromSpec(agentProvider, hbModel);
       startHeartbeatLoops(provider, hbProvider);
       events.emitSystem(`Heartbeat loops restarted for provider: ${agentProvider}`);
@@ -520,48 +487,17 @@ app.post('/api/start', async (req, res) => {
     const runFile = events.startRecording(RUNS_DIR);
     events.emitSystem(`Recording to ${runFile}`);
 
-    // Emit contract first, then relay admission/identity. The contract defines
-    // what the session requires; relay health confirms the relay admits it.
-    try {
-      const mediationContract = buildRelayContract('MEDIATION', ['alice', 'bob'], relayProfileId);
-      if (mediationContract) {
-        const schemaHash = computeOutputSchemaHash(
-          mediationContract.output_schema as Record<string, unknown>,
-        );
-        events.emit({
-          ts: new Date().toISOString(),
-          type: 'system',
-          agent: 'contract_enforcement',
-          payload: {
-            purpose_code: mediationContract.purpose_code,
-            output_schema_id: mediationContract.output_schema_id,
-            output_schema_hash: schemaHash,
-            enforcement_policy_hash: mediationContract.enforcement_policy_hash ?? null,
-            entropy_budget_bits: mediationContract.entropy_budget_bits ?? null,
-            model_profile_id: mediationContract.model_profile_id ?? null,
-          },
-        });
-      }
-    } catch (err) {
-      console.warn('Failed to emit contract parameters:', err instanceof Error ? err.message : String(err));
-    }
-
     if (relayHealth) {
-      events.emit({
-        ts: new Date().toISOString(),
-        type: 'system',
-        agent: 'relay_policy',
-        payload: {
-          policy_id: policySummary?.policy_id ?? 'unknown',
-          policy_hash: policySummary?.policy_hash ?? 'unknown',
-          model_profile_allowlist: policySummary?.model_profile_allowlist ?? [],
-          provider_allowlist: policySummary?.provider_allowlist ?? [],
-          enforcement_rules: policySummary?.enforcement_rules ?? [],
-          entropy_constraints: policySummary?.entropy_constraints ?? null,
-          verifying_key_hex: relayHealth.verifying_key_hex ?? 'unknown',
-          model_id: relayHealth.model_id ?? 'unknown',
+      for (const event of buildStartMilestoneEvents(
+        relayHealth,
+        relayProfileId,
+        () => new Date().toISOString(),
+        (message, err) => {
+          console.warn(`${message}:`, err instanceof Error ? err.message : String(err));
         },
-      });
+      )) {
+        events.emit(event);
+      }
     }
 
     if (!relayHealth) {
