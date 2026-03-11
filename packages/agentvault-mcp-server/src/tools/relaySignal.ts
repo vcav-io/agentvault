@@ -1187,6 +1187,12 @@ async function phaseInvite(
       'Provide either purpose or acceptable_purposes, not both.',
     );
   }
+  if (acceptablePurposes.length > 0 && args.contract) {
+    return buildError(
+      'INVALID_INPUT',
+      'acceptable_purposes cannot be combined with explicit contract JSON',
+    );
+  }
 
   // Resolve contract — use transport.agentId consistently as the identity source
   const agentId = transport.agentId;
@@ -1250,12 +1256,6 @@ async function phaseInvite(
     return buildError(
       'INVALID_INPUT',
       'acceptable_model_profiles is only supported with purpose-based direct AFAL contracts',
-    );
-  }
-  if (acceptablePurposes.length > 0 && args.contract) {
-    return buildError(
-      'INVALID_INPUT',
-      'acceptable_purposes cannot be combined with explicit contract JSON',
     );
   }
 
