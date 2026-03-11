@@ -49,6 +49,12 @@ import {
   type AgentState,
 } from './agent-loop.js';
 import { buildStartMilestoneEvents } from './start-milestones.js';
+import {
+  DEMO_SMOKE_MODE,
+  SMOKE_RELAY_HEALTH,
+  emitSmokeRun,
+  verifySmokeReceipt,
+} from './smoke-mode.js';
 import { AnthropicProvider } from './providers/anthropic.js';
 import { OpenAIProvider } from './providers/openai.js';
 import { GeminiProvider } from './providers/gemini.js';
@@ -396,9 +402,15 @@ app.use(express.static(PUBLIC_DIR));
 
 // Config endpoint — available providers and models for UI selectors
 app.get('/api/config', (_req, res) => {
-  const providers = getAvailableDemoProviders(process.env);
+  const providers = DEMO_SMOKE_MODE
+    ? getAvailableDemoProviders({ OPENAI_API_KEY: 'smoke' })
+    : getAvailableDemoProviders(process.env);
   let defaultProvider: string | null = null;
-  try { defaultProvider = detectProvider(); } catch { /* no keys configured */ }
+  if (DEMO_SMOKE_MODE) {
+    defaultProvider = 'openai';
+  } else {
+    try { defaultProvider = detectProvider(); } catch { /* no keys configured */ }
+  }
   res.json({ providers, defaultProvider });
 });
 
@@ -428,20 +440,24 @@ app.post('/api/start', async (req, res) => {
   }
 
   try {
-    // Check relay is reachable before doing anything else — fail fast with a clear error
+    // Check relay is reachable before doing anything else — fail fast with a clear error.
     let relayHealth: Record<string, unknown> | null = null;
-    try {
-      const healthRes = await fetch(`${RELAY_URL}/health`, { signal: AbortSignal.timeout(3000) });
-      if (healthRes.ok) {
-        relayHealth = await healthRes.json() as Record<string, unknown>;
-      } else {
-        res.status(502).json({ error: `Relay returned HTTP ${healthRes.status}. Is the relay running at ${RELAY_URL}?` });
+    if (DEMO_SMOKE_MODE) {
+      relayHealth = SMOKE_RELAY_HEALTH;
+    } else {
+      try {
+        const healthRes = await fetch(`${RELAY_URL}/health`, { signal: AbortSignal.timeout(3000) });
+        if (healthRes.ok) {
+          relayHealth = await healthRes.json() as Record<string, unknown>;
+        } else {
+          res.status(502).json({ error: `Relay returned HTTP ${healthRes.status}. Is the relay running at ${RELAY_URL}?` });
+          return;
+        }
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        res.status(502).json({ error: `Cannot reach relay at ${RELAY_URL} (${detail}). Start the relay first: cargo run -p agentvault-relay` });
         return;
       }
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      res.status(502).json({ error: `Cannot reach relay at ${RELAY_URL} (${detail}). Start the relay first: cargo run -p agentvault-relay` });
-      return;
     }
 
     // Relay is reachable — safe to proceed with provider override and recording
@@ -462,7 +478,7 @@ app.post('/api/start', async (req, res) => {
       });
       return;
     }
-    if (agentProvider) {
+    if (agentProvider && !DEMO_SMOKE_MODE) {
       provider = createProviderFromSpec(agentProvider, agentModel);
       events.emitSystem(`Agent provider overridden: ${agentProvider}/${agentModel ?? 'default'}`);
 
@@ -475,8 +491,10 @@ app.post('/api/start', async (req, res) => {
     }
 
     // Recreate registries with relay profile override (or reset to default)
-    initRegistries(relayProfileId);
-    events.emitSystem(`Relay profile: ${relayProfileId ?? 'default'}`);
+    if (!DEMO_SMOKE_MODE) {
+      initRegistries(relayProfileId);
+      events.emitSystem(`Relay profile: ${relayProfileId ?? 'default'}`);
+    }
 
     // Start JSONL recording
     const runFile = events.startRecording(RUNS_DIR);
@@ -510,6 +528,29 @@ app.post('/api/start', async (req, res) => {
     // Load prompts — use request body if provided, else fall back to files
     const alicePrompt = (req.body?.alicePrompt as string) || loadPrompt('alice');
     const bobPrompt = (req.body?.bobPrompt as string) || loadPrompt('bob');
+
+    if (DEMO_SMOKE_MODE) {
+      aliceState.started = true;
+      bobState.started = true;
+      aliceState.status = 'running';
+      bobState.status = 'running';
+      aliceState.messages = [{ role: 'user', content: alicePrompt }];
+      bobState.messages = [{ role: 'user', content: bobPrompt }];
+
+      res.json({ ok: true, runFile, smokeMode: true });
+
+      emitSmokeRun((event) => {
+        events.emit(event);
+        if (event.type === 'agent_status' && event.payload.status === 'completed') {
+          if (event.agent === 'alice') aliceState.status = 'completed';
+          if (event.agent === 'bob') bobState.status = 'completed';
+        }
+      }).catch((err) => {
+        console.error('Smoke run emission failed:', err);
+        events.emitSystem(`Smoke run error: ${err instanceof Error ? err.message : String(err)}`);
+      });
+      return;
+    }
 
     const aliceParams = {
       name: 'alice',
@@ -594,6 +635,11 @@ app.post('/api/message', async (req, res) => {
 // Verify receipt signature — supports both v1 and v2 receipts via shared verifier
 app.post('/api/verify-receipt', async (req, res) => {
   try {
+    if (DEMO_SMOKE_MODE) {
+      res.json(verifySmokeReceipt());
+      return;
+    }
+
     const { receipt } = req.body as {
       receipt?: Record<string, unknown>;
     };
@@ -630,6 +676,20 @@ app.post('/api/verify-receipt', async (req, res) => {
 // Stop heartbeats and agent loops without restarting (used by Stop button)
 app.post('/api/stop', async (_req, res) => {
   try {
+    if (DEMO_SMOKE_MODE) {
+      aliceState.status = 'idle';
+      bobState.status = 'idle';
+      aliceState.started = false;
+      bobState.started = false;
+      aliceState.messages = [];
+      bobState.messages = [];
+      aliceState.turnCount = 0;
+      bobState.turnCount = 0;
+      events.stopRecording();
+      res.json({ ok: true });
+      return;
+    }
+
     abortController.abort();
 
     for (const [name, transport] of [['Bob', bobTransport], ['Alice', aliceTransport]] as const) {
@@ -666,6 +726,24 @@ app.post('/api/stop', async (_req, res) => {
 
 app.post('/api/reset', async (_req, res) => {
   try {
+    if (DEMO_SMOKE_MODE) {
+      aliceState.messages = [];
+      aliceState.started = false;
+      aliceState.turnCount = 0;
+      aliceState.status = 'idle';
+      aliceState.generation++;
+      bobState.messages = [];
+      bobState.started = false;
+      bobState.turnCount = 0;
+      bobState.status = 'idle';
+      bobState.generation++;
+      aliceQueue.reset();
+      bobQueue.reset();
+      events.stopRecording();
+      res.json({ ok: true });
+      return;
+    }
+
     // Abort current heartbeat loops
     abortController.abort();
 
@@ -757,6 +835,10 @@ app.listen(PORT, BIND_ADDRESS, async () => {
 
   // Set up transports and start heartbeat loops at server startup
   try {
+    if (DEMO_SMOKE_MODE) {
+      console.log('Demo smoke mode enabled; skipping live relay/provider startup');
+      return;
+    }
     await setupAndStartHeartbeats();
   } catch (error) {
     console.error('Failed to initialize:', error);
