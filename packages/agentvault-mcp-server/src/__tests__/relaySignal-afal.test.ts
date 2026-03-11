@@ -1002,6 +1002,55 @@ describe('legacy payload type guard (isRelayInvitePayload)', () => {
 });
 
 describe('RESPOND with AFAL', () => {
+  it('returns PURPOSE_MISMATCH when an AFAL invite advertises a different purpose', async () => {
+    const afalPropose: AfalPropose = {
+      proposal_version: '1',
+      proposal_id: 'c'.repeat(64),
+      nonce: 'd'.repeat(64),
+      timestamp: '2026-02-24T10:00:00.000Z',
+      from: 'bob-demo',
+      to: 'alice-demo',
+      purpose_code: 'COMPATIBILITY',
+      lane_id: 'API_MEDIATED',
+      output_schema_id: 'vcav_e_compatibility_signal_v2',
+      output_schema_version: '1',
+      requested_budget_tier: 'SMALL',
+      requested_entropy_bits: 12,
+      model_profile_id: 'api-claude-sonnet-v1',
+      model_profile_version: '1',
+      admission_tier_requested: 'DEFAULT',
+    };
+
+    const invite: AfalInviteMessage = {
+      invite_id: 'inv-purpose-mismatch',
+      from_agent_id: 'bob-demo',
+      payload_type: 'VCAV_E_INVITE_V1',
+      template_id: 'dating.v1.d2',
+      payload: {
+        session_id: 'sess-bob',
+        responder_submit_token: 'sub-tok',
+        responder_read_token: 'read-tok',
+        relay_url: 'http://relay.test',
+      },
+      afalPropose,
+    };
+
+    const transport = createMockAfalTransport([invite]);
+
+    const result = await handleRelaySignal(
+      { mode: 'RESPOND', from: 'bob-demo', expected_purpose: 'MEDIATION', my_input: 'hi' },
+      transport,
+    );
+
+    expect(result.status).toBe('ERROR');
+    const data = result.data as { phase: string; state: string; error_code: string; user_message: string };
+    expect(data.phase).toBe('FAILED');
+    expect(data.state).toBe('FAILED');
+    expect(data.error_code).toBe('PURPOSE_MISMATCH');
+    expect(data.user_message).toContain('COMPATIBILITY');
+    expect(data.user_message).toContain('MEDIATION');
+  });
+
   it('extracts AfalPropose from enriched inbox invite', async () => {
     const afalPropose: AfalPropose = {
       proposal_version: '1',
