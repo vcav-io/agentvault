@@ -31,3 +31,7 @@ jobs:
       - name: Build & test agentvault-mcp-server
         working-directory: packages/agentvault-mcp-server
         run: npm run build && npm test
+
+      - name: Build & test agentvault-demo-ui
+        working-directory: packages/agentvault-demo-ui
+        run: npm ci && npm run build && npm test
