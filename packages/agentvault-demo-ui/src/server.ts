@@ -482,51 +482,6 @@ app.post('/api/start', async (req, res) => {
       return;
     }
 
-    // Emit relay policy from health response
-    if (relayHealth) {
-      const policySummary = relayHealth.policy_summary as Record<string, unknown> | undefined;
-      events.emit({
-        ts: new Date().toISOString(),
-        type: 'system',
-        agent: 'relay_policy',
-        payload: {
-          policy_id: policySummary?.policy_id ?? 'unknown',
-          policy_hash: policySummary?.policy_hash ?? 'unknown',
-          model_profile_allowlist: policySummary?.model_profile_allowlist ?? [],
-          provider_allowlist: policySummary?.provider_allowlist ?? [],
-          enforcement_rules: policySummary?.enforcement_rules ?? [],
-          entropy_constraints: policySummary?.entropy_constraints ?? null,
-          verifying_key_hex: relayHealth.verifying_key_hex ?? 'unknown',
-          model_id: relayHealth.model_id ?? 'unknown',
-        },
-      });
-    }
-
-    // Emit contract enforcement parameters so the UI shows them before session starts
-    try {
-      const mediationContract = buildRelayContract('MEDIATION', ['alice', 'bob']);
-      if (mediationContract) {
-        const schemaHash = computeOutputSchemaHash(
-          mediationContract.output_schema as Record<string, unknown>,
-        );
-        events.emit({
-          ts: new Date().toISOString(),
-          type: 'system',
-          agent: 'contract_enforcement',
-          payload: {
-            purpose_code: mediationContract.purpose_code,
-            output_schema_id: mediationContract.output_schema_id,
-            output_schema_hash: schemaHash,
-            enforcement_policy_hash: mediationContract.enforcement_policy_hash ?? null,
-            entropy_budget_bits: mediationContract.entropy_budget_bits ?? null,
-            model_profile_id: mediationContract.model_profile_id ?? null,
-          },
-        });
-      }
-    } catch (err) {
-      console.warn('Failed to emit contract parameters:', err instanceof Error ? err.message : String(err));
-    }
-
     // Relay is reachable — safe to proceed with provider override and recording
     const agentProvider = req.body?.agentProvider as string | undefined;
     const agentModel = req.body?.agentModel as string | undefined;
@@ -564,6 +519,49 @@ app.post('/api/start', async (req, res) => {
     // Start JSONL recording
     const runFile = events.startRecording(RUNS_DIR);
     events.emitSystem(`Recording to ${runFile}`);
+
+    // Emit relay policy and contract parameters — after startRecording so replays include them
+    if (relayHealth) {
+      events.emit({
+        ts: new Date().toISOString(),
+        type: 'system',
+        agent: 'relay_policy',
+        payload: {
+          policy_id: policySummary?.policy_id ?? 'unknown',
+          policy_hash: policySummary?.policy_hash ?? 'unknown',
+          model_profile_allowlist: policySummary?.model_profile_allowlist ?? [],
+          provider_allowlist: policySummary?.provider_allowlist ?? [],
+          enforcement_rules: policySummary?.enforcement_rules ?? [],
+          entropy_constraints: policySummary?.entropy_constraints ?? null,
+          verifying_key_hex: relayHealth.verifying_key_hex ?? 'unknown',
+          model_id: relayHealth.model_id ?? 'unknown',
+        },
+      });
+    }
+
+    try {
+      const mediationContract = buildRelayContract('MEDIATION', ['alice', 'bob'], relayProfileId);
+      if (mediationContract) {
+        const schemaHash = computeOutputSchemaHash(
+          mediationContract.output_schema as Record<string, unknown>,
+        );
+        events.emit({
+          ts: new Date().toISOString(),
+          type: 'system',
+          agent: 'contract_enforcement',
+          payload: {
+            purpose_code: mediationContract.purpose_code,
+            output_schema_id: mediationContract.output_schema_id,
+            output_schema_hash: schemaHash,
+            enforcement_policy_hash: mediationContract.enforcement_policy_hash ?? null,
+            entropy_budget_bits: mediationContract.entropy_budget_bits ?? null,
+            model_profile_id: mediationContract.model_profile_id ?? null,
+          },
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to emit contract parameters:', err instanceof Error ? err.message : String(err));
+    }
 
     if (!relayHealth) {
       events.emit({
