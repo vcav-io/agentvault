@@ -41,6 +41,7 @@ import { signMessage, DOMAIN_PREFIXES } from 'agentvault-mcp-server';
 import {
   buildRelayContract,
   computeRelayContractHash,
+  computeOutputSchemaHash,
 } from 'agentvault-client/contracts';
 
 import { EventBus } from './events.js';
@@ -499,6 +500,31 @@ app.post('/api/start', async (req, res) => {
           model_id: relayHealth.model_id ?? 'unknown',
         },
       });
+    }
+
+    // Emit contract enforcement parameters so the UI shows them before session starts
+    try {
+      const mediationContract = buildRelayContract('MEDIATION', ['alice', 'bob']);
+      if (mediationContract) {
+        const schemaHash = computeOutputSchemaHash(
+          mediationContract.output_schema as Record<string, unknown>,
+        );
+        events.emit({
+          ts: new Date().toISOString(),
+          type: 'system',
+          agent: 'contract_enforcement',
+          payload: {
+            purpose_code: mediationContract.purpose_code,
+            output_schema_id: mediationContract.output_schema_id,
+            output_schema_hash: schemaHash,
+            enforcement_policy_hash: mediationContract.enforcement_policy_hash ?? null,
+            entropy_budget_bits: mediationContract.entropy_budget_bits ?? null,
+            model_profile_id: mediationContract.model_profile_id ?? null,
+          },
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to emit contract parameters:', err instanceof Error ? err.message : String(err));
     }
 
     // Relay is reachable — safe to proceed with provider override and recording
