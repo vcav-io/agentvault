@@ -932,21 +932,7 @@ function removeSessionStateFile(handle: RelayHandle): void {
 function mapNegotiatedContract(
   handle: RelayHandle,
 ): RelaySignalOutput['negotiated_contract'] | undefined {
-  const mappedResolvedAgreement = mapResolvedAgreementToNegotiatedContract(handle.resolvedAgreement);
-  if (mappedResolvedAgreement) {
-    return mappedResolvedAgreement;
-  }
-  if (!handle.negotiatedContract) return undefined;
-  return {
-    kind: handle.negotiatedContract.kind,
-    ...(handle.negotiatedContract.contractOfferId
-      ? { contract_offer_id: handle.negotiatedContract.contractOfferId }
-      : {}),
-    ...(handle.negotiatedContract.bespokeContract
-      ? { bespoke_contract: handle.negotiatedContract.bespokeContract }
-      : {}),
-    selected_model_profile: handle.negotiatedContract.selectedModelProfile,
-  };
+  return mapResolvedAgreementToNegotiatedContract(handle.resolvedAgreement);
 }
 
 function mapAlignedTopicCode(handle: RelayHandle): string | undefined {
@@ -1301,7 +1287,6 @@ async function phaseInvite(
     }
   }
 
-  let negotiatedSelection: RelayHandle['negotiatedContract'] | null = null;
   let resolvedAgreement: ResolvedAgreement | null = null;
   if (transport instanceof DirectAfalTransport && !args.contract) {
     const negotiationCandidates: ContractOfferProposal['acceptable_offers'] = [];
@@ -1392,11 +1377,6 @@ async function phaseInvite(
             selectedModelProfile: selection.selected_model_profile,
             topicCode: handle.alignedTopicCode,
           });
-          negotiatedSelection = {
-            kind: 'offer',
-            contractOfferId: selection.selected_contract_offer_id,
-            selectedModelProfile: selection.selected_model_profile,
-          };
           contract = await compileResolvedAgreement({
             agreement: resolvedAgreement,
             participants: [agentId, counterparty],
@@ -1407,24 +1387,13 @@ async function phaseInvite(
             selectedModelProfile: selection.selected_model_profile,
             topicCode: handle.alignedTopicCode,
           });
-          negotiatedSelection = {
-            kind: 'bespoke',
-            bespokeContract: {
-              purpose_code: selection.selected_bespoke_contract.purpose_code,
-              schema_ref: selection.selected_bespoke_contract.schema_ref,
-              policy_ref: selection.selected_bespoke_contract.policy_ref,
-              program_ref: selection.selected_bespoke_contract.program_ref,
-            },
-            selectedModelProfile: selection.selected_model_profile,
-          };
           contract = await compileResolvedAgreement({
             agreement: resolvedAgreement,
             participants: [agentId, counterparty],
           });
         }
-        if (negotiatedSelection && contract) {
+        if (resolvedAgreement && contract) {
           handle.resolvedAgreement = resolvedAgreement ?? undefined;
-          handle.negotiatedContract = negotiatedSelection;
           relayContract = contract as RelayContract;
           purposeHint = relayContract.purpose_code;
         }
@@ -1438,7 +1407,7 @@ async function phaseInvite(
     ? (PURPOSE_TO_TEMPLATE[purposeHint] ?? 'mediation-demo.v1.standard')
     : 'mediation-demo.v1.standard';
   const preferredProfile =
-    negotiatedSelection?.selectedModelProfile ??
+    resolvedAgreement?.selected_model_profile ??
     negotiatedProfiles?.[0] ??
     preferredModelProfileRef(relayContract);
 
@@ -1458,7 +1427,7 @@ async function phaseInvite(
     model_profile_version: preferredProfile?.version ?? '1',
     admission_tier_requested: 'DEFAULT',
     ...(preferredProfile?.hash ? { model_profile_hash: preferredProfile.hash } : {}),
-    ...(!negotiatedSelection && negotiatedProfiles
+    ...(!resolvedAgreement && negotiatedProfiles
       ? { acceptable_model_profiles: negotiatedProfiles }
       : {}),
   };

@@ -58,21 +58,6 @@ export interface RelayHandle {
   expectedContractHash?: string;
   alignedTopicCode?: string;
   resolvedAgreement?: ResolvedAgreement;
-  negotiatedContract?: {
-    kind: 'offer' | 'bespoke';
-    contractOfferId?: string;
-    bespokeContract?: {
-      purpose_code: string;
-      schema_ref: string;
-      policy_ref: string;
-      program_ref: string;
-    };
-    selectedModelProfile: {
-      id: string;
-      version: string;
-      hash: string;
-    };
-  };
   /** Opaque retry state for PROPOSE_RETRY phase (stored by relaySignal). */
   retryState?: unknown;
   createdAt: number;
