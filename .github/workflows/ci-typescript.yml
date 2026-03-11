@@ -34,4 +34,4 @@ jobs:
 
       - name: Build & test agentvault-demo-ui
         working-directory: packages/agentvault-demo-ui
-        run: npm ci && npm run build && npm test
+        run: npm ci && npx playwright install --with-deps chromium && npm run build && npm test
