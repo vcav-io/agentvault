@@ -158,6 +158,7 @@ export interface RelaySignalArgs {
   // INITIATE mode
   counterparty?: string;
   purpose?: string;
+  acceptable_purposes?: string[];
   contract?: object;
   acceptable_topic_codes?: string[];
   acceptable_contracts?: Array<{
@@ -255,6 +256,17 @@ export interface RelaySignalOutput {
     };
     selected_model_profile: ModelProfileRef;
   };
+}
+
+function parseAcceptablePurposes(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const knownPurposes = new Set(listRelayPurposes());
+  const parsed: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string' || !knownPurposes.has(item) || parsed.includes(item)) continue;
+    parsed.push(item);
+  }
+  return parsed;
 }
 
 // Legacy data types (kept for CREATE/JOIN backward compat)
@@ -1168,10 +1180,17 @@ async function phaseInvite(
   relayProfileId?: string,
 ): Promise<ToolResponse<RelaySignalOutput>> {
   const counterparty = resolveAgentAlias(handle.counterparty, knownAgents);
+  const acceptablePurposes = parseAcceptablePurposes(args.acceptable_purposes);
+  if (args.purpose && acceptablePurposes.length) {
+    return buildError(
+      'INVALID_INPUT',
+      'Provide either purpose or acceptable_purposes, not both.',
+    );
+  }
 
   // Resolve contract — use transport.agentId consistently as the identity source
   const agentId = transport.agentId;
-  let contract: object;
+  let contract: object | null = null;
   let purposeHint: string | null = null;
   let relayContract: ReturnType<typeof buildRelayContract> | undefined;
   if (args.contract) {
@@ -1192,10 +1211,29 @@ async function phaseInvite(
     contract = built;
     relayContract = built;
     purposeHint = args.purpose;
+  } else if (acceptablePurposes.length === 1) {
+    const selectedPurpose = acceptablePurposes[0];
+    let built;
+    try {
+      built = buildRelayContract(selectedPurpose, [agentId, counterparty], relayProfileId);
+    } catch (e) {
+      return buildError('INVALID_INPUT', (e as Error).message);
+    }
+    if (!built) {
+      return buildError(
+        'INVALID_INPUT',
+        `Unknown purpose "${selectedPurpose}". Available: ${listRelayPurposes().join(', ')}`,
+      );
+    }
+    contract = built;
+    relayContract = built;
+    purposeHint = selectedPurpose;
+  } else if (acceptablePurposes.length > 1) {
+    // Defer concrete contract binding until pre-contract negotiation selects an offer.
   } else {
     return buildError(
       'INVALID_INPUT',
-      `INITIATE requires purpose (${listRelayPurposes().join(', ')}) or contract`,
+      `INITIATE requires purpose (${listRelayPurposes().join(', ')}), acceptable_purposes, or contract`,
     );
   }
 
@@ -1214,12 +1252,24 @@ async function phaseInvite(
       'acceptable_model_profiles is only supported with purpose-based direct AFAL contracts',
     );
   }
+  if (acceptablePurposes.length > 0 && args.contract) {
+    return buildError(
+      'INVALID_INPUT',
+      'acceptable_purposes cannot be combined with explicit contract JSON',
+    );
+  }
 
   // ── Relay inbox path ──────────────────────────────────────────────────
   // When using RelayInboxTransport, create an invite via the relay's inbox
   // instead of creating a session eagerly. The relay creates the session
   // when the responder accepts the invite.
   if (transport instanceof RelayInboxTransport) {
+    if (!contract) {
+      return buildError(
+        'SESSION_ERROR',
+        'acceptable_purposes with more than one purpose requires direct bilateral transport and pre-contract negotiation.',
+      );
+    }
     const resp = await transport.createRelayInvite({
       to_agent_id: counterparty,
       contract,
@@ -1243,6 +1293,12 @@ async function phaseInvite(
     transport instanceof DirectAfalTransport
       ? await transport.discoverPeerAgentCard(counterparty)
       : null;
+  if (acceptablePurposes.length > 1 && !(transport instanceof DirectAfalTransport)) {
+    return buildError(
+      'SESSION_ERROR',
+      'acceptable_purposes requires direct bilateral transport when more than one purpose is supplied.',
+    );
+  }
   if (
     purposeHint &&
     peerDiscovery?.supportedPurposes.length &&
@@ -1304,8 +1360,21 @@ async function phaseInvite(
         ? [preferredProfile]
         : undefined;
 
-    if (purposeHint && peerDiscovery?.supportsPrecontractNegotiation && peerDiscovery.supportedContractOffers?.length) {
-      const offerIds = purposeToContractOfferIds(purposeHint);
+    const negotiationPurposes = acceptablePurposes.length > 0
+      ? acceptablePurposes
+      : purposeHint
+        ? [purposeHint]
+        : [];
+
+    if (negotiationPurposes.length > 1 && !peerDiscovery?.supportsPrecontractNegotiation) {
+      return buildError(
+        'SESSION_ERROR',
+        'Counterparty does not advertise support for multi-purpose pre-contract negotiation.',
+      );
+    }
+
+    if (negotiationPurposes.length && peerDiscovery?.supportsPrecontractNegotiation && peerDiscovery.supportedContractOffers?.length) {
+      const offerIds = negotiationPurposes.flatMap((purpose) => purposeToContractOfferIds(purpose));
       const localSupportedOffers = listSupportedContractOffers();
       const allowedOfferIds = new Set(
         peerDiscovery.supportedContractOffers.map((offer) => offer.contract_offer_id),
@@ -1412,7 +1481,19 @@ async function phaseInvite(
           purposeHint = relayContract.purpose_code;
         }
       }
+    } else if (acceptablePurposes.length > 1) {
+      return buildError(
+        'SESSION_ERROR',
+        'No negotiated contract offers were available for the supplied acceptable_purposes.',
+      );
     }
+  }
+
+  if (!contract) {
+    return buildError(
+      'SESSION_ERROR',
+      'No concrete contract could be resolved from the supplied acceptable_purposes.',
+    );
   }
 
   const relayUrl = resolveRelayUrl(args.relay_url, peerDiscovery?.relayUrl);
@@ -2428,6 +2509,7 @@ export async function handleRelaySignal(
 
         // Compute contract hash early — needed for both collision path and idempotency key
         let contractHashForKey: string;
+        const acceptablePurposes = parseAcceptablePurposes(args.acceptable_purposes);
         if (args.contract) {
           contractHashForKey = createHash('sha256')
             .update(JSON.stringify(args.contract))
@@ -2435,6 +2517,10 @@ export async function handleRelaySignal(
         } else if (args.purpose) {
           const built = buildRelayContract(args.purpose, [agentId, counterparty], relayProfileId);
           contractHashForKey = built ? computeRelayContractHash(built) : args.purpose;
+        } else if (acceptablePurposes.length > 0) {
+          contractHashForKey = createHash('sha256')
+            .update(JSON.stringify({ acceptable_purposes: acceptablePurposes }))
+            .digest('hex');
         } else {
           contractHashForKey = '';
         }
@@ -2465,7 +2551,9 @@ export async function handleRelaySignal(
             idempotencyKey: respondIdempotencyKey,
             timeoutMs: HANDLE_TTL_MS,
           });
-          respondHandle.preferredPurpose = args.purpose;
+          if (args.purpose) {
+            respondHandle.preferredPurpose = args.purpose;
+          }
           respondHandle.myInput = args.my_input;
           // Do not bind collision redirects to a locally precomputed contract hash.
           // On the direct AFAL path, pre-session negotiation can legitimately pick a

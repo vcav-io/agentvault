@@ -93,6 +93,16 @@ export const RELAY_TOOLS = [
           description:
             'Type of bounded signal session (INITIATE mode). Selects the right contract, schema, and prompt template.',
         },
+        acceptable_purposes: {
+          type: 'array',
+          description:
+            'Ordered purpose candidates for INITIATE mode when you do not want to force an early single-purpose guess. ' +
+            'On direct AFAL transports, the counterparty can negotiate a common contract offer from this set.',
+          items: {
+            type: 'string',
+            enum: ['MEDIATION', 'COMPATIBILITY'],
+          },
+        },
         expected_purpose: {
           type: 'string',
           enum: ['MEDIATION', 'COMPATIBILITY'],

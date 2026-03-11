@@ -455,6 +455,9 @@
         alicePrompt: alicePrompt,
         bobPrompt: bobPrompt,
       };
+      if (runScenario && Array.isArray(runScenario.acceptablePurposes) && runScenario.acceptablePurposes.length) {
+        startBody.acceptablePurposes = runScenario.acceptablePurposes.slice();
+      }
       if (isSplit) {
         // Split mode: coordination model drives relay, agent model drives agent LLM
         startBody.agentProvider = els.providerSelect.value || undefined;
