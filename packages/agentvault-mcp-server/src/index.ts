@@ -257,7 +257,8 @@ function buildDirectTransportFromEnv(): DirectAfalTransport | null {
 
 /**
  * Parse AV_KNOWN_AGENTS environment variable.
- * Expected format: JSON array of {agent_id: string, aliases: string[], a2a_send_message_url?: string}.
+ * Expected format: JSON array of
+ * {agent_id: string, aliases: string[], public_key_hex?: string, a2a_send_message_url?: string}.
  */
 function parseKnownAgentsFromEnv(): NormalizedKnownAgent[] {
   const raw = process.env['AV_KNOWN_AGENTS'];
@@ -272,9 +273,12 @@ function parseKnownAgentsFromEnv(): NormalizedKnownAgent[] {
       if (
         typeof entry?.agent_id !== 'string' ||
         !Array.isArray(entry?.aliases) ||
+        (entry?.public_key_hex !== undefined && typeof entry?.public_key_hex !== 'string') ||
         (entry?.a2a_send_message_url !== undefined && typeof entry?.a2a_send_message_url !== 'string')
       ) {
-        console.error('AV_KNOWN_AGENTS entries must have string agent_id, aliases array, and optional string a2a_send_message_url');
+        console.error(
+          'AV_KNOWN_AGENTS entries must have string agent_id, aliases array, and optional string public_key_hex/a2a_send_message_url',
+        );
         return [];
       }
     }

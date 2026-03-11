@@ -60,6 +60,8 @@ import {
 export interface NormalizedKnownAgent {
   agent_id: string;
   aliases: string[];
+  public_key_hex?: string;
+  a2a_send_message_url?: string;
 }
 
 function isRelayInvitePayload(

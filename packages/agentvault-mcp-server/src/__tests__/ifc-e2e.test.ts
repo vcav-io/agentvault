@@ -90,12 +90,19 @@ describe('IFC first slice e2e', () => {
 
     const aliceRegistry = createToolRegistry({
       transport: aliceTransport,
-      knownAgents: [{ agent_id: 'bob-test', aliases: ['Bob'], a2a_send_message_url: bobUrl ?? undefined }],
+      knownAgents: [
+        {
+          agent_id: 'bob-test',
+          aliases: ['Bob'],
+          public_key_hex: BOB_PUB,
+          a2a_send_message_url: bobUrl ?? undefined,
+        },
+      ],
       ifcSeedHex: ALICE_SEED,
     });
     const bobRegistry = createToolRegistry({
       transport: bobTransport,
-      knownAgents: [{ agent_id: 'alice-test', aliases: ['Alice'] }],
+      knownAgents: [{ agent_id: 'alice-test', aliases: ['Alice'], public_key_hex: ALICE_PUB }],
       ifcService: bobIfc,
     });
 

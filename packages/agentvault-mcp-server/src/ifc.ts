@@ -15,6 +15,7 @@ export type IfcDecision = 'ALLOW' | 'HIDE' | 'ESCALATE' | 'BLOCK';
 
 export interface IfcKnownAgent extends NormalizedKnownAgent {
   a2a_send_message_url?: string;
+  public_key_hex?: string;
 }
 
 export interface IfcGrantScope {
@@ -138,6 +139,11 @@ interface ReceivedGrantState {
   uses: number;
 }
 
+const POST_SESSION_POLICY_HASH = contentHash({
+  policy_version: 'POST_SESSION_V1',
+  allowed_classes: ['LOGISTICS', 'CONSENT', 'REFERENCE', 'ARTIFACT_TRANSFER'],
+});
+
 function isHex(value: string, len: number): boolean {
   return value.length === len && /^[0-9a-f]+$/.test(value);
 }
@@ -207,6 +213,18 @@ export class IfcService {
 
   setKnownAgents(knownAgents: IfcKnownAgent[]): void {
     this.knownAgents = knownAgents;
+  }
+
+  private resolveKnownAgent(hint: string): IfcKnownAgent | undefined {
+    return this.knownAgents.find((agent) => aliasesContain(agent, hint));
+  }
+
+  private resolveTrustedSenderKey(sender: string): string {
+    const knownAgent = this.resolveKnownAgent(sender);
+    if (!knownAgent?.public_key_hex) {
+      throw new Error(`no trusted public key for sender: ${sender}`);
+    }
+    return knownAgent.public_key_hex;
   }
 
   pendingCount(): number {
@@ -280,7 +298,10 @@ export class IfcService {
     assertReceiptId(args.related_receipt_id);
     assertUuidLower(args.related_session_id, 'related_session_id');
     this.verifyGrant(args.grant);
-    if (args.grant.audience !== args.counterparty && !this.knownAgents.find((a) => aliasesContain(a, args.counterparty) && a.agent_id === args.grant.audience)) {
+    if (
+      args.grant.audience !== args.counterparty &&
+      !this.knownAgents.find((a) => aliasesContain(a, args.counterparty) && a.agent_id === args.grant.audience)
+    ) {
       throw new Error('grant audience does not match counterparty');
     }
     if (args.grant.provenance.receipt_id !== args.related_receipt_id) {
@@ -293,7 +314,7 @@ export class IfcService {
       throw new Error('grant does not allow this message_class');
     }
 
-    const peer = this.knownAgents.find((agent) => aliasesContain(agent, args.counterparty));
+    const peer = this.resolveKnownAgent(args.counterparty);
     if (!peer?.a2a_send_message_url) {
       throw new Error('counterparty has no a2a_send_message_url');
     }
@@ -310,10 +331,7 @@ export class IfcService {
       related_receipt_id: args.related_receipt_id,
       related_session_id: args.related_session_id,
       grant_id: args.grant.grant_id,
-      ifc_policy_hash: contentHash({
-        policy_version: 'POST_SESSION_V1',
-        allowed_classes: ['LOGISTICS', 'CONSENT', 'REFERENCE', 'ARTIFACT_TRANSFER'],
-      }),
+      ifc_policy_hash: POST_SESSION_POLICY_HASH,
       label_receipt: {
         policy_version: 'POST_SESSION_V1',
         message_class: args.message_class,
@@ -349,7 +367,18 @@ export class IfcService {
   receiveEnvelope(input: { envelope: IfcEnvelope; grant: IfcGrant }): IfcDeliveryResult {
     const { envelope, grant } = input;
     try {
-      this.verifyGrant(grant);
+      const trustedSenderKeyHex = this.resolveTrustedSenderKey(envelope.sender);
+      if (grant.issuer !== envelope.sender) throw new Error('grant issuer mismatch');
+      if (grant.issuer_public_key_hex !== trustedSenderKeyHex) {
+        throw new Error('grant issuer key mismatch');
+      }
+      const { signature: _sig, grant_id, ...unsignedGrant } = grant;
+      const recomputedGrantId = contentHash(unsignedGrant);
+      if (recomputedGrantId !== grant_id) throw new Error('grant_id mismatch');
+      if (!verifyMessage(DOMAIN_PREFIXES.IFC_GRANT, grant as unknown as Record<string, unknown>, trustedSenderKeyHex)) {
+        throw new Error('grant signature verification failed');
+      }
+      if (new Date(grant.expires_at).getTime() < Date.now()) throw new Error('grant expired');
       if (grant.audience !== this.agentId) throw new Error('grant audience mismatch');
       if (grant.grant_id !== envelope.grant_id) throw new Error('grant_id mismatch');
       if (grant.provenance.receipt_id !== envelope.related_receipt_id) throw new Error('receipt provenance mismatch');
@@ -359,7 +388,16 @@ export class IfcService {
       }
       if (envelope.recipient !== this.agentId) throw new Error('recipient mismatch');
       if (envelope.session_relation !== 'POST_SESSION') throw new Error('unsupported session_relation');
-      if (!verifyMessage(DOMAIN_PREFIXES.IFC_ENVELOPE, envelope as unknown as Record<string, unknown>, grant.issuer_public_key_hex)) {
+      if (envelope.ifc_policy_hash !== POST_SESSION_POLICY_HASH) {
+        throw new Error('ifc_policy_hash mismatch');
+      }
+      if (
+        !verifyMessage(
+          DOMAIN_PREFIXES.IFC_ENVELOPE,
+          envelope as unknown as Record<string, unknown>,
+          trustedSenderKeyHex,
+        )
+      ) {
         throw new Error('envelope signature verification failed');
       }
 

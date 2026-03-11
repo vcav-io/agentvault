@@ -7,6 +7,10 @@ import { IfcService, type IfcEnvelope, type IfcGrant } from '../ifc.js';
 
 const ALICE_SEED = '0101010101010101010101010101010101010101010101010101010101010101';
 const ALICE_PUB = bytesToHex(ed25519.getPublicKey(hexToBytes(ALICE_SEED)));
+const POST_SESSION_POLICY_HASH = contentHash({
+  policy_version: 'POST_SESSION_V1',
+  allowed_classes: ['LOGISTICS', 'CONSENT', 'REFERENCE', 'ARTIFACT_TRANSFER'],
+});
 
 function createService(agentId = 'alice-test') {
   return new IfcService({
@@ -71,7 +75,7 @@ describe('IfcService', () => {
           hexToBytes('0202020202020202020202020202020202020202020202020202020202020202'),
         ),
       ),
-      knownAgents: [],
+      knownAgents: [{ agent_id: 'alice-test', aliases: ['Alice'], public_key_hex: ALICE_PUB }],
     });
 
     const { grant } = alice.createGrant({
@@ -97,7 +101,7 @@ describe('IfcService', () => {
         related_receipt_id: 'b'.repeat(64),
         related_session_id: '22222222-2222-2222-2222-222222222222',
         grant_id: grant.grant_id,
-        ifc_policy_hash: 'c'.repeat(64),
+        ifc_policy_hash: POST_SESSION_POLICY_HASH,
         label_receipt: {
           policy_version: 'POST_SESSION_V1',
           message_class: 'ARTIFACT_TRANSFER',
@@ -131,7 +135,7 @@ describe('IfcService', () => {
           hexToBytes('0202020202020202020202020202020202020202020202020202020202020202'),
         ),
       ),
-      knownAgents: [],
+      knownAgents: [{ agent_id: 'alice-test', aliases: ['Alice'], public_key_hex: ALICE_PUB }],
     });
 
     const { grant } = alice.createGrant({
@@ -157,7 +161,7 @@ describe('IfcService', () => {
         related_receipt_id: 'b'.repeat(64),
         related_session_id: '22222222-2222-2222-2222-222222222222',
         grant_id: grant.grant_id,
-        ifc_policy_hash: 'c'.repeat(64),
+        ifc_policy_hash: POST_SESSION_POLICY_HASH,
         label_receipt: {
           policy_version: 'POST_SESSION_V1',
           message_class: 'LOGISTICS',
@@ -168,5 +172,56 @@ describe('IfcService', () => {
     });
 
     expect(delivery.decision).toBe('BLOCK');
+  });
+
+  it('blocks a self-asserted sender key that is not trusted locally', () => {
+    const alice = createService('alice-test');
+    const bob = new IfcService({
+      agentId: 'bob-test',
+      seedHex: '0202020202020202020202020202020202020202020202020202020202020202',
+      verifyingKeyHex: bytesToHex(
+        ed25519.getPublicKey(
+          hexToBytes('0202020202020202020202020202020202020202020202020202020202020202'),
+        ),
+      ),
+      knownAgents: [{ agent_id: 'alice-test', aliases: ['Alice'], public_key_hex: 'f'.repeat(64) }],
+    });
+
+    const { grant } = alice.createGrant({
+      audience: 'bob-test',
+      receipt_id: 'b'.repeat(64),
+      session_id: '22222222-2222-2222-2222-222222222222',
+      message_classes: ['LOGISTICS'],
+      max_uses: 1,
+      expires_in_seconds: 60,
+    });
+
+    const envelope = signMessage(
+      DOMAIN_PREFIXES.IFC_ENVELOPE,
+      {
+        version: 'AV-IFC-MSG-V1',
+        message_id: '33333333-3333-3333-3333-333333333333',
+        created_at: new Date().toISOString(),
+        sender: 'alice-test',
+        recipient: 'bob-test',
+        message_class: 'LOGISTICS',
+        session_relation: 'POST_SESSION',
+        payload: 'Meet at 10:30 UTC tomorrow.',
+        related_receipt_id: 'b'.repeat(64),
+        related_session_id: '22222222-2222-2222-2222-222222222222',
+        grant_id: grant.grant_id,
+        ifc_policy_hash: POST_SESSION_POLICY_HASH,
+        label_receipt: {
+          policy_version: 'POST_SESSION_V1',
+          message_class: 'LOGISTICS',
+          session_relation: 'POST_SESSION',
+        },
+      },
+      ALICE_SEED,
+    ) as IfcEnvelope;
+
+    const delivery = bob.receiveEnvelope({ grant, envelope });
+    expect(delivery.decision).toBe('BLOCK');
+    expect(delivery.error).toContain('grant issuer key mismatch');
   });
 });
