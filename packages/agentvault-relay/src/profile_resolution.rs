@@ -1,9 +1,9 @@
 //! Profile resolution — the policy boundary for contract-bound model selection.
 //!
-//! When a contract specifies `model_profile_id`, the relay resolves it to a
+//! When a contract specifies a profile binding, the relay resolves it to a
 //! concrete runtime configuration (provider, model_id, profile hash). This
-//! module enforces fail-closed semantics: if a named profile cannot be
-//! resolved, the session is rejected.
+//! module enforces fail-closed semantics: if a contract-bound profile cannot
+//! be resolved, the session is rejected.
 //!
 //! Resolution precedence:
 //! - `admitted_profiles` (registry admission): checked first, already
@@ -12,7 +12,7 @@
 //!   configured (`admitted_profiles` is `None`). "Present on disk" and
 //!   "admitted for execution" are separate concepts.
 //!
-//! Legacy mode: contracts with no `model_profile_id` return `Ok(None)`,
+//! Legacy mode: contracts with no profile binding return `Ok(None)`,
 //! signalling the caller to use env-var defaults. This is logged visibly.
 
 use std::collections::HashMap;
@@ -38,48 +38,60 @@ pub struct ResolvedRuntime {
 ///
 /// Returns:
 /// - `Ok(Some(ResolvedRuntime))` — profile found and verified.
-/// - `Ok(None)` — legacy contract with no `model_profile_id`.
-/// - `Err` — profile named but not resolvable (fail closed).
+/// - `Ok(None)` — legacy contract with no profile binding.
+/// - `Err` — profile bound but not resolvable (fail closed).
 pub fn resolve_runtime_profile(
     contract: &Contract,
     admitted_profiles: &Option<HashMap<String, ModelProfile>>,
     prompt_program_dir: &str,
 ) -> Result<Option<ResolvedRuntime>, RelayError> {
-    let (profile_id, expected_hash) = match (
-        contract.model_profile_id.as_deref(),
-        contract.model_profile_hash.as_deref(),
-    ) {
-        (None, None) => return Ok(None),
-        (Some(_), None) | (None, Some(_)) => return Err(RelayError::ContractValidation(
-            "model_profile_id and model_profile_hash must either both be present or both be absent"
-                .to_string(),
-        )),
-        (Some(id), Some(hash)) => (id, hash),
+    let profile_id = contract.model_profile_id.as_deref();
+    let expected_hash = match contract.model_profile_hash.as_deref() {
+        Some(hash) => hash,
+        None if profile_id.is_none() => return Ok(None),
+        None => {
+            return Err(RelayError::ContractValidation(
+                "model_profile_hash is required when model_profile_id is present".to_string(),
+            ))
+        }
     };
 
     let profile = match admitted_profiles {
         Some(profiles) => {
-            // Registry is configured — only admitted profiles are valid.
-            // Linear search by profile_id (profiles are keyed by hash).
-            profiles
-                .values()
-                .find(|p| p.profile_id == *profile_id)
-                .cloned()
-                .ok_or_else(|| {
-                    // Check if the profile exists on disk but isn't admitted.
+            // Registry is configured — resolve by the contract's content hash.
+            let resolved = profiles.get(expected_hash).cloned().ok_or_else(|| {
+                // Check if a named profile exists on disk but isn't admitted.
+                if let Some(profile_id) = profile_id {
                     if load_model_profile(prompt_program_dir, profile_id).is_ok() {
-                        RelayError::ProfileNotAdmitted {
+                        return RelayError::ProfileNotAdmitted {
                             profile_id: profile_id.to_string(),
-                        }
-                    } else {
-                        RelayError::ProfileNotFound {
-                            profile_id: profile_id.to_string(),
-                        }
+                        };
                     }
-                })?
+                }
+                RelayError::ProfileNotFound {
+                    profile_id: profile_id.unwrap_or(expected_hash).to_string(),
+                }
+            })?;
+
+            if let Some(profile_id) = profile_id {
+                if resolved.profile_id != profile_id {
+                    return Err(RelayError::ContractValidation(format!(
+                        "model_profile_id '{profile_id}' does not match resolved profile '{}'",
+                        resolved.profile_id
+                    )));
+                }
+            }
+
+            resolved
         }
         None => {
             // No registry configured — filesystem fallback (dev mode).
+            let profile_id = profile_id.ok_or_else(|| {
+                RelayError::ContractValidation(
+                    "model_profile_id is required when registry admission is unavailable"
+                        .to_string(),
+                )
+            })?;
             load_model_profile(prompt_program_dir, profile_id).map_err(|_| {
                 RelayError::ProfileNotFound {
                     profile_id: profile_id.to_string(),
@@ -89,8 +101,9 @@ pub fn resolve_runtime_profile(
     };
 
     let profile_hash = profile.content_hash().map_err(|e| {
+        let profile_ref = profile_id.unwrap_or(expected_hash);
         RelayError::PromptProgram(format!(
-            "failed to compute profile hash for '{profile_id}': {e}"
+            "failed to compute profile hash for '{profile_ref}': {e}"
         ))
     })?;
 
@@ -170,6 +183,21 @@ mod tests {
         let rt = result.expect("should resolve to Some");
         assert_eq!(rt.provider, "anthropic");
         assert_eq!(rt.model_id, "claude-sonnet-4-6");
+        assert_eq!(rt.profile.profile_id, "api-claude-sonnet-v1");
+        assert_eq!(rt.profile_hash, profile_hash);
+    }
+
+    #[test]
+    fn test_resolve_admitted_profile_by_hash_only() {
+        let profile = make_profile("api-claude-sonnet-v1", "anthropic", "claude-sonnet-4-6");
+        let profile_hash = profile.content_hash().unwrap();
+        let admitted = admitted_map(vec![profile]);
+        let mut contract = make_contract(None);
+        contract.model_profile_hash = Some(profile_hash.clone());
+
+        let result = resolve_runtime_profile(&contract, &admitted, "/nonexistent").unwrap();
+        let rt = result.expect("should resolve to Some");
+        assert_eq!(rt.provider, "anthropic");
         assert_eq!(rt.profile.profile_id, "api-claude-sonnet-v1");
         assert_eq!(rt.profile_hash, profile_hash);
     }
@@ -260,8 +288,21 @@ mod tests {
         let err = resolve_runtime_profile(&contract, &None, "/nonexistent").unwrap_err();
         assert!(
             err.to_string()
-                .contains("must either both be present or both be absent"),
+                .contains("model_profile_hash is required when model_profile_id is present"),
             "expected partial-binding rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_hash_only_without_admission_rejects() {
+        let mut contract = make_contract(None);
+        contract.model_profile_hash = Some("a".repeat(64));
+
+        let err = resolve_runtime_profile(&contract, &None, "/nonexistent").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("model_profile_id is required when registry admission is unavailable"),
+            "expected hash-only filesystem rejection, got: {err}"
         );
     }
 
@@ -274,8 +315,23 @@ mod tests {
 
         let err = resolve_runtime_profile(&contract, &admitted, "/nonexistent").unwrap_err();
         assert!(
-            err.to_string().contains("does not match resolved profile"),
-            "expected mismatched hash rejection, got: {err}"
+            err.to_string().contains("not found"),
+            "expected hash-first lookup rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_mismatched_profile_id_rejects() {
+        let profile = make_profile("api-claude-sonnet-v1", "anthropic", "claude-sonnet-4-6");
+        let admitted = admitted_map(vec![profile.clone()]);
+        let mut contract = make_contract(Some("api-gpt5-v1"));
+        contract.model_profile_hash = Some(profile.content_hash().unwrap());
+
+        let err = resolve_runtime_profile(&contract, &admitted, "/nonexistent").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("model_profile_id 'api-gpt5-v1' does not match resolved profile"),
+            "expected mismatched id rejection, got: {err}"
         );
     }
 }
