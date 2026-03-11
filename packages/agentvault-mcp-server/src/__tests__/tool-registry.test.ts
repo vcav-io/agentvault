@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createToolRegistry, getToolDefs } from '../tool-registry.js';
 import type { AfalTransport, AfalInviteMessage } from '../afal-transport.js';
+import { IfcService } from '../ifc.js';
 import { _setDiscoverPollConfigForTesting } from '../tools/relaySignal.js';
 import { _resetHandlesForTesting } from '../tools/relayHandles.js';
 
@@ -66,6 +67,9 @@ describe('getToolDefs', () => {
     const names = defs.map((d) => d.name);
     expect(names).toContain('agentvault.get_identity');
     expect(names).toContain('agentvault.relay_signal');
+    expect(names).toContain('agentvault.create_ifc_grant');
+    expect(names).toContain('agentvault.send_ifc_message');
+    expect(names).toContain('agentvault.read_ifc_messages');
   });
 
   it('each tool def has name, description, and inputSchema', () => {
@@ -176,5 +180,26 @@ describe('createToolRegistry', () => {
     });
 
     expect(() => registry.dispatch('unknown.tool', {})).toThrow('Unknown tool: unknown.tool');
+  });
+
+  it('handleGetIdentity includes pending IFC messages when configured', async () => {
+    const transport = createMockTransport();
+    const ifcService = new IfcService({
+      agentId: 'test-agent',
+      seedHex: '0101010101010101010101010101010101010101010101010101010101010101',
+      verifyingKeyHex:
+        '8a88e3dd7409f195fd52db2d3cba5d72ca670bf1d94121bf3748801b40f6f5c2',
+      knownAgents: [],
+    });
+    vi.spyOn(ifcService, 'pendingCount').mockReturnValue(2);
+    const registry = createToolRegistry({
+      transport,
+      knownAgents: [],
+      ifcService,
+    });
+
+    const identity = await registry.handleGetIdentity();
+    expect(identity.data?.pending_ifc_messages).toBe(2);
+    expect(identity.data?.next_action?.tool).toBe('agentvault.read_ifc_messages');
   });
 });

@@ -16,6 +16,10 @@ export const AGENTVAULT_TOPIC_ALIGNMENT_PROPOSAL_MEDIA_TYPE =
   'application/vnd.agentvault.topic-alignment-proposal+json';
 export const AGENTVAULT_TOPIC_ALIGNMENT_SELECTION_MEDIA_TYPE =
   'application/vnd.agentvault.topic-alignment-selection+json';
+export const AGENTVAULT_IFC_ENVELOPE_MEDIA_TYPE =
+  'application/vnd.agentvault.ifc-envelope+json';
+export const AGENTVAULT_IFC_RESULT_MEDIA_TYPE =
+  'application/vnd.agentvault.ifc-result+json';
 
 interface A2AMessagePart {
   data: unknown;
