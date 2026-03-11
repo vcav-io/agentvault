@@ -520,25 +520,8 @@ app.post('/api/start', async (req, res) => {
     const runFile = events.startRecording(RUNS_DIR);
     events.emitSystem(`Recording to ${runFile}`);
 
-    // Emit relay policy and contract parameters — after startRecording so replays include them
-    if (relayHealth) {
-      events.emit({
-        ts: new Date().toISOString(),
-        type: 'system',
-        agent: 'relay_policy',
-        payload: {
-          policy_id: policySummary?.policy_id ?? 'unknown',
-          policy_hash: policySummary?.policy_hash ?? 'unknown',
-          model_profile_allowlist: policySummary?.model_profile_allowlist ?? [],
-          provider_allowlist: policySummary?.provider_allowlist ?? [],
-          enforcement_rules: policySummary?.enforcement_rules ?? [],
-          entropy_constraints: policySummary?.entropy_constraints ?? null,
-          verifying_key_hex: relayHealth.verifying_key_hex ?? 'unknown',
-          model_id: relayHealth.model_id ?? 'unknown',
-        },
-      });
-    }
-
+    // Emit contract first, then relay admission/identity. The contract defines
+    // what the session requires; relay health confirms the relay admits it.
     try {
       const mediationContract = buildRelayContract('MEDIATION', ['alice', 'bob'], relayProfileId);
       if (mediationContract) {
@@ -561,6 +544,24 @@ app.post('/api/start', async (req, res) => {
       }
     } catch (err) {
       console.warn('Failed to emit contract parameters:', err instanceof Error ? err.message : String(err));
+    }
+
+    if (relayHealth) {
+      events.emit({
+        ts: new Date().toISOString(),
+        type: 'system',
+        agent: 'relay_policy',
+        payload: {
+          policy_id: policySummary?.policy_id ?? 'unknown',
+          policy_hash: policySummary?.policy_hash ?? 'unknown',
+          model_profile_allowlist: policySummary?.model_profile_allowlist ?? [],
+          provider_allowlist: policySummary?.provider_allowlist ?? [],
+          enforcement_rules: policySummary?.enforcement_rules ?? [],
+          entropy_constraints: policySummary?.entropy_constraints ?? null,
+          verifying_key_hex: relayHealth.verifying_key_hex ?? 'unknown',
+          model_id: relayHealth.model_id ?? 'unknown',
+        },
+      });
     }
 
     if (!relayHealth) {

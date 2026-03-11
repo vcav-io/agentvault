@@ -127,11 +127,15 @@ The relay discards raw inputs after receipt construction. Only commitment hashes
 
 You can configure multiple API keys and switch providers in the UI before starting a run.
 
-| Provider | Agent model (default) | Relay model (default) | Approx. cost/run | Notes |
-|----------|----------------------|----------------------|-------------------|-------|
-| Gemini | gemini-2.5-flash | gemini-2.5-flash | ~$0.01 | Cheapest stable option |
-| OpenAI | gpt-4.1-mini | gpt-4.1-mini | ~$0.02 | Reliable default |
-| Anthropic | claude-haiku-4-5-20251001 | claude-haiku-4-5-20251001 | ~$0.03 | High quality |
+The live UI populates its selector from the demo server's current config. On current `main`, the coordination-model selector exposes:
+
+| Provider | Current selectable models | Default in selector |
+|----------|---------------------------|---------------------|
+| Gemini | `gemini-3-flash-preview`, `gemini-3.1-flash-lite-preview` | `gemini-3-flash-preview` |
+| OpenAI | `gpt-5`, `gpt-4.1-mini` | `gpt-5` |
+| Anthropic | `claude-sonnet-4-6`, `claude-haiku-4-5-20251001` | `claude-sonnet-4-6` |
+
+For the current defaults and heartbeat-model notes, see [model-defaults.md](model-defaults.md).
 
 ## Alternative: CLI demo with Claude Code
 

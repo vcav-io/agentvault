@@ -2,20 +2,20 @@
 
 Current model defaults per provider for the AgentVault demo UI.
 
-## Agent models (primary conversation)
+## Coordination models (UI selector)
 
 | Provider | Default model | Tier | Notes |
 |----------|--------------|------|-------|
-| Gemini | `gemini-3.1-flash-lite-preview` | budget | Cheapest current-gen; slightly conservative signaling |
-| OpenAI | `gpt-5-nano` | budget | Cheapest GPT-5; now GA with valid structured output |
-| Anthropic | `claude-haiku-4-5-20251001` | budget | Only budget Anthropic with tool-call support |
+| Gemini | `gemini-3-flash-preview` | flagship | Default coordination model shown in the selector |
+| OpenAI | `gpt-5` | flagship | Default coordination model shown in the selector |
+| Anthropic | `claude-sonnet-4-6` | flagship | Default coordination model shown in the selector |
 
 ## Heartbeat models (polling loops)
 
 | Provider | Default model | Tier | Notes |
 |----------|--------------|------|-------|
 | Gemini | `gemini-3.1-flash-lite-preview` | budget | Same as agent (cheapest current-gen) |
-| OpenAI | `gpt-5-nano` | budget | Same as agent (cheapest GPT-5) |
+| OpenAI | `gpt-4.1-nano` | budget | Cheapest OpenAI model used for heartbeat polling |
 | Anthropic | `claude-haiku-4-5-20251001` | budget | Same as agent (no cheaper option with tool use) |
 
 ## Available models in UI selector
@@ -25,26 +25,26 @@ Current model defaults per provider for the AgentVault demo UI.
 - `gemini-3.1-flash-lite-preview` (budget, default)
 
 ### OpenAI
-- `gpt-5-mini` (mid)
-- `gpt-5-nano` (budget, default)
+- `gpt-5` (flagship, default)
+- `gpt-4.1-mini` (mid)
 
 ### Anthropic
-- `claude-haiku-4-5-20251001` (budget, default)
-- `claude-sonnet-4-6` (reference)
+- `claude-sonnet-4-6` (flagship, default)
+- `claude-haiku-4-5-20251001` (budget)
 
 ## Selection heuristic
 
-Cheapest model that:
-1. Supports tool calling (required for agent loop)
-2. Passes mediation quality threshold (produces valid structured output)
-3. Is listed in the relay's `model_profile_allowlist`
+Two defaults are in play:
+1. The coordination-model selector defaults to a stronger flagship model per provider for the main demo run.
+2. Heartbeat polling defaults to the cheapest model with usable tool support.
 
 ## Removed models
 
 - `gpt-4.1-nano` — previous-gen budget; produces degenerate output (INSUFFICIENT_SIGNAL)
-- `gpt-4.1-mini` — previous-gen mid; superseded by gpt-5-nano at budget tier
-- `gemini-2.5-flash` — previous-gen mid; superseded by gemini-3.1-flash-lite at budget tier
-- `gemini-2.5-flash-lite` — previous-gen budget; superseded by gemini-3.1-flash-lite
+- `gpt-5-nano` — no longer used by the demo UI
+- `gpt-5-mini` — no longer used by the demo UI
+- `gemini-2.5-flash` — previous-gen Gemini default
+- `gemini-2.5-flash-lite` — previous-gen Gemini budget option
 
 ## Last sweep
 

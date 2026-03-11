@@ -82,7 +82,7 @@ The software lane is available now. The TEE lane has been hardware-validated on 
 
 ## Verify the receipt
 
-After the run completes, click **Verify Receipt** on any result card.
+After the run completes, click **Verify Signature** on any result card.
 
 ### What verification proves
 
