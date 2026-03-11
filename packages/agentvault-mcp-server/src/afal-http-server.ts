@@ -19,6 +19,7 @@ import { createServer } from 'node:http';
 import type { Server, IncomingMessage, ServerResponse } from 'node:http';
 import type { AfalResponder } from './afal-responder.js';
 import type { AgentDescriptor } from './direct-afal-transport.js';
+import type { IfcService } from './ifc.js';
 import { buildAgentCard } from './a2a-agent-card.js';
 import {
   A2A_SEND_MESSAGE_PATH,
@@ -26,6 +27,8 @@ import {
   AGENTVAULT_CONTRACT_OFFER_PROPOSAL_MEDIA_TYPE,
   AGENTVAULT_CONTRACT_OFFER_SELECTION_MEDIA_TYPE,
   AGENTVAULT_DENY_MEDIA_TYPE,
+  AGENTVAULT_IFC_ENVELOPE_MEDIA_TYPE,
+  AGENTVAULT_IFC_RESULT_MEDIA_TYPE,
   AGENTVAULT_PROPOSE_MEDIA_TYPE,
   AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
   AGENTVAULT_TOPIC_ALIGNMENT_PROPOSAL_MEDIA_TYPE,
@@ -70,6 +73,7 @@ export interface AfalHttpServerConfig {
   supportedPurposes?: string[];
   advertiseAfalEndpoint?: boolean;
   seedHex?: string;
+  ifcService?: IfcService;
 }
 
 export class AfalHttpServer {
@@ -79,10 +83,12 @@ export class AfalHttpServer {
   private _actualPort: number | null = null;
   private _localDescriptor: AgentDescriptor;
   private readonly _inFlightTasks = new Map<string, InFlightTask>();
+  private ifcService?: IfcService;
 
   constructor(config: AfalHttpServerConfig) {
     this.config = config;
     this._localDescriptor = config.localDescriptor;
+    this.ifcService = config.ifcService;
   }
 
   get port(): number {
@@ -97,6 +103,10 @@ export class AfalHttpServer {
   /** Update the served descriptor (e.g. after port 0 resolves to actual port). */
   setDescriptor(descriptor: AgentDescriptor): void {
     this._localDescriptor = descriptor;
+  }
+
+  setIfcService(ifcService: IfcService): void {
+    this.ifcService = ifcService;
   }
 
   /** Remove expired in-flight task entries. Called on each A2A request. */
@@ -276,6 +286,7 @@ export class AfalHttpServer {
               AGENTVAULT_SESSION_TOKENS_MEDIA_TYPE,
               AGENTVAULT_CONTRACT_OFFER_PROPOSAL_MEDIA_TYPE,
               AGENTVAULT_TOPIC_ALIGNMENT_PROPOSAL_MEDIA_TYPE,
+              AGENTVAULT_IFC_ENVELOPE_MEDIA_TYPE,
             ]);
             if (!parsed) {
               res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -364,6 +375,49 @@ export class AfalHttpServer {
                     buildA2ATaskResponse({
                       mediaType: AGENTVAULT_CONTRACT_OFFER_SELECTION_MEDIA_TYPE,
                       data: selection,
+                      taskId: parsed.taskId,
+                      state: 'completed',
+                    }),
+                  ),
+                );
+              }
+            } else if (parsed.mediaType === AGENTVAULT_IFC_ENVELOPE_MEDIA_TYPE) {
+              if (!this.ifcService) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(
+                  JSON.stringify(
+                    buildA2ATaskResponse({
+                      mediaType: AGENTVAULT_IFC_RESULT_MEDIA_TYPE,
+                      data: {
+                        decision: 'BLOCK',
+                        error: 'IFC service is not configured',
+                      },
+                      taskId: parsed.taskId,
+                      state: 'completed',
+                    }),
+                  ),
+                );
+              } else if (
+                !parsed.data ||
+                typeof parsed.data !== 'object' ||
+                !('envelope' in (parsed.data as Record<string, unknown>)) ||
+                !('grant' in (parsed.data as Record<string, unknown>))
+              ) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Invalid IFC envelope body' }));
+              } else {
+                const result = this.ifcService.receiveEnvelope(
+                  parsed.data as {
+                    envelope: import('./ifc.js').IfcEnvelope;
+                    grant: import('./ifc.js').IfcGrant;
+                  },
+                );
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(
+                  JSON.stringify(
+                    buildA2ATaskResponse({
+                      mediaType: AGENTVAULT_IFC_RESULT_MEDIA_TYPE,
+                      data: result,
                       taskId: parsed.taskId,
                       state: 'completed',
                     }),

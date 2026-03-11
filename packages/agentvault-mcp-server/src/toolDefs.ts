@@ -52,6 +52,77 @@ export const VERIFY_TOOLS = [
   },
 ];
 
+export const IFC_TOOLS = [
+  {
+    name: 'agentvault.create_ifc_grant',
+    description:
+      'Create a short-lived IFC follow-up grant tied to an existing receipt and session. ' +
+      'Use this for post-session logistics, consent, references, and controlled artifact transfer.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        audience: { type: 'string', description: 'Receiving agent_id.' },
+        receipt_id: { type: 'string', description: 'Related receipt_id (64 lowercase hex).' },
+        session_id: { type: 'string', description: 'Related session_id (lowercase UUID).' },
+        message_classes: {
+          type: 'array',
+          items: {
+            type: 'string',
+            enum: ['LOGISTICS', 'CONSENT', 'REFERENCE', 'ARTIFACT_TRANSFER'],
+          },
+          description: 'Allowed IFC message classes for this grant.',
+        },
+        max_uses: { type: 'number', description: 'Maximum permitted uses for this grant.' },
+        expires_in_seconds: {
+          type: 'number',
+          description: 'Grant validity duration in seconds (max 86400).',
+        },
+      },
+      required: ['audience', 'receipt_id', 'session_id', 'message_classes', 'max_uses', 'expires_in_seconds'],
+    },
+  },
+  {
+    name: 'agentvault.send_ifc_message',
+    description:
+      'Send one IFC-wrapped post-session message to a known peer over the AgentVault A2A send-message path. ' +
+      'Plain non-IFC messages are not allowed on this surface.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        counterparty: {
+          type: 'string',
+          description: 'Known agent_id or alias of the counterparty.',
+        },
+        grant: {
+          type: 'object',
+          description: 'Signed grant created by agentvault.create_ifc_grant.',
+        },
+        message_class: {
+          type: 'string',
+          enum: ['LOGISTICS', 'CONSENT', 'REFERENCE', 'ARTIFACT_TRANSFER'],
+          description: 'Post-session IFC message class.',
+        },
+        payload: { type: 'string', description: 'Bounded message payload.' },
+        related_receipt_id: { type: 'string', description: 'Related receipt_id (64 lowercase hex).' },
+        related_session_id: { type: 'string', description: 'Related session_id (lowercase UUID).' },
+      },
+      required: ['counterparty', 'grant', 'message_class', 'payload', 'related_receipt_id', 'related_session_id'],
+    },
+  },
+  {
+    name: 'agentvault.read_ifc_messages',
+    description:
+      'Read pending IFC messages that have been allowed, hidden, escalated, or blocked for this agent.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        limit: { type: 'number', description: 'Optional maximum number of pending messages to read.' },
+      },
+      required: [],
+    },
+  },
+];
+
 export const RELAY_TOOLS = [
   {
     name: 'agentvault.relay_signal',

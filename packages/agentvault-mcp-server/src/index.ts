@@ -32,7 +32,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
 import { buildError } from './envelope.js';
-import { RELAY_TOOLS, IDENTITY_TOOLS, VERIFY_TOOLS } from './toolDefs.js';
+import { RELAY_TOOLS, IDENTITY_TOOLS, VERIFY_TOOLS, IFC_TOOLS } from './toolDefs.js';
 import { dispatch } from './dispatch.js';
 import type { InviteTransport } from './invite-transport.js';
 import { OrchestratorInboxAdapter } from './afal-transport.js';
@@ -47,6 +47,7 @@ import { listKnownModelProfiles } from './model-profiles.js';
 import { listSupportedContractOffers } from './contract-offers.js';
 import { supportsBespokePrecontractNegotiation } from './bespoke-contracts.js';
 import { listSupportedTopicCodes, supportsTopicAlignment } from './topic-codes.js';
+import { IfcService, type IfcKnownAgent } from './ifc.js';
 import { ed25519 } from '@noble/curves/ed25519';
 import { hexToBytes, bytesToHex } from '@noble/hashes/utils';
 
@@ -68,6 +69,23 @@ export function createAgentVaultServer(
   const afalTransport: AfalTransport | undefined =
     directTransport ??
     (inviteTransport ? new OrchestratorInboxAdapter(inviteTransport) : undefined);
+  const agentId = afalTransport?.agentId ?? process.env['AV_AGENT_ID'];
+  const ifcSeedHex =
+    directTransport instanceof DirectAfalTransport
+      ? directTransport.ifcSeedHex
+      : process.env['AV_AFAL_SEED_HEX'];
+  const ifcService =
+    agentId && ifcSeedHex
+      ? new IfcService({
+          agentId,
+          seedHex: ifcSeedHex,
+          knownAgents: knownAgents as IfcKnownAgent[],
+          verifyingKeyHex: bytesToHex(ed25519.getPublicKey(hexToBytes(ifcSeedHex))),
+        })
+      : undefined;
+  if (directTransport instanceof DirectAfalTransport && ifcService) {
+    directTransport.setIfcService(ifcService);
+  }
 
   const server = new Server(
     {
@@ -82,22 +100,20 @@ export function createAgentVaultServer(
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    return { tools: [...IDENTITY_TOOLS, ...RELAY_TOOLS, ...VERIFY_TOOLS] };
+    return { tools: [...IDENTITY_TOOLS, ...RELAY_TOOLS, ...VERIFY_TOOLS, ...IFC_TOOLS] };
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
 
     try {
-      // Resolve agent identity from the transport when available;
-      // fall back to env only for standalone (no-transport) mode.
-      const agentId = afalTransport?.agentId ?? process.env['AV_AGENT_ID'];
       const result = await dispatch(
         name,
         args as Record<string, unknown>,
         afalTransport,
         knownAgents,
         agentId,
+        ifcService,
       );
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (error) {
@@ -241,7 +257,8 @@ function buildDirectTransportFromEnv(): DirectAfalTransport | null {
 
 /**
  * Parse AV_KNOWN_AGENTS environment variable.
- * Expected format: JSON array of {agent_id: string, aliases: string[]}.
+ * Expected format: JSON array of
+ * {agent_id: string, aliases: string[], public_key_hex?: string, a2a_send_message_url?: string}.
  */
 function parseKnownAgentsFromEnv(): NormalizedKnownAgent[] {
   const raw = process.env['AV_KNOWN_AGENTS'];
@@ -253,8 +270,15 @@ function parseKnownAgentsFromEnv(): NormalizedKnownAgent[] {
       return [];
     }
     for (const entry of parsed) {
-      if (typeof entry?.agent_id !== 'string' || !Array.isArray(entry?.aliases)) {
-        console.error('AV_KNOWN_AGENTS entries must have string agent_id and aliases array');
+      if (
+        typeof entry?.agent_id !== 'string' ||
+        !Array.isArray(entry?.aliases) ||
+        (entry?.public_key_hex !== undefined && typeof entry?.public_key_hex !== 'string') ||
+        (entry?.a2a_send_message_url !== undefined && typeof entry?.a2a_send_message_url !== 'string')
+      ) {
+        console.error(
+          'AV_KNOWN_AGENTS entries must have string agent_id, aliases array, and optional string public_key_hex/a2a_send_message_url',
+        );
         return [];
       }
     }

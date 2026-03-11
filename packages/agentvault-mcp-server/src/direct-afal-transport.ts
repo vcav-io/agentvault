@@ -18,6 +18,7 @@ import { AfalHttpServer } from './afal-http-server.js';
 import { AGENTVAULT_A2A_EXTENSION_URI, verifyAgentCardSignature } from './a2a-agent-card.js';
 import type { AgentVaultA2AExtensionParams } from './a2a-agent-card.js';
 import type { ModelProfileRef } from './model-profiles.js';
+import type { IfcService } from './ifc.js';
 import {
   A2A_SEND_MESSAGE_PATH,
   AGENTVAULT_ADMIT_MEDIA_TYPE,
@@ -199,6 +200,18 @@ export class DirectAfalTransport implements AfalTransport {
 
   get agentId(): string {
     return this.config.agentId;
+  }
+
+  get ifcSeedHex(): string {
+    return this.config.seedHex;
+  }
+
+  get a2aSendMessageUrl(): string | null {
+    return this.httpServer ? `${this.httpServer.baseUrl}${A2A_SEND_MESSAGE_PATH}` : null;
+  }
+
+  setIfcService(ifcService: IfcService): void {
+    this.httpServer?.setIfcService(ifcService);
   }
 
   async start(): Promise<void> {

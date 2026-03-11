@@ -26,6 +26,7 @@ export interface GetIdentityOutput {
   agent_id: string | undefined;
   known_agents: NormalizedKnownAgent[];
   pending_invites?: number;
+  pending_ifc_messages?: number;
   next_action?: NextAction;
   inbox_hint?: string;
 }
@@ -34,6 +35,7 @@ export async function handleGetIdentity(
   agentId: string | undefined,
   knownAgents: NormalizedKnownAgent[],
   inboxService?: InboxService,
+  ifcPendingCount = 0,
 ): Promise<ToolResponse<GetIdentityOutput>> {
   const result: GetIdentityOutput = { agent_id: agentId, known_agents: knownAgents };
 
@@ -68,6 +70,16 @@ export async function handleGetIdentity(
       console.error('getIdentity: inbox check failed:', err instanceof Error ? err.message : String(err));
       result.inbox_hint = 'Warning: inbox check failed — call relay_signal in RESPOND mode to check manually.';
     }
+  }
+
+  result.pending_ifc_messages = ifcPendingCount;
+  if ((!result.pending_invites || result.pending_invites === 0) && ifcPendingCount > 0) {
+    result.next_action = {
+      tool: 'agentvault.read_ifc_messages',
+      args: {},
+      reason: 'pending_ifc_messages',
+    };
+    result.inbox_hint = `You have ${ifcPendingCount} pending IFC message(s).`;
   }
 
   return buildSuccess('SUCCESS', result);
