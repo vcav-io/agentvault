@@ -48,6 +48,7 @@ import {
   isTerminal,
   type AgentState,
 } from './agent-loop.js';
+import { withScenarioPurposeRegistry } from './scenario-purpose-registry.js';
 import { buildStartMilestoneEvents } from './start-milestones.js';
 import {
   DEMO_SMOKE_MODE,
@@ -336,21 +337,27 @@ async function setupAndStartHeartbeats(): Promise<void> {
 }
 
 /** (Re)create tool registries, optionally overriding the relay profile. */
-function initRegistries(relayProfileId?: string): void {
+function initRegistries(relayProfileId?: string, acceptablePurposes?: string[]): void {
   const aliceKnownAgents = [{ agent_id: 'bob', aliases: ['Bob'] }];
   const bobKnownAgents = [{ agent_id: 'alice', aliases: ['Alice'] }];
 
-  aliceRegistry = createToolRegistry({
-    transport: aliceTransport,
-    knownAgents: aliceKnownAgents,
-    relayProfileId,
-  });
+  aliceRegistry = withScenarioPurposeRegistry(
+    createToolRegistry({
+      transport: aliceTransport,
+      knownAgents: aliceKnownAgents,
+      relayProfileId,
+    }),
+    acceptablePurposes,
+  );
 
-  bobRegistry = createToolRegistry({
-    transport: bobTransport,
-    knownAgents: bobKnownAgents,
-    relayProfileId,
-  });
+  bobRegistry = withScenarioPurposeRegistry(
+    createToolRegistry({
+      transport: bobTransport,
+      knownAgents: bobKnownAgents,
+      relayProfileId,
+    }),
+    acceptablePurposes,
+  );
 }
 
 /** Start (or restart) heartbeat loops with the given providers. */
@@ -464,6 +471,9 @@ app.post('/api/start', async (req, res) => {
     const agentProvider = req.body?.agentProvider as string | undefined;
     const agentModel = req.body?.agentModel as string | undefined;
     const relayProfileId = req.body?.relayProfileId as string | undefined;
+    const acceptablePurposes = Array.isArray(req.body?.acceptablePurposes)
+      ? req.body.acceptablePurposes.filter((value: unknown): value is string => typeof value === 'string')
+      : undefined;
     const policySummary = relayHealth?.policy_summary as Record<string, unknown> | undefined;
     const allowedProfiles = Array.isArray(policySummary?.model_profile_allowlist)
       ? policySummary.model_profile_allowlist.filter(
@@ -492,7 +502,7 @@ app.post('/api/start', async (req, res) => {
 
     // Recreate registries with relay profile override (or reset to default)
     if (!DEMO_SMOKE_MODE) {
-      initRegistries(relayProfileId);
+      initRegistries(relayProfileId, acceptablePurposes);
       events.emitSystem(`Relay profile: ${relayProfileId ?? 'default'}`);
     }
 

@@ -55,4 +55,13 @@ describe('demo guardrails', () => {
       expect(modelDefaults).toContain(heartbeatModel);
     }
   });
+
+  it('marks ambiguous salary-overlap scenarios for acceptable purpose negotiation', () => {
+    const scenarios = readRepoFile('packages', 'agentvault-demo-ui', 'public', 'scenarios.js');
+    const appJs = readRepoFile('packages', 'agentvault-demo-ui', 'public', 'app.js');
+
+    expect(scenarios).toContain("id: 'sc06_salary_negotiation'");
+    expect(scenarios).toContain("acceptablePurposes: ['MEDIATION', 'COMPATIBILITY']");
+    expect(appJs).toContain('startBody.acceptablePurposes = runScenario.acceptablePurposes.slice();');
+  });
 });

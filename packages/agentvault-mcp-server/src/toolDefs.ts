@@ -4,6 +4,10 @@
  * Exports the relay_signal tool schema under the agentvault namespace.
  */
 
+import { listRelayPurposes } from 'agentvault-client/contracts';
+
+const RELAY_PURPOSES = listRelayPurposes();
+
 export const IDENTITY_TOOLS = [
   {
     name: 'agentvault.get_identity',
@@ -89,13 +93,24 @@ export const RELAY_TOOLS = [
         },
         purpose: {
           type: 'string',
-          enum: ['MEDIATION', 'COMPATIBILITY'],
+          enum: RELAY_PURPOSES,
           description:
             'Type of bounded signal session (INITIATE mode). Selects the right contract, schema, and prompt template.',
         },
+        acceptable_purposes: {
+          type: 'array',
+          description:
+            'Ordered purpose candidates for INITIATE mode when you do not want to force an early single-purpose guess. ' +
+            'On direct AFAL transports, the counterparty can negotiate a common contract offer from this set. ' +
+            'The first purpose is the initiator-preferred option.',
+          items: {
+            type: 'string',
+            enum: RELAY_PURPOSES,
+          },
+        },
         expected_purpose: {
           type: 'string',
-          enum: ['MEDIATION', 'COMPATIBILITY'],
+          enum: RELAY_PURPOSES,
           description:
             "What kind of session you expect to join (RESPOND mode, required unless expected_contract_hash provided). Verified cryptographically against the invite's contract hash before submitting data.",
         },
