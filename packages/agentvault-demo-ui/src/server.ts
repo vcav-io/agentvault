@@ -38,11 +38,6 @@ import type {
   TrustedAgent,
 } from 'agentvault-mcp-server';
 import { signMessage, DOMAIN_PREFIXES } from 'agentvault-mcp-server';
-import {
-  buildRelayContract,
-  computeRelayContractHash,
-} from 'agentvault-client/contracts';
-
 import { HEARTBEAT_DEFAULTS, getAvailableDemoProviders } from './demo-config.js';
 import { EventBus } from './events.js';
 import { replayToSSE, listRuns } from './replay.js';
