@@ -40,7 +40,7 @@ Two defaults are in play:
 
 ## Removed models
 
-- `gpt-4.1-nano` — previous-gen budget; produces degenerate output (INSUFFICIENT_SIGNAL)
+- `gpt-4.1-nano` — removed from the coordination selector; still used for heartbeat polling, but produced degenerate mediation output as a primary coordination model
 - `gpt-5-nano` — no longer used by the demo UI
 - `gpt-5-mini` — no longer used by the demo UI
 - `gemini-2.5-flash` — previous-gen Gemini default
