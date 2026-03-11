@@ -39,14 +39,17 @@ import { DirectAfalTransport } from '../direct-afal-transport.js';
 import { listKnownModelProfiles, resolveModelProfileRefs, type ModelProfileRef } from '../model-profiles.js';
 import {
   purposeToContractOfferIds,
-  resolveContractOfferToContract,
   listSupportedContractOffers,
 } from '../contract-offers.js';
 import type { ContractOfferProposal } from '../contract-negotiation.js';
-import {
-  resolveBespokeContractToContract,
-} from '../bespoke-contracts.js';
 import type { TopicAlignmentProposal } from '../topic-alignment.js';
+import {
+  compileResolvedAgreement,
+  mapResolvedAgreementToNegotiatedContract,
+  resolvedAgreementFromBespoke,
+  resolvedAgreementFromOffer,
+  type ResolvedAgreement,
+} from '../resolved-agreement.js';
 import {
   encodeRelayToken,
   decodeRelayToken,
@@ -929,6 +932,10 @@ function removeSessionStateFile(handle: RelayHandle): void {
 function mapNegotiatedContract(
   handle: RelayHandle,
 ): RelaySignalOutput['negotiated_contract'] | undefined {
+  const mappedResolvedAgreement = mapResolvedAgreementToNegotiatedContract(handle.resolvedAgreement);
+  if (mappedResolvedAgreement) {
+    return mappedResolvedAgreement;
+  }
   if (!handle.negotiatedContract) return undefined;
   return {
     kind: handle.negotiatedContract.kind,
@@ -1295,6 +1302,7 @@ async function phaseInvite(
   }
 
   let negotiatedSelection: RelayHandle['negotiatedContract'] | null = null;
+  let resolvedAgreement: ResolvedAgreement | null = null;
   if (transport instanceof DirectAfalTransport && !args.contract) {
     const negotiationCandidates: ContractOfferProposal['acceptable_offers'] = [];
     const preferredProfile = preferredModelProfileRef(relayContract);
@@ -1379,17 +1387,26 @@ async function phaseInvite(
       }
       if (selection?.state === 'AGREED' && selection.selected_model_profile) {
         if (selection.selected_contract_offer_id) {
+          resolvedAgreement = resolvedAgreementFromOffer({
+            contractOfferId: selection.selected_contract_offer_id,
+            selectedModelProfile: selection.selected_model_profile,
+            topicCode: handle.alignedTopicCode,
+          });
           negotiatedSelection = {
             kind: 'offer',
             contractOfferId: selection.selected_contract_offer_id,
             selectedModelProfile: selection.selected_model_profile,
           };
-          contract = resolveContractOfferToContract({
-            contractOfferId: selection.selected_contract_offer_id,
+          contract = await compileResolvedAgreement({
+            agreement: resolvedAgreement,
             participants: [agentId, counterparty],
-            selectedModelProfile: selection.selected_model_profile,
           });
         } else if (selection.selected_bespoke_contract) {
+          resolvedAgreement = resolvedAgreementFromBespoke({
+            contract: selection.selected_bespoke_contract,
+            selectedModelProfile: selection.selected_model_profile,
+            topicCode: handle.alignedTopicCode,
+          });
           negotiatedSelection = {
             kind: 'bespoke',
             bespokeContract: {
@@ -1400,13 +1417,13 @@ async function phaseInvite(
             },
             selectedModelProfile: selection.selected_model_profile,
           };
-          contract = await resolveBespokeContractToContract({
-            contract: selection.selected_bespoke_contract,
+          contract = await compileResolvedAgreement({
+            agreement: resolvedAgreement,
             participants: [agentId, counterparty],
-            selectedModelProfile: selection.selected_model_profile,
           });
         }
         if (negotiatedSelection && contract) {
+          handle.resolvedAgreement = resolvedAgreement ?? undefined;
           handle.negotiatedContract = negotiatedSelection;
           relayContract = contract as RelayContract;
           purposeHint = relayContract.purpose_code;
@@ -1594,7 +1611,7 @@ async function phasePollInvite(
       initiatorRead: detail.read_token,
     };
 
-    writeLastSessionFile(handle.sessionId, 'INITIATOR', detail.read_token, handle.relayUrl);
+    writeLastSessionFile(handle.sessionId!, 'INITIATOR', detail.read_token, handle.relayUrl!);
 
     // Commit phase before submit so retries route to POLL_RELAY (not back here)
     handle.phase = 'POLL_RELAY';

@@ -9,6 +9,7 @@
  */
 
 import { createHash, createHmac, timingSafeEqual, randomUUID } from 'node:crypto';
+import type { ResolvedAgreement } from '../resolved-agreement.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -56,6 +57,7 @@ export interface RelayHandle {
   };
   expectedContractHash?: string;
   alignedTopicCode?: string;
+  resolvedAgreement?: ResolvedAgreement;
   negotiatedContract?: {
     kind: 'offer' | 'bespoke';
     contractOfferId?: string;
