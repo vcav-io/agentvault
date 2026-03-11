@@ -1880,10 +1880,13 @@ async function phaseDiscover(
     const response = await transport.peekInbox();
     const invites: AfalInviteMessage[] = response.invites ?? [];
 
-    // Track whether we found invites from the sender that failed contract matching.
-    // If all sender invites fail contract checks, return CONTRACT_MISMATCH immediately
-    // instead of polling forever (the sender won't send a different contract).
-    let foundSenderInviteWithContractMismatch = false;
+    // Track whether we found invites from the sender that failed validation.
+    // If all sender invites fail, return a first-class terminal error instead
+    // of polling forever (the sender won't send a different contract).
+    let senderInviteFailure:
+      | { kind: 'contract' }
+      | { kind: 'purpose'; expected: string; actual: string }
+      | null = null;
 
     // Scan newest-first to prefer the most recent matching invite
     for (let i = invites.length - 1; i >= 0; i--) {
@@ -1927,7 +1930,7 @@ async function phaseDiscover(
 
       // Check expected_contract_hash if provided (direct hash comparison)
       if (handle.expectedContractHash && invite.contract_hash !== handle.expectedContractHash) {
-        foundSenderInviteWithContractMismatch = true;
+        senderInviteFailure = { kind: 'contract' };
         continue;
       }
 
@@ -1938,7 +1941,11 @@ async function phaseDiscover(
         !handle.expectedContractHash
       ) {
         if (invite.afalPropose.purpose_code !== handle.expectedPurpose) {
-          foundSenderInviteWithContractMismatch = true;
+          senderInviteFailure = {
+            kind: 'purpose',
+            expected: handle.expectedPurpose,
+            actual: invite.afalPropose.purpose_code,
+          };
           continue;
         }
       } else if (handle.expectedPurpose && !handle.expectedContractHash) {
@@ -1946,7 +1953,11 @@ async function phaseDiscover(
         const expectedTemplate = PURPOSE_TO_TEMPLATE[handle.expectedPurpose];
         const inviteTemplate = invite.template_id;
         if (expectedTemplate && inviteTemplate && inviteTemplate !== expectedTemplate) {
-          foundSenderInviteWithContractMismatch = true;
+          senderInviteFailure = {
+            kind: 'purpose',
+            expected: handle.expectedPurpose,
+            actual: advertisedPurpose ?? 'UNKNOWN',
+          };
           continue;
         }
       } else if (
@@ -1979,7 +1990,7 @@ async function phaseDiscover(
           console.error(
             `phaseDiscover: invite ${invite.invite_id} missing contract_json — cannot confirm`,
           );
-          foundSenderInviteWithContractMismatch = true;
+          senderInviteFailure = { kind: 'contract' };
           continue;
         }
 
@@ -1990,7 +2001,7 @@ async function phaseDiscover(
             `phaseDiscover: invite ${invite.invite_id} contract_json hash mismatch: ` +
               `computed=${computedHash} advertised=${detail.contract_hash}`,
           );
-          foundSenderInviteWithContractMismatch = true;
+          senderInviteFailure = { kind: 'contract' };
           continue;
         }
 
@@ -2009,7 +2020,7 @@ async function phaseDiscover(
             `phaseDiscover: invite ${invite.invite_id} participant mismatch: ` +
               `expected=[${expectedParticipants}] got=[${participants}]`,
           );
-          foundSenderInviteWithContractMismatch = true;
+          senderInviteFailure = { kind: 'contract' };
           continue;
         }
 
@@ -2017,7 +2028,11 @@ async function phaseDiscover(
         if (handle.expectedPurpose) {
           const contractPurpose = detail.contract_json.purpose_code;
           if (typeof contractPurpose === 'string' && contractPurpose !== handle.expectedPurpose) {
-            foundSenderInviteWithContractMismatch = true;
+            senderInviteFailure = {
+              kind: 'purpose',
+              expected: handle.expectedPurpose,
+              actual: contractPurpose,
+            };
             continue;
           }
         } else if (handle.preferredPurpose) {
@@ -2060,7 +2075,14 @@ async function phaseDiscover(
 
     // If sender sent invites but all failed contract matching, fail fast.
     // Transition handle to FAILED to prevent stale handle leak.
-    if (foundSenderInviteWithContractMismatch) {
+    if (senderInviteFailure?.kind === 'purpose') {
+      return failedResponse(
+        handle,
+        'PURPOSE_MISMATCH',
+        `Counterparty proposed ${senderInviteFailure.actual}, but this response expected ${senderInviteFailure.expected}.`,
+      );
+    }
+    if (senderInviteFailure?.kind === 'contract') {
       return failedResponse(
         handle,
         'CONTRACT_MISMATCH',

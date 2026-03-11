@@ -164,6 +164,36 @@ describe('resume_strategy in responses', () => {
     expect(data.next_update_seconds).toBe(30);
   });
 
+  it('RESPOND returns PURPOSE_MISMATCH instead of CONTRACT_MISMATCH on legacy template divergence', async () => {
+    const transport = createMockAfalTransport([
+      {
+        invite_id: 'inv-purpose-mismatch',
+        from_agent_id: 'bob-demo',
+        payload_type: 'VCAV_E_INVITE_V1',
+        payload: {
+          session_id: 'sess-join',
+          responder_submit_token: 'sub-tok',
+          responder_read_token: 'read-tok',
+          relay_url: 'http://relay.test',
+        },
+        contract_hash: 'compat-hash',
+        template_id: 'dating.v1.d2',
+      },
+    ]);
+
+    const result = await handleRelaySignal(
+      { mode: 'RESPOND', from: 'bob-demo', expected_purpose: 'MEDIATION', my_input: 'world' },
+      transport,
+    );
+    const data = result.data as RelaySignalOutput;
+
+    expect(result.status).toBe('ERROR');
+    expect(data.phase).toBe('FAILED');
+    expect(data.error_code).toBe('PURPOSE_MISMATCH');
+    expect(data.user_message).toContain('COMPATIBILITY');
+    expect(data.user_message).toContain('MEDIATION');
+  });
+
   it('completed response has no resume_strategy', async () => {
     const transport = createMockAfalTransport();
     const { resumeToken } = await initiateSession(transport);
