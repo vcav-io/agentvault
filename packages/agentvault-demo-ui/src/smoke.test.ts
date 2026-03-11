@@ -97,6 +97,9 @@ describe('demo ui smoke flow', () => {
     expect(liveTitles).toContain('Relay session opened');
     expect(liveTitles).toContain('Bob joined session');
     expect(liveTitles).toContain('Alice — session complete');
+    const relayPolicyText = await page.locator('.vault-card').filter({ hasText: 'Relay Identity & Policy' }).textContent();
+    expect(relayPolicyText).toContain('no_digits');
+    expect(relayPolicyText).toContain('no_currency_symbols');
 
     await page.click('.receipt-card__verify-btn');
     await page.waitForFunction(() => {

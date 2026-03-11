@@ -10,10 +10,7 @@ export const SMOKE_RELAY_HEALTH: Record<string, unknown> = {
     policy_hash: '22'.repeat(32),
     model_profile_allowlist: ['api-gpt5-v1', 'api-gpt41mini-v1'],
     provider_allowlist: ['openai'],
-    enforcement_rules: [
-      { rule_id: 'no_digits', classification: 'ENFORCED' },
-      { rule_id: 'no_currency_symbols', classification: 'ENFORCED' },
-    ],
+    enforcement_rules: ['no_digits', 'no_currency_symbols'],
     entropy_constraints: {
       budget_bits: 12,
       classification: 'ENFORCED',
