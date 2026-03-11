@@ -1393,7 +1393,7 @@ async function phaseInvite(
           });
         }
         if (resolvedAgreement && contract) {
-          handle.resolvedAgreement = resolvedAgreement ?? undefined;
+          handle.resolvedAgreement = resolvedAgreement;
           relayContract = contract as RelayContract;
           purposeHint = relayContract.purpose_code;
         }
