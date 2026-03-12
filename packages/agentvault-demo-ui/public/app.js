@@ -17,6 +17,7 @@
     stopBtn: $('stop-btn'),
     resetBtn: $('reset-btn'),
     newRunBtn: $('new-run-btn'),
+    replayLink: $('replay-link'),
     statusChip: $('status-chip'),
     statusText: $('status-text'),
     // Chat panels
@@ -64,6 +65,7 @@
   var totalEvents = 0;
   var reconnectNotice = null;
   var terminalAgents = {};
+  var suppressSseReconnectWarning = false;
 
   // ── Init vault card manager ────────────────────────────────
   VaultCardManager.init(els.vaultEvents);
@@ -385,17 +387,33 @@
   }
 
   // ── SSE ────────────────────────────────────────────────────
+  function closeLiveEventStream() {
+    suppressSseReconnectWarning = true;
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+  }
+
   function connectSSE() {
     if (eventSource) eventSource.close();
+    suppressSseReconnectWarning = false;
     eventSource = new EventSource('/api/events');
     eventSource.onmessage = function (e) {
       try { handleEvent(JSON.parse(e.data)); }
       catch (err) { console.error('SSE parse error:', err); }
     };
     eventSource.onerror = function () {
+      if (suppressSseReconnectWarning) return;
       console.warn('SSE reconnecting...');
     };
   }
+
+  if (els.replayLink) {
+    els.replayLink.addEventListener('click', closeLiveEventStream);
+  }
+  window.addEventListener('pagehide', closeLiveEventStream);
+  window.addEventListener('beforeunload', closeLiveEventStream);
 
   // ── Status polling ─────────────────────────────────────────
   async function pollStatus() {
