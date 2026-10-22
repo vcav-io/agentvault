@@ -174,7 +174,7 @@ These enable the AFAL direct transport for INITIATE and RESPOND session modes (a
 | `SELKEY_AFAL_PEER_DESCRIPTOR_URL` | For INITIATE | — | URL of the peer agent's descriptor (used in INITIATE mode) |
 | `SELKEY_AFAL_ADVERTISE_AFAL_ENDPOINT` | No | `true` | Set to `false` to publish an A2A-only Agent Card (no AFAL endpoint) |
 | `SELKEY_AFAL_REQUIRE_SIGNED_CARDS` | No | — | No longer has an effect. An A2A agent card is used only if its `card_signature` verifies under the peer's pinned key; endpoints and relay hints are never taken from an unsigned card (discovery falls back to the signed AFAL descriptor) |
-| `SELKEY_AGENT_PIN_RESEED` | No | — | `true` lets configured keys replace stored pins that differ (see [Agent identity pins](#agent-identity-pins)) |
+| `SELKEY_AGENT_PIN_RESEED` | No | — | Lets configured keys replace stored pins that differ from them; see [Agent identity pins](#agent-identity-pins) |
 | `SELKEY_AGENT_PIN_MODE` | No | `preshared` | `preshared`: peers must be pinned in advance. `tofu`: on first contact the peer's key is recorded as pending and the call fails with `NEEDS_CONFIRMATION` until a person runs `selkey-mcp pins confirm <agent_id>` in a terminal |
 
 ### Known Agents
