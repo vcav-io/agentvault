@@ -163,46 +163,14 @@ export interface FileLockOptions {
   timeoutMs: number;
 }
 
-/**
- * Run `fn` while holding `<lockPath>.takeover`, an O_EXCL marker that every
- * removal of `lockPath` (stale takeover and release) holds. While it is held
- * no other process can remove the lock file, so the file read inside `fn` is
- * the file `fn` removes. Returns undefined if the marker could not be taken
- * in time. A marker older than `staleMs` (its holder died inside the short
- * critical section) is removed.
- */
-function withRemovalMarker<T>(lockPath: string, opts: FileLockOptions, fn: () => T): T | undefined {
-  const marker = `${lockPath}.takeover`;
-  const deadline = Date.now() + opts.timeoutMs;
-  for (;;) {
-    let fd: number;
-    try {
-      fd = fs.openSync(marker, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, FILE_MODE);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-      try {
-        if (Date.now() - fs.lstatSync(marker).mtimeMs > opts.staleMs) fs.rmSync(marker, { force: true });
-      } catch {
-        // gone already
-      }
-      if (Date.now() > deadline) return undefined;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
-      continue;
-    }
-    fs.closeSync(fd);
-    try {
-      return fn();
-    } finally {
-      fs.rmSync(marker, { force: true });
-    }
-  }
-}
+/** A removal marker older than this is treated as orphaned (its critical section takes milliseconds). */
+export const MARKER_STALE_MS = 60_000;
 
-/** mtime and contents of the lock file, read from one open file descriptor. */
-function readLock(lockPath: string): { mtimeMs: number; token: string } | undefined {
+/** mtime and contents of a small state file, read from one open file descriptor. */
+function readTokenFile(file: string): { mtimeMs: number; token: string } | undefined {
   let fd: number;
   try {
-    fd = fs.openSync(lockPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     throw err;
@@ -213,6 +181,95 @@ function readLock(lockPath: string): { mtimeMs: number; token: string } | undefi
   } finally {
     fs.closeSync(fd);
   }
+}
+
+/**
+ * Remove an orphaned marker that was observed holding `observedToken`. The
+ * marker is renamed to a unique name first (only one of several waiters can
+ * rename the same file), then its token and age are checked again; a marker
+ * that turns out to be another holder's is put back. True if removed.
+ */
+export function removeStaleMarker(marker: string, observedToken: string, staleMs: number = MARKER_STALE_MS): boolean {
+  const aside = `${marker}.${randomBytes(8).toString('hex')}.stale`;
+  try {
+    fs.renameSync(marker, aside);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw err;
+  }
+  const moved = readTokenFile(aside);
+  if (moved && moved.token === observedToken && Date.now() - moved.mtimeMs > staleMs) {
+    fs.rmSync(aside, { force: true });
+    return true;
+  }
+  try {
+    fs.linkSync(aside, marker);
+  } catch {
+    // Another waiter created a marker meanwhile; see the residual note below.
+  }
+  fs.rmSync(aside, { force: true });
+  return false;
+}
+
+/**
+ * Run `fn` while holding `<lockPath>.takeover`, an O_EXCL marker holding a
+ * random token that every removal of `lockPath` (stale takeover and release)
+ * holds. While it is held no other process removes the lock file, so the file
+ * `fn` checks is the file it removes. Returns undefined if the marker could
+ * not be taken in time. On exit the marker is removed only if it still holds
+ * this holder's token.
+ *
+ * A marker older than `markerStaleMs` (default 60 s, far longer than the
+ * critical section) is treated as orphaned and removed by rename-and-recheck,
+ * so two waiters cannot both remove it.
+ *
+ * Residual: these are advisory locks between local processes of the same
+ * user. A holder stalled for longer than the marker staleness (suspended or
+ * swapped out) can still overlap with a new holder, and a fourth contender
+ * arriving within microseconds of an orphaned-marker removal can do the same.
+ * The effect is a lost update to the pin store or ledger file, not a
+ * cross-user compromise.
+ */
+export function withRemovalMarker<T>(
+  lockPath: string,
+  opts: FileLockOptions & { markerStaleMs?: number },
+  fn: () => T,
+): T | undefined {
+  const marker = `${lockPath}.takeover`;
+  const markerStaleMs = opts.markerStaleMs ?? MARKER_STALE_MS;
+  const deadline = Date.now() + opts.timeoutMs;
+  const token = `${process.pid}:${randomBytes(16).toString('hex')}`;
+  for (;;) {
+    let fd: number;
+    try {
+      fd = fs.openSync(marker, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, FILE_MODE);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      const current = readTokenFile(marker);
+      if (current && Date.now() - current.mtimeMs > markerStaleMs) {
+        removeStaleMarker(marker, current.token, markerStaleMs);
+        continue;
+      }
+      if (Date.now() > deadline) return undefined;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+      continue;
+    }
+    try {
+      fs.writeSync(fd, token);
+    } finally {
+      fs.closeSync(fd);
+    }
+    try {
+      return fn();
+    } finally {
+      if (readTokenFile(marker)?.token === token) fs.rmSync(marker, { force: true });
+    }
+  }
+}
+
+/** mtime and contents of the lock file, read from one open file descriptor. */
+function readLock(lockPath: string): { mtimeMs: number; token: string } | undefined {
+  return readTokenFile(lockPath);
 }
 
 /**
@@ -268,6 +325,8 @@ export function acquireFileLock(lockPath: string, opts: FileLockOptions): () => 
         const current = readLock(lockPath);
         if (!current) return true;
         if (Date.now() - current.mtimeMs <= opts.staleMs) return false;
+        // Re-read through a fresh descriptor right before removing it.
+        if (readLock(lockPath)?.token !== current.token) return false;
         fs.unlinkSync(lockPath);
         return true;
       });

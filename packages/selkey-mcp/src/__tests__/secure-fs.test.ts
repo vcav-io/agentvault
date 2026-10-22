@@ -9,6 +9,8 @@ import {
   acquireFileLock,
   appendPrivateLine,
   removeLockIfUnchanged,
+  removeStaleMarker,
+  withRemovalMarker,
   readPrivateJson,
   writePrivateJson,
 } from '../secure-fs.js';
@@ -193,5 +195,52 @@ describe('lock takeover under contention', () => {
     releaseA?.();
     releaseB?.();
     expect(fs.existsSync(lock)).toBe(false);
+  });
+});
+
+describe('removal marker', () => {
+  const old = () => new Date(Date.now() - 120_000);
+
+  it('lets exactly one of two waiters remove an orphaned marker', () => {
+    const marker = path.join(tmp, 'm.lock.takeover');
+    fs.writeFileSync(marker, 'orphan', { mode: 0o600 });
+    fs.utimesSync(marker, old(), old());
+    // Both waiters observed the orphaned marker. The first removes it and
+    // creates its own; the second must not remove the new one.
+    expect(removeStaleMarker(marker, 'orphan', 60_000)).toBe(true);
+    fs.writeFileSync(marker, 'waiter-1', { flag: 'wx', mode: 0o600 });
+    expect(removeStaleMarker(marker, 'orphan', 60_000)).toBe(false);
+    expect(fs.readFileSync(marker, 'utf8')).toBe('waiter-1');
+    expect(fs.readdirSync(tmp)).toEqual(['m.lock.takeover']);
+  });
+
+  it('does not remove another holder\'s marker on exit', () => {
+    const lock = path.join(tmp, 'n.lock');
+    const marker = `${lock}.takeover`;
+    withRemovalMarker(lock, { staleMs: 10_000, timeoutMs: 1_000 }, () => {
+      // This holder stalled: its marker was removed as orphaned and another
+      // holder took a marker of its own.
+      fs.rmSync(marker);
+      fs.writeFileSync(marker, 'other-holder', { flag: 'wx', mode: 0o600 });
+    });
+    expect(fs.readFileSync(marker, 'utf8')).toBe('other-holder');
+  });
+
+  it('removes its own marker on exit', () => {
+    const lock = path.join(tmp, 'o.lock');
+    expect(withRemovalMarker(lock, { staleMs: 10_000, timeoutMs: 1_000 }, () => 7)).toBe(7);
+    expect(fs.existsSync(`${lock}.takeover`)).toBe(false);
+  });
+
+  it('takes over an orphaned marker only after the marker staleness', () => {
+    const lock = path.join(tmp, 'p.lock');
+    const marker = `${lock}.takeover`;
+    fs.writeFileSync(marker, 'orphan', { mode: 0o600 });
+    const recent = new Date(Date.now() - 20_000);
+    fs.utimesSync(marker, recent, recent);
+    // Older than the lock staleness but not the marker staleness: still held.
+    expect(withRemovalMarker(lock, { staleMs: 10_000, timeoutMs: 50 }, () => 1)).toBeUndefined();
+    fs.utimesSync(marker, old(), old());
+    expect(withRemovalMarker(lock, { staleMs: 10_000, timeoutMs: 50 }, () => 1)).toBe(1);
   });
 });
