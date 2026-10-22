@@ -1198,6 +1198,7 @@ mod tests {
             health_expose_model: false,
             admitted_programs: None,
             admitted_profiles: None,
+            operator_token: None,
         }
     }
 

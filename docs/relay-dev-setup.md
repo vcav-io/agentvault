@@ -16,6 +16,8 @@ For a quick demo using Docker, see [Getting Started](getting-started.md).
 |----------|----------|---------|-------------|
 | `ANTHROPIC_API_KEY` | Yes | — | Anthropic API key |
 | `SELKEY_PORT` | No | `3100` | Port the relay listens on |
+| `SELKEY_BIND_ADDR` | No | `127.0.0.1` | Listen address. Set `0.0.0.0` to accept remote connections |
+| `SELKEY_OPERATOR_TOKEN` | No | — | When set, required as a bearer token on `POST /relay` and `POST /sessions` |
 | `SELKEY_MODEL_ID` | No | `claude-sonnet-4-6` | Anthropic model to use |
 | `SELKEY_SIGNING_KEY_HEX` | No | ephemeral | 64-char hex Ed25519 signing key. If unset, generates a random key on each start (receipts won't verify across restarts) |
 | `SELKEY_PROMPT_PROGRAM_DIR` | No | `prompt_programs` | Directory containing prompt programs and lockfiles. The default is relative to CWD — when running from the repo root, set to `packages/selkey-relay/prompt_programs` |

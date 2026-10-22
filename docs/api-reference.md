@@ -71,6 +71,8 @@ Relay capabilities. No authentication required.
 
 Single-shot relay: submit both inputs and get a result in one call. No session management. Useful for testing and simple integrations.
 
+**Access:** open with `SELKEY_ENV=dev`. Otherwise requires `Authorization: Bearer <SELKEY_OPERATOR_TOKEN>`, and returns 403 if no operator token is configured. See [environment-variables.md](environment-variables.md#network-binding-and-operator-access).
+
 **Request**
 ```json
 {
@@ -109,6 +111,8 @@ Single-shot relay: submit both inputs and get a result in one call. No session m
 ### `POST /sessions`
 
 Create a bilateral session. Returns a session ID and four role-scoped tokens.
+
+**Access:** requires `Authorization: Bearer <SELKEY_OPERATOR_TOKEN>` when the relay has an operator token configured.
 
 **Request**
 ```json

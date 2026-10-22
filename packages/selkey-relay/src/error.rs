@@ -31,6 +31,9 @@ pub enum RelayError {
     #[error("Unauthorized")]
     Unauthorized,
 
+    #[error("Forbidden: {0}")]
+    Forbidden(String),
+
     #[error("Session not found")]
     SessionNotFound,
 
@@ -72,6 +75,7 @@ impl RelayError {
             RelayError::Unauthorized | RelayError::SessionNotFound | RelayError::InviteNotFound => {
                 StatusCode::UNAUTHORIZED
             }
+            RelayError::Forbidden(_) => StatusCode::FORBIDDEN,
             RelayError::InviteStateConflict(_) => StatusCode::CONFLICT,
             RelayError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             RelayError::ProfileNotFound { .. } => StatusCode::BAD_REQUEST,

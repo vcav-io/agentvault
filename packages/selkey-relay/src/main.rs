@@ -434,6 +434,29 @@ async fn main() {
         tracing::info!(provider = %provider, model_id = %active_model, "startup: active provider/model");
     }
 
+    let operator_token = std::env::var("SELKEY_OPERATOR_TOKEN")
+        .ok()
+        .filter(|t| !t.is_empty());
+    let bind_addr =
+        selkey_relay::resolve_bind_addr(std::env::var("SELKEY_BIND_ADDR").ok().as_deref());
+    match (&operator_token, is_dev) {
+        (Some(_), _) => {
+            tracing::info!("SELKEY_OPERATOR_TOKEN set — required on POST /relay and POST /sessions")
+        }
+        (None, true) => tracing::warn!(
+            "SELKEY_ENV=dev without SELKEY_OPERATOR_TOKEN — POST /relay and POST /sessions are unauthenticated"
+        ),
+        (None, false) => tracing::info!(
+            "SELKEY_OPERATOR_TOKEN not set — POST /relay is disabled; POST /sessions is unauthenticated"
+        ),
+    }
+    if operator_token.is_none() && !bind_addr.is_loopback() {
+        tracing::warn!(
+            %bind_addr,
+            "relay is bound to a non-loopback address without SELKEY_OPERATOR_TOKEN — anyone who can reach it can create sessions"
+        );
+    }
+
     let state = Arc::new(AppState {
         signing_key,
         anthropic_api_key,
@@ -458,11 +481,12 @@ async fn main() {
         health_expose_model,
         admitted_programs: registry_admission.as_ref().map(|a| a.programs.clone()),
         admitted_profiles: registry_admission.as_ref().map(|a| a.profiles.clone()),
+        operator_token,
     });
 
     let app = build_router(state);
 
-    let addr = format!("0.0.0.0:{port}");
+    let addr = std::net::SocketAddr::new(bind_addr, port);
     tracing::info!(%addr, session_ttl_secs, "Selkey relay starting");
     let listener = TcpListener::bind(&addr).await.expect("bind failed");
     axum::serve(listener, app).await.expect("server error");

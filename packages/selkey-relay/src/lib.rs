@@ -43,6 +43,25 @@ use crate::types::{
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Default listen address: loopback only. Set SELKEY_BIND_ADDR (e.g. `0.0.0.0`
+/// inside a container) to listen on other interfaces.
+pub const DEFAULT_BIND_ADDR: std::net::IpAddr = std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+
+/// Resolve the relay listen address from SELKEY_BIND_ADDR.
+///
+/// Unset or empty uses [`DEFAULT_BIND_ADDR`]. An unparseable value is a
+/// configuration error and stops startup rather than silently widening or
+/// narrowing exposure.
+pub fn resolve_bind_addr(value: Option<&str>) -> std::net::IpAddr {
+    match value.map(str::trim).filter(|v| !v.is_empty()) {
+        None => DEFAULT_BIND_ADDR,
+        Some(v) => v.parse().unwrap_or_else(|_| {
+            tracing::error!(value = %v, "SELKEY_BIND_ADDR is not a valid IP address — refusing to start");
+            std::process::exit(1);
+        }),
+    }
+}
 const GIT_SHA: &str = env!("SELKEY_GIT_SHA");
 
 /// Pre-computed hashes needed to build a failure receipt when inference fails.
@@ -99,6 +118,9 @@ pub struct AppState {
     pub admitted_programs: Option<HashMap<String, crate::prompt_program::PromptProgram>>,
     /// Pre-loaded profiles from registry admission (keyed by bare hex hash).
     pub admitted_profiles: Option<HashMap<String, crate::types::ModelProfile>>,
+    /// Operator bearer token (from SELKEY_OPERATOR_TOKEN). When set, it is
+    /// required on POST /relay and POST /sessions.
+    pub operator_token: Option<String>,
 }
 
 // ============================================================================
@@ -112,6 +134,47 @@ fn extract_bearer_token(headers: &HeaderMap) -> Result<&str, RelayError> {
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .ok_or(RelayError::Unauthorized)
+}
+
+/// Compare two secrets without short-circuiting on the first differing byte.
+fn secrets_equal(a: &str, b: &str) -> bool {
+    use sha2::{Digest, Sha256};
+    let da = Sha256::digest(a.as_bytes());
+    let db = Sha256::digest(b.as_bytes());
+    da.iter()
+        .zip(db.iter())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
+}
+
+/// Require the operator token if one is configured.
+fn check_operator_token(state: &AppState, headers: &HeaderMap) -> Result<(), RelayError> {
+    match state.operator_token.as_deref() {
+        None => Ok(()),
+        Some(expected) => {
+            let presented = extract_bearer_token(headers)?;
+            if secrets_equal(presented, expected) {
+                Ok(())
+            } else {
+                Err(RelayError::Unauthorized)
+            }
+        }
+    }
+}
+
+/// Access rule for the single-shot POST /relay endpoint, where one caller
+/// supplies both inputs: available with SELKEY_ENV=dev, or to callers holding
+/// the operator token. Disabled otherwise.
+fn check_single_shot_relay_access(state: &AppState, headers: &HeaderMap) -> Result<(), RelayError> {
+    if state.operator_token.is_some() {
+        return check_operator_token(state, headers);
+    }
+    if state.is_dev {
+        return Ok(());
+    }
+    Err(RelayError::Forbidden(
+        "POST /relay is disabled: set SELKEY_OPERATOR_TOKEN (or SELKEY_ENV=dev)".to_string(),
+    ))
 }
 
 // ============================================================================
@@ -248,8 +311,10 @@ async fn capabilities_handler(State(state): State<Arc<AppState>>) -> Json<Capabi
 
 async fn relay_handler(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(request): Json<RelayRequest>,
 ) -> Result<Json<RelayResponse>, RelayError> {
+    check_single_shot_relay_access(&state, &headers)?;
     let response = relay::relay(request, &state).await?;
     Ok(Json(response))
 }
@@ -261,8 +326,11 @@ async fn relay_handler(
 /// POST /sessions — create a new bilateral session.
 async fn create_session_handler(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(request): Json<CreateSessionRequest>,
 ) -> Result<Json<CreateSessionResponse>, RelayError> {
+    check_operator_token(&state, &headers)?;
+
     // Resolve and validate provider
     let provider = resolve_provider(&request.provider, &state)?;
 
@@ -918,6 +986,7 @@ mod tests {
             health_expose_model: false,
             admitted_programs: None,
             admitted_profiles: None,
+            operator_token: None,
         })
     }
 
@@ -937,6 +1006,30 @@ mod tests {
         _b: Option<RelayInput>,
     ) -> Result<(relay::RelayResult, relay::InferenceTiming), RelayError> {
         panic!("simulated provider panic");
+    }
+
+    #[test]
+    fn test_default_bind_addr_is_loopback() {
+        assert!(DEFAULT_BIND_ADDR.is_loopback());
+        assert_eq!(resolve_bind_addr(None), DEFAULT_BIND_ADDR);
+        assert_eq!(resolve_bind_addr(Some("")), DEFAULT_BIND_ADDR);
+        assert_eq!(resolve_bind_addr(Some("  ")), DEFAULT_BIND_ADDR);
+        assert_eq!(
+            resolve_bind_addr(Some("0.0.0.0")),
+            "0.0.0.0".parse::<std::net::IpAddr>().unwrap()
+        );
+        assert_eq!(
+            resolve_bind_addr(Some("::1")),
+            "::1".parse::<std::net::IpAddr>().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_secrets_equal() {
+        assert!(secrets_equal("token-a", "token-a"));
+        assert!(!secrets_equal("token-a", "token-b"));
+        assert!(!secrets_equal("token-a", "token-a-longer"));
+        assert!(!secrets_equal("", "token-a"));
     }
 
     #[tokio::test]
