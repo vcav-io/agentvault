@@ -29,6 +29,7 @@ import {
   SELKEY_CONTRACT_OFFER_SELECTION_MEDIA_TYPE,
   SELKEY_DENY_MEDIA_TYPE,
   SELKEY_IFC_ENVELOPE_MEDIA_TYPE,
+  SELKEY_IFC_GRANT_MEDIA_TYPE,
   SELKEY_IFC_RESULT_MEDIA_TYPE,
   SELKEY_PROPOSE_MEDIA_TYPE,
   SELKEY_SESSION_TOKENS_MEDIA_TYPE,
@@ -298,6 +299,7 @@ export class AfalHttpServer {
               SELKEY_CONTRACT_OFFER_PROPOSAL_MEDIA_TYPE,
               SELKEY_TOPIC_ALIGNMENT_PROPOSAL_MEDIA_TYPE,
               SELKEY_IFC_ENVELOPE_MEDIA_TYPE,
+              SELKEY_IFC_GRANT_MEDIA_TYPE,
             ]);
             const negotiationAuth =
               parsed?.mediaType === SELKEY_TOPIC_ALIGNMENT_PROPOSAL_MEDIA_TYPE
@@ -401,6 +403,26 @@ export class AfalHttpServer {
                   ),
                 );
               }
+            } else if (parsed.mediaType === SELKEY_IFC_GRANT_MEDIA_TYPE) {
+              // A grant issued to this agent by a pinned peer.
+              const data =
+                parsed.data && typeof parsed.data === 'object'
+                  ? (parsed.data as Record<string, unknown>)
+                  : {};
+              const result = this.ifcService
+                ? this.ifcService.receiveGrant({ grant: data['grant'] })
+                : { accepted: false, error: 'IFC service is not configured' };
+              res.writeHead(result.accepted ? 200 : 400, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify(
+                  buildA2ATaskResponse({
+                    mediaType: SELKEY_IFC_RESULT_MEDIA_TYPE,
+                    data: result,
+                    taskId: parsed.taskId,
+                    state: 'completed',
+                  }),
+                ),
+              );
             } else if (parsed.mediaType === SELKEY_IFC_ENVELOPE_MEDIA_TYPE) {
               if (!this.ifcService) {
                 res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -420,8 +442,7 @@ export class AfalHttpServer {
               } else if (
                 !parsed.data ||
                 typeof parsed.data !== 'object' ||
-                !('envelope' in (parsed.data as Record<string, unknown>)) ||
-                !('grant' in (parsed.data as Record<string, unknown>))
+                !('envelope' in (parsed.data as Record<string, unknown>))
               ) {
                 res.writeHead(400, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ error: 'Invalid IFC envelope body' }));
@@ -429,7 +450,7 @@ export class AfalHttpServer {
                 const result = this.ifcService.receiveEnvelope(
                   parsed.data as {
                     envelope: import('./ifc.js').IfcEnvelope;
-                    grant: import('./ifc.js').IfcGrant;
+                    grant?: unknown;
                   },
                 );
                 res.writeHead(200, { 'Content-Type': 'application/json' });

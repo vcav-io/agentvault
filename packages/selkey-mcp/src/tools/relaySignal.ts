@@ -64,6 +64,7 @@ import {
 import { buildExpectedContractHashes, localAllowedPurposes } from '../responder-contracts.js';
 import { appendPrivateLine, ensurePrivateDir, selkeyStateDir, writePrivateJson } from '../secure-fs.js';
 import { PinError, normalizeAgentId, resolveAgentHint } from '../pin-store.js';
+import { recordHeldReceipt } from '../held-receipts.js';
 import {
   encodeRelayToken,
   decodeRelayToken,
@@ -1077,6 +1078,40 @@ function localSessionData(handle: RelayHandle): LocalSessionData {
   };
 }
 
+/**
+ * Remember the receipt of a session this agent completed, with the
+ * counterparty from the local handle. IFC grants can only be issued for a
+ * held receipt.
+ */
+function recordCompletedReceipt(
+  handle: RelayHandle,
+  localSessionId: string | undefined,
+  output: SessionOutputResponse,
+  verified: boolean,
+): void {
+  // Only the v3 receipt the session check covered; the session id comes from
+  // this agent's own handle, never from the receipt.
+  const receipt = output.receipt as Record<string, unknown> | null | undefined;
+  if (!receipt || typeof receipt !== 'object' || typeof receipt['receipt_id'] !== 'string' || !localSessionId) {
+    return;
+  }
+  try {
+    recordHeldReceipt({
+      agent_id: handle.agentId,
+      receipt_id: receipt['receipt_id'],
+      session_id: localSessionId,
+      counterparty: handle.counterparty,
+      role: handle.role,
+      receipt_verified: verified,
+      recorded_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error(
+      `recordCompletedReceipt: failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 function completedResponse(
   handle: RelayHandle,
   output: SessionOutputResponse,
@@ -1087,11 +1122,13 @@ function completedResponse(
     return failedResponse(handle, 'RECEIPT_VERIFICATION_FAILED', receiptCheck.detail);
   }
   handle.phase = 'COMPLETED';
+  const localSessionId = handle.sessionId;
   const effectiveSessionId = getEffectiveCompletedSessionId(handle, output);
   if (effectiveSessionId) {
     handle.sessionId = effectiveSessionId;
   }
   removeSessionStateFile(handle);
+  recordCompletedReceipt(handle, localSessionId, output, receiptCheck.status === 'VERIFIED');
   return buildSuccess('COMPLETE', {
     mode: handle.role === 'INITIATOR' ? 'INITIATE' : 'RESPOND',
     state: 'COMPLETED',

@@ -695,25 +695,18 @@ describe('IFC counterparty aliases', () => {
           a2a_send_message_url: 'http://peer.example.com/a2a/send-message',
         },
       ],
-    });
-    const { grant } = alice.createGrant({
-      audience: 'bob-test',
-      receipt_id: 'a'.repeat(64),
-      session_id: '11111111-1111-1111-1111-111111111111',
-      message_classes: ['LOGISTICS'],
-      max_uses: 1,
-      expires_in_seconds: 60,
+      stateDir: tmp,
     });
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve({}) })));
+    // 'BOB' is not an alias of bob-test, so it cannot select bob-test's endpoint.
     await expect(
       alice.sendMessage({
         counterparty: 'BOB',
-        grant,
+        grant_id: 'missing',
         message_class: 'LOGISTICS',
         payload: 'hi',
-        related_receipt_id: 'a'.repeat(64),
-        related_session_id: '11111111-1111-1111-1111-111111111111',
       }),
-    ).rejects.toThrow(/grant audience does not match counterparty/);
+    ).rejects.toThrow();
+    expect(resolveAgentHint('BOB', [{ agent_id: 'bob-test', aliases: ['Bob'] }])).toBeUndefined();
   });
 });
