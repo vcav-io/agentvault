@@ -285,15 +285,40 @@ pub fn content_hash(policy: &RelayEnforcementPolicy) -> Result<String, RelayErro
 // Load
 // ============================================================================
 
+/// Parse a relay enforcement policy from its JSON value, requiring the
+/// canonical form: the value must equal the re-serialised typed policy, so
+/// every field is written explicitly (`null` for an absent optional value)
+/// and nothing is added or dropped. The policy hash is then the same
+/// whether it is computed over the file's JSON (admission registry) or over
+/// the typed policy ([`content_hash`], lockfile).
+pub fn policy_from_value(value: serde_json::Value) -> Result<RelayEnforcementPolicy, String> {
+    let policy: RelayEnforcementPolicy =
+        serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
+    let canonical = serde_json::to_value(&policy).map_err(|e| e.to_string())?;
+    if canonical != value {
+        return Err(
+            "enforcement policy is not in canonical form: every field must be \
+                    written explicitly (null for an absent optional value)"
+                .to_string(),
+        );
+    }
+    Ok(policy)
+}
+
+/// Parse a relay enforcement policy from JSON text (see [`policy_from_value`]).
+fn policy_from_str(data: &str) -> Result<RelayEnforcementPolicy, String> {
+    let value: serde_json::Value = serde_json::from_str(data).map_err(|e| e.to_string())?;
+    policy_from_value(value)
+}
+
 /// Load and parse a relay enforcement policy from a JSON file.
 pub fn load_enforcement_policy(path: &str) -> Result<RelayEnforcementPolicy, RelayError> {
     let data = std::fs::read_to_string(path).map_err(|e| {
         RelayError::EnforcementPolicy(format!("failed to read enforcement policy at {path}: {e}"))
     })?;
-    let policy: RelayEnforcementPolicy = serde_json::from_str(&data).map_err(|e| {
+    policy_from_str(&data).map_err(|e| {
         RelayError::EnforcementPolicy(format!("invalid enforcement policy JSON at {path}: {e}"))
-    })?;
-    Ok(policy)
+    })
 }
 
 // ============================================================================
@@ -447,7 +472,7 @@ fn scan_policy_ids(dir: &str) -> Result<HashSet<String>, RelayError> {
                 continue;
             }
         };
-        let policy: RelayEnforcementPolicy = match serde_json::from_str(&data) {
+        let policy: RelayEnforcementPolicy = match policy_from_str(&data) {
             Ok(p) => p,
             Err(e) => {
                 tracing::warn!(
@@ -498,7 +523,7 @@ pub fn generate_enforcement_lockfile(dir: &str) -> Result<(), RelayError> {
             }
         };
 
-        let policy: RelayEnforcementPolicy = match serde_json::from_str(&data) {
+        let policy: RelayEnforcementPolicy = match policy_from_str(&data) {
             Ok(p) => p,
             Err(e) => {
                 tracing::warn!(
@@ -1012,6 +1037,81 @@ mod tests {
             assert!(err.to_string().contains("unknown field"), "{path}: {err}");
 
             std::fs::remove_dir_all(&dir).ok();
+        }
+    }
+
+    #[test]
+    fn test_lockfile_rejects_non_canonical_policy() {
+        type Edit = fn(&mut serde_json::Value);
+        let cases: [(&str, Edit); 3] = [
+            ("omitted-top", |p| {
+                p.as_object_mut().unwrap().remove("provider_allowlist");
+            }),
+            ("omitted-nested", |p| {
+                p["rules"][0]["scope"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("skip_keys");
+            }),
+            ("omitted-null", |p| {
+                p["entropy_constraints"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("review_trigger_pct");
+            }),
+        ];
+        for (name, edit) in cases {
+            let dir = std::env::temp_dir().join(format!("vcav-enforcement-noncanonical-{name}"));
+            std::fs::create_dir_all(&dir).unwrap();
+            let mut policy = sample_policy();
+            policy.entropy_constraints = Some(EntropyConstraints {
+                budget_bits: 32,
+                classification: EnforcementClass::Advisory,
+                review_trigger_pct: Some(80),
+            });
+            let mut json = serde_json::to_value(&policy).unwrap();
+            edit(&mut json);
+            std::fs::write(dir.join("compatibility_safe_v1.json"), json.to_string()).unwrap();
+            // Pin the hash the typed policy would have.
+            let typed: RelayEnforcementPolicy = serde_json::from_value(json).unwrap();
+            let hash = content_hash(&typed).unwrap();
+            write_lockfile_entries(&dir, &[("compatibility_safe_v1", &hash)]);
+
+            let dir_str = dir.to_str().unwrap();
+            let err = validate_enforcement_lockfile(dir_str).unwrap_err();
+            assert!(
+                err.to_string().contains("not in canonical form"),
+                "{name}: {err}"
+            );
+            let entries = HashMap::from([("compatibility_safe_v1".to_string(), hash)]);
+            let err = load_all_policies(dir_str, &entries).unwrap_err();
+            assert!(
+                err.to_string().contains("not in canonical form"),
+                "{name}: {err}"
+            );
+
+            std::fs::remove_dir_all(&dir).ok();
+        }
+    }
+
+    #[test]
+    fn test_committed_policy_hash_is_the_same_on_both_paths() {
+        let dir = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/prompt_programs/relay_policies"
+        );
+        let entries = load_lockfile_entries(dir).unwrap();
+        for (policy_id, locked) in &entries {
+            let path = format!("{dir}/{policy_id}.json");
+            let raw: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            // Admission path: JCS of the file's JSON.
+            let canonical = receipt_core::canonicalize_serializable(&raw).unwrap();
+            let file_hash = hex::encode(Sha256::digest(canonical.as_bytes()));
+            // Lockfile path: the typed policy.
+            let typed_hash = content_hash(&load_enforcement_policy(&path).unwrap()).unwrap();
+            assert_eq!(file_hash, typed_hash, "{policy_id}");
+            assert_eq!(&typed_hash, locked, "{policy_id}");
         }
     }
 

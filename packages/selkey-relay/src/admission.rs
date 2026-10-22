@@ -90,17 +90,37 @@ pub fn load_admission(
     let registry_path_str = registry_path_override.unwrap_or(&config.registry.path);
     let registry_root = resolve_registry_root(config_path, registry_path_str)?;
 
-    let schemas = load_kind::<serde_json::Value>(&registry_root, "schemas", &config.schemas)?;
-    let policies =
-        load_kind::<RelayEnforcementPolicy>(&registry_root, "policies", &config.policies)?;
+    let schemas = load_kind(
+        &registry_root,
+        "schemas",
+        &config.schemas,
+        typed::<serde_json::Value>,
+    )?;
+    // Policies must be canonical, so the digest here equals the policy's
+    // content hash on the lockfile path.
+    let policies = load_kind::<RelayEnforcementPolicy>(
+        &registry_root,
+        "policies",
+        &config.policies,
+        crate::enforcement_policy::policy_from_value,
+    )?;
     for (hash, policy) in &policies {
         crate::enforcement_policy::validate_policy(policy).map_err(|e| {
             RelayError::Internal(format!("admitted policy sha256:{hash} rejected: {e}"))
         })?;
     }
-    let profiles =
-        load_kind::<crate::types::ModelProfile>(&registry_root, "profiles", &config.profiles)?;
-    let programs = load_kind::<PromptProgram>(&registry_root, "programs", &config.programs)?;
+    let profiles = load_kind(
+        &registry_root,
+        "profiles",
+        &config.profiles,
+        typed::<crate::types::ModelProfile>,
+    )?;
+    let programs = load_kind(
+        &registry_root,
+        "programs",
+        &config.programs,
+        typed::<PromptProgram>,
+    )?;
 
     let default_policy_hash = config.policies.default.as_ref().map(|d| strip_prefix(d));
     let default_profile_hash = config.profiles.default.as_ref().map(|d| strip_prefix(d));
@@ -219,18 +239,24 @@ fn compute_jcs_sha256(value: &serde_json::Value) -> Result<String, RelayError> {
 // Generic artefact loader
 // ============================================================================
 
+/// Deserialize an artefact into `T` (see [`load_kind`]).
+fn typed<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> Result<T, String> {
+    serde_json::from_value(value).map_err(|e| e.to_string())
+}
+
 /// Load all admitted artefacts for a single kind from `<registry_root>/<kind_dir>/`.
 ///
 /// For each qualified digest in `admission.allow`:
 /// 1. Read `<kind_dir>/sha256-<hex>.json`
-/// 2. Parse as JSON, then deserialize into `T`
+/// 2. Parse as JSON, then convert it into `T` with `parse`
 /// 3. Re-canonicalize and verify the digest matches
 ///
 /// Returns a map from bare hex hash to deserialized artefact.
-fn load_kind<T: serde::de::DeserializeOwned>(
+fn load_kind<T>(
     registry_root: &Path,
     kind_dir: &str,
     admission: &KindAdmission,
+    parse: fn(serde_json::Value) -> Result<T, String>,
 ) -> Result<HashMap<String, T>, RelayError> {
     let mut result = HashMap::new();
 
@@ -266,7 +292,7 @@ fn load_kind<T: serde::de::DeserializeOwned>(
         }
 
         // 4. Deserialize into the target type
-        let artefact: T = serde_json::from_value(json_value).map_err(|e| {
+        let artefact: T = parse(json_value).map_err(|e| {
             RelayError::Internal(format!(
                 "type validation failed for {}: {e}",
                 file_path.display()
@@ -324,12 +350,17 @@ mod tests {
         })
     }
 
+    /// A policy in canonical form (every field explicit).
     fn sample_policy() -> serde_json::Value {
         serde_json::json!({
             "policy_version": "1.0.0",
             "policy_id": "test-policy",
             "policy_scope": "RELAY_GLOBAL",
-            "rules": []
+            "model_profile_allowlist": [],
+            "provider_allowlist": [],
+            "max_output_tokens": null,
+            "rules": [],
+            "entropy_constraints": null
         })
     }
 
@@ -691,21 +722,72 @@ path = "{}"
     }
 
     #[test]
+    fn test_admitted_policy_must_be_canonical() {
+        let mut omitted = sample_policy();
+        omitted
+            .as_object_mut()
+            .unwrap()
+            .remove("provider_allowlist");
+        let mut nested = sample_policy();
+        nested["rules"] = serde_json::json!([{
+            "rule_id": "r", "type": "unicode_category_reject", "value": "Nd",
+            "scope": { "kind": "all_string_values" }, "classification": "GATE"
+        }]);
+        let mut absent_null = sample_policy();
+        absent_null
+            .as_object_mut()
+            .unwrap()
+            .remove("entropy_constraints");
+        for bad in [omitted, nested, absent_null] {
+            let tmp = test_tmp("non-canonical-policy");
+            let (config_path, _, policy_digest, _, _) = setup_admission(&tmp);
+            let registry = tmp.join("registry");
+            let bad_digest = write_artefact(&registry, "policies", &bad);
+            let config = fs::read_to_string(&config_path)
+                .unwrap()
+                .replace(&policy_digest, &bad_digest);
+            fs::write(&config_path, config).unwrap();
+            let err = load_admission(&config_path, None).unwrap_err().to_string();
+            assert!(err.contains("not in canonical form"), "{bad}: {err}");
+            fs::remove_dir_all(&tmp).ok();
+        }
+    }
+
+    #[test]
+    fn test_admitted_policy_digest_equals_content_hash() {
+        let tmp = test_tmp("policy-digest");
+        let (config_path, _, policy_digest, _, _) = setup_admission(&tmp);
+        let artefacts = load_admission(&config_path, None).unwrap();
+        let hash = strip_prefix(&policy_digest);
+        let policy = &artefacts.policies[&hash];
+        assert_eq!(
+            crate::enforcement_policy::content_hash(policy).unwrap(),
+            hash
+        );
+        fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
     fn test_admitted_policies_are_validated() {
+        let with = |fields: serde_json::Value| {
+            let mut policy = sample_policy();
+            for (k, v) in fields.as_object().unwrap() {
+                policy[k] = v.clone();
+            }
+            policy
+        };
         let bad_policies = [
             // Unsupported unicode category.
-            serde_json::json!({
-                "policy_version": "1", "policy_id": "bad-category", "policy_scope": "RELAY_GLOBAL",
+            with(serde_json::json!({
+                "policy_id": "bad-category",
                 "rules": [{
                     "rule_id": "r", "type": "unicode_category_reject", "value": "Lu",
-                    "scope": { "kind": "all_string_values" }, "classification": "GATE"
+                    "scope": { "kind": "all_string_values", "skip_keys": [] },
+                    "classification": "GATE"
                 }]
-            }),
+            })),
             // Unsupported scope.
-            serde_json::json!({
-                "policy_version": "1", "policy_id": "bad-scope", "policy_scope": "PER_SCHEMA",
-                "rules": []
-            }),
+            with(serde_json::json!({ "policy_id": "bad-scope", "policy_scope": "PER_SCHEMA" })),
         ];
         for bad in bad_policies {
             let tmp = test_tmp("bad-policy");
