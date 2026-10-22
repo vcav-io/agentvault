@@ -1,5 +1,4 @@
 use chrono::Utc;
-use entropy_core::calculate_schema_entropy_upper_bound;
 use receipt_core::{
     AssuranceLevel, BudgetEnforcementMode, BudgetUsageRecord, BudgetUsageV2, Claims, Commitments,
     ExecutionLane, ExecutionLaneV2, HashAlgorithm, InputCommitment, Operator, PreflightBundle,
@@ -437,44 +436,42 @@ pub async fn relay_core(
     // 3. Compute contract hash and resolve output schema
     let contract_hash = compute_contract_hash(contract)?;
 
-    // 3b. Resolve effective output schema — registry lookup or inline
-    // A schema is a "stub" (requiring registry lookup) if it has no `properties` key.
-    let is_stub_schema = contract
-        .output_schema
-        .as_object()
-        .map(|obj| !obj.contains_key("properties"))
-        .unwrap_or(true);
-    let effective_schema = if let Some(ref requested_hash) = contract.output_schema_hash {
-        if is_stub_schema {
-            // Contract references schema by hash — look up from registry
-            state
-                .schema_registry
-                .get(requested_hash)
-                .cloned()
-                .ok_or_else(|| {
-                    RelayError::ContractValidation(format!(
-                        "output_schema_hash '{requested_hash}' not found in schema registry"
-                    ))
-                })?
-        } else {
-            // Both inline schema and hash provided — verify consistency
-            tracing::warn!(
-                output_schema_hash = %requested_hash,
-                "contract provides both inline output_schema and output_schema_hash; \
-                 inline schemas are deprecated — use hash-only reference"
-            );
-            let computed_hash = compute_output_schema_hash(&contract.output_schema)?;
-            if *requested_hash != computed_hash {
-                return Err(RelayError::ContractValidation(format!(
-                    "output_schema_hash mismatch: contract says '{requested_hash}' but inline schema hashes to '{computed_hash}'"
-                )));
+    // 3b. Resolve and accept the output schema (registry schemas; strict inline
+    //     schemas in dev only) and compute its entropy upper bound. Any failure
+    //     rejects the contract before the provider is called.
+    let resolved_schema = crate::schema_acceptance::resolve_output_schema(
+        contract,
+        &state.schema_registry,
+        state.is_dev,
+    )?;
+    let effective_schema = resolved_schema.schema;
+    let output_schema_hash = resolved_schema.hash;
+    let entropy_bits = resolved_schema.entropy_bits;
+
+    // 3c. Enforce the contract entropy budget per contract mode (#151 gap 6)
+    let entropy_mode = contract
+        .entropy_enforcement
+        .unwrap_or(vault_family_types::EntropyEnforcementMode::Advisory);
+
+    if let Some(budget) = contract.entropy_budget_bits {
+        if entropy_bits > budget {
+            match entropy_mode {
+                vault_family_types::EntropyEnforcementMode::Advisory => {
+                    tracing::warn!(
+                        entropy_bits,
+                        budget,
+                        "schema entropy exceeds contract budget (advisory only)"
+                    );
+                }
+                vault_family_types::EntropyEnforcementMode::Gate
+                | vault_family_types::EntropyEnforcementMode::Strict => {
+                    return Err(RelayError::ContractValidation(format!(
+                        "schema entropy ({entropy_bits} bits) exceeds contract budget ({budget} bits) — enforcement mode: {entropy_mode:?}"
+                    )));
+                }
             }
-            contract.output_schema.clone()
         }
-    } else {
-        contract.output_schema.clone()
-    };
-    let output_schema_hash = compute_output_schema_hash(&effective_schema)?;
+    }
 
     // 4. Load and validate prompt program
     let program = match &state.admitted_programs {
@@ -590,38 +587,6 @@ pub async fn relay_core(
 
     // 8b. Enforcement rules: reject forbidden characters in string values
     validate_output_enforcement_rules(&output, &resolved_policy.rules)?;
-
-    // 9. Compute entropy and enforce per contract mode (#151 gap 6)
-    let entropy_bits = calculate_schema_entropy_upper_bound(&effective_schema)
-        .map(|v| v as u32)
-        .unwrap_or_else(|e| {
-            tracing::warn!("entropy calculation failed: {e}; recording 0");
-            0
-        });
-
-    let entropy_mode = contract
-        .entropy_enforcement
-        .unwrap_or(vault_family_types::EntropyEnforcementMode::Advisory);
-
-    if let Some(budget) = contract.entropy_budget_bits {
-        if entropy_bits > budget {
-            match entropy_mode {
-                vault_family_types::EntropyEnforcementMode::Advisory => {
-                    tracing::warn!(
-                        entropy_bits,
-                        budget,
-                        "schema entropy exceeds contract budget (advisory only)"
-                    );
-                }
-                vault_family_types::EntropyEnforcementMode::Gate
-                | vault_family_types::EntropyEnforcementMode::Strict => {
-                    return Err(RelayError::ContractValidation(format!(
-                        "schema entropy ({entropy_bits} bits) exceeds contract budget ({budget} bits) — enforcement mode: {entropy_mode:?}"
-                    )));
-                }
-            }
-        }
-    }
 
     let session_end = Utc::now();
 
@@ -1987,38 +1952,53 @@ mod tests {
 
     #[test]
     fn test_schema_resolution_inline_no_hash() {
-        // Real inline schema, no hash → uses inline, no registry involvement
+        // Strict inline schema without a hash: accepted only in dev, where it is
+        // used directly (no registry involvement).
         let schema = serde_json::json!({
             "type": "object",
             "properties": { "signal": { "type": "string", "enum": ["yes", "no"] } },
             "required": ["signal"],
             "additionalProperties": false
         });
+        let mut contract = schema_resolution_contract();
+        contract.output_schema = schema.clone();
+        let registry = crate::schema_registry::SchemaRegistry::empty();
 
-        let is_stub = schema
-            .as_object()
-            .map(|obj| !obj.contains_key("properties"))
-            .unwrap_or(true);
-        assert!(!is_stub, "schema with properties should not be a stub");
+        let resolved =
+            crate::schema_acceptance::resolve_output_schema(&contract, &registry, true).unwrap();
+        assert_eq!(resolved.schema, schema);
+        assert!(!resolved.from_registry);
 
-        // When output_schema_hash is None and schema has properties,
-        // the schema is used directly (the else branch at relay.rs ~line 397)
+        assert!(
+            crate::schema_acceptance::resolve_output_schema(&contract, &registry, false).is_err(),
+            "inline schemas outside the registry are rejected outside dev"
+        );
     }
 
     #[test]
     fn test_schema_resolution_stub_no_hash_is_error() {
-        // Stub schema {} with no hash → no way to resolve → error
-        let stub = serde_json::json!({});
-        let is_stub = stub
-            .as_object()
-            .map(|obj| !obj.contains_key("properties"))
-            .unwrap_or(true);
-        assert!(is_stub, "empty object should be detected as stub");
+        // Stub schema {} with no hash cannot be resolved: it is rejected at
+        // contract validation, in dev and outside dev.
+        let mut contract = schema_resolution_contract();
+        contract.output_schema = serde_json::json!({});
+        let registry = crate::schema_registry::SchemaRegistry::empty();
+        for allow_inline in [false, true] {
+            let err =
+                crate::schema_acceptance::resolve_output_schema(&contract, &registry, allow_inline)
+                    .unwrap_err();
+            assert!(matches!(err, RelayError::ContractValidation(_)));
+        }
+    }
 
-        // With no output_schema_hash, the stub is used directly but will fail
-        // schema validation downstream (no properties = no valid output).
-        // The relay doesn't reject stubs without hashes at the resolution stage —
-        // it fails at validate_output_schema.
+    fn schema_resolution_contract() -> Contract {
+        serde_json::from_value(serde_json::json!({
+            "purpose_code": "MEDIATION",
+            "output_schema_id": "test",
+            "output_schema": {},
+            "participants": ["alice", "bob"],
+            "prompt_template_hash": "a".repeat(64)
+        }))
+        .unwrap()
     }
 
     #[test]

@@ -131,6 +131,7 @@ if [[ "${NO_RELAY}" == "false" ]]; then
     RELAY_BIN="${REPO_ROOT}/target/release/selkey-relay"
     SELKEY_PORT=3100 \
     SELKEY_PROMPT_PROGRAM_DIR="${REPO_ROOT}/packages/selkey-relay/prompt_programs" \
+    SELKEY_SCHEMA_DIR="${REPO_ROOT}/schemas/output" \
     SELKEY_ENV=dev \
     SELKEY_INBOX_AUTH=off \
     ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" \

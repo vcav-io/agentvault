@@ -20,8 +20,10 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /build/target/release/selkey-relay /usr/local/bin/selkey-relay
 COPY packages/selkey-relay/prompt_programs /opt/selkey/prompt_programs
+COPY schemas/output /opt/selkey/schemas/output
 
 ENV SELKEY_PROMPT_PROGRAM_DIR=/opt/selkey/prompt_programs
+ENV SELKEY_SCHEMA_DIR=/opt/selkey/schemas/output
 ENV SELKEY_PORT=3100
 EXPOSE 3100
 
