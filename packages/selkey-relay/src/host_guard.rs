@@ -137,9 +137,9 @@ mod tests {
         }
         for bad in [
             "",
-            "attacker.example",
-            "attacker.example:3100",
-            "localhost.attacker.example",
+            "other.example",
+            "other.example:3100",
+            "localhost.other.example",
             "127.0.0.1.nip.io:3100",
             "127.0.0.2:3100",
             "[::2]:3100",

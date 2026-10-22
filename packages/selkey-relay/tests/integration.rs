@@ -4624,7 +4624,7 @@ async fn test_loopback_relay_rejects_unexpected_host_header() {
         (Some("localhost:3100"), StatusCode::OK),
         (Some("127.0.0.1:3100"), StatusCode::OK),
         (Some("[::1]:3100"), StatusCode::OK),
-        (Some("rebind.attacker.example:3100"), StatusCode::FORBIDDEN),
+        (Some("rebind.other.example:3100"), StatusCode::FORBIDDEN),
         (None, StatusCode::FORBIDDEN),
     ] {
         let mut builder = Request::builder().uri("/health");
@@ -4645,7 +4645,7 @@ async fn test_loopback_relay_rejects_unexpected_host_header() {
             Request::builder()
                 .method("POST")
                 .uri("/sessions")
-                .header("host", "rebind.attacker.example")
+                .header("host", "rebind.other.example")
                 .header("content-type", "application/json")
                 .header("authorization", format!("Bearer {TEST_OPERATOR_TOKEN}"))
                 .body(Body::from(
