@@ -22,6 +22,9 @@ pub const DEFAULT_MAX_INVITES: usize = 10_000;
 /// Default maximum pending invites per sending agent
 /// (`SELKEY_MAX_PENDING_INVITES_PER_AGENT`).
 pub const DEFAULT_MAX_PENDING_INVITES_PER_AGENT: usize = 100;
+/// Default maximum invites in any state held per sending agent
+/// (`SELKEY_MAX_INVITES_PER_AGENT`).
+pub const DEFAULT_MAX_INVITES_PER_AGENT: usize = 1_000;
 /// Default session creations per minute per client address
 /// (`SELKEY_SESSION_CREATE_RATE_PER_MIN`, also applies to POST /relay).
 pub const DEFAULT_SESSION_CREATE_RATE_PER_MIN: u32 = 60;
@@ -39,6 +42,7 @@ pub struct LimitConfig {
     pub max_sessions: usize,
     pub max_invites: usize,
     pub max_pending_invites_per_agent: usize,
+    pub max_invites_per_agent: usize,
     pub session_create_rate_per_min: u32,
     pub invite_create_rate_per_min: u32,
 }
@@ -51,6 +55,7 @@ impl Default for LimitConfig {
             max_sessions: DEFAULT_MAX_SESSIONS,
             max_invites: DEFAULT_MAX_INVITES,
             max_pending_invites_per_agent: DEFAULT_MAX_PENDING_INVITES_PER_AGENT,
+            max_invites_per_agent: DEFAULT_MAX_INVITES_PER_AGENT,
             session_create_rate_per_min: DEFAULT_SESSION_CREATE_RATE_PER_MIN,
             invite_create_rate_per_min: DEFAULT_INVITE_CREATE_RATE_PER_MIN,
         }
@@ -95,6 +100,11 @@ impl LimitConfig {
                 "SELKEY_MAX_PENDING_INVITES_PER_AGENT",
                 d.max_pending_invites_per_agent,
             )?,
+            max_invites_per_agent: read(
+                &lookup,
+                "SELKEY_MAX_INVITES_PER_AGENT",
+                d.max_invites_per_agent,
+            )?,
             session_create_rate_per_min: read(
                 &lookup,
                 "SELKEY_SESSION_CREATE_RATE_PER_MIN",
@@ -113,7 +123,8 @@ impl LimitConfig {
 ///
 /// The number of tracked keys is bounded by [`MAX_RATE_LIMIT_KEYS`]: when it
 /// is full, entries from past windows are dropped, and if every tracked key
-/// is still in its current window a new key is refused.
+/// is still in its current window the one whose window started earliest is
+/// evicted.
 #[derive(Clone)]
 pub struct RateLimiter {
     per_window: u32,
@@ -144,8 +155,16 @@ impl RateLimiter {
         if !map.contains_key(key) && map.len() >= self.max_keys {
             let window = self.window;
             map.retain(|_, (start, _)| now.duration_since(*start) < window);
+            // Still full: evict the key whose window started earliest, so
+            // a new caller is never refused only because others are tracked.
             if map.len() >= self.max_keys {
-                return Err(RelayError::RateLimited);
+                if let Some(oldest) = map
+                    .iter()
+                    .min_by_key(|(_, (start, _))| *start)
+                    .map(|(k, _)| k.clone())
+                {
+                    map.remove(&oldest);
+                }
             }
         }
         let entry = map.entry(key.to_string()).or_insert((now, 0));
@@ -199,8 +218,24 @@ fn client_key(parts: &axum::http::request::Parts) -> String {
     parts
         .extensions
         .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-        .map(|info| info.0.ip().to_string())
+        .map(|info| address_key(info.0.ip()))
         .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Rate-limit key for an address: the IPv4 address, or the /64 prefix of an
+/// IPv6 address (one host typically controls a whole /64). IPv4-mapped IPv6
+/// addresses use their IPv4 form.
+pub fn address_key(ip: std::net::IpAddr) -> String {
+    match ip {
+        std::net::IpAddr::V4(v4) => v4.to_string(),
+        std::net::IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => v4.to_string(),
+            None => {
+                let s = v6.segments();
+                format!("{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3])
+            }
+        },
+    }
 }
 
 /// Extractor: counts one session creation (POST /sessions, POST /relay)
@@ -258,6 +293,24 @@ mod tests {
     }
 
     #[test]
+    fn test_full_rate_limiter_admits_new_key() {
+        let limiter = RateLimiter::with_max_keys(10, Duration::from_secs(60), 2);
+        assert!(limiter.check("a").is_ok());
+        assert!(limiter.check("b").is_ok());
+        assert!(limiter.check("c").is_ok());
+        assert_eq!(limiter.tracked_keys(), 2);
+    }
+
+    #[test]
+    fn test_address_key_groups_ipv6_by_prefix() {
+        let key = |s: &str| address_key(s.parse().unwrap());
+        assert_eq!(key("2001:db8:1:2::1"), key("2001:db8:1:2:ffff::9"));
+        assert_ne!(key("2001:db8:1:2::1"), key("2001:db8:1:3::1"));
+        assert_eq!(key("192.0.2.7"), "192.0.2.7");
+        assert_eq!(key("::ffff:192.0.2.7"), "192.0.2.7");
+    }
+
+    #[test]
     fn test_rate_limiter_resets_after_window() {
         let limiter = RateLimiter::new(1, Duration::from_millis(20));
         assert!(limiter.check("a").is_ok());
@@ -272,12 +325,13 @@ mod tests {
         for key in ["a", "b", "c"] {
             assert!(limiter.check(key).is_ok());
         }
-        // Full and every key is in its window: a new key is refused.
-        assert!(matches!(limiter.check("d"), Err(RelayError::RateLimited)));
+        // Full and every key is in its window: the oldest key is evicted and
+        // the new key is admitted.
+        assert!(limiter.check("d").is_ok());
         assert_eq!(limiter.tracked_keys(), 3);
         // After the window, stale keys are dropped to make room.
         std::thread::sleep(Duration::from_millis(30));
-        assert!(limiter.check("d").is_ok());
+        assert!(limiter.check("e").is_ok());
         assert_eq!(limiter.tracked_keys(), 1);
     }
 }

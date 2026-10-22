@@ -4650,3 +4650,41 @@ async fn test_invite_accept_rechecks_stored_sender_key() {
     let (status, json) = accept(ok.invite_id).await;
     assert_eq!(status, StatusCode::OK, "{json}");
 }
+
+#[tokio::test]
+async fn test_session_rate_limit_groups_ipv6_prefix() {
+    let mut state = test_app_state("http://unused", &shared_prompt_dir());
+    state.limits = selkey_relay::limits::Limits::new(selkey_relay::limits::LimitConfig {
+        session_create_rate_per_min: 1,
+        ..Default::default()
+    });
+    let app = build_router(Arc::new(state));
+    let body = serde_json::json!({ "contract": valid_contract(), "provider": "anthropic" });
+    let send = |addr: &str| {
+        let mut request = Request::builder()
+            .method("POST")
+            .uri("/sessions")
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {TEST_OPERATOR_TOKEN}"))
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        request.extensions_mut().insert(axum::extract::ConnectInfo(
+            addr.parse::<std::net::SocketAddr>().unwrap(),
+        ));
+        app.clone().oneshot(request)
+    };
+    assert_eq!(
+        send("[2001:db8:1:2::1]:4000").await.unwrap().status(),
+        StatusCode::OK
+    );
+    // Same /64, different address: shares the allowance.
+    assert_eq!(
+        send("[2001:db8:1:2::2]:4001").await.unwrap().status(),
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    // A different /64 has its own allowance.
+    assert_eq!(
+        send("[2001:db8:1:3::1]:4002").await.unwrap().status(),
+        StatusCode::OK
+    );
+}

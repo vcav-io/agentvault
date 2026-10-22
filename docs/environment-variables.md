@@ -95,9 +95,10 @@ Unset variables use the default. A set value must be a positive integer, or the 
 | `SELKEY_MAX_ENTROPY_BITS_PER_SESSION` | `64` | Per-session cap on the output schema's entropy upper bound. Applies to every contract, whatever its `entropy_budget_bits` or `entropy_enforcement`; a contract above it is rejected at session or invite creation |
 | `SELKEY_MAX_BODY_BYTES` | `262144` | Maximum request body size (`413` above it) |
 | `SELKEY_MAX_SESSIONS` | `10000` | Sessions held in memory at once (`503` when full) |
-| `SELKEY_MAX_INVITES` | `10000` | Invites held in memory at once (`503` when full). Accepted, declined, canceled and expired invites are removed 24 hours after they reach that state |
+| `SELKEY_MAX_INVITES` | `10000` | Invites held in memory at once. Accepted, declined, canceled and expired invites are removed 1 hour after they reach that state; when the store is full, the oldest finished invite (declined, canceled or expired before accepted) is removed to make room. `503` only when every held invite is pending |
+| `SELKEY_MAX_INVITES_PER_AGENT` | `1000` | Invites in any state held per sending agent. At the limit the sender's oldest finished invite is removed; `429` if all of them are pending |
 | `SELKEY_MAX_PENDING_INVITES_PER_AGENT` | `100` | Pending invites per sending agent (`429` above it) |
-| `SELKEY_SESSION_CREATE_RATE_PER_MIN` | `60` | `POST /sessions` plus `POST /relay` per client address per minute (`429` above it). Behind a reverse proxy all clients share the proxy's address |
+| `SELKEY_SESSION_CREATE_RATE_PER_MIN` | `60` | `POST /sessions` plus `POST /relay` per client address per minute (`429` above it). IPv6 clients are grouped by /64. Behind a reverse proxy all clients share the proxy's address |
 | `SELKEY_INVITE_CREATE_RATE_PER_MIN` | `30` | `POST /invites` per sending agent per minute (`429` above it) |
 
 ### Agent registry (inbox authentication)

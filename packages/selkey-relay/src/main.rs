@@ -337,13 +337,16 @@ async fn main() {
     .with_limits(
         limit_config.max_invites,
         limit_config.max_pending_invites_per_agent,
-    );
+    )
+    .with_max_held_per_agent(limit_config.max_invites_per_agent);
 
     #[cfg(not(feature = "persistence"))]
-    let inbox_store = InboxStore::new(Duration::from_secs(invite_ttl_secs)).with_limits(
-        limit_config.max_invites,
-        limit_config.max_pending_invites_per_agent,
-    );
+    let inbox_store = InboxStore::new(Duration::from_secs(invite_ttl_secs))
+        .with_limits(
+            limit_config.max_invites,
+            limit_config.max_pending_invites_per_agent,
+        )
+        .with_max_held_per_agent(limit_config.max_invites_per_agent);
 
     // Start background inbox reaper
     inbox_store.clone().start_reaper();
