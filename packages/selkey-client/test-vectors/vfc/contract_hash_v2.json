@@ -38,6 +38,21 @@
       "name": "unknown_enforcement_mode"
     },
     {
+      "contract_json": "{\"purpose_code\":\"MEDIATION\",\"output_schema_id\":\"urn:vcav:schema:mediation.e18.v1\",\"output_schema\":{},\"participants\":[\"agent-alice\",\"agent-bob\"],\"prompt_template_hash\":\"a3f2f8f5ed1b68f2ba0c2fb0216f49f23eb2e8285e4a6575d72a4f75f2ef7e3c\",\"output_schema_hash\":\"8278e0910d750195b448797616e091ad6dd17d43db59e148f8d7b9727e1e48d0\",\"model_constraints\":[]}",
+      "expected_error": "INVALID_CONTRACT",
+      "name": "model_constraints_as_array"
+    },
+    {
+      "contract_json": "{\"purpose_code\":\"MEDIATION\",\"output_schema_id\":\"urn:vcav:schema:mediation.e18.v1\",\"output_schema\":{},\"participants\":[\"agent-alice\",\"agent-bob\"],\"prompt_template_hash\":\"a3f2f8f5ed1b68f2ba0c2fb0216f49f23eb2e8285e4a6575d72a4f75f2ef7e3c\",\"output_schema_hash\":\"8278e0910d750195b448797616e091ad6dd17d43db59e148f8d7b9727e1e48d0\",\"model_constraints\":[[\"anthropic\"],[\"claude-*\"],\"mid\"]}",
+      "expected_error": "INVALID_CONTRACT",
+      "name": "model_constraints_as_positional_array"
+    },
+    {
+      "contract_json": "{\"purpose_code\":\"MEDIATION\",\"output_schema_id\":\"urn:vcav:schema:mediation.e18.v1\",\"output_schema\":{},\"participants\":[\"agent-alice\",\"agent-bob\"],\"prompt_template_hash\":\"a3f2f8f5ed1b68f2ba0c2fb0216f49f23eb2e8285e4a6575d72a4f75f2ef7e3c\",\"output_schema_hash\":\"8278e0910d750195b448797616e091ad6dd17d43db59e148f8d7b9727e1e48d0\",\"entropy_enforcement\":{\"Gate\":null}}",
+      "expected_error": "INVALID_CONTRACT",
+      "name": "enforcement_mode_as_object"
+    },
+    {
       "contract_json": "{\"purpose_code\":null,\"output_schema_id\":\"urn:vcav:schema:mediation.e18.v1\",\"output_schema\":{},\"participants\":[\"agent-alice\",\"agent-bob\"],\"prompt_template_hash\":\"a3f2f8f5ed1b68f2ba0c2fb0216f49f23eb2e8285e4a6575d72a4f75f2ef7e3c\",\"output_schema_hash\":\"8278e0910d750195b448797616e091ad6dd17d43db59e148f8d7b9727e1e48d0\"}",
       "expected_error": "INVALID_CONTRACT",
       "name": "null_required_member"
