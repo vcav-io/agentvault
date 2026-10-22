@@ -752,7 +752,8 @@ fn hashes_from_guess(
     guessed_context: &serde_json::Value,
 ) -> Vec<String> {
     use selkey_relay::types::{CommitmentNonce, RelayInput};
-    let program = selkey_relay::prompt_program::load_prompt_program(prompt_dir, prompt_hash).unwrap();
+    let program =
+        selkey_relay::prompt_program::load_prompt_program(prompt_dir, prompt_hash).unwrap();
     let typed: selkey_relay::types::Contract =
         serde_json::from_value(contract(prompt_hash)).unwrap();
     let input = |role: &str, context: &serde_json::Value| RelayInput {
@@ -762,18 +763,26 @@ fn hashes_from_guess(
     };
     let mut out = Vec::new();
     for ctx in [own_context, guessed_context] {
-        out.push(sha256_hex(receipt_core::canonicalize_v3(ctx).unwrap().as_bytes()));
+        out.push(sha256_hex(
+            receipt_core::canonicalize_v3(ctx).unwrap().as_bytes(),
+        ));
         out.push(sha256_hex(receipt_core::canonicalize(ctx).as_bytes()));
         out.push(sha256_hex(ctx.to_string().as_bytes()));
     }
     let assembled = program
-        .assemble(&typed, &input("alice", own_context), &input("bob", guessed_context))
+        .assemble(
+            &typed,
+            &input("alice", own_context),
+            &input("bob", guessed_context),
+        )
         .unwrap();
     let prompt = serde_json::json!({
         "system": assembled.system,
         "user_message": assembled.user_message,
     });
-    out.push(sha256_hex(receipt_core::canonicalize_v3(&prompt).unwrap().as_bytes()));
+    out.push(sha256_hex(
+        receipt_core::canonicalize_v3(&prompt).unwrap().as_bytes(),
+    ));
     out.push(sha256_hex(receipt_core::canonicalize(&prompt).as_bytes()));
     out.push(sha256_hex(assembled.user_message.as_bytes()));
     out.push(sha256_hex(
@@ -898,4 +907,249 @@ async fn test_submit_rejects_context_with_repeated_member() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     std::fs::remove_dir_all(&prompt_dir).ok();
+}
+
+// ============================================================================
+// Relay-produced receipts for the TypeScript conformance suite
+// ============================================================================
+
+/// Writes `packages/selkey-client/test-vectors/relay/relay_receipts.json`:
+/// a success and a failure session output produced by this relay, with the
+/// contract and each participant's context and nonce, so the TypeScript
+/// verifier is tested against real relay output.
+///
+/// Regenerate with:
+/// `cargo test -p selkey-relay --test receipt_v3 -- --ignored write_relay_receipt_fixture`
+#[tokio::test]
+#[ignore = "writes the TypeScript fixture; run explicitly to regenerate"]
+async fn write_relay_receipt_fixture() {
+    let ctx_a = serde_json::json!({"position": "prefers a four day week", "flexibility": "high"});
+    let ctx_b = serde_json::json!({"position": "needs cover on fridays", "flexibility": "medium"});
+    let mut cases = Vec::new();
+    for (name, failing) in [("success", false), ("failure", true)] {
+        let (prompt_dir, prompt_hash) = setup_prompt_program(&format!("fixture-{name}"));
+        let mock = if failing {
+            start_failing_mock_provider().await
+        } else {
+            start_mock_provider().await
+        };
+        let state = app_state(&mock, &prompt_dir);
+        let output = run_session(
+            &state,
+            &prompt_hash,
+            ctx_a.clone(),
+            NONCE_A,
+            ctx_b.clone(),
+            NONCE_B,
+        )
+        .await;
+        verified_receipt(&output["receipt"]);
+        cases.push(serde_json::json!({
+            "name": name,
+            "contract_json": contract(&prompt_hash).to_string(),
+            "output_response_json": output.to_string(),
+            "participants_private": [
+                {"participant_id": "alice", "context_json": ctx_a.to_string(), "nonce_hex": NONCE_A},
+                {"participant_id": "bob", "context_json": ctx_b.to_string(), "nonce_hex": NONCE_B},
+            ],
+        }));
+        std::fs::remove_dir_all(&prompt_dir).ok();
+    }
+    let fixture = serde_json::json!({
+        "description": "Session outputs produced by selkey-relay (tests/receipt_v3.rs, write_relay_receipt_fixture). The TypeScript verifier must accept each receipt against relay_verifying_key_hex and open each participant's commitment with its nonce.",
+        "relay_verifying_key_hex": hex::encode(signing_key().verifying_key().as_bytes()),
+        "cases": cases,
+    });
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../selkey-client/test-vectors/relay/relay_receipts.json");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&fixture).unwrap() + "\n",
+    )
+    .unwrap();
+}
+
+// ============================================================================
+// Receipt field privacy scan over relay-produced receipts
+// (docs/receipt-v3.md section 8 in vault-family-core)
+// ============================================================================
+
+fn privacy_contexts() -> (serde_json::Value, serde_json::Value) {
+    (
+        serde_json::json!({"role": "initiator", "salary_band": "B"}),
+        serde_json::json!({"role": "responder", "salary_band": "C"}),
+    )
+}
+
+/// Output the rejecting provider returns: it fails the contract schema, so
+/// it is never released.
+fn rejected_model_output() -> serde_json::Value {
+    serde_json::json!({"decision": "MAYBE", "detail": "salary_band C"})
+}
+
+async fn start_rejecting_mock_provider() -> String {
+    use axum::routing::post;
+    let app = axum::Router::new().route(
+        "/v1/messages",
+        post(|| async {
+            axum::Json(serde_json::json!({
+                "id": "msg_mock",
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": rejected_model_output().to_string()}],
+                "model": "test-model",
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 10, "output_tokens": 5}
+            }))
+        }),
+    );
+    serve(app).await
+}
+
+/// Hashes of input-derived values (and of the unreleased model output) that
+/// anyone who guesses the inputs could recompute.
+fn input_derived_hashes(prompt_dir: &str, prompt_hash: &str) -> Vec<(String, String)> {
+    use selkey_relay::types::{CommitmentNonce, RelayInput};
+    let (a, b) = privacy_contexts();
+    let ja = receipt_core::canonicalize_v3(&a).unwrap();
+    let jb = receipt_core::canonicalize_v3(&b).unwrap();
+    let program =
+        selkey_relay::prompt_program::load_prompt_program(prompt_dir, prompt_hash).unwrap();
+    let typed: selkey_relay::types::Contract =
+        serde_json::from_value(contract(prompt_hash)).unwrap();
+    let input = |role: &str, context: &serde_json::Value| RelayInput {
+        role: role.to_string(),
+        context: context.clone(),
+        commitment_nonce: CommitmentNonce::parse(NONCE_C).unwrap(),
+    };
+    let assembled = program
+        .assemble(&typed, &input("alice", &a), &input("bob", &b))
+        .unwrap();
+    let prompt = serde_json::json!({
+        "system": assembled.system,
+        "user_message": assembled.user_message,
+    });
+    let rejected = rejected_model_output();
+    let preimages: Vec<(&str, Vec<u8>)> = vec![
+        ("context_a", ja.clone().into_bytes()),
+        ("context_b", jb.clone().into_bytes()),
+        (
+            "context_a_legacy",
+            receipt_core::canonicalize(&a).into_bytes(),
+        ),
+        (
+            "context_b_legacy",
+            receipt_core::canonicalize(&b).into_bytes(),
+        ),
+        ("contexts_concat", format!("{ja}{jb}").into_bytes()),
+        (
+            "contexts_array",
+            receipt_core::canonicalize_v3(&serde_json::json!([a, b]))
+                .unwrap()
+                .into_bytes(),
+        ),
+        (
+            "assembled_prompt",
+            receipt_core::canonicalize_v3(&prompt).unwrap().into_bytes(),
+        ),
+        (
+            "assembled_prompt_legacy",
+            receipt_core::canonicalize(&prompt).into_bytes(),
+        ),
+        ("user_message", assembled.user_message.clone().into_bytes()),
+        (
+            "system_and_user",
+            format!("{}{}", assembled.system, assembled.user_message).into_bytes(),
+        ),
+        (
+            "rejected_output",
+            receipt_core::canonicalize_v3(&rejected)
+                .unwrap()
+                .into_bytes(),
+        ),
+        (
+            "rejected_output_legacy",
+            receipt_core::canonicalize(&rejected).into_bytes(),
+        ),
+        (
+            "rejected_output_compact",
+            serde_json::to_vec(&rejected).unwrap(),
+        ),
+    ];
+    preimages
+        .into_iter()
+        .map(|(name, bytes)| (name.to_string(), sha256_hex(&bytes)))
+        .collect()
+}
+
+fn lowercase_strings(value: &serde_json::Value, out: &mut Vec<String>) {
+    match value {
+        serde_json::Value::String(s) => out.push(s.to_lowercase()),
+        serde_json::Value::Array(items) => items.iter().for_each(|v| lowercase_strings(v, out)),
+        serde_json::Value::Object(map) => map.iter().for_each(|(k, v)| {
+            out.push(k.to_lowercase());
+            lowercase_strings(v, out);
+        }),
+        _ => {}
+    }
+}
+
+/// Run a relay session with the privacy contexts; returns the session output
+/// and the candidate hashes.
+async fn privacy_session(kind: &str) -> (serde_json::Value, Vec<(String, String)>) {
+    let (prompt_dir, prompt_hash) = setup_prompt_program(&format!("privacy-scan-{kind}"));
+    let mock = match kind {
+        "success" => start_mock_provider().await,
+        "rejected" => start_rejecting_mock_provider().await,
+        _ => start_failing_mock_provider().await,
+    };
+    let state = app_state(&mock, &prompt_dir);
+    let (a, b) = privacy_contexts();
+    let output = run_session(&state, &prompt_hash, a, NONCE_A, b, NONCE_B).await;
+    let candidates = input_derived_hashes(&prompt_dir, &prompt_hash);
+    std::fs::remove_dir_all(&prompt_dir).ok();
+    (output, candidates)
+}
+
+#[tokio::test]
+async fn test_no_relay_receipt_field_is_an_unsalted_hash_of_input_derived_values() {
+    for (kind, state, status) in [
+        ("success", "COMPLETED", receipt_core::SessionStatus::Success),
+        ("rejected", "ABORTED", receipt_core::SessionStatus::Rejected),
+        (
+            "provider-error",
+            "ABORTED",
+            receipt_core::SessionStatus::Error,
+        ),
+    ] {
+        let (output, candidates) = privacy_session(kind).await;
+        assert_eq!(output["state"], state, "{kind}: {output}");
+        let receipt = verified_receipt(&output["receipt"]);
+        assert_eq!(receipt.claims.status, Some(status), "{kind}");
+        let mut values = Vec::new();
+        lowercase_strings(&output["receipt"], &mut values);
+        for (name, hash) in &candidates {
+            assert!(
+                !values.iter().any(|v| v.contains(hash.as_str())),
+                "{kind} receipt contains the SHA-256 of {name}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_privacy_scan_detects_a_planted_input_derived_hash() {
+    // Guards the scan above against passing vacuously.
+    let (output, candidates) = privacy_session("planted").await;
+    for (name, hash) in &candidates {
+        let mut receipt = output["receipt"].clone();
+        receipt["commitments"]["extra"] = serde_json::json!(hash);
+        let mut values = Vec::new();
+        lowercase_strings(&receipt, &mut values);
+        assert!(
+            values.iter().any(|v| v.contains(hash.as_str())),
+            "planted {name} not detected"
+        );
+    }
 }

@@ -99,7 +99,6 @@ pub fn compute_input_commitments(
     .collect()
 }
 
-
 /// Validate JSON output against the contract's output schema.
 fn validate_output_schema(
     output: &serde_json::Value,
@@ -1069,10 +1068,7 @@ mod tests {
         for (reason, expected_status, expected_signal) in cases {
             let (status, signal) = abort_reason_to_receipt_status(reason);
             assert_eq!(status, expected_status, "wrong status for {reason:?}");
-            assert_eq!(
-                signal, expected_signal,
-                "wrong signal_class for {reason:?}"
-            );
+            assert_eq!(signal, expected_signal, "wrong signal_class for {reason:?}");
         }
     }
 
