@@ -63,6 +63,7 @@ import { AnthropicProvider } from './providers/anthropic.js';
 import { OpenAIProvider } from './providers/openai.js';
 import { GeminiProvider } from './providers/gemini.js';
 import type { LLMProvider } from './providers/types.js';
+import { boundedFetch } from 'selkey/fetch';
 
 // ── Constants ────────────────────────────────────────────────────────────
 
@@ -73,6 +74,8 @@ const DEMO_DIR = path.resolve(__dirname, '..');
 const PORT = parseInt(process.env['DEMO_PORT'] ?? '3200', 10);
 const BIND_ADDRESS = process.env['DEMO_BIND_ADDRESS'] ?? '127.0.0.1';
 const RELAY_URL = process.env['SELKEY_RELAY_URL'] ?? 'http://localhost:3100';
+/** Largest relay /health body the demo reads (redirects are not followed). */
+const RELAY_HEALTH_MAX_BYTES = 64 * 1024;
 const RUNS_DIR = process.env['DEMO_RUNS_DIR'] ?? path.join(DEMO_DIR, 'runs');
 const BOB_AFAL_PORT = parseInt(process.env['BOB_AFAL_PORT'] ?? '3201', 10);
 const ALICE_AFAL_PORT = parseInt(process.env['ALICE_AFAL_PORT'] ?? '3202', 10);
@@ -488,7 +491,7 @@ app.post('/api/start', async (req, res) => {
       relayHealth = SMOKE_RELAY_HEALTH;
     } else {
       try {
-        const healthRes = await fetch(`${RELAY_URL}/health`, { signal: AbortSignal.timeout(3000) });
+        const healthRes = await boundedFetch(`${RELAY_URL}/health`, {}, { timeoutMs: 3000, maxBytes: RELAY_HEALTH_MAX_BYTES });
         if (healthRes.ok) {
           relayHealth = await healthRes.json() as Record<string, unknown>;
         } else {
@@ -713,7 +716,10 @@ function applyRelayPin(health: Record<string, unknown> | null): DemoRelayPin {
 async function currentRelayPin(): Promise<DemoRelayPin> {
   if (relayPin) return relayPin;
   if (CONFIGURED_RELAY_KEY) return applyRelayPin(null);
-  const resp = await fetch(`${RELAY_URL.replace(/\/$/, '')}/health`, { signal: AbortSignal.timeout(3000) });
+  const resp = await boundedFetch(`${RELAY_URL.replace(/\/$/, '')}/health`, {}, {
+    timeoutMs: 3000,
+    maxBytes: RELAY_HEALTH_MAX_BYTES,
+  });
   if (!resp.ok) throw new Error(`Relay /health returned ${resp.status}`);
   return applyRelayPin((await resp.json()) as Record<string, unknown>);
 }

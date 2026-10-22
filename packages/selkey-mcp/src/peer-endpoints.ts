@@ -79,8 +79,10 @@ export function assertPeerEndpointAllowed(endpoint: string, policy: PeerEndpoint
     return;
   }
 
+  // The origin comes from the peer: keep it short in the message.
+  const shown = target.origin.length > 200 ? `${target.origin.slice(0, 200)}...` : target.origin;
   throw new PeerEndpointError(
-    `Peer endpoint origin ${target.origin} differs from the configured peer origin ` +
+    `Peer endpoint origin ${shown} differs from the configured peer origin ` +
       `${anchor?.origin ?? '(none)'}; list it in ${PEER_ENDPOINT_ORIGINS_ENV} to allow it`,
   );
 }

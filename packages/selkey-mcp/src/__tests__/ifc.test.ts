@@ -9,6 +9,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { ed25519 } from '@noble/curves/ed25519';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
 
@@ -437,6 +439,41 @@ describe('recipient store hardening', () => {
       expect(delivery.error!.length).toBeLessThan(200);
     } finally {
       vi.unstubAllGlobals();
+    }
+  });
+
+  it('does not follow a redirect when delivering a grant', async () => {
+    bobHoldsReceipt();
+    let landingHits = 0;
+    const server = createServer((req, res) => {
+      if (req.url === '/landing') {
+        landingHits++;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('{}');
+        return;
+      }
+      res.writeHead(307, { Location: '/landing' });
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      const bob = new IfcService({
+        agentId: 'bob-test',
+        seedHex: BOB_SEED,
+        verifyingKeyHex: BOB_PUB,
+        knownAgents: [
+          { agent_id: 'alice-test', aliases: [], public_key_hex: ALICE_PUB, a2a_send_message_url: `http://127.0.0.1:${port}/a2a` },
+        ],
+        stateDir: bobDir,
+      });
+      const delivery = await bob.deliverGrant(issueToAlice(bob));
+      expect(delivery.delivered).toBe(false);
+      expect(delivery.error).toMatch(/redirect/i);
+      expect(landingHits).toBe(0);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
 });
