@@ -17,7 +17,7 @@ Complete reference for all environment variables used by the Selkey relay and MC
 | `SELKEY_PORT` | `3100` | Port the relay listens on |
 | `SELKEY_ALLOW_UNAUTHENTICATED` | unset | Set to `1` to let a non-dev relay start on a non-loopback address without `SELKEY_OPERATOR_TOKEN` (only when access is controlled elsewhere) |
 | `SELKEY_BIND_ADDR` | `127.0.0.1` | IP address the relay listens on. Loopback by default; set `0.0.0.0` (or a specific interface) to accept remote connections, e.g. inside a container |
-| `SELKEY_OPERATOR_TOKEN` | — | Operator bearer token. When set, `POST /relay` and `POST /sessions` require `Authorization: Bearer <token>`. Must be at least 32 printable characters and not repetitive (e.g. `openssl rand -hex 32`); the relay refuses to start with a weaker token |
+| `SELKEY_OPERATOR_TOKEN` | — | Operator bearer token. When set, `POST /relay` and `POST /sessions` require `Authorization: Bearer <token>`. Use at least 32 characters from a random generator (e.g. `openssl rand -hex 32`). The relay refuses to start with a token that is shorter, has few distinct characters or repeats a shorter sequence; these checks catch obvious mistakes, not weak generators |
 | `SELKEY_MODEL_ID` | `claude-sonnet-4-6` | Anthropic model ID |
 | `SELKEY_SIGNING_KEY_HEX` | required outside dev | 64-char hex Ed25519 signing key for receipt signing (e.g. `openssl rand -hex 32`). Outside `SELKEY_ENV=dev` the relay refuses to start without it. In dev, if unset, a random key is generated on each start and receipts won't verify across restarts. The key id logged at startup and reported by `/health` is `ed25519:` + hex(SHA-256(public key)) |
 | `SELKEY_PROMPT_PROGRAM_DIR` | `prompt_programs` | Directory containing prompt programs, model profile lockfile, and enforcement policy lockfile |
@@ -90,7 +90,7 @@ cargo build --features persistence
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SELKEY_AGENT_REGISTRY_PATH` | — | Path to `agents.json`: `{"agents": [{"agent_id", "inbox_token", "public_key_hex"?}]}`. Required unless `SELKEY_INBOX_AUTH=off` with `SELKEY_ENV=dev`. Each `inbox_token` must be unique, at least 32 printable characters and not repetitive (e.g. `openssl rand -hex 32`); the relay refuses to start if any token is weaker. `public_key_hex` is the key attached to that agent's invites |
+| `SELKEY_AGENT_REGISTRY_PATH` | — | Path to `agents.json`: `{"agents": [{"agent_id", "inbox_token", "public_key_hex"?}]}`. Required unless `SELKEY_INBOX_AUTH=off` with `SELKEY_ENV=dev`. Each `inbox_token` must be unique and should be at least 32 characters from a random generator (e.g. `openssl rand -hex 32`); the relay refuses to start if any token is shorter, has few distinct characters or repeats a shorter sequence. `public_key_hex` is the key attached to that agent's invites |
 | `SELKEY_INBOX_AUTH` | — | Set to `off` (with `SELKEY_ENV=dev`) to run without an agent registry; inbox endpoints then reject every request |
 
 ## MCP Server (`selkey-mcp`)

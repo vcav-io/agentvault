@@ -1708,8 +1708,8 @@ async fn test_submit_without_contract_hash_still_works() {
 // Inbox endpoint integration tests
 // ============================================================================
 
-const ALICE_INBOX_TOKEN: &str = "6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f";
-const BOB_INBOX_TOKEN: &str = "c4e8b2a6f0d93715e2b8a4c6d0f19e37c4e8b2a6f0d93715e2b8a4c6d0f19e37";
+const ALICE_INBOX_TOKEN: &str = "6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f91c5e07b3d8a26f4e1b0c79d5a3f8e62";
+const BOB_INBOX_TOKEN: &str = "c4e8b2a6f0d93715e2b8a4c6d0f19e375a0d1c8e93b7f264a1e0d8c5b39f7a26";
 
 /// Build an AppState with agent registry populated for inbox testing.
 fn inbox_test_app_state() -> AppState {
@@ -1785,7 +1785,7 @@ async fn test_inbox_create_invite_happy_path() {
                 .header("content-type", "application/json")
                 .header(
                     "authorization",
-                    "Bearer 6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f",
+                    "Bearer 6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f91c5e07b3d8a26f4e1b0c79d5a3f8e62",
                 )
                 .body(Body::from(inbox_create_body()))
                 .unwrap(),
@@ -1858,7 +1858,7 @@ async fn test_inbox_invite_not_found_returns_401_constant_shape() {
                 .uri("/invites/inv_nonexistent")
                 .header(
                     "authorization",
-                    "Bearer 6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f",
+                    "Bearer 6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f91c5e07b3d8a26f4e1b0c79d5a3f8e62",
                 )
                 .body(Body::empty())
                 .unwrap(),
@@ -1890,7 +1890,7 @@ async fn test_inbox_list_inbox_returns_ok() {
                 .uri("/inbox")
                 .header(
                     "authorization",
-                    "Bearer c4e8b2a6f0d93715e2b8a4c6d0f19e37c4e8b2a6f0d93715e2b8a4c6d0f19e37",
+                    "Bearer c4e8b2a6f0d93715e2b8a4c6d0f19e375a0d1c8e93b7f264a1e0d8c5b39f7a26",
                 )
                 .body(Body::empty())
                 .unwrap(),
@@ -1958,7 +1958,7 @@ async fn test_inbox_cross_agent_isolation() {
                 .uri("/inbox")
                 .header(
                     "authorization",
-                    "Bearer 6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f",
+                    "Bearer 6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f91c5e07b3d8a26f4e1b0c79d5a3f8e62",
                 )
                 .body(Body::empty())
                 .unwrap(),
@@ -2024,7 +2024,7 @@ async fn test_inbox_accept_creates_session() {
                 .header("content-type", "application/json")
                 .header(
                     "authorization",
-                    "Bearer c4e8b2a6f0d93715e2b8a4c6d0f19e37c4e8b2a6f0d93715e2b8a4c6d0f19e37",
+                    "Bearer c4e8b2a6f0d93715e2b8a4c6d0f19e375a0d1c8e93b7f264a1e0d8c5b39f7a26",
                 )
                 .body(Body::from("{}"))
                 .unwrap(),
@@ -2095,7 +2095,7 @@ async fn test_inbox_decline_returns_ok() {
                 .header("content-type", "application/json")
                 .header(
                     "authorization",
-                    "Bearer c4e8b2a6f0d93715e2b8a4c6d0f19e37c4e8b2a6f0d93715e2b8a4c6d0f19e37",
+                    "Bearer c4e8b2a6f0d93715e2b8a4c6d0f19e375a0d1c8e93b7f264a1e0d8c5b39f7a26",
                 )
                 .body(Body::from(r#"{"reason_code": "BUSY"}"#))
                 .unwrap(),
@@ -2126,7 +2126,7 @@ async fn test_inbox_cancel_returns_ok() {
                 .uri(format!("/invites/{invite_id}/cancel"))
                 .header(
                     "authorization",
-                    "Bearer 6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f",
+                    "Bearer 6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f91c5e07b3d8a26f4e1b0c79d5a3f8e62",
                 )
                 .body(Body::empty())
                 .unwrap(),
@@ -2166,7 +2166,7 @@ async fn test_inbox_accept_canceled_returns_409() {
                 .header("content-type", "application/json")
                 .header(
                     "authorization",
-                    "Bearer c4e8b2a6f0d93715e2b8a4c6d0f19e37c4e8b2a6f0d93715e2b8a4c6d0f19e37",
+                    "Bearer c4e8b2a6f0d93715e2b8a4c6d0f19e375a0d1c8e93b7f264a1e0d8c5b39f7a26",
                 )
                 .body(Body::from("{}"))
                 .unwrap(),
@@ -2198,7 +2198,7 @@ async fn test_inbox_cancel_accepted_returns_409() {
                 .uri(format!("/invites/{invite_id}/cancel"))
                 .header(
                     "authorization",
-                    "Bearer 6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f",
+                    "Bearer 6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f91c5e07b3d8a26f4e1b0c79d5a3f8e62",
                 )
                 .body(Body::empty())
                 .unwrap(),
@@ -3298,7 +3298,7 @@ async fn test_invite_detail_includes_contract_json() {
                 .header("content-type", "application/json")
                 .header(
                     "authorization",
-                    "Bearer 6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f",
+                    "Bearer 6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f91c5e07b3d8a26f4e1b0c79d5a3f8e62",
                 )
                 .body(Body::from(inbox_create_body()))
                 .unwrap(),
@@ -3324,7 +3324,7 @@ async fn test_invite_detail_includes_contract_json() {
                 .uri(format!("/invites/{invite_id}"))
                 .header(
                     "authorization",
-                    "Bearer c4e8b2a6f0d93715e2b8a4c6d0f19e37c4e8b2a6f0d93715e2b8a4c6d0f19e37",
+                    "Bearer c4e8b2a6f0d93715e2b8a4c6d0f19e375a0d1c8e93b7f264a1e0d8c5b39f7a26",
                 )
                 .body(Body::empty())
                 .unwrap(),
@@ -3368,7 +3368,7 @@ async fn test_invite_detail_contract_json_hash_matches() {
                 .header("content-type", "application/json")
                 .header(
                     "authorization",
-                    "Bearer 6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f",
+                    "Bearer 6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f91c5e07b3d8a26f4e1b0c79d5a3f8e62",
                 )
                 .body(Body::from(inbox_create_body()))
                 .unwrap(),
@@ -3392,7 +3392,7 @@ async fn test_invite_detail_contract_json_hash_matches() {
                 .uri(format!("/invites/{invite_id}"))
                 .header(
                     "authorization",
-                    "Bearer c4e8b2a6f0d93715e2b8a4c6d0f19e37c4e8b2a6f0d93715e2b8a4c6d0f19e37",
+                    "Bearer c4e8b2a6f0d93715e2b8a4c6d0f19e375a0d1c8e93b7f264a1e0d8c5b39f7a26",
                 )
                 .body(Body::empty())
                 .unwrap(),
@@ -4239,5 +4239,48 @@ async fn test_invite_sender_key_cannot_differ_from_registry_key() {
 
     // The registered key itself is accepted.
     let (status, json) = create_invite_with_sender_key(&app, Some(&registered)).await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+}
+
+#[tokio::test]
+async fn test_invite_accept_rechecks_stored_sender_key() {
+    let state = Arc::new(inbox_test_app_state());
+    // An invite stored without the create-time key check (as by an earlier
+    // relay version with persistence), carrying a key the registry does not hold.
+    let request: selkey_relay::inbox_types::CreateInviteRequest =
+        serde_json::from_str(&inbox_create_body()).unwrap();
+    let stored = state
+        .inbox_store
+        .create_invite("alice", &request, Some("bb".repeat(32)))
+        .await
+        .unwrap();
+    let accept = |id: String| {
+        let app = build_router(state.clone());
+        async move {
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(format!("/invites/{id}/accept"))
+                        .header("content-type", "application/json")
+                        .header("authorization", format!("Bearer {BOB_INBOX_TOKEN}"))
+                        .body(Body::from("{}"))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            status_and_json(response).await
+        }
+    };
+    let (status, json) = accept(stored.invite_id.clone()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{json}");
+
+    // The registered key passes.
+    let ok = state
+        .inbox_store
+        .create_invite("alice", &request, Some("aa".repeat(32)))
+        .await
+        .unwrap();
+    let (status, json) = accept(ok.invite_id).await;
     assert_eq!(status, StatusCode::OK, "{json}");
 }

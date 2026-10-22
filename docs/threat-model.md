@@ -379,8 +379,9 @@ the hashes match. Retroactive substitution of artefacts is detectable.
 
 Operator, session and inbox bearer tokens are compared in constant time.
 Authentication runs before a request body is read or parsed. Operator-configured
-tokens (`SELKEY_OPERATOR_TOKEN`, agent registry `inbox_token`s) must be at least 32
-characters and not repetitive, or the relay refuses to start. Outside development
+tokens (`SELKEY_OPERATOR_TOKEN`, agent registry `inbox_token`s) should come from a
+random generator; the relay refuses to start with tokens that are shorter than 32
+characters, have few distinct characters or repeat a shorter sequence. Outside development
 mode the relay refuses to start without a configured signing key, so receipts are
 always signed by a stable key that verifiers can pin. An invite carries the sender
 key from the agent registry, never a key supplied by the sender in the request.
