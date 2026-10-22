@@ -54,6 +54,10 @@ Verifies a receipt's Ed25519 signature against the relay verifying key. Receipt 
 
 Without `SELKEY_AFAL_SEED_HEX`, only `CREATE` and `JOIN` (legacy token exchange) modes are available.
 
+## IFC follow-up messages
+
+Post-session IFC messages use recipient-issued grants (`VCAV-IFC-GRANT-V2`). The agent that will *receive* follow-up calls `selkey.create_ifc_grant` for a receipt it holds from a session with the audience; the grant is delivered to the audience, which sends with `selkey.send_ifc_message` and the `grant_id`. The recipient enforces expiry, use count, `message_id` de-duplication and revocation from its own store (`.selkey/ifc-grants.json`) and appends every decision to `.selkey/ifc-audit.jsonl`. `selkey.revoke_ifc_grant` and `selkey.list_ifc_grants` manage grants. V1 grants are rejected.
+
 ## Agent identity pins
 
 Peers are identified by pinned Ed25519 keys stored in `$SELKEY_WORKDIR/.selkey/pins.json` (`0700` directory, `0600` file, refused if group- or world-writable). Every PROPOSE, ADMIT, DENY, COMMIT, `/afal/negotiate` request and IFC signature is verified against `pins[agent_id]`; keys in agent cards, descriptors or messages are only compared with the pin. By default a peer must be pinned in advance (`SELKEY_AFAL_TRUSTED_AGENTS`, `SELKEY_KNOWN_AGENTS` with `public_key_hex`, or `selkey-mcp pins add`). With `SELKEY_AGENT_PIN_MODE=tofu`, first contact returns `NEEDS_CONFIRMATION` with the key fingerprint, and a person confirms it in a terminal with `selkey-mcp pins confirm <agent_id>`; no MCP tool can confirm a pin. A key that differs from the pin fails with both fingerprints until the operator re-pins it or applies a rotation statement signed by the pinned key (`selkey-mcp pins rotate`).

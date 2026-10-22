@@ -13,6 +13,7 @@ import { handleRelaySignal, _setDiscoverPollConfigForTesting, _setRelayPollConfi
 import type { RelaySignalOutput, SessionStateEntry } from '../tools/relaySignal.js';
 import { _resetHandlesForTesting } from '../tools/relayHandles.js';
 import type { AfalTransport, AfalInviteMessage } from '../afal-transport.js';
+import { findHeldReceipt } from '../held-receipts.js';
 
 // Mock selkey to avoid real HTTP calls
 const { mockGetStatus, mockGetOutput } = vi.hoisted(() => ({
@@ -257,6 +258,22 @@ describe('session state files', () => {
     expect(readSessionFile(handleId)).toBeNull();
     index = readSessionIndex();
     expect(index.length).toBe(0);
+  });
+
+  it('records the receipt of a completed session with the local counterparty', async () => {
+    const transport = createMockAfalTransport();
+    const { resumeToken } = await initiateSession(transport);
+    mockGetStatus.mockResolvedValueOnce({ state: 'COMPLETED' });
+    mockGetOutput.mockResolvedValueOnce({
+      state: 'COMPLETED',
+      output: {},
+      receipt: { receipt_id: 'c0ffee00-0000-4000-8000-000000000009', session_id: 'b'.repeat(64) },
+    });
+
+    await handleRelaySignal({ resume_token: resumeToken }, transport);
+
+    const held = findHeldReceipt('alice-demo', 'c0ffee00-0000-4000-8000-000000000009', path.join(tmpDir, '.selkey'));
+    expect(held).toMatchObject({ counterparty: 'bob-demo', session_id: 'b'.repeat(64), role: 'INITIATOR' });
   });
 
   it('removes per-session file on FAILED response', async () => {

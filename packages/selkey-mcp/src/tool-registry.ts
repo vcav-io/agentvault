@@ -15,13 +15,22 @@ import type { NormalizedKnownAgent, RelaySignalArgs } from './tools/relaySignal.
 import type { InboxService, GetIdentityOutput } from './tools/getIdentity.js';
 import type { VerifyReceiptArgs, VerifyReceiptOutput } from './tools/verify-receipt.js';
 import type { ToolResponse } from './envelope.js';
-import { IfcService, type CreateIfcGrantArgs, type IfcKnownAgent, type ReadIfcMessagesArgs, type SendIfcMessageArgs } from './ifc.js';
+import {
+  IfcService,
+  type CreateIfcGrantArgs,
+  type IfcKnownAgent,
+  type ReadIfcMessagesArgs,
+  type RevokeIfcGrantArgs,
+  type SendIfcMessageArgs,
+} from './ifc.js';
+import { DirectAfalTransport } from './direct-afal-transport.js';
 import { handleGetIdentity } from './tools/getIdentity.js';
 import { handleRelaySignal } from './tools/relaySignal.js';
 import { handleVerifyReceipt } from './tools/verify-receipt.js';
 import { handleCreateIfcGrant } from './tools/create-ifc-grant.js';
 import { handleSendIfcMessage } from './tools/send-ifc-message.js';
 import { handleReadIfcMessages } from './tools/read-ifc-messages.js';
+import { handleListIfcGrants, handleRevokeIfcGrant } from './tools/manage-ifc-grants.js';
 import { IDENTITY_TOOLS, RELAY_TOOLS, VERIFY_TOOLS, IFC_TOOLS } from './toolDefs.js';
 
 // ── Configuration ────────────────────────────────────────────────────────
@@ -67,6 +76,8 @@ export interface ToolRegistry {
   handleCreateIfcGrant(args: CreateIfcGrantArgs): Promise<ToolResponse<unknown>>;
   handleSendIfcMessage(args: SendIfcMessageArgs): Promise<ToolResponse<unknown>>;
   handleReadIfcMessages(args: ReadIfcMessagesArgs): Promise<ToolResponse<unknown>>;
+  handleRevokeIfcGrant(args: RevokeIfcGrantArgs): Promise<ToolResponse<unknown>>;
+  handleListIfcGrants(): Promise<ToolResponse<unknown>>;
   dispatch(toolName: string, args: Record<string, unknown>): Promise<ToolResponse<unknown>>;
   toolDefs: ToolDefinition[];
 }
@@ -90,6 +101,7 @@ export function createToolRegistry(config: ToolRegistryConfig): ToolRegistry {
           seedHex: config.ifcSeedHex,
           knownAgents: knownAgents as IfcKnownAgent[],
           verifyingKeyHex: bytesToHex(ed25519.getPublicKey(hexToBytes(config.ifcSeedHex))),
+          ...(transport instanceof DirectAfalTransport ? { pins: transport.pinStore } : {}),
         })
       : undefined);
   ifcService?.setKnownAgents(knownAgents as IfcKnownAgent[]);
@@ -119,6 +131,14 @@ export function createToolRegistry(config: ToolRegistryConfig): ToolRegistry {
       return handleReadIfcMessages(args, ifcService);
     },
 
+    handleRevokeIfcGrant(args: RevokeIfcGrantArgs) {
+      return handleRevokeIfcGrant(args, ifcService);
+    },
+
+    handleListIfcGrants() {
+      return handleListIfcGrants(ifcService);
+    },
+
     dispatch(toolName: string, args: Record<string, unknown>) {
       switch (toolName) {
         case 'selkey.get_identity':
@@ -133,9 +153,13 @@ export function createToolRegistry(config: ToolRegistryConfig): ToolRegistry {
           return registry.handleSendIfcMessage(args as unknown as SendIfcMessageArgs);
         case 'selkey.read_ifc_messages':
           return registry.handleReadIfcMessages(args as ReadIfcMessagesArgs);
+        case 'selkey.revoke_ifc_grant':
+          return registry.handleRevokeIfcGrant(args as unknown as RevokeIfcGrantArgs);
+        case 'selkey.list_ifc_grants':
+          return registry.handleListIfcGrants();
         default:
           throw new Error(
-            `Unknown tool: ${toolName}. Available: selkey.get_identity, selkey.relay_signal, selkey.verify_receipt, selkey.create_ifc_grant, selkey.send_ifc_message, selkey.read_ifc_messages`,
+            `Unknown tool: ${toolName}. Available: selkey.get_identity, selkey.relay_signal, selkey.verify_receipt, selkey.create_ifc_grant, selkey.send_ifc_message, selkey.read_ifc_messages, selkey.revoke_ifc_grant, selkey.list_ifc_grants`,
           );
       }
     },
@@ -162,4 +186,4 @@ export type { NormalizedKnownAgent, RelaySignalArgs } from './tools/relaySignal.
 export type { InboxService, GetIdentityOutput } from './tools/getIdentity.js';
 export type { VerifyReceiptArgs, VerifyReceiptOutput } from './tools/verify-receipt.js';
 export type { ToolResponse, StatusCode, ErrorCode } from './envelope.js';
-export type { CreateIfcGrantArgs, ReadIfcMessagesArgs, SendIfcMessageArgs } from './ifc.js';
+export type { CreateIfcGrantArgs, ReadIfcMessagesArgs, RevokeIfcGrantArgs, SendIfcMessageArgs } from './ifc.js';

@@ -119,6 +119,14 @@ These enable the AFAL direct transport for INITIATE and RESPOND session modes (a
 |----------|----------|---------|-------------|
 | `SELKEY_KNOWN_AGENTS` | No | — | JSON array of known agents: `[{"agent_id":"bob-agent","aliases":["Bob"],"public_key_hex":"...","a2a_send_message_url":"..."}]`. Aliases match exactly (no case folding); an alias that names more than one agent is an error. `public_key_hex` seeds the agent pin store |
 
+### IFC
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `SELKEY_IFC_MAX_GRANT_TTL_SECONDS` | No | `86400` | Longest lifetime this agent allows for IFC grants it issues (values above 86400 are ignored) |
+
+IFC grant state lives in `$SELKEY_WORKDIR/.selkey/ifc-grants.json` and `ifc-audit.jsonl`; receipts of completed sessions (used to authorise grant issuance) in `held-receipts.json`. All are `0600` in a `0700` directory.
+
 ### Agent identity pins
 
 The MCP server keeps one pin store at `$SELKEY_WORKDIR/.selkey/pins.json` (directory `0700`, file `0600`; the server refuses to start if the file is group- or world-writable). It is seeded from `SELKEY_AFAL_TRUSTED_AGENTS` and the `public_key_hex` entries of `SELKEY_KNOWN_AGENTS`; a configured key replaces a stored pin for the same `agent_id`. Every PROPOSE, ADMIT, DENY, COMMIT, negotiation request and IFC signature from a peer is verified against the pinned key for its `agent_id`, never against a key in the peer's card, descriptor or message. A peer that presents a different key is rejected with both fingerprints (`ed25519:` + hex SHA-256 of the raw key).

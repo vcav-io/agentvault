@@ -64,6 +64,7 @@ import {
 import { buildExpectedContractHashes, localAllowedPurposes } from '../responder-contracts.js';
 import { appendPrivateLine, ensurePrivateDir, selkeyStateDir, writePrivateJson } from '../secure-fs.js';
 import { PinError, normalizeAgentId, resolveAgentHint } from '../pin-store.js';
+import { recordHeldReceipt } from '../held-receipts.js';
 import {
   encodeRelayToken,
   decodeRelayToken,
@@ -1077,6 +1078,42 @@ function localSessionData(handle: RelayHandle): LocalSessionData {
   };
 }
 
+/**
+ * Remember the receipt of a session this agent completed, with the
+ * counterparty from the local handle. IFC grants can only be issued for a
+ * held receipt.
+ */
+function recordCompletedReceipt(
+  handle: RelayHandle,
+  output: SessionOutputResponse,
+  verified: boolean,
+): void {
+  const candidates = [output.receipt, (output as { receipt_v2?: unknown }).receipt_v2];
+  const receipt = candidates.find(
+    (r): r is Record<string, unknown> =>
+      !!r && typeof r === 'object' && typeof (r as Record<string, unknown>)['receipt_id'] === 'string',
+  );
+  const sessionId =
+    (receipt && typeof receipt['session_id'] === 'string' ? receipt['session_id'] : undefined) ??
+    handle.sessionId;
+  if (!receipt || !sessionId) return;
+  try {
+    recordHeldReceipt({
+      agent_id: handle.agentId,
+      receipt_id: receipt['receipt_id'] as string,
+      session_id: sessionId,
+      counterparty: handle.counterparty,
+      role: handle.role,
+      receipt_verified: verified,
+      recorded_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error(
+      `recordCompletedReceipt: failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 function completedResponse(
   handle: RelayHandle,
   output: SessionOutputResponse,
@@ -1092,6 +1129,7 @@ function completedResponse(
     handle.sessionId = effectiveSessionId;
   }
   removeSessionStateFile(handle);
+  recordCompletedReceipt(handle, output, receiptCheck.status === 'VERIFIED');
   return buildSuccess('COMPLETE', {
     mode: handle.role === 'INITIATOR' ? 'INITIATE' : 'RESPOND',
     state: 'COMPLETED',
