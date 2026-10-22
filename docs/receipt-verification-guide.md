@@ -695,7 +695,7 @@ attestation infrastructure.
 | `token_usage` | Prompt, completion, and total token counts |
 | `relay_software_version` | Semver of the relay that issued the receipt |
 | `status` | Session outcome status |
-| `signal_class` | Classification of the signal produced |
+| `signal_class` | Classification of the signal produced. `SINGLE_CALLER_COMPLETED` means one caller supplied both inputs (`POST /relay`): the input commitments are keyed by contract participant, but each participant did not submit its own input |
 | `execution_lane` | `standard` (software) or `tee` (TEE) |
 | `channel_capacity_bits_upper_bound` | Computed upper bound on schema information capacity (bits) |
 | `channel_capacity_measurement_version` | Algorithm version for capacity computation (e.g., `"enum_cardinality_v1"`) |

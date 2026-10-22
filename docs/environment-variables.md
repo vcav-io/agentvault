@@ -15,6 +15,7 @@ Complete reference for all environment variables used by the Selkey relay and MC
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SELKEY_PORT` | `3100` | Port the relay listens on |
+| `SELKEY_ALLOWED_HOSTS` | unset | Comma-separated extra hostnames accepted in the `Host` header (e.g. a compose service name). When the relay listens on loopback, or when this is set, requests whose `Host` is not `localhost`, `127.0.0.1`, `[::1]` or a listed name get `403`. This blocks DNS-rebinding requests from browser pages to a local relay |
 | `SELKEY_ALLOW_UNAUTHENTICATED` | unset | Set to `1` to let a non-dev relay start on a non-loopback address without `SELKEY_OPERATOR_TOKEN` (only when access is controlled elsewhere) |
 | `SELKEY_BIND_ADDR` | `127.0.0.1` | IP address the relay listens on. Loopback by default; set `0.0.0.0` (or a specific interface) to accept remote connections, e.g. inside a container |
 | `SELKEY_OPERATOR_TOKEN` | — | Operator bearer token. When set, `POST /relay` and `POST /sessions` require `Authorization: Bearer <token>`. Must be at least 32 printable characters and not repetitive (e.g. `openssl rand -hex 32`); the relay refuses to start with a weaker token |
@@ -60,9 +61,15 @@ cannot.
 With `SELKEY_ENV=dev`, the relay also accepts inline schemas that are not in the registry, but only
 strict ones: `additionalProperties: false` and every property `required` on every object; every
 string bounded by `enum` or `maxLength`; every array bounded by `maxItems`; integers bounded by
-`minimum`/`maximum`; no `true`/`{}` subschemas, composition (`anyOf`, `oneOf`, ...), `$ref` or
-`patternProperties`. For these schemas the relay computes the entropy bound from the structure and
-ignores any `x-vcav-entropy-bits-upper-bound` annotations.
+`minimum`/`maximum`; `number` (non-integer) values only through `enum`; `const` allowed (0 bits);
+no `true`/`{}` subschemas, composition (`anyOf`, `oneOf`, ...), `$ref` or `patternProperties`. For
+these schemas the relay computes the entropy bound from the structure and ignores any
+`x-vcav-entropy-bits-upper-bound` annotations. The per-session cap
+(`SELKEY_MAX_ENTROPY_BITS_PER_SESSION`, default 64 bits) applies to inline schemas too, so a
+free-text field of more than a few characters needs the operator to raise it.
+
+Before release, integral numbers in the model output are rewritten as JSON integers (`2.0`,
+`2e0` → `2`), so a value has one representation.
 
 ### Lockfile overrides (development only)
 

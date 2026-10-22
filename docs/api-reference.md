@@ -105,6 +105,13 @@ The single caller supplies both inputs, so it generates both nonces: one fresh
 input is rejected if its nonce is missing or malformed. The contract follows
 the same rules as `POST /sessions`.
 
+`input_a` and `input_b` are labelled with `contract.participants[0]` and `[1]`;
+the `role` fields are ignored. Because one caller supplied both inputs, the
+receipt's `claims.signal_class` is `SINGLE_CALLER_COMPLETED` (bilateral
+sessions use `SESSION_COMPLETED`). Its input commitments are still keyed by
+contract participant, but they do not show that each participant submitted
+its own input.
+
 **Response** `200 OK`
 ```json
 {
@@ -145,7 +152,8 @@ result is canonicalised with RFC 8785. Numbers anywhere in the contract must be
 within ±(2^53−1).
 
 The relay runs every contract check at creation, before any input is submitted:
-participants, enforcement policy, model profile and allowlist, relay key pin, model
+participants, enforcement policy (its `provider_allowlist`, `max_output_tokens` and
+`entropy_constraints` included), model profile and allowlist, relay key pin, model
 constraints, TTLs, output schema acceptance, the entropy limits below, the prompt
 program, and that the provider is configured. A contract that would fail at
 inference is rejected here with `400` and no session is created. The same checks
@@ -321,6 +329,12 @@ other than `success`, `output_hash` = SHA-256 of zero bytes, no inline
 `null`. See [receipt-verification-guide.md](receipt-verification-guide.md) for
 verification.
 
+### `GET /sessions/:id/metadata` (dev only)
+
+Diagnostic timings and sizes, available only with `SELKEY_ENV=dev` (otherwise `401`).
+Requires a read token. Each participant sees its own input time and size; the
+counterparty's `*_input_at` and `*_input_bytes` are `null`.
+
 ## Inbox endpoints
 
 The inbox system enables asynchronous session setup. An agent sends an invite to another agent; the recipient can accept (creating a bilateral session), decline, or let it expire. All inbox endpoints use bearer token authentication via the **agent registry** — tokens are configured per-agent in the relay's agent registry, not session-scoped.
@@ -344,7 +358,7 @@ Create a new invite to another agent.
 }
 ```
 
-`provider` defaults to the first configured provider if empty. `to_agent_id` must be a registered agent. The contract checks described under `POST /sessions` run before the invite is stored, and again on accept. Invite creation is rate limited per sending agent, and each agent may have a limited number of pending invites (`429`); the total number of invites is capped (`503`). The invite expires after the contract's `invite_ttl_secs` if set (never above `SELKEY_INVITE_TTL_SECS`). The invite's `from_agent_pubkey` is always the sender's `public_key_hex` from the agent registry (or absent if none is registered). A request `from_agent_pubkey` is optional; if present it must equal the registered key, otherwise the request is rejected with `400`.
+`provider` defaults to the first configured provider if empty. `to_agent_id` must be a registered agent, and the contract's `participants` must be `[sender, to_agent_id]` in that order (the sender receives the initiator tokens, whose input is committed under `participants[0]`). The contract checks described under `POST /sessions` run before the invite is stored, and again on accept. Invite creation is rate limited per sending agent, and each agent may have a limited number of pending invites (`429`); the total number of invites is capped (`503`). The invite expires after the contract's `invite_ttl_secs` if set (never above `SELKEY_INVITE_TTL_SECS`). The invite's `from_agent_pubkey` is always the sender's `public_key_hex` from the agent registry (or absent if none is registered). A request `from_agent_pubkey` is optional; if present it must equal the registered key, otherwise the request is rejected with `400`.
 
 **Response** `200 OK`
 ```json

@@ -216,7 +216,7 @@ released; `output_hash` covers only released output. v3 therefore has no
 | `token_usage` | object or null | `{prompt_tokens, completion_tokens, total_tokens}`. |
 | `relay_software_version` | string or null | Relay software version string. |
 | `status` | string or null | Session outcome status. |
-| `signal_class` | string or null | Classification of the signal produced. |
+| `signal_class` | string or null | Classification of the signal produced. `SESSION_COMPLETED` for a bilateral session; `SINGLE_CALLER_COMPLETED` when one caller supplied both inputs (`POST /relay`). |
 | `execution_lane` | string enum or null | `standard` (software relay) or `tee` (TEE execution). |
 | `channel_capacity_bits_upper_bound` | integer or null | Computed upper bound on the output schema's information capacity (bits). |
 | `channel_capacity_measurement_version` | string or null | Algorithm version used to compute the channel capacity bound (e.g., `"enum_cardinality_v1"`). |
