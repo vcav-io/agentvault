@@ -750,8 +750,9 @@ The software relay operates at `SELF_ASSERTED`. The TEE relay (`selkey-tee`) is 
 prototype, not yet secure: its shipped image runs a simulated runtime and issues
 `SELF_ASSERTED` receipts, and on real AMD SEV-SNP hardware it issues `TEE_ATTESTED`
 receipts whose measurement doesn't yet cover the relay binary.
-Never display "receipt verified" without also showing the assurance level — a
-`SELF_ASSERTED` receipt is much weaker than a `TEE_ATTESTED` one.
+Never display "receipt verified" without also showing the assurance level.
+`TEE_ATTESTED` is intended to be stronger than `SELF_ASSERTED`; while the TEE lane
+is a prototype, treat a `TEE_ATTESTED` receipt as no stronger than `SELF_ASSERTED`.
 
 ### Operator identity
 

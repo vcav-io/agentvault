@@ -238,12 +238,12 @@ Claims are optional and omitted when they have no value.
 | `measurement` | string (hex) | Launch measurement from the attestation report. |
 | `quote` | string (base64) | The raw attestation report. |
 | `attestation_hash` | string (64 hex) | SHA-256 of the raw attestation report bytes. |
-| `receipt_signing_pubkey_hex` | string (64 hex) | Ed25519 public key used to sign the receipt, bound into the TEE attestation. Verifiers never use it as the verification key; if present it must equal the pinned key (Section 7.4). |
+| `receipt_signing_pubkey_hex` | string (64 hex) | Ed25519 public key used to sign the receipt, bound into the TEE attestation. Verifiers MUST NOT use it as the verification key; if present it must equal the pinned key (Section 7.4). The selkey-tee `tee-verifier` currently does use it (see 11.5). |
 | `transcript_hash_hex` | string (128 hex) | SHA-512 hash of the canonical session transcript. For SEV-SNP, this is embedded in the attestation report's `REPORT_DATA` field. |
 | `user_data_hex` | string (128 hex) | The report's `REPORT_DATA` (user data) field. |
 | `snp_vcek_cert` | string (base64) | DER VCEK certificate, when the relay obtained it, for checking the report against AMD's certificate chain. |
 
-**TEE commitments** (additional fields in `commitments` when TEE-attested):
+**TEE commitments** (additional fields in `commitments` on selkey-tee receipts, simulated or hardware):
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -733,9 +733,11 @@ most forbidden content), while the guardian provides defense-in-depth.
 Guardian enforcement MUST be deterministic: given an identical policy and identical
 output, any conforming relay MUST produce the same accept/reject decision.
 
-The relay loads its lockfile-verified enforcement policies at startup. Each session uses
+The relay loads its enforcement policies at startup: lockfile-verified by default, or
+digest-checked by registry admission when `SELKEY_REGISTRY_PATH` is set. Each session uses
 the policy selected by `contract.enforcement_policy_hash`, or the relay's default policy
-(`SELKEY_DEFAULT_POLICY_HASH`, required when more than one policy is loaded). The hash of
+(`SELKEY_DEFAULT_POLICY_HASH` in lockfile mode, required when more than one policy is
+loaded; `policies.default` in the admission config in registry mode). The hash of
 the policy applied is bound into the receipt as `commitments.preflight_bundle.policy_hash`.
 A verifier who obtains the policy file can independently compute the hash and confirm
 which rules were active.
@@ -859,7 +861,7 @@ intended to additionally prove:
 - The signing key was generated inside the CVM and never exposed to the host.
 
 Today these don't fully hold. Without measured boot, the CVM launch measurement does
-not cover the relay binary (on a GCP N2D confidential VM it covers the guest firmware),
+not cover the relay binary (on a GCP N2D confidential VM it most likely covers only the guest firmware),
 so a matching measurement doesn't show which relay code ran, and the other two
 properties depend on that code. The shipped `selkey-tee` image runs a simulated runtime
 with no hardware attestation. Model identity in the transcript is provider-reported: it
