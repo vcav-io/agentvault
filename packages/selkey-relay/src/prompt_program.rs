@@ -450,10 +450,9 @@ mod tests {
             }
             let stem = path.file_stem().unwrap().to_str().unwrap();
             if stem.len() == 64 && stem.chars().all(|c| c.is_ascii_hexdigit()) {
-                // Parse only: this test is about the field set, not the
-                // file-name hash.
-                let data = std::fs::read_to_string(&path).unwrap();
-                serde_json::from_str::<PromptProgram>(&data).unwrap();
+                // Loads only if the file name is its content hash.
+                let program = load_prompt_program(dir, stem).unwrap();
+                assert_eq!(program.content_hash().unwrap(), stem);
                 programs += 1;
             } else {
                 load_model_profile(dir, stem).unwrap();
