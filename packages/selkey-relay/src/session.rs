@@ -226,9 +226,7 @@ impl SessionStore {
         contract_hash: String,
         provider: String,
     ) -> (String, SessionTokens, Session) {
-        let contract_bytes = serde_json::to_value(&contract)
-            .map(|v| crate::limits::approx_heap_bytes(&v))
-            .unwrap_or(usize::MAX);
+        let contract_bytes = crate::limits::contract_heap_bytes(&contract);
         let ttl = contract
             .session_ttl_secs
             .map(|secs| Duration::from_secs(u64::from(secs)).min(self.ttl))

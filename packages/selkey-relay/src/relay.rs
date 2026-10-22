@@ -1279,6 +1279,70 @@ pub async fn relay(request: RelayRequest, state: &AppState) -> Result<RelayRespo
 mod tests {
     use super::*;
 
+    fn contract_with(key: &str, value: serde_json::Value) -> serde_json::Value {
+        let mut contract = serde_json::json!({
+            "purpose_code": "MEDIATION",
+            "output_schema_id": "vault_result_mediation",
+            "output_schema": {"type": "object"},
+            "participants": ["alice", "bob"],
+            "prompt_template_hash": "a".repeat(64)
+        });
+        contract[key] = value;
+        contract
+    }
+
+    fn rejection(contract: &serde_json::Value) -> String {
+        match accept_contract(contract) {
+            Err(RelayError::ContractValidation(msg)) => msg,
+            other => panic!("expected a contract validation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_contract_size_limits() {
+        use crate::limits::{MAX_CONTRACT_BYTES, MAX_CONTRACT_STRING_BYTES};
+        // Whole contract: a schema description fills it past the cap.
+        let at = |len: usize| {
+            contract_with(
+                "output_schema",
+                serde_json::json!({"type": "object", "description": "x".repeat(len)}),
+            )
+        };
+        let base = serde_json::to_string(&at(0)).unwrap().len();
+        let fits = at(MAX_CONTRACT_BYTES - base);
+        assert_eq!(
+            serde_json::to_string(&fits).unwrap().len(),
+            MAX_CONTRACT_BYTES
+        );
+        assert!(accept_contract(&fits).is_ok());
+        let over = at(MAX_CONTRACT_BYTES - base + 1);
+        assert!(rejection(&over).contains(&format!("exceeds {MAX_CONTRACT_BYTES} bytes")));
+        // Metadata.
+        let msg = rejection(&contract_with(
+            "metadata",
+            serde_json::json!({"n": "x".repeat(2048)}),
+        ));
+        assert!(msg.contains("metadata exceeds"), "{msg}");
+        assert!(accept_contract(&contract_with(
+            "metadata",
+            serde_json::json!({"n": "x".repeat(2000)})
+        ))
+        .is_ok());
+        // Strings outside output_schema and metadata.
+        let long = "a".repeat(MAX_CONTRACT_STRING_BYTES + 1);
+        let msg = rejection(&contract_with(
+            "participants",
+            serde_json::json!([long, "bob"]),
+        ));
+        assert!(msg.contains("participants"), "{msg}");
+        let ok = "a".repeat(MAX_CONTRACT_STRING_BYTES);
+        assert!(accept_contract(&contract_with(
+            "participants",
+            serde_json::json!([ok, "bob"])
+        ))
+        .is_ok());
+    }
+
     #[test]
     fn test_accepted_contract_hash_is_contract_hash_v2() {
         let contract = Contract {

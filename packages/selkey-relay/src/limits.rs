@@ -46,25 +46,108 @@ pub const MAX_CONTRACT_STRING_BYTES: usize = 256;
 /// store's contracts, measured with [`approx_heap_bytes`].
 pub const DEFAULT_MAX_STORE_BYTES: usize = 256 * 1024 * 1024;
 
-/// Approximate heap footprint of a JSON value once parsed: one
-/// `serde_json::Value` per node plus string and key bytes. A compact JSON
-/// text can take many times its own length in memory (each `0` in an array
-/// is a whole `Value`), so store budgets count this rather than text length.
+/// Approximate heap footprint of a parsed JSON value, in bytes: the root
+/// `serde_json::Value` plus everything it allocates. A compact JSON text can
+/// take many times its own length in memory, so store budgets count this
+/// rather than text length.
+///
+/// The estimate is meant to be at least the real allocation. Each heap
+/// allocation is charged as a glibc malloc chunk ([`alloc_chunk_bytes`]),
+/// which also covers allocators with a 16-byte quantum:
+/// - strings and object keys: their capacity;
+/// - arrays: their capacity in `Value`s;
+/// - objects: serde_json stores members in a `BTreeMap` (no
+///   `preserve_order`), so each non-empty object costs whole B-tree nodes.
+///   See [`BTREE_LEAF_BYTES`] for the node model.
+///
+/// `tests/heap_estimate.rs` checks this against a counting allocator for
+/// the worst shapes (many small objects, arrays and strings).
 pub fn approx_heap_bytes(value: &serde_json::Value) -> usize {
+    std::mem::size_of::<serde_json::Value>().saturating_add(owned_heap_bytes(value))
+}
+
+/// Approximate heap footprint of a typed contract, as [`approx_heap_bytes`]
+/// counts it. `output_schema` and `metadata` are measured in place, since a
+/// `Value` built by deserialisation can have spare array capacity that a
+/// re-serialised copy would not show.
+pub fn contract_heap_bytes(contract: &crate::types::Contract) -> usize {
+    let mut rest = contract.clone();
+    rest.output_schema = serde_json::Value::Null;
+    rest.metadata = serde_json::Value::Null;
+    let rest_bytes = serde_json::to_value(&rest)
+        .map(|v| approx_heap_bytes(&v))
+        .unwrap_or(usize::MAX);
+    rest_bytes
+        .saturating_add(owned_heap_bytes(&contract.output_schema))
+        .saturating_add(owned_heap_bytes(&contract.metadata))
+}
+
+/// Size of a std `BTreeMap<String, Value>` leaf node: parent pointer,
+/// parent index and length (`u16` each), then 11 keys and 11 values (std's
+/// node capacity, `2 * B - 1` with `B = 6`), rounded to pointer alignment.
+/// This mirrors std's private node layout; `tests/heap_estimate.rs` pins it
+/// against real allocations.
+pub const BTREE_LEAF_BYTES: usize = {
+    let raw = std::mem::size_of::<usize>()
+        + 2 * std::mem::size_of::<u16>()
+        + BTREE_NODE_CAPACITY
+            * (std::mem::size_of::<String>() + std::mem::size_of::<serde_json::Value>());
+    let align = std::mem::align_of::<usize>();
+    raw.div_ceil(align) * align
+};
+/// Size of an internal node: a leaf plus 12 child pointers.
+pub const BTREE_INTERNAL_BYTES: usize =
+    BTREE_LEAF_BYTES + (BTREE_NODE_CAPACITY + 1) * std::mem::size_of::<usize>();
+const BTREE_NODE_CAPACITY: usize = 11;
+/// Every non-root node holds at least this many members.
+const BTREE_NODE_MIN_LEN: usize = 5;
+
+/// Memory a heap allocation of `size` bytes takes, modelled on glibc
+/// malloc: an 8-byte header, rounded up to 16 bytes, at least 32 bytes.
+/// Zero-size requests do not allocate.
+pub const fn alloc_chunk_bytes(size: usize) -> usize {
+    if size == 0 {
+        return 0;
+    }
+    let chunk = size.saturating_add(8 + 15) & !15;
+    if chunk < 32 {
+        32
+    } else {
+        chunk
+    }
+}
+
+/// Upper bound on the node memory of a `BTreeMap` with `len` members.
+fn btree_bytes(len: usize) -> usize {
+    let leaf = alloc_chunk_bytes(BTREE_LEAF_BYTES);
+    let internal = alloc_chunk_bytes(BTREE_INTERNAL_BYTES);
+    match len {
+        0 => 0,
+        1..=BTREE_NODE_CAPACITY => leaf,
+        _ => {
+            let leaves = len.div_ceil(BTREE_NODE_MIN_LEN);
+            let internals = leaves.div_ceil(BTREE_NODE_MIN_LEN) + 1;
+            leaves
+                .saturating_mul(leaf)
+                .saturating_add(internals.saturating_mul(internal))
+        }
+    }
+}
+
+/// Heap bytes `value` owns, not counting the `Value` itself.
+fn owned_heap_bytes(value: &serde_json::Value) -> usize {
     const NODE: usize = std::mem::size_of::<serde_json::Value>();
-    const KEY: usize = std::mem::size_of::<String>();
     match value {
-        serde_json::Value::String(s) => NODE + s.len(),
-        serde_json::Value::Array(items) => {
-            NODE + items.iter().map(approx_heap_bytes).sum::<usize>()
-        }
-        serde_json::Value::Object(map) => {
-            NODE + map
-                .iter()
-                .map(|(k, v)| KEY + k.len() + approx_heap_bytes(v))
-                .sum::<usize>()
-        }
-        _ => NODE,
+        serde_json::Value::String(s) => alloc_chunk_bytes(s.capacity()),
+        serde_json::Value::Array(items) => items.iter().fold(
+            alloc_chunk_bytes(items.capacity().saturating_mul(NODE)),
+            |sum, v| sum.saturating_add(owned_heap_bytes(v)),
+        ),
+        serde_json::Value::Object(map) => map.iter().fold(btree_bytes(map.len()), |sum, (k, v)| {
+            sum.saturating_add(alloc_chunk_bytes(k.capacity()))
+                .saturating_add(owned_heap_bytes(v))
+        }),
+        _ => 0,
     }
 }
 
@@ -323,10 +406,14 @@ mod tests {
     #[test]
     fn test_approx_heap_bytes_counts_nodes_not_text() {
         let node = std::mem::size_of::<serde_json::Value>();
-        let zeros = serde_json::Value::Array(vec![serde_json::json!(0); 1000]);
+        let zeros: serde_json::Value =
+            serde_json::from_str(&format!("[{}]", vec!["0"; 1000].join(","))).unwrap();
         // About 2 bytes of text per element, a whole Value in memory.
-        assert_eq!(approx_heap_bytes(&zeros), node * 1001);
-        assert!(approx_heap_bytes(&serde_json::json!("abcd")) >= 4);
+        assert!(approx_heap_bytes(&zeros) >= node * 1001);
+        // Each non-empty object costs at least one B-tree leaf.
+        let small: serde_json::Value = serde_json::from_str(r#"{"a":0}"#).unwrap();
+        assert!(approx_heap_bytes(&small) >= node + BTREE_LEAF_BYTES);
+        assert_eq!(BTREE_LEAF_BYTES, 632);
     }
 
     #[test]
