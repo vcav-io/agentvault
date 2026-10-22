@@ -83,7 +83,7 @@ beforeEach(() => {
   // Use a temp directory for session state files
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vcav-heartbeat-test-'));
   process.env['SELKEY_WORKDIR'] = tmpDir;
-  process.env['SELKEY_RELAY_URL'] = 'http://relay.test';
+  process.env['SELKEY_RELAY_URL'] = 'https://relay.test';
   process.env['SELKEY_AGENT_ID'] = 'alice-demo';
   delete process.env['SELKEY_RESUME_TOKEN_SECRET'];
 });
@@ -180,7 +180,7 @@ describe('resume_strategy in responses', () => {
           session_id: 'sess-join',
           responder_submit_token: 'sub-tok',
           responder_read_token: 'read-tok',
-          relay_url: 'http://relay.test',
+          relay_url: 'https://relay.test',
         },
         contract_hash: 'compat-hash',
         template_id: 'dating.v1.d2',
@@ -364,7 +364,7 @@ describe('session state files', () => {
           session_id: 'sess-join',
           responder_submit_token: 'sub-tok',
           responder_read_token: 'read-tok',
-          relay_url: 'http://relay.test',
+          relay_url: 'https://relay.test',
         },
         contract_hash: 'relay-hash-mock',
         template_id: 'mediation-demo.v1.standard',
@@ -471,7 +471,7 @@ describe('stale resume-token fallback', () => {
           session_id: 'sess-fallback',
           responder_submit_token: 'resp-submit',
           responder_read_token: 'resp-read',
-          relay_url: 'http://relay.test',
+          relay_url: 'https://relay.test',
         },
       },
     ]);
@@ -666,7 +666,7 @@ describe('non-blocking phases', () => {
         session_id: 'sess-delayed',
         responder_submit_token: 'sub-tok',
         responder_read_token: 'read-tok',
-        relay_url: 'http://relay.test',
+        relay_url: 'https://relay.test',
       },
       contract_hash: 'relay-hash-mock',
       template_id: 'mediation-demo.v1.standard',
@@ -699,7 +699,7 @@ describe('non-blocking phases', () => {
           session_id: 'sess-join',
           responder_submit_token: 'sub-tok',
           responder_read_token: 'read-tok',
-          relay_url: 'http://relay.test',
+          relay_url: 'https://relay.test',
         },
         contract_hash: 'relay-hash-mock',
         template_id: 'mediation-demo.v1.standard',

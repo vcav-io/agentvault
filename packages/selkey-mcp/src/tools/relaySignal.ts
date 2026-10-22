@@ -54,12 +54,14 @@ import {
 import {
   assertRelayTrusted,
   checkReceiptAgainstPinnedKey,
+  expectedRelayKeyVariants,
   type LocalSessionData,
   isRelayKeyPinned,
   isRelayUrlAllowed,
   normalizeRelayUrl,
   resolveLocalRelayUrl,
   RelayTrustError,
+  withPinnedRelayKey,
 } from '../relay-trust.js';
 import { buildExpectedContractHashes, localAllowedPurposes } from '../responder-contracts.js';
 import { appendPrivateLine, ensurePrivateDir, selkeyStateDir, writePrivateJson } from '../secure-fs.js';
@@ -1391,6 +1393,13 @@ async function phaseInvite(
         'acceptable_purposes with more than one purpose requires direct bilateral transport and pre-contract negotiation.',
       );
     }
+    // Bind the contract to the pinned relay key (if configured), as on
+    // every other INITIATE path.
+    try {
+      contract = withPinnedRelayKey(contract);
+    } catch (e) {
+      return buildError('INVALID_INPUT', (e as Error).message);
+    }
     const resp = await transport.createRelayInvite({
       to_agent_id: counterparty,
       contract,
@@ -1608,6 +1617,14 @@ async function phaseInvite(
       'SESSION_ERROR',
       'No concrete contract could be resolved from the supplied acceptable_purposes.',
     );
+  }
+
+  // Bind the contract to the pinned relay key (if configured) so the relay
+  // refuses the session when its signing key differs.
+  try {
+    contract = withPinnedRelayKey(contract);
+  } catch (e) {
+    return buildError('INVALID_INPUT', (e as Error).message);
   }
 
   const relayUrl = resolveRelayUrl(args.relay_url);
@@ -2091,6 +2108,7 @@ async function phaseDiscover(
       : await buildExpectedContractHashes({
           purposes: responderAcceptablePurposes(handle, transport),
           participants: [handle.counterparty, handle.agentId],
+          relayKeys: expectedRelayKeyVariants(),
         });
 
     // Sleep between polls (not before the first check)
@@ -2567,15 +2585,16 @@ async function handleCreate(args: RelaySignalArgs): Promise<ToolResponse<RelaySi
   const relayUrl = resolveRelayUrl(args.relay_url);
   await assertRelayTrusted(relayUrl);
   const config = { relay_url: relayUrl };
+  const contract = withPinnedRelayKey(args.contract);
 
   const myContext = args.my_input ?? '';
   const nonce = generateCommitmentNonce();
-  const created = await createAndSubmit(config, args.contract, myContext, 'initiator', nonce);
+  const created = await createAndSubmit(config, contract, myContext, 'initiator', nonce);
   const output = await pollUntilDone(config, created.sessionId, created.initiatorReadToken);
 
   const receiptCheck = checkReceiptAgainstPinnedKey(output, {
-    ownInput: ownInputFromContract(args.contract, 0, myContext, nonce),
-    contract: args.contract,
+    ownInput: ownInputFromContract(contract, 0, myContext, nonce),
+    contract,
     submittedInput: true,
   });
   if (receiptCheck.status === 'FAILED') {

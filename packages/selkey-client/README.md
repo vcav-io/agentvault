@@ -20,7 +20,7 @@ not yet published on npm.
 | `selkey/types` | TypeScript types: `RelayClientConfig`, `SessionState`, `AbortReason`, `CreateSessionResponse`, `SessionOutputResponse` |
 | `selkey/contracts` | Contract helpers: `buildRelayContract`, `computeRelayContractHash`, `listRelayPurposes`, `RelayContract` type |
 | `selkey/http` | Low-level fetch wrappers: `createSession`, `submitInput`, `getStatus`, `getOutput` |
-| `selkey/verify` | `verifyReceipt` (receipt v3, v2 and v1 against a pinned relay key, with optional commitment checks), `fetchRelayPublicKey` |
+| `selkey/verify` | `verifyReceipt` (receipt v3, v2 and v1 against a pinned relay key, with optional commitment checks), `relayKeyId` (`"ed25519:" + hex(SHA-256(key))`), `fetchRelayPublicKey(url, expectedKeyId)` (checks a relay's `/health` key against a pinned key id; throws on mismatch) |
 | `selkey/receipt-v3` | Receipt v3 verifier (`verifyReceiptV3`) and participant checks (`checkOwnInputV3`, `checkReceivedOutputV3`, `checkContractV3`) |
 | `selkey/commitment` | `generateCommitmentNonce`, `computeInputCommitmentV3`, `verifyInputCommitmentV3` |
 | `selkey/contract-hash` | Contract hash v2: `computeContractHashV2`, `normalizeContractV2` |

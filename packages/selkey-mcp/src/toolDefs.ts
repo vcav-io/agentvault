@@ -39,7 +39,9 @@ export const VERIFY_TOOLS = [
       'A relay key is required: pass public_key_hex, or configure SELKEY_RELAY_VERIFYING_KEY_HEX. ' +
       'Obtain the key out of band from the relay operator (not from the receipt or the counterparty). ' +
       'Keys embedded in the receipt (e.g. tee_attestation.receipt_signing_pubkey_hex) are never trusted ' +
-      'on their own; a receipt whose embedded key differs from the relay key is invalid.',
+      'on their own; a receipt whose embedded key differs from the relay key is invalid. ' +
+      'assurance_level and tee_info in the result are asserted by the relay; this tool does not ' +
+      'verify TEE attestation quotes.',
     inputSchema: {
       type: 'object' as const,
       properties: {

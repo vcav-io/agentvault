@@ -54,8 +54,8 @@ vi.mock('selkey/http', () => ({
 
 const RESPONDER = 'alice-demo';
 const INITIATOR = 'bob-demo';
-const LOCAL_RELAY = 'http://relay.test';
-const OTHER_RELAY = 'http://unlisted-relay.example';
+const LOCAL_RELAY = 'https://relay.test';
+const OTHER_RELAY = 'https://unlisted-relay.example';
 
 const ENV_KEYS = [
   'SELKEY_RELAY_URL',

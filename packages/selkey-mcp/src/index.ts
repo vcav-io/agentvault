@@ -48,6 +48,7 @@ import type { NormalizedKnownAgent } from './tools/relaySignal.js';
 import { DirectAfalTransport, isAgentDescriptor } from './direct-afal-transport.js';
 import type { DirectAfalTransportConfig } from './direct-afal-transport.js';
 import { RelayInboxTransport } from './relay-inbox-transport.js';
+import { isRelayTransportAllowed, RELAY_INSECURE_HTTP_HOSTS_ENV } from './relay-trust.js';
 import { signMessage, DOMAIN_PREFIXES } from './afal-signing.js';
 import type { AdmissionPolicy, TrustedAgent } from './afal-responder.js';
 import { listKnownModelProfiles } from './model-profiles.js';
@@ -341,7 +342,7 @@ function parseKnownAgentsFromEnv(): NormalizedKnownAgent[] {
  * Build a RelayInboxTransport from SELKEY_INBOX_* environment variables.
  * Returns null if SELKEY_INBOX_TOKEN is not set or SELKEY_INBOX_TRANSPORT !== 'relay'.
  */
-function buildRelayInboxTransportFromEnv(): RelayInboxTransport | null {
+export function buildRelayInboxTransportFromEnv(): RelayInboxTransport | null {
   if (process.env['SELKEY_INBOX_TRANSPORT'] !== 'relay') return null;
   // Fail-closed: when relay mode is explicitly requested, missing env vars are fatal.
   const inboxToken = process.env['SELKEY_INBOX_TOKEN'];
@@ -358,6 +359,14 @@ function buildRelayInboxTransportFromEnv(): RelayInboxTransport | null {
   const relayUrl = process.env['SELKEY_RELAY_URL'];
   if (!relayUrl) {
     throw new Error('SELKEY_RELAY_URL is required when SELKEY_INBOX_TRANSPORT=relay.');
+  }
+  // The inbox token and contracts travel to this relay: plain http only on
+  // loopback or explicitly listed private hosts.
+  if (!isRelayTransportAllowed(relayUrl)) {
+    throw new Error(
+      `SELKEY_RELAY_URL "${relayUrl}" uses plain http on a non-loopback host. Use https, or add its ` +
+        `host name to ${RELAY_INSECURE_HTTP_HOSTS_ENV} for a private network.`,
+    );
   }
   return new RelayInboxTransport({ agentId, inboxToken, relayUrl });
 }

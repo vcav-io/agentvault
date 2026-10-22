@@ -648,18 +648,65 @@ export function detectReceiptVersion(
   return null;
 }
 
+const RELAY_KEY_HEX_RE = /^[0-9a-fA-F]{64}$/;
+const RELAY_KEY_ID_RE = /^ed25519:[0-9a-f]{64}$/;
+
 /**
- * Fetch the relay's signing public key from its /health endpoint.
+ * Key id of a relay verifying key: `"ed25519:" + hex(SHA-256(raw 32-byte key))`.
+ *
+ * The hex part equals the receipt's `operator.operator_key_fingerprint`, so a
+ * verifier can look a receipt's key up in its own pin set by fingerprint.
  */
-export async function fetchRelayPublicKey(relayUrl: string): Promise<string> {
+export function relayKeyId(publicKeyHex: string): string {
+  if (!RELAY_KEY_HEX_RE.test(publicKeyHex)) {
+    throw new Error('relay public key must be 64 hex characters (32 bytes)');
+  }
+  return `ed25519:${bytesToHex(sha256(hexToBytes(publicKeyHex.toLowerCase())))}`;
+}
+
+/** Default time limit for the /health request in fetchRelayPublicKey. */
+export const RELAY_HEALTH_TIMEOUT_MS = 10_000;
+
+/**
+ * Read the relay's verifying key from its /health endpoint and check it
+ * against a key the caller already trusts.
+ *
+ * `/health` is served by the relay being checked, so it is never a trust
+ * anchor on its own: the caller must pass the key id of a key obtained out of
+ * band (`relayKeyId(pinnedKeyHex)`, or the 64-hex pinned key itself). Throws
+ * if the served key differs. Returns the served key as lowercase hex.
+ */
+export async function fetchRelayPublicKey(
+  relayUrl: string,
+  expectedKeyId: string,
+  opts: { timeoutMs?: number } = {},
+): Promise<string> {
+  if (typeof expectedKeyId !== 'string' || !expectedKeyId) {
+    throw new Error('fetchRelayPublicKey requires the expected relay key id');
+  }
+  const expected = RELAY_KEY_HEX_RE.test(expectedKeyId)
+    ? relayKeyId(expectedKeyId)
+    : expectedKeyId;
+  if (!RELAY_KEY_ID_RE.test(expected)) {
+    throw new Error(
+      'expected relay key id must be "ed25519:" followed by 64 lowercase hex characters',
+    );
+  }
   const healthUrl = relayUrl.replace(/\/$/, '') + '/health';
-  const resp = await fetch(healthUrl);
+  const resp = await fetch(healthUrl, {
+    signal: AbortSignal.timeout(opts.timeoutMs ?? RELAY_HEALTH_TIMEOUT_MS),
+  });
   if (!resp.ok) {
     throw new Error(`Relay /health returned ${resp.status}`);
   }
   const body = (await resp.json()) as Record<string, unknown>;
-  if (typeof body['verifying_key_hex'] !== 'string') {
-    throw new Error('Relay /health response missing verifying_key_hex');
+  const served = body['verifying_key_hex'];
+  if (typeof served !== 'string' || !RELAY_KEY_HEX_RE.test(served)) {
+    throw new Error('Relay /health response missing a valid verifying_key_hex');
   }
-  return body['verifying_key_hex'] as string;
+  const servedId = relayKeyId(served);
+  if (servedId !== expected) {
+    throw new Error(`Relay verifying key ${servedId} does not match the expected key ${expected}`);
+  }
+  return served.toLowerCase();
 }

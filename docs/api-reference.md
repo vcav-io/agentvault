@@ -44,7 +44,7 @@ Health check. No authentication required.
 }
 ```
 
-`provider` and `model_id` are `"redacted"` unless `SELKEY_HEALTH_EXPOSE_MODEL=true`. `verifying_key_hex` is the relay's Ed25519 public key for receipt signature verification. `verifying_key_id` is its key id, `ed25519:` + hex(SHA-256(32-byte public key)); the hex part equals a receipt's `operator.operator_key_fingerprint`. `/health` is unauthenticated, so it is not a trust anchor: verify receipts against a key you pinned out of band.
+`provider` and `model_id` are `"redacted"` unless `SELKEY_HEALTH_EXPOSE_MODEL=true`. `verifying_key_hex` is the relay's Ed25519 public key for receipt signature verification. `verifying_key_id` is its key id, `ed25519:` + hex(SHA-256(32-byte public key)); the hex part equals a receipt's `operator.operator_key_fingerprint`. `/health` is unauthenticated, so it is not a trust anchor: verify receipts against a key you pinned out of band, and use these fields only to check that the relay serves that key.
 
 ---
 
