@@ -60,6 +60,12 @@ pub fn accept_contract(contract_json: &serde_json::Value) -> Result<AcceptedCont
         .map_err(|e| RelayError::ContractValidation(format!("contract: {e}")))?;
     let contract: Contract = serde_json::from_value(normalized.clone())
         .map_err(|e| RelayError::ContractValidation(format!("contract: {e}")))?;
+    if crate::limits::contract_heap_bytes(&contract) > crate::limits::MAX_CONTRACT_HEAP_BYTES {
+        return Err(RelayError::ContractValidation(format!(
+            "contract exceeds {} bytes once parsed",
+            crate::limits::MAX_CONTRACT_HEAP_BYTES
+        )));
+    }
     // Receipts need one input commitment per participant, keyed by a unique,
     // non-empty participant id; reject anything else before inputs are taken.
     let mut seen = std::collections::BTreeSet::new();
@@ -1328,6 +1334,12 @@ mod tests {
             serde_json::json!({"n": "x".repeat(2000)})
         ))
         .is_ok());
+        // Estimated heap: within the text cap, but made of tiny values.
+        let tiny = vec![serde_json::json!({"": 0}); 2_000];
+        let packed = contract_with("output_schema", serde_json::json!({"enum": tiny}));
+        assert!(serde_json::to_string(&packed).unwrap().len() < MAX_CONTRACT_BYTES);
+        let msg = rejection(&packed);
+        assert!(msg.contains("once parsed"), "{msg}");
         // Strings outside output_schema and metadata.
         let long = "a".repeat(MAX_CONTRACT_STRING_BYTES + 1);
         let msg = rejection(&contract_with(

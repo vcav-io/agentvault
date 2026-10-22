@@ -41,6 +41,11 @@ pub const MAX_CONTRACT_METADATA_BYTES: usize = 2 * 1024;
 /// Maximum length, in bytes, of each string in a contract outside
 /// `output_schema` and `metadata` (participant ids, hashes, profile ids).
 pub const MAX_CONTRACT_STRING_BYTES: usize = 256;
+/// Maximum estimated heap of one accepted contract ([`contract_heap_bytes`]).
+/// A contract within [`MAX_CONTRACT_BYTES`] made of many tiny JSON values
+/// can take over 1.5 MB once parsed; this keeps any one contract (held once
+/// per session and twice per invite) to a small share of a store budget.
+pub const MAX_CONTRACT_HEAP_BYTES: usize = 256 * 1024;
 /// Default memory budget of each in-memory store (`SELKEY_MAX_STORE_BYTES`):
 /// the session store's contracts and inputs, and separately the invite
 /// store's contracts, measured with [`approx_heap_bytes`].
@@ -51,9 +56,13 @@ pub const DEFAULT_MAX_STORE_BYTES: usize = 256 * 1024 * 1024;
 /// take many times its own length in memory, so store budgets count this
 /// rather than text length.
 ///
-/// The estimate is meant to be at least the real allocation. Each heap
-/// allocation is charged as a glibc malloc chunk ([`alloc_chunk_bytes`]),
-/// which also covers allocators with a 16-byte quantum:
+/// The estimate is meant to be at least the real allocation under glibc
+/// malloc (the relay image is Debian bookworm): each heap allocation is
+/// charged as a glibc chunk ([`alloc_chunk_bytes`]). Other allocators round
+/// differently: macOS malloc can be about 18% higher for mid-size strings,
+/// jemalloc and musl about 5%. Allocator fragmentation and transient parsing
+/// buffers are not counted (see the provisioning note for
+/// `SELKEY_MAX_STORE_BYTES` in `docs/environment-variables.md`):
 /// - strings and object keys: their capacity;
 /// - arrays: their capacity in `Value`s;
 /// - objects: serde_json stores members in a `BTreeMap` (no
@@ -67,19 +76,68 @@ pub fn approx_heap_bytes(value: &serde_json::Value) -> usize {
 }
 
 /// Approximate heap footprint of a typed contract, as [`approx_heap_bytes`]
-/// counts it. `output_schema` and `metadata` are measured in place, since a
-/// `Value` built by deserialisation can have spare array capacity that a
-/// re-serialised copy would not show.
+/// counts it: the struct itself plus what each field owns. Fields are
+/// measured in place (nothing is cloned or re-serialised), so a `Value`
+/// built by deserialisation is charged its real spare capacity.
 pub fn contract_heap_bytes(contract: &crate::types::Contract) -> usize {
-    let mut rest = contract.clone();
-    rest.output_schema = serde_json::Value::Null;
-    rest.metadata = serde_json::Value::Null;
-    let rest_bytes = serde_json::to_value(&rest)
-        .map(|v| approx_heap_bytes(&v))
-        .unwrap_or(usize::MAX);
-    rest_bytes
-        .saturating_add(owned_heap_bytes(&contract.output_schema))
-        .saturating_add(owned_heap_bytes(&contract.metadata))
+    // Capacity needs the owned types, hence &String and &Vec.
+    #[allow(clippy::ptr_arg)]
+    fn string(s: &String) -> usize {
+        alloc_chunk_bytes(s.capacity())
+    }
+    fn opt_string(s: &Option<String>) -> usize {
+        s.as_ref().map_or(0, string)
+    }
+    #[allow(clippy::ptr_arg)]
+    fn strings(v: &Vec<String>) -> usize {
+        v.iter().fold(
+            alloc_chunk_bytes(v.capacity().saturating_mul(std::mem::size_of::<String>())),
+            |sum, s| sum.saturating_add(string(s)),
+        )
+    }
+    // Exhaustive, so a new contract field must be accounted for here.
+    let crate::types::Contract {
+        purpose_code: _,
+        output_schema_id,
+        output_schema,
+        participants,
+        prompt_template_hash,
+        entropy_budget_bits: _,
+        timing_class,
+        metadata,
+        model_profile_id,
+        model_profile_hash,
+        enforcement_policy_hash,
+        output_schema_hash,
+        model_constraints,
+        max_completion_tokens: _,
+        session_ttl_secs: _,
+        invite_ttl_secs: _,
+        entropy_enforcement: _,
+        relay_verifying_key_hex,
+    } = contract;
+    let constraints = model_constraints.as_ref().map_or(0, |c| {
+        strings(&c.allowed_providers)
+            .saturating_add(strings(&c.allowed_models))
+            .saturating_add(opt_string(&c.min_tier))
+    });
+    [
+        std::mem::size_of::<crate::types::Contract>(),
+        string(output_schema_id),
+        owned_heap_bytes(output_schema),
+        strings(participants),
+        string(prompt_template_hash),
+        opt_string(timing_class),
+        owned_heap_bytes(metadata),
+        opt_string(model_profile_id),
+        opt_string(model_profile_hash),
+        opt_string(enforcement_policy_hash),
+        opt_string(output_schema_hash),
+        constraints,
+        opt_string(relay_verifying_key_hex),
+    ]
+    .into_iter()
+    .fold(0usize, usize::saturating_add)
 }
 
 /// Size of a std `BTreeMap<String, Value>` leaf node: parent pointer,

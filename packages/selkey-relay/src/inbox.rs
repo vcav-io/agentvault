@@ -43,8 +43,12 @@ struct InboxStoreInner {
     inbox_index: HashMap<String, Vec<String>>,
     /// agent_id -> monotonic event counter.
     event_counters: HashMap<String, u64>,
-    /// Sum of [`invite_held_bytes`] over `invites`.
+    /// [`invite_held_bytes`] of each held invite, computed once at insert.
+    invite_bytes: HashMap<String, usize>,
+    /// Sum of `invite_bytes`.
     held_bytes: usize,
+    /// Sum of `invite_bytes` over finished (non-pending) invites.
+    finished_bytes: usize,
 }
 
 /// Approximate memory an invite's contract holds (typed and JSON copies),
@@ -55,10 +59,62 @@ fn invite_held_bytes(invite: &Invite) -> usize {
 }
 
 impl InboxStoreInner {
+    fn new(
+        invites: HashMap<String, Invite>,
+        inbox_index: HashMap<String, Vec<String>>,
+        event_counters: HashMap<String, u64>,
+    ) -> Self {
+        let mut inner = Self {
+            invites: HashMap::new(),
+            inbox_index,
+            event_counters,
+            invite_bytes: HashMap::new(),
+            held_bytes: 0,
+            finished_bytes: 0,
+        };
+        for (id, invite) in invites {
+            let bytes = invite_held_bytes(&invite);
+            inner.insert_invite(id, invite, bytes);
+        }
+        inner
+    }
+
+    fn insert_invite(&mut self, invite_id: String, invite: Invite, bytes: usize) {
+        self.held_bytes = self.held_bytes.saturating_add(bytes);
+        if invite.status != InviteStatus::Pending {
+            self.finished_bytes = self.finished_bytes.saturating_add(bytes);
+        }
+        self.invite_bytes.insert(invite_id.clone(), bytes);
+        self.invites.insert(invite_id, invite);
+    }
+
     fn remove_invite(&mut self, invite_id: &str) -> Option<Invite> {
         let removed = self.invites.remove(invite_id)?;
-        self.held_bytes = self.held_bytes.saturating_sub(invite_held_bytes(&removed));
+        let bytes = self.invite_bytes.remove(invite_id).unwrap_or(0);
+        self.held_bytes = self.held_bytes.saturating_sub(bytes);
+        if removed.status != InviteStatus::Pending {
+            self.finished_bytes = self.finished_bytes.saturating_sub(bytes);
+        }
         Some(removed)
+    }
+
+    /// Record that a pending invite has just reached a terminal state.
+    fn note_finished(&mut self, invite_id: &str) {
+        let bytes = self.invite_bytes.get(invite_id).copied().unwrap_or(0);
+        self.finished_bytes = self.finished_bytes.saturating_add(bytes);
+    }
+
+    #[cfg(test)]
+    fn recomputed_bytes(&self) -> (usize, usize) {
+        self.invites.values().fold((0, 0), |(held, finished), inv| {
+            let bytes = invite_held_bytes(inv);
+            let done = if inv.status == InviteStatus::Pending {
+                0
+            } else {
+                bytes
+            };
+            (held + bytes, finished + done)
+        })
     }
 }
 
@@ -96,12 +152,11 @@ pub struct InboxStore {
 impl InboxStore {
     pub fn new(invite_ttl: Duration) -> Self {
         Self {
-            inner: Arc::new(RwLock::new(InboxStoreInner {
-                invites: HashMap::new(),
-                inbox_index: HashMap::new(),
-                event_counters: HashMap::new(),
-                held_bytes: 0,
-            })),
+            inner: Arc::new(RwLock::new(InboxStoreInner::new(
+                HashMap::new(),
+                HashMap::new(),
+                HashMap::new(),
+            ))),
             channels: Arc::new(Mutex::new(HashMap::new())),
             invite_ttl,
             gc_grace: Duration::from_secs(3600), // 1h grace after a terminal state
@@ -158,16 +213,12 @@ impl InboxStore {
 
         tracing::info!(invites = invites.len(), "SQLite: loaded inbox into memory");
 
-        let held_bytes = invites.values().fold(0usize, |sum, inv| {
-            sum.saturating_add(invite_held_bytes(inv))
-        });
         Ok(Self {
-            inner: Arc::new(RwLock::new(InboxStoreInner {
+            inner: Arc::new(RwLock::new(InboxStoreInner::new(
                 invites,
                 inbox_index,
                 event_counters,
-                held_bytes,
-            })),
+            ))),
             channels: Arc::new(Mutex::new(HashMap::new())),
             invite_ttl,
             gc_grace: Duration::from_secs(3600),
@@ -285,6 +336,9 @@ impl InboxStore {
             decline_reason_code: None,
         };
 
+        // Estimated outside the lock.
+        let new_bytes = invite_held_bytes(&invite);
+
         // Capacity checks and the insert happen under one write lock, so
         // concurrent creates cannot overshoot the limits.
         let mut store = self.inner.write().await;
@@ -310,17 +364,9 @@ impl InboxStore {
         }
         // Whole store memory budget. Checked before anything is evicted, so
         // a refusal never removes finished invites for nothing.
-        let new_bytes = invite_held_bytes(&invite);
-        let finished_bytes = store
-            .invites
-            .values()
-            .filter(|inv| inv.status != InviteStatus::Pending)
-            .fold(0usize, |sum, inv| {
-                sum.saturating_add(invite_held_bytes(inv))
-            });
         if store
             .held_bytes
-            .saturating_sub(finished_bytes)
+            .saturating_sub(store.finished_bytes)
             .saturating_add(new_bytes)
             > self.max_held_bytes
         {
@@ -410,8 +456,7 @@ impl InboxStore {
 
         // Insert invite BEFORE emitting SSE event so that subscribers who
         // immediately call GET /invites/:id can find it.
-        store.held_bytes = store.held_bytes.saturating_add(new_bytes);
-        store.invites.insert(invite_id.clone(), invite);
+        store.insert_invite(invite_id.clone(), invite, new_bytes);
 
         // Update counter while holding write lock, then release before channel emit
         let counter = store
@@ -716,6 +761,7 @@ impl InboxStore {
         });
 
         // NLL: invite borrow ends here; all needed data extracted into sqlite_payload.
+        store.note_finished(invite_id);
         // Update counter
         let counter = store
             .event_counters
@@ -819,6 +865,7 @@ impl InboxStore {
         });
 
         // NLL: invite borrow ends here; all needed data extracted above.
+        store.note_finished(invite_id);
         let counter = store
             .event_counters
             .entry(from_agent_id.clone())
@@ -907,6 +954,7 @@ impl InboxStore {
             .map(|_| (invite_id.to_string(), invite.status, invite.updated_at));
 
         // NLL: invite borrow ends here; all needed data extracted above.
+        store.note_finished(invite_id);
         let counter = store.event_counters.entry(to_agent_id.clone()).or_insert(0);
         *counter += 1;
         let event = InboxEvent {
@@ -1001,6 +1049,10 @@ impl InboxStore {
                     gc_ids.push(id.clone());
                 }
             }
+        }
+
+        for (invite_id, _, _) in &newly_expired {
+            store.note_finished(invite_id);
         }
 
         // Build SSE events for newly expired invites while holding write lock
@@ -2261,6 +2313,55 @@ mod tests {
         assert!(matches!(err, RelayError::ServiceUnavailable(_)));
         assert_eq!(store.len().await, 3);
         assert!(store.get_invite(&ids[0], "alice").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_running_byte_totals_match_recomputation() {
+        let store = InboxStore::new(Duration::from_millis(50)).with_limits(5, 100);
+        let session_store = SessionStore::new(Duration::from_secs(600));
+        let check = |label: &'static str| {
+            let store = store.clone();
+            async move {
+                let inner = store.inner.read().await;
+                assert_eq!(
+                    (inner.held_bytes, inner.finished_bytes),
+                    inner.recomputed_bytes(),
+                    "{label}"
+                );
+            }
+        };
+        let mut ids = Vec::new();
+        for _ in 0..4 {
+            ids.push(
+                store
+                    .create_invite("alice", &test_create_request(), None)
+                    .await
+                    .unwrap()
+                    .invite_id,
+            );
+        }
+        check("created").await;
+        store.cancel_invite(&ids[0], "alice").await.unwrap();
+        check("canceled").await;
+        store.decline_invite(&ids[1], "bob", None).await.unwrap();
+        check("declined").await;
+        store
+            .accept_invite(&ids[2], "bob", None, &session_store)
+            .await
+            .unwrap();
+        check("accepted").await;
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        store.reap_expired().await;
+        check("expired").await;
+        // Filling the store evicts finished invites (remove_invite).
+        for _ in 0..3 {
+            store
+                .create_invite("alice", &test_create_request(), None)
+                .await
+                .unwrap();
+        }
+        check("evicted").await;
+        assert!(store.len().await <= 5);
     }
 
     #[tokio::test]
