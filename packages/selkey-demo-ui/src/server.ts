@@ -277,6 +277,11 @@ async function setupAndStartHeartbeats(): Promise<void> {
   // Set environment variables for tool handlers
   process.env['SELKEY_RELAY_URL'] = RELAY_URL;
   process.env['SELKEY_WORKDIR'] = SELKEY_WORKDIR;
+  // Both demo agents share one process and working directory, so they share
+  // one owner-side disclosure ledger. Raise its budgets (unless configured)
+  // so repeated demo runs on the same day are not refused.
+  process.env['SELKEY_ENTROPY_BUDGET_PER_COUNTERPARTY_BITS'] ??= '4096';
+  process.env['SELKEY_ENTROPY_BUDGET_GLOBAL_BITS'] ??= '8192';
 
   // Generate identities
   const alice = generateIdentity();

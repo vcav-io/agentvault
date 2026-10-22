@@ -62,6 +62,7 @@ import {
   RelayTrustError,
 } from '../relay-trust.js';
 import { buildExpectedContractHashes, localAllowedPurposes } from '../responder-contracts.js';
+import { chargeOwnDisclosure, EntropyLedgerError } from '../entropy-ledger.js';
 import { appendPrivateLine, ensurePrivateDir, selkeyStateDir, writePrivateJson } from '../secure-fs.js';
 import {
   encodeRelayToken,
@@ -671,6 +672,9 @@ function responderAcceptablePurposes(handle: RelayHandle, transport: AfalTranspo
 }
 
 function mapRelayError(error: unknown): { code: ErrorCode; detail: string } {
+  if (error instanceof EntropyLedgerError) {
+    return { code: error.code, detail: error.message };
+  }
   if (error instanceof RelayTrustError) {
     return {
       code: error.message.startsWith('relay_url') ? 'INVALID_INPUT' : 'PRECONDITION_FAILED',
@@ -752,6 +756,37 @@ function resolveAgentAlias(hint: string, knownAgents: NormalizedKnownAgent[]): s
       entry.aliases.some((alias) => alias.toLowerCase() === hintLower),
   );
   return match ? match.agent_id : hint;
+}
+
+/**
+ * Charge this agent's disclosure for a session against the owner-side budget
+ * ledger before its input is submitted (fail closed). The counterparty is
+ * taken from the local contract's participants, falling back to the
+ * locally resolved counterparty id.
+ */
+function chargeSessionDisclosure(params: {
+  key: string;
+  contract: unknown;
+  selfId: string | undefined;
+  fallbackCounterparty?: string;
+  purpose?: string;
+}): void {
+  const participants =
+    params.contract && typeof params.contract === 'object'
+      ? (params.contract as Record<string, unknown>)['participants']
+      : undefined;
+  let counterparty: string | undefined;
+  if (Array.isArray(participants) && params.selfId && participants.includes(params.selfId)) {
+    const others = participants.filter((p): p is string => typeof p === 'string' && p !== params.selfId);
+    if (others.length === 1) counterparty = others[0];
+  }
+  counterparty = counterparty ?? params.fallbackCounterparty;
+  chargeOwnDisclosure({
+    key: params.key,
+    contract: params.contract,
+    counterparty,
+    purpose: params.purpose,
+  });
 }
 
 function hashInput(input: string): string {
@@ -1206,6 +1241,13 @@ async function createCommittedDirectSession(params: {
   purposeHint?: string | null;
 }): Promise<void> {
   await assertRelayTrusted(params.relayUrl, [transportLocalRelayUrl(params.transport)]);
+  chargeSessionDisclosure({
+    key: params.handle.id,
+    contract: params.contract,
+    selfId: params.transport.agentId,
+    fallbackCounterparty: params.handle.counterparty,
+    purpose: params.purposeHint ?? undefined,
+  });
   const config = { relay_url: params.relayUrl };
   const nonce = generateCommitmentNonce();
   const created = await createAndSubmit(config, params.contract, params.myInput, 'initiator', nonce);
@@ -1598,6 +1640,13 @@ async function phaseInvite(
 
   if (!(transport instanceof DirectAfalTransport)) {
     await assertRelayTrusted(relayUrl, [transportLocalRelayUrl(transport)]);
+    chargeSessionDisclosure({
+      key: handle.id,
+      contract,
+      selfId: agentId,
+      fallbackCounterparty: counterparty,
+      purpose: purposeHint ?? undefined,
+    });
     const config = { relay_url: relayUrl };
     const myContext = args.my_input ?? '';
     const nonce = generateCommitmentNonce();
@@ -1756,6 +1805,20 @@ async function phasePollInvite(
         'RELAY_NOT_TRUSTED',
         err instanceof Error ? err.message : String(err),
       );
+    }
+    try {
+      chargeSessionDisclosure({
+        key: handle.id,
+        contract: handle.contract,
+        selfId: transport.agentId,
+        fallbackCounterparty: handle.counterparty,
+        purpose: handle.purpose,
+      });
+    } catch (err) {
+      if (err instanceof EntropyLedgerError) {
+        return failedResponse(handle, err.code, err.message);
+      }
+      throw err;
     }
     const config = { relay_url: handle.relayUrl };
     const myContext = handle.myInput ?? '';
@@ -2345,6 +2408,22 @@ async function phaseJoin(
       );
     }
 
+    // Charge the owner-side disclosure budget before accepting or submitting.
+    try {
+      chargeSessionDisclosure({
+        key: handle.id,
+        contract: handle.contract,
+        selfId: transport.agentId,
+        fallbackCounterparty: handle.counterparty,
+        purpose: handle.purpose,
+      });
+    } catch (err) {
+      if (err instanceof EntropyLedgerError) {
+        return failedResponse(handle, err.code, err.message);
+      }
+      throw err;
+    }
+
     // For relay inbox: accept invite FIRST to get session tokens.
     // For legacy transports: tokens are already in handle from phaseDiscover.
     if (!handle.sessionId || !handle.tokens) {
@@ -2515,6 +2594,11 @@ async function handleCreate(args: RelaySignalArgs): Promise<ToolResponse<RelaySi
   }
   const relayUrl = resolveRelayUrl(args.relay_url);
   await assertRelayTrusted(relayUrl);
+  chargeSessionDisclosure({
+    key: `create:${randomUUID()}`,
+    contract: args.contract,
+    selfId: localParticipantId(args.contract, 0),
+  });
   const config = { relay_url: relayUrl };
 
   const myContext = args.my_input ?? '';
@@ -2551,6 +2635,13 @@ async function handleJoin(args: RelaySignalArgs): Promise<ToolResponse<RelaySign
 
   const relayUrl = resolveRelayUrl(args.relay_url);
   await assertRelayTrusted(relayUrl);
+  // The disclosure bound comes from the caller's contract; without it the
+  // session cannot be charged, so JOIN refuses (when the ledger is enforced).
+  chargeSessionDisclosure({
+    key: `join:${args.session_id}`,
+    contract: args.contract,
+    selfId: localParticipantId(args.contract, 1),
+  });
   const config = { relay_url: relayUrl };
 
   const myContext = args.my_input ?? '';

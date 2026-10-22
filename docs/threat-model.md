@@ -291,6 +291,28 @@ bound on the total information content. A 25-bit bounded output carries at most 
 of information about the combined input context. This is a meaningful constraint
 compared to unbounded free text (which carries hundreds of bits for a short paragraph).
 
+### 6.1.1 Repeated Sessions
+
+The per-session bound does not cap what a counterparty learns across sessions: the
+bits released in each session add up. A counterparty that runs many sessions with
+varied contracts or inputs can narrow down the other side's context, and a refusal or
+abort itself leaks about one bit. The relay cannot enforce a cross-session limit
+honestly on unauthenticated lanes, because a prober can rename itself.
+
+The data owner's MCP server keeps an owner-side ledger
+(`.selkey/budget-ledger.json`). It charges each session it submits input to, before
+submission, using the schema's bit upper bound computed locally (or the contract's
+`entropy_budget_bits`, if larger), against a per-counterparty budget and a global
+budget over a rolling window. Aborted sessions count. The global budget is the
+backstop against many distinct counterparty identities. Limits of this control:
+
+- It only protects agents that run a Selkey client with the ledger enabled.
+- Per-counterparty budgets are keyed by `agent_id`; only the global budget resists
+  a counterparty that uses several identities.
+- The unit is the summed schema upper bound, which overcounts correlated outputs.
+- State is local to one working directory. Agents that share a working directory
+  share a ledger, and deleting the file resets it.
+
 ### 6.2 Timing
 
 Response latency may correlate with input complexity (longer inputs = more tokens =
