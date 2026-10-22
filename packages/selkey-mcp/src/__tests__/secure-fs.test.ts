@@ -1,11 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
 import {
   InsecureStateFileError,
+  acquireFileLock,
   appendPrivateLine,
+  removeLockIfUnchanged,
+  removeStaleMarker,
+  withRemovalMarker,
   readPrivateJson,
   writePrivateJson,
 } from '../secure-fs.js';
@@ -98,5 +103,144 @@ describe.skipIf(!posix)('secure-fs', () => {
     const link = path.join(tmp, 'state', 'link.jsonl');
     fs.symlinkSync(log, link);
     expect(() => appendPrivateLine(link, 'x')).toThrow();
+  });
+});
+
+describe('lock files', () => {
+  const opts = { staleMs: 10_000, timeoutMs: 1_000 };
+  const age = (file: string) => {
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(file, old, old);
+  };
+
+  it('takes over a stale lock and leaves the new holder\'s lock when the old holder releases', () => {
+    const lock = path.join(tmp, 'state', 'x.lock');
+    const releaseA = acquireFileLock(lock, opts);
+    age(lock); // holder A looks abandoned
+    const releaseB = acquireFileLock(lock, opts);
+    releaseA(); // A finishes late: must not remove B's lock
+    expect(fs.existsSync(lock)).toBe(true);
+    expect(() => acquireFileLock(lock, { staleMs: 10_000, timeoutMs: 50 })).toThrow(/timed out/);
+    releaseB();
+    expect(fs.existsSync(lock)).toBe(false);
+  });
+
+  it('does not remove a fresh lock that replaced the stale one it observed', () => {
+    const lock = path.join(tmp, 'y.lock');
+    fs.writeFileSync(lock, 'old');
+    const observed = fs.readFileSync(lock, 'utf8');
+    // Another process takes the lock over before this one acts.
+    const fresh = path.join(tmp, 'y.fresh');
+    fs.writeFileSync(fresh, 'new');
+    fs.renameSync(fresh, lock);
+    expect(removeLockIfUnchanged(lock, observed)).toBe(false);
+    expect(fs.readFileSync(lock, 'utf8')).toBe('new');
+    expect(fs.readdirSync(tmp).sort()).toEqual(['y.lock']);
+  });
+
+  it('removes the stale lock it observed', () => {
+    const lock = path.join(tmp, 'z.lock');
+    fs.writeFileSync(lock, 'old');
+    expect(removeLockIfUnchanged(lock, 'old')).toBe(true);
+    expect(fs.readdirSync(tmp)).toEqual([]);
+  });
+});
+
+describe('lock takeover under contention', () => {
+  // Patch node:fs for the module under test (ESM named exports are synced).
+  const fsc = createRequire(import.meta.url)('node:fs') as typeof fs;
+
+  it('lets only one process take over a stale lock when another takes it over mid-check', () => {
+    const lock = path.join(tmp, 'race.lock');
+    fs.writeFileSync(lock, 'abandoned-holder', { mode: 0o600 });
+    const past = new Date(Date.now() - 60_000);
+    fs.utimesSync(lock, past, past);
+
+    const origRead = fsc.readFileSync;
+    let releaseB: (() => void) | undefined;
+    let bError: unknown;
+    let fired = false;
+    // The first time A reads the lock's token, process B attempts its own
+    // takeover of the same stale lock.
+    fsc.readFileSync = function (this: unknown, p: unknown, ...rest: unknown[]) {
+      if (!fired && (p === lock || typeof p === 'number')) {
+        fired = true;
+        fsc.readFileSync = origRead;
+        syncBuiltinESMExports();
+        try {
+          releaseB = acquireFileLock(lock, { staleMs: 10_000, timeoutMs: 100 });
+        } catch (err) {
+          bError = err;
+        }
+      }
+      return (origRead as (...a: unknown[]) => unknown).call(this, p, ...rest);
+    } as typeof fs.readFileSync;
+    syncBuiltinESMExports();
+
+    let releaseA: (() => void) | undefined;
+    let aError: unknown;
+    try {
+      releaseA = acquireFileLock(lock, { staleMs: 10_000, timeoutMs: 1_000 });
+    } catch (err) {
+      aError = err;
+    } finally {
+      fsc.readFileSync = origRead;
+      syncBuiltinESMExports();
+    }
+    expect(fired).toBe(true);
+    // At most one holder at a time.
+    const holders = [releaseA, releaseB].filter(Boolean).length;
+    expect(holders).toBe(1);
+    expect(aError ?? bError).toBeDefined();
+    releaseA?.();
+    releaseB?.();
+    expect(fs.existsSync(lock)).toBe(false);
+  });
+});
+
+describe('removal marker', () => {
+  const old = () => new Date(Date.now() - 120_000);
+
+  it('lets exactly one of two waiters remove an orphaned marker', () => {
+    const marker = path.join(tmp, 'm.lock.takeover');
+    fs.writeFileSync(marker, 'orphan', { mode: 0o600 });
+    fs.utimesSync(marker, old(), old());
+    // Both waiters observed the orphaned marker. The first removes it and
+    // creates its own; the second must not remove the new one.
+    expect(removeStaleMarker(marker, 'orphan', 60_000)).toBe(true);
+    fs.writeFileSync(marker, 'waiter-1', { flag: 'wx', mode: 0o600 });
+    expect(removeStaleMarker(marker, 'orphan', 60_000)).toBe(false);
+    expect(fs.readFileSync(marker, 'utf8')).toBe('waiter-1');
+    expect(fs.readdirSync(tmp)).toEqual(['m.lock.takeover']);
+  });
+
+  it('does not remove another holder\'s marker on exit', () => {
+    const lock = path.join(tmp, 'n.lock');
+    const marker = `${lock}.takeover`;
+    withRemovalMarker(lock, { staleMs: 10_000, timeoutMs: 1_000 }, () => {
+      // This holder stalled: its marker was removed as orphaned and another
+      // holder took a marker of its own.
+      fs.rmSync(marker);
+      fs.writeFileSync(marker, 'other-holder', { flag: 'wx', mode: 0o600 });
+    });
+    expect(fs.readFileSync(marker, 'utf8')).toBe('other-holder');
+  });
+
+  it('removes its own marker on exit', () => {
+    const lock = path.join(tmp, 'o.lock');
+    expect(withRemovalMarker(lock, { staleMs: 10_000, timeoutMs: 1_000 }, () => 7)).toBe(7);
+    expect(fs.existsSync(`${lock}.takeover`)).toBe(false);
+  });
+
+  it('takes over an orphaned marker only after the marker staleness', () => {
+    const lock = path.join(tmp, 'p.lock');
+    const marker = `${lock}.takeover`;
+    fs.writeFileSync(marker, 'orphan', { mode: 0o600 });
+    const recent = new Date(Date.now() - 20_000);
+    fs.utimesSync(marker, recent, recent);
+    // Older than the lock staleness but not the marker staleness: still held.
+    expect(withRemovalMarker(lock, { staleMs: 10_000, timeoutMs: 50 }, () => 1)).toBeUndefined();
+    fs.utimesSync(marker, old(), old());
+    expect(withRemovalMarker(lock, { staleMs: 10_000, timeoutMs: 50 }, () => 1)).toBe(1);
   });
 });

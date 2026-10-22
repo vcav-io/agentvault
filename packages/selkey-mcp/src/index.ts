@@ -14,7 +14,9 @@
  *   SELKEY_AFAL_HTTP_PORT          — port for AFAL HTTP server (enables RESPOND mode)
  *   SELKEY_AFAL_BIND_ADDRESS       — bind address (default: 127.0.0.1)
  *   SELKEY_AFAL_TRUSTED_AGENTS     — JSON: [{"agentId":"...","publicKeyHex":"..."}] (pin seeds)
- *   SELKEY_AGENT_PIN_RESEED        — "true" lets configured keys replace differing stored pins
+ *   SELKEY_AGENT_PIN_RESEED        — "true" lets configured keys replace differing stored pins that
+ *                                    came from configuration; a comma-separated agent_id list
+ *                                    replaces those agents' pins whatever their source (CLI, rotation)
  *   SELKEY_AGENT_PIN_MODE          — "preshared" (default) or "tofu" (first contact needs
  *                                    human confirmation via `selkey-mcp pins confirm`)
  *
@@ -56,7 +58,7 @@ import { listSupportedContractOffers } from './contract-offers.js';
 import { supportsBespokePrecontractNegotiation } from './bespoke-contracts.js';
 import { listSupportedTopicCodes, supportsTopicAlignment } from './topic-codes.js';
 import { IfcService, type IfcKnownAgent } from './ifc.js';
-import { PinStore, parsePinMode, type PinResolver, type PinSeed } from './pin-store.js';
+import { PinStore, parsePinMode, parsePinReseed, type PinResolver, type PinSeed } from './pin-store.js';
 import { processPinsCliIo, runPinsCli } from './pin-cli.js';
 import { ed25519 } from '@noble/curves/ed25519';
 import { hexToBytes, bytesToHex } from '@noble/hashes/utils';
@@ -300,7 +302,7 @@ function openPinStoreFromEnv(knownAgents: NormalizedKnownAgent[]): PinStore {
   return PinStore.open({
     seeds: pinSeedsFromEnv(knownAgents),
     mode: parsePinMode(process.env['SELKEY_AGENT_PIN_MODE']),
-    reseed: process.env['SELKEY_AGENT_PIN_RESEED'] === 'true',
+    reseed: parsePinReseed(process.env['SELKEY_AGENT_PIN_RESEED']),
   });
 }
 

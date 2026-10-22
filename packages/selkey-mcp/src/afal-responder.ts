@@ -48,6 +48,15 @@ export interface AdmittedProposal {
   admittedRelayPreference?: RelayPreference;
 }
 
+/**
+ * Structured COMMIT error code: the responder holds no admission for this
+ * COMMIT (the admit token was already used or has expired). An initiator
+ * that re-sends a COMMIT after losing the response to the first one reads
+ * this as "already committed".
+ */
+export const COMMIT_ERROR_UNKNOWN_ADMIT = 'UNKNOWN_ADMIT_TOKEN';
+export type CommitErrorCode = typeof COMMIT_ERROR_UNKNOWN_ADMIT;
+
 // ── NonceCache ───────────────────────────────────────────────────────────────
 
 const DEFAULT_WINDOW_MS = 10 * 60 * 1000;
@@ -63,22 +72,30 @@ export class NonceCache {
     this.windowMs = opts?.windowMs ?? DEFAULT_WINDOW_MS;
   }
 
-  check(agentId: string, nonce: string, timestampMs: number): boolean {
+  /**
+   * Record `nonce` for `agentId`; false if it is still held or the agent's
+   * cache is full. An entry is held until max(first seen on the local clock,
+   * the request's claimed time) plus the window, so neither a far-future
+   * timestamp on another request nor local expiry ahead of a future-dated
+   * request's own freshness lets a nonce be reused. Staleness of
+   * `timestampMs` is checked by the callers.
+   */
+  check(agentId: string, nonce: string, timestampMs: number, nowMs: number = Date.now()): boolean {
     let agentCache = this.caches.get(agentId);
     if (!agentCache) {
       agentCache = new Map();
       this.caches.set(agentId, agentCache);
     }
 
-    const cutoff = timestampMs - this.windowMs;
-    for (const [n, ts] of agentCache) {
-      if (ts < cutoff) agentCache.delete(n);
+    for (const [n, expiresAt] of agentCache) {
+      if (expiresAt < nowMs) agentCache.delete(n);
     }
 
     if (agentCache.size >= this.maxPerAgent) return false;
     if (agentCache.has(nonce)) return false;
 
-    agentCache.set(nonce, timestampMs);
+    const claimed = Number.isFinite(timestampMs) ? timestampMs : nowMs;
+    agentCache.set(nonce, Math.max(nowMs, claimed) + this.windowMs);
     return true;
   }
 
@@ -257,7 +274,7 @@ export class AfalResponder {
     return { outcome: 'ADMIT', response: signedAdmit };
   }
 
-  handleCommit(body: unknown): { ok: boolean; error?: string } {
+  handleCommit(body: unknown): { ok: boolean; error?: string; code?: CommitErrorCode } {
     this.gcExpired();
 
     if (!body || typeof body !== 'object') {
@@ -279,7 +296,7 @@ export class AfalResponder {
 
     const admitted = this.admitStore.get(admitTokenId);
     if (!admitted) {
-      return { ok: false, error: 'Unknown or expired admit_token_id' };
+      return { ok: false, error: 'Unknown or expired admit_token_id', code: COMMIT_ERROR_UNKNOWN_ADMIT };
     }
 
     if (from !== admitted.proposerAgentId) {

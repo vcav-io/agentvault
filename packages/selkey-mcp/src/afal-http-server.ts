@@ -18,7 +18,7 @@
 import { createServer } from 'node:http';
 import type { Server, IncomingMessage, ServerResponse } from 'node:http';
 import type { AfalResponder } from './afal-responder.js';
-import { NonceCache } from './afal-responder.js';
+import { COMMIT_ERROR_UNKNOWN_ADMIT, NonceCache } from './afal-responder.js';
 import type { AgentDescriptor } from './direct-afal-transport.js';
 import type { IfcService } from './ifc.js';
 import { buildAgentCard } from './a2a-agent-card.js';
@@ -478,7 +478,13 @@ export class AfalHttpServer {
                     JSON.stringify(
                       buildA2ATaskResponse({
                         mediaType: SELKEY_SESSION_TOKENS_MEDIA_TYPE,
-                        data: { ok: false, error: 'Unknown task_id — no matching in-flight propose' },
+                        // The in-flight task is removed when its COMMIT succeeds, so
+                        // an unknown task_id means no admission is held for it.
+                        data: {
+                          ok: false,
+                          error: 'Unknown task_id — no matching in-flight propose',
+                          code: COMMIT_ERROR_UNKNOWN_ADMIT,
+                        },
                         taskId: parsed.taskId,
                         state: 'failed',
                       }),
