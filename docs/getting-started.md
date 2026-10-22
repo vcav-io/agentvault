@@ -74,7 +74,7 @@ Then click **Start Protocol** in the browser.
 
 The demo UI opens with:
 
-- A **scenario picker** with 15 built-in scenarios
+- A **scenario picker** with 14 built-in scenarios plus a blank template
 - **Provider and model selectors**
 - An optional **canary checking toggle** to test whether private input leaked into the output
 
