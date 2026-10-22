@@ -18,7 +18,7 @@ Complete reference for all environment variables used by the Selkey relay and MC
 | `SELKEY_ALLOWED_HOSTS` | unset | Comma-separated extra hostnames accepted in the `Host` header (e.g. a compose service name). When the relay listens on loopback, or when this is set, requests whose `Host` is not `localhost`, `127.0.0.1`, `[::1]` or a listed name get `403`. This blocks DNS-rebinding requests from browser pages to a local relay |
 | `SELKEY_ALLOW_UNAUTHENTICATED` | unset | Set to `1` to let a non-dev relay start on a non-loopback address without `SELKEY_OPERATOR_TOKEN` (only when access is controlled elsewhere) |
 | `SELKEY_BIND_ADDR` | `127.0.0.1` | IP address the relay listens on. Loopback by default; set `0.0.0.0` (or a specific interface) to accept remote connections, e.g. inside a container |
-| `SELKEY_OPERATOR_TOKEN` | — | Operator bearer token. When set, `POST /relay` and `POST /sessions` require `Authorization: Bearer <token>`. Must be at least 32 printable characters and not repetitive (e.g. `openssl rand -hex 32`); the relay refuses to start with a weaker token |
+| `SELKEY_OPERATOR_TOKEN` | — | Operator bearer token. When set, `POST /relay` and `POST /sessions` require `Authorization: Bearer <token>`. Use at least 32 characters from a random generator (e.g. `openssl rand -hex 32`). The relay refuses to start with a token that is shorter, has few distinct characters or repeats a shorter sequence; these checks catch obvious mistakes, not weak generators |
 | `SELKEY_MODEL_ID` | `claude-sonnet-4-6` | Anthropic model ID |
 | `SELKEY_SIGNING_KEY_HEX` | required outside dev | 64-char hex Ed25519 signing key for receipt signing (e.g. `openssl rand -hex 32`). Outside `SELKEY_ENV=dev` the relay refuses to start without it. In dev, if unset, a random key is generated on each start and receipts won't verify across restarts. The key id logged at startup and reported by `/health` is `ed25519:` + hex(SHA-256(public key)) |
 | `SELKEY_PROMPT_PROGRAM_DIR` | `prompt_programs` | Directory containing prompt programs, model profile lockfile, and enforcement policy lockfile |
@@ -102,16 +102,17 @@ Unset variables use the default. A set value must be a positive integer, or the 
 | `SELKEY_MAX_ENTROPY_BITS_PER_SESSION` | `64` | Per-session cap on the output schema's entropy upper bound. Applies to every contract, whatever its `entropy_budget_bits` or `entropy_enforcement`; a contract above it is rejected at session or invite creation |
 | `SELKEY_MAX_BODY_BYTES` | `262144` | Maximum request body size (`413` above it) |
 | `SELKEY_MAX_SESSIONS` | `10000` | Sessions held in memory at once (`503` when full) |
-| `SELKEY_MAX_INVITES` | `10000` | Invites held in memory at once (`503` when full). Accepted, declined, canceled and expired invites are removed 24 hours after they reach that state |
+| `SELKEY_MAX_INVITES` | `10000` | Invites held in memory at once. Accepted, declined, canceled and expired invites are removed 1 hour after they reach that state; when the store is full, the oldest finished invite (declined, canceled or expired before accepted) is removed to make room. `503` only when every held invite is pending |
+| `SELKEY_MAX_INVITES_PER_AGENT` | `1000` | Invites in any state held per sending agent. At the limit the sender's oldest finished invite is removed; `429` if all of them are pending |
 | `SELKEY_MAX_PENDING_INVITES_PER_AGENT` | `100` | Pending invites per sending agent (`429` above it) |
-| `SELKEY_SESSION_CREATE_RATE_PER_MIN` | `60` | `POST /sessions` plus `POST /relay` per client address per minute (`429` above it). Behind a reverse proxy all clients share the proxy's address |
+| `SELKEY_SESSION_CREATE_RATE_PER_MIN` | `60` | `POST /sessions` plus `POST /relay` per client address per minute (`429` above it). IPv6 clients are grouped by /64. Behind a reverse proxy all clients share the proxy's address |
 | `SELKEY_INVITE_CREATE_RATE_PER_MIN` | `30` | `POST /invites` per sending agent per minute (`429` above it) |
 
 ### Agent registry (inbox authentication)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SELKEY_AGENT_REGISTRY_PATH` | — | Path to `agents.json`: `{"agents": [{"agent_id", "inbox_token", "public_key_hex"?}]}`. Required unless `SELKEY_INBOX_AUTH=off` with `SELKEY_ENV=dev`. Each `inbox_token` must be unique, at least 32 printable characters and not repetitive (e.g. `openssl rand -hex 32`); the relay refuses to start if any token is weaker. `public_key_hex` is the key attached to that agent's invites |
+| `SELKEY_AGENT_REGISTRY_PATH` | — | Path to `agents.json`: `{"agents": [{"agent_id", "inbox_token", "public_key_hex"?}]}`. Required unless `SELKEY_INBOX_AUTH=off` with `SELKEY_ENV=dev`. Each `inbox_token` must be unique and should be at least 32 characters from a random generator (e.g. `openssl rand -hex 32`); the relay refuses to start if any token is shorter, has few distinct characters or repeats a shorter sequence. `public_key_hex` is the key attached to that agent's invites |
 | `SELKEY_INBOX_AUTH` | — | Set to `off` (with `SELKEY_ENV=dev`) to run without an agent registry; inbox endpoints then reject every request |
 
 ## MCP Server (`selkey-mcp`)

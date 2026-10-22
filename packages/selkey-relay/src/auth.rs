@@ -48,7 +48,9 @@ pub const MIN_TOKEN_DISTINCT_CHARS: usize = 8;
 /// `length * log2(alphabet)`, where the alphabet is 16 for a hex token and
 /// otherwise the combined size of the character classes used (lower case,
 /// upper case, digits, symbols). A random 32-byte hex token
-/// (`openssl rand -hex 32`) passes; short or repetitive tokens do not. The
+/// (`openssl rand -hex 32`) passes; short tokens, tokens with few distinct
+/// characters and tokens that repeat a shorter sequence do not. These checks
+/// catch obvious mistakes only: use a random generator. The
 /// returned error never contains the token.
 pub fn check_token_strength(token: &str) -> Result<(), String> {
     const ADVICE: &str = "generate one with `openssl rand -hex 32`";
@@ -68,6 +70,12 @@ pub fn check_token_strength(token: &str) -> Result<(), String> {
         return Err(format!(
             "token is too repetitive (fewer than {MIN_TOKEN_DISTINCT_CHARS} distinct characters); {ADVICE}"
         ));
+    }
+    // A short block repeated (e.g. 16 characters written four times) adds
+    // length without adding randomness.
+    let bytes = token.as_bytes();
+    if (1..=bytes.len() / 2).any(|period| bytes[period..] == bytes[..bytes.len() - period]) {
+        return Err(format!("token repeats a shorter sequence; {ADVICE}"));
     }
     let is_hex = !token.bytes().all(|b| b.is_ascii_digit())
         && (token
@@ -269,6 +277,18 @@ mod tests {
         }
         let with_space = format!("{} {}", "0123456789abcdef", "0123456789abcdef");
         assert!(check_token_strength(&with_space).is_err());
+    }
+
+    #[test]
+    fn test_token_strength_rejects_repeated_blocks() {
+        for weak in [
+            "0123456789abcdef".repeat(4),
+            "q3Xv8_Zt0LmN4pQ-".repeat(3),
+            format!("{}{}", "6a1f0c3e9b7d24a5".repeat(2), "6a1f0c3e"),
+        ] {
+            let err = check_token_strength(&weak).unwrap_err();
+            assert!(err.contains("repeats"), "{weak}: {err}");
+        }
     }
 
     #[test]

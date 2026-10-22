@@ -157,7 +157,9 @@ participants, enforcement policy (its `provider_allowlist`, `max_output_tokens` 
 constraints, TTLs, output schema acceptance, the entropy limits below, the prompt
 program, and that the provider is configured. A contract that would fail at
 inference is rejected here with `400` and no session is created. The same checks
-run again when inference starts.
+run again when inference starts. They read only artefacts fixed at startup, so a
+contract accepted at creation passes them again; if one ever failed there, the
+session would abort without a receipt (the failure is logged).
 
 **Entropy limits.** The output schema's entropy upper bound must not exceed the
 relay's per-session cap (`SELKEY_MAX_ENTROPY_BITS_PER_SESSION`, default 64 bits),

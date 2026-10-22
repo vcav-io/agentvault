@@ -616,6 +616,12 @@ async fn abort_if_processing(store: &SessionStore, session_id: &str, reason: Abo
 
 /// Build the failure receipt context: the contract preflight plus the input
 /// commitments. `None` if either cannot be computed.
+///
+/// The preflight already passed when the session was created, and the
+/// artefacts it reads (policies, profiles, schemas, prompt programs, relay
+/// key) are fixed at startup, so it does not fail here in a running relay.
+/// If it ever does, the session aborts without a receipt: a failure receipt
+/// would have to bind hashes the relay did not resolve. That case is logged.
 fn failure_receipt_context(
     state: &AppState,
     contract: &types::Contract,
@@ -624,7 +630,13 @@ fn failure_receipt_context(
     input_a: &RelayInput,
     input_b: &RelayInput,
 ) -> Option<FailureReceiptContext> {
-    let preflight = relay::preflight_contract(contract, provider, state).ok()?;
+    let preflight = match relay::preflight_contract(contract, provider, state) {
+        Ok(preflight) => preflight,
+        Err(e) => {
+            tracing::error!(error = %e, "contract preflight failed after session creation; no failure receipt");
+            return None;
+        }
+    };
     let input_commitments = relay::compute_input_commitments(contract, input_a, input_b).ok()?;
     Some(FailureReceiptContext {
         contract_hash: contract_hash.to_string(),
@@ -700,14 +712,25 @@ async fn complete_inference<F>(
         + 'static,
 {
     let task = tokio::spawn(inference);
-    // Let the reaper abort the inference if the session times out.
+    // Let the reaper abort the inference if the session times out. If the
+    // session already left `Processing` (or is gone) before the handle was
+    // registered, abort now: nothing would record the result.
     let abort = task.abort_handle();
-    state
+    let still_processing = state
         .session_store
         .with_session(&session_id, |session| {
-            session.inference_abort = Some(abort);
+            if session.state == SessionState::Processing {
+                session.inference_abort = Some(abort.clone());
+                true
+            } else {
+                false
+            }
         })
-        .await;
+        .await
+        .unwrap_or(false);
+    if !still_processing {
+        abort.abort();
+    }
     let outcome = match task.await {
         Ok(result) => result,
         Err(join_err) if join_err.is_cancelled() => {
@@ -1161,6 +1184,34 @@ mod tests {
         assert_eq!(st, SessionState::Aborted);
         assert_eq!(reason, Some(AbortReason::Timeout));
         assert!(cleared);
+    }
+
+    #[tokio::test]
+    async fn test_inference_aborted_if_session_timed_out_before_registration() {
+        let state = test_state();
+        let session_id = processing_session_with_inputs(&state).await;
+        // The reaper times the session out between input hand-off and the
+        // inference task registering its abort handle.
+        state
+            .session_store
+            .with_session(&session_id, |s| {
+                s.state = SessionState::Aborted;
+                s.abort_reason = Some(AbortReason::Timeout);
+            })
+            .await;
+        let inference = async move {
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+            Err(RelayError::Internal("unreachable".to_string()))
+        };
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            complete_inference(state.clone(), session_id.clone(), None, inference),
+        )
+        .await
+        .expect("inference for a session no longer processing must be aborted");
+        let (st, reason, _) = session_outcome(&state, &session_id).await;
+        assert_eq!(st, SessionState::Aborted);
+        assert_eq!(reason, Some(AbortReason::Timeout));
     }
 
     #[tokio::test]

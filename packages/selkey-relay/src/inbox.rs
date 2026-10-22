@@ -68,6 +68,8 @@ pub struct InboxStore {
     max_invites: usize,
     /// Maximum pending invites per sending agent.
     max_pending_per_agent: usize,
+    /// Maximum invites (any state) held per sending agent.
+    max_held_per_agent: usize,
     #[cfg(feature = "persistence")]
     db: Option<Arc<SqliteDb>>,
 }
@@ -82,9 +84,10 @@ impl InboxStore {
             })),
             channels: Arc::new(Mutex::new(HashMap::new())),
             invite_ttl,
-            gc_grace: Duration::from_secs(86400), // 24h grace after a terminal state
+            gc_grace: Duration::from_secs(3600), // 1h grace after a terminal state
             max_invites: crate::limits::DEFAULT_MAX_INVITES,
             max_pending_per_agent: crate::limits::DEFAULT_MAX_PENDING_INVITES_PER_AGENT,
+            max_held_per_agent: crate::limits::DEFAULT_MAX_INVITES_PER_AGENT,
             #[cfg(feature = "persistence")]
             db: None,
         }
@@ -94,6 +97,12 @@ impl InboxStore {
     pub fn with_limits(mut self, max_invites: usize, max_pending_per_agent: usize) -> Self {
         self.max_invites = max_invites;
         self.max_pending_per_agent = max_pending_per_agent;
+        self
+    }
+
+    /// Set the maximum number of invites (any state) held per sending agent.
+    pub fn with_max_held_per_agent(mut self, max_held_per_agent: usize) -> Self {
+        self.max_held_per_agent = max_held_per_agent;
         self
     }
 
@@ -130,9 +139,10 @@ impl InboxStore {
             })),
             channels: Arc::new(Mutex::new(HashMap::new())),
             invite_ttl,
-            gc_grace: Duration::from_secs(86400),
+            gc_grace: Duration::from_secs(3600),
             max_invites: crate::limits::DEFAULT_MAX_INVITES,
             max_pending_per_agent: crate::limits::DEFAULT_MAX_PENDING_INVITES_PER_AGENT,
+            max_held_per_agent: crate::limits::DEFAULT_MAX_INVITES_PER_AGENT,
             db: Some(db),
         })
     }
@@ -243,30 +253,60 @@ impl InboxStore {
             decline_reason_code: None,
         };
 
-        // Capacity checks before anything is written.
-        {
-            let store = self.inner.read().await;
-            if store.invites.len() >= self.max_invites {
-                tracing::warn!(max_invites = self.max_invites, "invite store at capacity");
-                return Err(RelayError::ServiceUnavailable(
-                    "invite capacity reached".to_string(),
-                ));
-            }
-            let pending_from_sender = store
+        // Capacity checks and the insert happen under one write lock, so
+        // concurrent creates cannot overshoot the limits.
+        let mut store = self.inner.write().await;
+        let mut evicted = Vec::new();
+
+        // Per sender: pending invites, and all invites held.
+        let (pending_from_sender, held_by_sender) =
+            store
                 .invites
                 .values()
-                .filter(|inv| {
-                    inv.from_agent_id == from_agent_id && inv.status == InviteStatus::Pending
-                })
-                .count();
-            if pending_from_sender >= self.max_pending_per_agent {
-                return Err(RelayError::RateLimited);
+                .fold((0usize, 0usize), |(pending, held), inv| {
+                    if inv.from_agent_id == from_agent_id {
+                        (
+                            pending + usize::from(inv.status == InviteStatus::Pending),
+                            held + 1,
+                        )
+                    } else {
+                        (pending, held)
+                    }
+                });
+        if pending_from_sender >= self.max_pending_per_agent {
+            return Err(RelayError::RateLimited);
+        }
+        if held_by_sender >= self.max_held_per_agent {
+            // Make room from this sender's own finished invites first.
+            match Self::evict_oldest_terminal(&mut store, |inv| inv.from_agent_id == from_agent_id)
+            {
+                Some(id) => evicted.push(id),
+                None => return Err(RelayError::RateLimited),
+            }
+        }
+        // Whole store: finished invites give way to new ones.
+        if store.invites.len() >= self.max_invites {
+            match Self::evict_oldest_terminal(&mut store, |_| true) {
+                Some(id) => evicted.push(id),
+                None => {
+                    tracing::warn!(max_invites = self.max_invites, "invite store at capacity");
+                    return Err(RelayError::ServiceUnavailable(
+                        "invite capacity reached".to_string(),
+                    ));
+                }
             }
         }
 
-        // SQLite write FIRST (before memory update)
+        // SQLite write before the memory update (under the same lock).
         #[cfg(feature = "persistence")]
         if let Some(ref db) = self.db {
+            if !evicted.is_empty() {
+                let db = db.clone();
+                let ids = evicted.clone();
+                tokio::spawn(async move {
+                    let _ = tokio::task::spawn_blocking(move || db.batch_delete(&ids)).await;
+                });
+            }
             let db = db.clone();
             let invite_for_db = invite.clone();
             tokio::task::spawn_blocking(move || db.insert_invite(&invite_for_db))
@@ -274,8 +314,12 @@ impl InboxStore {
                 .map_err(|e| RelayError::ServiceUnavailable(format!("db thread: {e}")))?
                 .map_err(|e| RelayError::Internal(format!("sqlite: {e}")))?;
         }
-
-        let mut store = self.inner.write().await;
+        if !evicted.is_empty() {
+            tracing::info!(
+                count = evicted.len(),
+                "evicted finished invites to make room"
+            );
+        }
 
         // Add to recipient's inbox index
         store
@@ -326,6 +370,27 @@ impl InboxStore {
             status: InviteStatus::Pending,
             expires_at,
         })
+    }
+
+    /// Remove the oldest finished invite matching `filter`, preferring
+    /// declined, canceled and expired invites over accepted ones (an accepted
+    /// invite still serves the sender's session tokens). Returns its id.
+    fn evict_oldest_terminal(
+        store: &mut InboxStoreInner,
+        filter: impl Fn(&Invite) -> bool,
+    ) -> Option<String> {
+        let victim = store
+            .invites
+            .values()
+            .filter(|inv| inv.status != InviteStatus::Pending && filter(inv))
+            .min_by_key(|inv| (inv.status == InviteStatus::Accepted, inv.updated_at))
+            .map(|inv| inv.invite_id.clone())?;
+        store.invites.remove(&victim);
+        for index in store.inbox_index.values_mut() {
+            index.retain(|id| *id != victim);
+        }
+        store.inbox_index.retain(|_, ids| !ids.is_empty());
+        Some(victim)
     }
 
     /// List inbox for an agent with optional filters.
@@ -1980,5 +2045,89 @@ mod tests {
         assert!(sessions.is_empty().await);
         let detail = store.get_invite(&created.invite_id, "bob").await.unwrap();
         assert_eq!(detail.status, InviteStatus::Pending);
+    }
+
+    fn request_from_bob() -> CreateInviteRequest {
+        let mut request = test_create_request();
+        request.to_agent_id = "alice".to_string();
+        request.contract["participants"] = serde_json::json!(["bob", "alice"]);
+        request
+    }
+
+    #[tokio::test]
+    async fn test_finished_invites_from_one_sender_do_not_block_others() {
+        let store = InboxStore::new(Duration::from_secs(600)).with_limits(5, 3);
+        // One sender cycles create + cancel well past the store capacity.
+        for _ in 0..20 {
+            let created = store
+                .create_invite("alice", &test_create_request(), None)
+                .await
+                .unwrap();
+            store
+                .cancel_invite(&created.invite_id, "alice")
+                .await
+                .unwrap();
+        }
+        // Another sender can still create invites.
+        for _ in 0..3 {
+            store
+                .create_invite("bob", &request_from_bob(), None)
+                .await
+                .unwrap();
+        }
+        assert!(store.len().await <= 5);
+    }
+
+    #[tokio::test]
+    async fn test_invites_held_per_sender_capped() {
+        let store = InboxStore::new(Duration::from_secs(600))
+            .with_limits(100, 10)
+            .with_max_held_per_agent(3);
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            ids.push(
+                store
+                    .create_invite("alice", &test_create_request(), None)
+                    .await
+                    .unwrap()
+                    .invite_id,
+            );
+        }
+        // All three pending: the sender is at its cap.
+        let err = store
+            .create_invite("alice", &test_create_request(), None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RelayError::RateLimited));
+        // Finishing one frees a slot: its oldest finished invite is evicted.
+        store.cancel_invite(&ids[0], "alice").await.unwrap();
+        store
+            .create_invite("alice", &test_create_request(), None)
+            .await
+            .unwrap();
+        assert_eq!(store.len().await, 3);
+        assert!(store.get_invite(&ids[0], "alice").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_creates_respect_capacity() {
+        let store = InboxStore::new(Duration::from_secs(600)).with_limits(5, 100);
+        let mut tasks = Vec::new();
+        for _ in 0..20 {
+            let store = store.clone();
+            tasks.push(tokio::spawn(async move {
+                store
+                    .create_invite("alice", &test_create_request(), None)
+                    .await
+            }));
+        }
+        let mut created = 0;
+        for task in tasks {
+            if task.await.unwrap().is_ok() {
+                created += 1;
+            }
+        }
+        assert_eq!(created, 5);
+        assert_eq!(store.len().await, 5);
     }
 }
