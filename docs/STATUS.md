@@ -48,7 +48,7 @@
 | selkey-tee | [#15](https://github.com/vcav-io/selkey-tee/issues/15) | Live transparency log for enclave measurements | L | Unblocked now #13 is done; low priority (StaticAllowlist sufficient for early deployments) |
 | website | [#42](https://github.com/vcav-io/website/issues/42) | SEO Phase 5: IA and authority signals | L | Unblocked now Phase 4 is done |
 | website | [#29](https://github.com/vcav-io/website/issues/29) | Align simulation visual style with demo UI | S | |
-| vcav | [#770](https://github.com/vcav-io/vcav/issues/770) | Move session.run() to spawn_blocking | S | |
+| vcav (private) | #770 | Move session.run() to spawn_blocking | S | |
 
 ## Recently Completed
 

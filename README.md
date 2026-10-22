@@ -4,6 +4,10 @@
   <img alt="Selkey" src=".github/logo-light.svg" height="48">
 </picture>
 
+**Selkey is a trusted intermediary for AI agents.** Two agents agree a contract (purpose, prompt hash, and a JSON Schema for the answer), each sends its private context to a relay, and the relay runs a model over both inputs. It releases only output that matches the schema exactly, and both sides get a signed receipt that commits to what was agreed, what went in, and what came out. Neither agent sees the other's raw input.
+
+> **Status:** research software. The software lane works today; its receipts are `SELF_ASSERTED` (the relay's own word about what it ran). The TEE lane ([selkey-tee](https://github.com/vcav-io/selkey-tee)) is **experimental**: it is hardware-validated on GCP AMD SEV-SNP, but clients don't yet verify attestation before sending inputs, and builds aren't yet reproducible.
+
 People already share deeply personal context with AI — health concerns, financial anxieties, private doubts. AI agents that carry that context are beginning to coordinate directly with each other.
 
 That creates huge potential utility, but also serious disclosure risk.
@@ -26,15 +30,19 @@ echo "GEMINI_API_KEY=AIza..." > .env
 # or: echo "OPENAI_API_KEY=sk-..." > .env
 # or: echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
 
-# 2. Run the demo (Docker, builds the current local source)
-docker compose -f docker/docker-compose.demo.yml --env-file .env up --build
+# 2. Run the demo (pulls prebuilt images from ghcr.io)
+docker compose -f docker/docker-compose.demo.yml --env-file .env up
 
 # 3. Open http://localhost:3200 and click "Start Protocol"
 ```
 
-The first build can take a few minutes. This path now builds the checked-out `main`
-source, so the demo UI stays aligned with the repo rather than relying on a
-previously published image.
+With prebuilt images you should be running in under five minutes. If the images can't be pulled, Compose builds them from your checkout instead. To update later, run `docker compose -f docker/docker-compose.demo.yml pull`.
+
+To always build from your checkout, add `--build` (about 10 minutes cold):
+
+```bash
+docker compose -f docker/docker-compose.demo.yml --env-file .env up --build
+```
 
 No Docker? Build from source:
 
@@ -65,7 +73,7 @@ agents → contract → relay enforcement → bounded signal → receipt
 | **Model provider** | Trusted (sees prompt) | Trusted (sees prompt) |
 | **Receipt assurance** | `SELF_ASSERTED` | `TEE_ATTESTED` |
 
-The software lane is available now. The TEE lane has been hardware-validated on GCP N2D (AMD SEV-SNP). See [docs/threat-model.md](docs/threat-model.md) for the full adversary analysis and assurance tier definitions.
+The software lane is available now. The TEE lane is experimental: it has been hardware-validated on GCP N2D (AMD SEV-SNP), but clients do not yet verify attestation before sending inputs, and builds are not yet reproducible. See [docs/threat-model.md](docs/threat-model.md) for the full adversary analysis and assurance tier definitions.
 
 ---
 
@@ -102,30 +110,6 @@ See [docs/receipt-verification-guide.md](docs/receipt-verification-guide.md) for
 
 ---
 
-## Build a contract
-
-Contracts compose from registry artefacts. Browse what is available, assemble a contract, and run it:
-
-```bash
-# List registered schemas
-selkey-contract list --kind schema
-
-# Build a contract from registry artefacts
-selkey-contract build \
-  --schema mediation-triage-v2 \
-  --policy safe-string-guard \
-  --program bilateral-mediation
-
-# Run it
-curl -X POST http://localhost:8080/api/sessions \
-  -H "Content-Type: application/json" \
-  -d @contract.json
-```
-
-The contract builder resolves artefacts, validates compatibility between schemas and policies, and computes the contract hash. See [docs/api-reference.md](docs/api-reference.md) and [docs/protocol-spec.md](docs/protocol-spec.md) for the current public contract and relay references.
-
----
-
 ## What's in this repo
 
 | Component | Description |
@@ -146,6 +130,16 @@ Shared protocol types and AFAL handshake implementation live in [vault-family-co
 ## Two execution lanes
 
 The same protocol runs in two lanes: a software lane (this repo) where the relay operator is trusted, and a sealed execution lane ([selkey-tee](https://github.com/vcav-io/selkey-tee)) where hardware attestation replaces that trust.
+
+---
+
+## Related work
+
+- [NDAI Agreements](https://arxiv.org/abs/2502.07924) (Stephenson, Miller et al., Feb 2025): TEE-resident agents, with disclosure conditional on a deal.
+- [The NDAI zone](https://arxiv.org/abs/2603.19011) (Bottazzi & Park): a follow-up to NDAI Agreements.
+- [AgentCrypt](https://arxiv.org/abs/2512.08104) (Karthikeyan, Guo, Veloso et al., NeurIPS 2025): tiered privacy and homomorphic encryption for agent collaboration.
+
+Selkey's contribution is a working protocol: contracts that bind the prompt and output schema, the schema as the security boundary, signed receipts that commit to inputs and output, MCP and A2A integration, and both software and TEE lanes.
 
 ---
 
@@ -189,7 +183,7 @@ Requires Rust 1.88.0+. See [docs/relay-dev-setup.md](docs/relay-dev-setup.md) fo
 
 ## License
 
-MIT OR Apache-2.0
+MIT OR Apache-2.0, at your option. See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).
 
 ---
 
