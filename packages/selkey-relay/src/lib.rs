@@ -753,7 +753,8 @@ async fn complete_inference<F>(
     let store = state.session_store.clone();
     match outcome {
         Ok((result, timing)) => {
-            let output_bytes = serde_json::to_string(&result.output)
+            // Size of the output as delivered (its canonical text).
+            let output_bytes = receipt_core::canonicalize_v3(&result.output)
                 .map(|s| s.len())
                 .map_err(|e| tracing::warn!("failed to serialize output for metadata: {e}"))
                 .ok();

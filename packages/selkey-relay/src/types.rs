@@ -7,6 +7,29 @@ use crate::session::{AbortReason, SessionState};
 // Core types (shared between single-shot and bilateral)
 // ============================================================================
 
+/// Serialise released output as its receipt v3 canonical (RFC 8785) text, so
+/// the delivered bytes are exactly the bytes the receipt's `output_hash`
+/// commits to.
+fn serialize_canonical_output<S: serde::Serializer>(
+    value: &serde_json::Value,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    use serde::ser::Error;
+    let text = receipt_core::canonicalize_v3(value).map_err(S::Error::custom)?;
+    let raw = serde_json::value::RawValue::from_string(text).map_err(S::Error::custom)?;
+    raw.serialize(serializer)
+}
+
+fn serialize_canonical_output_opt<S: serde::Serializer>(
+    value: &Option<serde_json::Value>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    match value {
+        Some(v) => serialize_canonical_output(v, serializer),
+        None => serializer.serialize_none(),
+    }
+}
+
 // Contract is now defined in vault-family-types. Re-export for use within crate.
 pub use vault_family_types::Contract;
 
@@ -110,6 +133,7 @@ pub struct RelayRequest {
 /// Relay response: structured output + signed receipt.
 #[derive(Debug, Serialize)]
 pub struct RelayResponse {
+    #[serde(serialize_with = "serialize_canonical_output")]
     pub output: serde_json::Value,
     /// Signed v3 receipt.
     pub receipt: receipt_core::ReceiptV3,
@@ -174,6 +198,7 @@ pub struct SessionStatusResponse {
 pub struct SessionOutputResponse {
     pub state: SessionState,
     pub abort_reason: Option<AbortReason>,
+    #[serde(serialize_with = "serialize_canonical_output_opt")]
     pub output: Option<serde_json::Value>,
     /// Signed v3 receipt (success or failure), once the session is terminal.
     pub receipt: Option<receipt_core::ReceiptV3>,

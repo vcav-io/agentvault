@@ -13,7 +13,7 @@ receipt-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "73
 vault-family-types = { git = "https://github.com/vcav-io/vault-family-core", rev = "734b8854cc826e2f2c6776ffe857f209f467d7b1", package = "vault-family-types" }
 
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 toml.workspace = true
 axum.workspace = true
 tokio.workspace = true
