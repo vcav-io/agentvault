@@ -23,6 +23,7 @@ use crate::prompt_program::PromptProgram;
 
 /// Top-level admission config.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AdmissionConfig {
     pub registry: RegistryConfig,
     #[serde(default)]
@@ -37,12 +38,14 @@ pub struct AdmissionConfig {
 
 /// Registry location.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RegistryConfig {
     pub path: String,
 }
 
 /// Admission list for a single artefact kind.
 #[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct KindAdmission {
     #[serde(default)]
     pub allow: Vec<String>,
@@ -394,6 +397,54 @@ allow = ["{program_digest}"]
             profile_digest,
             program_digest,
         )
+    }
+
+    #[test]
+    fn test_admitted_profile_or_program_with_unknown_field_rejected() {
+        for (kind, mut artefact) in [
+            ("profiles", sample_profile()),
+            ("programs", sample_program()),
+        ] {
+            artefact
+                .as_object_mut()
+                .unwrap()
+                .insert("unenforced_extra".to_string(), serde_json::json!(true));
+            let tmp = test_tmp("unknown-field-artefact");
+            let (config_path, _, _, profile_digest, program_digest) = setup_admission(&tmp);
+            let registry = tmp.join("registry");
+            let bad_digest = write_artefact(&registry, kind, &artefact);
+            let replaced = if kind == "profiles" {
+                profile_digest
+            } else {
+                program_digest
+            };
+            let config = fs::read_to_string(&config_path)
+                .unwrap()
+                .replace(&replaced, &bad_digest);
+            fs::write(&config_path, config).unwrap();
+            let err = load_admission(&config_path, None).unwrap_err().to_string();
+            assert!(err.contains("unknown field"), "{kind}: {err}");
+            fs::remove_dir_all(&tmp).ok();
+        }
+    }
+
+    #[test]
+    fn test_admission_config_with_unknown_key_rejected() {
+        let edits: [(&str, &str); 3] = [
+            ("[registry]", "extra = 1\n[registry]"),
+            ("[registry]\n", "[registry]\nextra = 1\n"),
+            ("[profiles]\n", "[profiles]\nextra = 1\n"),
+        ];
+        for (from, to) in edits {
+            let tmp = test_tmp("unknown-config-key");
+            let (config_path, ..) = setup_admission(&tmp);
+            let config = fs::read_to_string(&config_path).unwrap();
+            assert!(config.contains(from), "{from}");
+            fs::write(&config_path, config.replacen(from, to, 1)).unwrap();
+            let err = parse_config(&config_path).unwrap_err().to_string();
+            assert!(err.contains("unknown field"), "{to}: {err}");
+            fs::remove_dir_all(&tmp).ok();
+        }
     }
 
     #[test]

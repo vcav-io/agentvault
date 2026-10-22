@@ -101,6 +101,7 @@ pub struct RelayInput {
 /// is what the relay dispatches to the provider API; the other fields
 /// describe the cognitive class the parties agreed on.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ModelProfile {
     pub profile_version: String,
     pub profile_id: String,
