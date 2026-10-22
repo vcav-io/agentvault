@@ -57,7 +57,6 @@ export interface CommitmentsV3 {
   schema_hash: string;
   output_hash: string;
   input_commitments: InputCommitmentV3[];
-  assembled_prompt_hash: string;
   prompt_assembly_version: string;
   output?: unknown;
   prompt_template_hash?: string;
@@ -72,7 +71,6 @@ export interface CommitmentsV3 {
   output_retrieval_uri?: string;
   output_media_type?: string;
   preflight_bundle_uri?: string;
-  rejected_output_hash?: string;
   initiator_submission_hash?: string;
   responder_submission_hash?: string;
 }
@@ -281,7 +279,6 @@ function readCommitments(v: unknown, ctx: Ctx): CommitmentsV3 {
       'schema_hash',
       'output_hash',
       'input_commitments',
-      'assembled_prompt_hash',
       'prompt_assembly_version',
     ],
     [
@@ -292,7 +289,6 @@ function readCommitments(v: unknown, ctx: Ctx): CommitmentsV3 {
       'output_retrieval_uri',
       'output_media_type',
       'preflight_bundle_uri',
-      'rejected_output_hash',
       'initiator_submission_hash',
       'responder_submission_hash',
     ],
@@ -302,7 +298,6 @@ function readCommitments(v: unknown, ctx: Ctx): CommitmentsV3 {
     contract_hash_alg: oneOf(o.contract_hash_alg, `${p}.contract_hash_alg`, [CONTRACT_HASH_ALG_V2]),
     schema_hash: hex64(o.schema_hash, `${p}.schema_hash`),
     output_hash: hex64(o.output_hash, `${p}.output_hash`),
-    assembled_prompt_hash: hex64(o.assembled_prompt_hash, `${p}.assembled_prompt_hash`),
     prompt_assembly_version: str(o.prompt_assembly_version, `${p}.prompt_assembly_version`),
   };
 
@@ -330,7 +325,6 @@ function readCommitments(v: unknown, ctx: Ctx): CommitmentsV3 {
   for (const k of [
     'prompt_template_hash',
     'effective_config_hash',
-    'rejected_output_hash',
     'initiator_submission_hash',
     'responder_submission_hash',
   ]) {
