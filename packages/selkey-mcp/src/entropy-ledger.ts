@@ -23,7 +23,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { buildRelayContract, computeOutputSchemaHash, listRelayPurposes } from 'selkey/contracts';
 import { resolveNegotiationRegistryPath } from './bespoke-contracts.js';
-import { readPrivateJson, selkeyStateDir, writePrivateJson } from './secure-fs.js';
+import { ensurePrivateDir, readPrivateJson, selkeyStateDir, writePrivateJson } from './secure-fs.js';
 
 export const DEFAULT_PER_COUNTERPARTY_BITS = 128;
 export const DEFAULT_GLOBAL_BITS = 512;
@@ -81,6 +81,7 @@ export interface RemainingBudget {
   global?: BudgetSnapshot;
   per_counterparty?: Array<BudgetSnapshot & { agent_id: string }>;
   error?: string;
+  warning?: string;
 }
 
 // ── Configuration ─────────────────────────────────────────────────────────
@@ -129,13 +130,12 @@ export function ledgerConfigFromEnv(): EntropyLedgerConfig | null {
 
 // ── Schema upper bound ────────────────────────────────────────────────────
 
-function binomial(n: number, k: number): number {
+/** Ordered selections of k distinct items from n: n! / (n - k)!. */
+function permutations(n: number, k: number): number {
   if (k < 0 || k > n) return 0;
   let result = 1;
-  for (let i = 1; i <= k; i++) {
-    result = (result * (n - k + i)) / i;
-  }
-  return Math.round(result);
+  for (let i = 0; i < k; i++) result *= n - i;
+  return result;
 }
 
 /**
@@ -191,7 +191,8 @@ export function schemaCardinality(schema: unknown): number {
       if (!Number.isFinite(n)) return maxItems === 0 ? 1 : Infinity;
       let count = 0;
       for (let k = minItems; k <= maxItems; k++) {
-        count += s['uniqueItems'] === true ? binomial(n, k) : Math.pow(n, k);
+        // Released arrays are ordered, so distinct items count as permutations.
+        count += s['uniqueItems'] === true ? permutations(n, k) : Math.pow(n, k);
       }
       return Math.max(count, 1);
     }
@@ -374,6 +375,64 @@ export function chargeLedger(
   nowMs: number = Date.now(),
   filePath: string = ledgerPath(),
 ): { charged: boolean; entry: LedgerEntry } {
+  // Read-modify-write under a lock file so concurrent processes sharing a
+  // working directory cannot both spend the same remaining budget.
+  let release: () => void;
+  try {
+    release = acquireLedgerLock(`${filePath}.lock`);
+  } catch (err) {
+    throw new EntropyLedgerError(
+      'ENTROPY_BUDGET_EXCEEDED',
+      `Disclosure budget ledger is busy (${err instanceof Error ? err.message : String(err)}). Input was not submitted.`,
+    );
+  }
+  try {
+    return chargeLedgerLocked(params, config, nowMs, filePath);
+  } finally {
+    release();
+  }
+}
+
+const LOCK_STALE_MS = 10_000;
+const LOCK_TIMEOUT_MS = 5_000;
+
+function acquireLedgerLock(lockPath: string): () => void {
+  ensurePrivateDir(path.dirname(lockPath));
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  for (;;) {
+    try {
+      const fd = fs.openSync(lockPath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o600);
+      fs.writeSync(fd, String(process.pid));
+      fs.closeSync(fd);
+      return () => {
+        try {
+          fs.unlinkSync(lockPath);
+        } catch {
+          // already removed
+        }
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      try {
+        if (Date.now() - fs.statSync(lockPath).mtimeMs > LOCK_STALE_MS) {
+          fs.unlinkSync(lockPath);
+          continue;
+        }
+      } catch {
+        continue;
+      }
+      if (Date.now() > deadline) throw new Error(`timed out waiting for ${lockPath}`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    }
+  }
+}
+
+function chargeLedgerLocked(
+  params: ChargeParams,
+  config: EntropyLedgerConfig,
+  nowMs: number,
+  filePath: string,
+): { charged: boolean; entry: LedgerEntry } {
   let ledger: LedgerFile;
   try {
     ledger = loadLedger(filePath);
@@ -461,7 +520,13 @@ export function remainingBudget(
   } catch (err) {
     return { enforced: true, error: err instanceof Error ? err.message : String(err) };
   }
-  if (!config) return { enforced: false };
+  if (!config) {
+    return {
+      enforced: false,
+      warning:
+        'The owner-side disclosure budget is disabled (SELKEY_ENTROPY_LEDGER=off): this agent does not limit how much its input can be probed across sessions.',
+    };
+  }
   let ledger: LedgerFile;
   try {
     ledger = loadLedger(filePath);

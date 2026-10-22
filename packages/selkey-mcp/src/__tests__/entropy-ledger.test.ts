@@ -62,8 +62,24 @@ describe('schema upper bound', () => {
     // 5 * 6 * 5 * 3 = 450 values -> 9 bits
     expect(schemaUpperBoundBits(mediation().output_schema)).toBe(9);
     const compat = buildRelayContract('COMPATIBILITY', ['alice-demo', 'bob-demo'])!;
-    // 1 * 4^4 * 3 * 42 * 22 * 4 -> ceil(log2(2838528)) = 22
-    expect(schemaUpperBoundBits(compat.output_schema)).toBe(22);
+    // Ordered unique arrays: 6 reasons up to 3 -> 1+6+30+120 = 157; 6 up to 2 -> 37.
+    // 1 * 4^4 * 3 * 157 * 37 * 4 = 17845248 -> 25 bits
+    expect(schemaUpperBoundBits(compat.output_schema)).toBe(25);
+  });
+
+  it('counts uniqueItems arrays as ordered selections', () => {
+    const reasons = (maxItems: number) => ({
+      type: 'array',
+      items: { type: 'string', enum: ['A', 'B', 'C', 'D', 'E', 'F'] },
+      minItems: 0,
+      maxItems,
+      uniqueItems: true,
+    });
+    // [A,B] and [B,A] are different released values: 1+6+30+120 = 157 -> 8 bits
+    // (unordered counting would give 42 -> 6 bits).
+    expect(schemaUpperBoundBits(reasons(3))).toBe(8);
+    // 1+6+30 = 37 -> 6 bits (unordered: 22 -> 5 bits).
+    expect(schemaUpperBoundBits(reasons(2))).toBe(6);
   });
 
   it('treats schemas that do not bound the output as unbounded', () => {
@@ -214,6 +230,24 @@ describe('ledger budgets', () => {
     chargeOwnDisclosure({ key: 'h1', contract: {}, counterparty: undefined });
     expect(fs.existsSync(ledgerPath())).toBe(false);
   });
+
+  it('warns in remaining_budget when the ledger is turned off', () => {
+    process.env['SELKEY_ENTROPY_LEDGER'] = 'off';
+    const budget = remainingBudget([]);
+    expect(budget.enforced).toBe(false);
+    expect(budget.warning).toMatch(/disabled/);
+  });
+
+  it('serialises concurrent charges with a lock file', () => {
+    // A lock held by another writer makes a charge wait, then fail closed.
+    fs.mkdirSync(path.dirname(ledgerPath()), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(`${ledgerPath()}.lock`, '999999', { mode: 0o600 });
+    const started = Date.now();
+    expect(() => charge('locked', 'bob', 1)).toThrow(/busy/);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(4000);
+    fs.unlinkSync(`${ledgerPath()}.lock`);
+    expect(charge('unlocked', 'bob', 1).charged).toBe(true);
+  }, 10_000);
 });
 
 describe('get_identity remaining_budget', () => {

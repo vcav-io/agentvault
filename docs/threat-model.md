@@ -300,7 +300,9 @@ abort itself leaks about one bit. The relay cannot enforce a cross-session limit
 honestly on unauthenticated lanes, because a prober can rename itself.
 
 The data owner's MCP server keeps an owner-side ledger
-(`.selkey/budget-ledger.json`). It charges each session it submits input to, before
+(`.selkey/budget-ledger.json`). It is a probing rate limit, not a secrecy
+guarantee: it bounds how fast released bits accumulate per window, and does not
+stop a patient counterparty from learning more over many windows. It charges each session it submits input to, before
 submission, using the schema's bit upper bound computed locally (or the contract's
 `entropy_budget_bits`, if larger), against a per-counterparty budget and a global
 budget over a rolling window. Aborted sessions count. The global budget is the
@@ -312,6 +314,9 @@ backstop against many distinct counterparty identities. Limits of this control:
 - The unit is the summed schema upper bound, which overcounts correlated outputs.
 - State is local to one working directory. Agents that share a working directory
   share a ledger, and deleting the file resets it.
+- Each relay session is charged once (a COMMIT that has to be re-sent reuses the
+  existing session; a new session is a new charge). Writes take a lock file, so
+  processes sharing a working directory do not double-spend the same budget.
 
 ### 6.2 Timing
 

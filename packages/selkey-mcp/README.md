@@ -63,7 +63,7 @@ Both INITIATE and RESPOND use only locally configured relays (`SELKEY_RELAY_URL`
 
 ## Disclosure budget
 
-Before submitting its own input, the agent charges the session against a local ledger (`$SELKEY_WORKDIR/.selkey/budget-ledger.json`): a per-counterparty budget and a global budget, over a rolling window. The charge is the bit upper bound of the contract's output schema, computed locally, or the contract's `entropy_budget_bits` if that is larger. Sessions are charged before submission, so aborted sessions count. When a budget would be exceeded, or the schema's bound can't be computed locally, the input is not submitted. See `SELKEY_ENTROPY_LEDGER` and `SELKEY_ENTROPY_BUDGET_*` in [docs/environment-variables.md](../../docs/environment-variables.md).
+Before submitting its own input, the agent charges the session against a local ledger (`$SELKEY_WORKDIR/.selkey/budget-ledger.json`): a per-counterparty budget and a global budget, over a rolling window. The charge is the bit upper bound of the contract's output schema, computed locally, or the contract's `entropy_budget_bits` if that is larger. Sessions are charged before submission, so aborted sessions count. When a budget would be exceeded, or the schema's bound can't be computed locally, the input is not submitted. The budgets are a probing rate limit, not a secrecy guarantee. See `SELKEY_ENTROPY_LEDGER` and `SELKEY_ENTROPY_BUDGET_*` in [docs/environment-variables.md](../../docs/environment-variables.md).
 
 ## See also
 
