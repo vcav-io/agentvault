@@ -37,9 +37,10 @@ The relay listens on `127.0.0.1` unless `SELKEY_BIND_ADDR` says otherwise. In Do
 (the demo compose file publishes `127.0.0.1:3100:3100`).
 
 The relay refuses to start on a non-loopback address unless `SELKEY_OPERATOR_TOKEN` is set. This
-applies with `SELKEY_ENV=dev` too. If access is controlled some other way (for example an
-authenticating reverse proxy, or a container port published only on host loopback as in the demo
-compose file), set `SELKEY_ALLOW_UNAUTHENTICATED=1` to start anyway.
+applies with `SELKEY_ENV=dev` too. The demo compose file sets a shared
+`SELKEY_OPERATOR_TOKEN` (a published demo value, not a secret) for the relay and the demo service.
+If access is controlled some other way (for example an authenticating reverse proxy), set
+`SELKEY_ALLOW_UNAUTHENTICATED=1` to start without a token.
 
 | Endpoint | `SELKEY_ENV=dev`, no token | Non-dev, no token | `SELKEY_OPERATOR_TOKEN` set |
 |---|---|---|---|
