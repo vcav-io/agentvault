@@ -5,6 +5,7 @@
  * that INITIATE builds AfalPropose and RESPOND extracts it.
  */
 
+import { signCard } from './helpers/sign-card.js';
 import { PinStore } from '../pin-store.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { handleRelaySignal, _setDiscoverPollConfigForTesting } from '../tools/relaySignal.js';
@@ -232,7 +233,7 @@ describe('INITIATE with AFAL', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () =>
-        Promise.resolve({
+        Promise.resolve(signCard({
           name: 'bob-demo',
           capabilities: {
             extensions: [
@@ -247,7 +248,7 @@ describe('INITIATE with AFAL', () => {
               },
             ],
           },
-        }),
+        }, PEER_SEED)),
     });
     mockFetch.mockImplementationOnce((_url: string, init?: RequestInit) =>
       Promise.resolve({
@@ -283,7 +284,7 @@ describe('INITIATE with AFAL', () => {
       peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
     });
 
-    const card = {
+    const card = signCard({
       name: 'bob-demo',
       capabilities: {
         extensions: [
@@ -298,7 +299,7 @@ describe('INITIATE with AFAL', () => {
           },
         ],
       },
-    };
+    }, PEER_SEED);
     mockFetch.mockImplementation((url: string, init?: RequestInit) => {
       if (url.endsWith('/propose')) {
         return Promise.resolve({
@@ -418,7 +419,7 @@ describe('INITIATE with AFAL', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () =>
-        Promise.resolve({
+        Promise.resolve(signCard({
           name: 'bob-demo',
           capabilities: {
             extensions: [
@@ -447,7 +448,7 @@ describe('INITIATE with AFAL', () => {
               },
             ],
           },
-        }),
+        }, PEER_SEED)),
     });
     mockFetch.mockImplementationOnce(async (_url, init) => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
@@ -549,7 +550,7 @@ describe('INITIATE with AFAL', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () =>
-        Promise.resolve({
+        Promise.resolve(signCard({
           name: 'bob-demo',
           capabilities: {
             extensions: [
@@ -588,7 +589,7 @@ describe('INITIATE with AFAL', () => {
               },
             ],
           },
-        }),
+        }, PEER_SEED)),
     });
     mockFetch.mockImplementationOnce(async (_url, init) => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
@@ -682,7 +683,7 @@ describe('INITIATE with AFAL', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () =>
-        Promise.resolve({
+        Promise.resolve(signCard({
           name: 'bob-demo',
           capabilities: {
             extensions: [
@@ -713,7 +714,7 @@ describe('INITIATE with AFAL', () => {
               },
             ],
           },
-        }),
+        }, PEER_SEED)),
     });
     mockFetch.mockImplementationOnce(async (_url, init) => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
@@ -919,7 +920,7 @@ describe('INITIATE with AFAL', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () =>
-        Promise.resolve({
+        Promise.resolve(signCard({
           name: 'bob-demo',
           capabilities: {
             extensions: [
@@ -942,7 +943,7 @@ describe('INITIATE with AFAL', () => {
               },
             ],
           },
-        }),
+        }, PEER_SEED)),
     });
     mockFetch.mockImplementationOnce(async (_url, init) => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
@@ -1002,7 +1003,7 @@ describe('INITIATE with AFAL', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () =>
-        Promise.resolve({
+        Promise.resolve(signCard({
           name: 'bob-demo',
           capabilities: {
             extensions: [
@@ -1020,7 +1021,7 @@ describe('INITIATE with AFAL', () => {
               },
             ],
           },
-        }),
+        }, PEER_SEED)),
     });
     mockFetch.mockImplementationOnce(async (_url, init) => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
@@ -1086,7 +1087,7 @@ describe('INITIATE with AFAL', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () =>
-        Promise.resolve({
+        Promise.resolve(signCard({
           name: 'bob-demo',
           capabilities: {
             extensions: [
@@ -1115,7 +1116,7 @@ describe('INITIATE with AFAL', () => {
               },
             ],
           },
-        }),
+        }, PEER_SEED)),
     });
     mockFetch.mockImplementationOnce(async (_url, init) => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
@@ -1381,7 +1382,7 @@ describe('counterparty aliases', () => {
         Promise.resolve({
           ok: true,
           json: () =>
-            Promise.resolve({
+            Promise.resolve(signCard({
               name: 'bob-demo',
               capabilities: {
                 extensions: [
@@ -1395,7 +1396,7 @@ describe('counterparty aliases', () => {
                   },
                 ],
               },
-            }),
+            }, PEER_SEED)),
         }),
       ),
     );

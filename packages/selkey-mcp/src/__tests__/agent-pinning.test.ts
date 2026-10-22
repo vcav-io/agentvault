@@ -31,6 +31,7 @@ import { runPinsCli, type PinsCliIo } from '../pin-cli.js';
 import { signNegotiationRequest } from '../negotiation-auth.js';
 import { IfcService } from '../ifc.js';
 import { InsecureStateFileError } from '../secure-fs.js';
+import { signCard } from './helpers/sign-card.js';
 
 const ALICE_SEED = '01'.repeat(32);
 const ALICE_PUB = bytesToHex(ed25519.getPublicKey(hexToBytes(ALICE_SEED)));
@@ -64,7 +65,14 @@ function descriptor(agentId: string, pub: string, seed: string): AgentDescriptor
 }
 
 /** An agent card for "bob-test" carrying `pub` (optionally self-signed). */
-function card(pub: string): Record<string, unknown> {
+const SEED_FOR: Record<string, string> = { [ALICE_PUB]: ALICE_SEED, [BOB_PUB]: BOB_SEED, [OTHER_PUB]: OTHER_SEED };
+
+/** A signed agent card for "bob-test" carrying `pub`, signed by that key. */
+function card(pub: string, extraParams: Record<string, unknown> = {}): Record<string, unknown> {
+  return signCard(unsignedCard(pub, extraParams), SEED_FOR[pub] ?? OTHER_SEED);
+}
+
+function unsignedCard(pub: string, extraParams: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     name: 'bob-test',
     url: 'http://peer.example.com',
@@ -76,6 +84,7 @@ function card(pub: string): Record<string, unknown> {
             public_key_hex: pub,
             supported_purposes: ['MEDIATION'],
             afal_endpoint: 'http://peer.example.com/afal',
+            ...extraParams,
           },
         },
       ],
@@ -299,6 +308,38 @@ describe('initiator verifies peers against pins', () => {
     ).rejects.toMatchObject({ code: 'KEY_CHANGED' });
   });
 
+  it('does not use endpoints from an unsigned agent card, even one carrying the pinned key', async () => {
+    const fetchMock = vi.fn((url: string) =>
+      Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve(unsignedCard(BOB_PUB, { afal_endpoint: 'http://other-host.example/afal' })),
+        text: () => Promise.resolve(''),
+        url,
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const transport = initiator(PinStore.inMemory([{ agentId: 'bob-test', publicKeyHex: BOB_PUB }]));
+    await expect(
+      transport.sendPropose({ propose: propose(), templateId: 't', budgetTier: 'SMALL' }),
+    ).rejects.toThrow();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('other-host.example'))).toBe(false);
+    expect(await transport.discoverPeerAgentCard()).toBeNull();
+  });
+
+  it('does not use a card whose signed fields were changed', async () => {
+    const tampered = card(BOB_PUB);
+    const ext = (tampered.capabilities as { extensions: Array<{ params: Record<string, unknown> }> }).extensions[0];
+    ext.params['afal_endpoint'] = 'http://other-host.example/afal';
+    const fetchMock = vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve(tampered) }));
+    vi.stubGlobal('fetch', fetchMock);
+    const transport = initiator(PinStore.inMemory([{ agentId: 'bob-test', publicKeyHex: BOB_PUB }]));
+    await expect(
+      transport.sendPropose({ propose: propose(), templateId: 't', budgetTier: 'SMALL' }),
+    ).rejects.toThrow();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('other-host.example'))).toBe(false);
+  });
+
   it('accepts an ADMIT signed by the pinned key', async () => {
     mockPeer(BOB_PUB, (id) => admit(BOB_SEED, { proposal_id: id }));
     const transport = initiator(PinStore.inMemory([{ agentId: 'bob-test', publicKeyHex: BOB_PUB }]));
@@ -374,12 +415,10 @@ describe('negotiation selections are checked against the offered candidates', ()
       ],
       expected_counterparty: 'bob-test',
     };
-    const cardWithNegotiation = card(BOB_PUB);
-    delete cardWithNegotiation['url']; // use the direct /afal/negotiate endpoint
-    const params = (cardWithNegotiation.capabilities as { extensions: Array<{ params: Record<string, unknown> }> })
-      .extensions[0].params;
-    params['supports_precontract_negotiation'] = true;
-    params['supported_contract_offers'] = [{ contract_offer_id: 'offer-1', supported_model_profiles: [PROFILE_A] }];
+    const cardWithNegotiation = card(BOB_PUB, {
+      supports_precontract_negotiation: true,
+      supported_contract_offers: [{ contract_offer_id: 'offer-1', supported_model_profiles: [PROFILE_A] }],
+    });
 
     for (const [selection, message] of [
       [{ negotiation_id: 'neg-1', state: 'AGREED', selected_contract_offer_id: 'offer-2', selected_model_profile: PROFILE_A }, /not offered/],
@@ -400,12 +439,10 @@ describe('negotiation selections are checked against the offered candidates', ()
   });
 
   it('rejects a topic code that was not offered', async () => {
-    const cardWithTopics = card(BOB_PUB);
-    delete cardWithTopics['url']; // use the direct /afal/negotiate endpoint
-    const params = (cardWithTopics.capabilities as { extensions: Array<{ params: Record<string, unknown> }> })
-      .extensions[0].params;
-    params['supports_topic_alignment'] = true;
-    params['supported_topic_codes'] = ['salary_alignment', 'reference_check'];
+    const cardWithTopics = card(BOB_PUB, {
+      supports_topic_alignment: true,
+      supported_topic_codes: ['salary_alignment', 'reference_check'],
+    });
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string) =>

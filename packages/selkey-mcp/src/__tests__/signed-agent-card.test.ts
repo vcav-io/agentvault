@@ -304,7 +304,7 @@ describe('tryResolvePeerViaAgentCard card signature verification (transport-leve
     return `http://127.0.0.1:${server.httpServer.port}`;
   }
 
-  it('accepts unsigned card in lenient mode (default)', async () => {
+  it('does not use an unsigned card by default, even when its key is pinned', async () => {
     // Start responder WITHOUT seedHex — card will be unsigned
     const baseUrl = await startResponder({ seedHex: undefined });
 
@@ -315,12 +315,12 @@ describe('tryResolvePeerViaAgentCard card signature verification (transport-leve
       seedHex: TEST_SEED_HEX,
       localDescriptor,
       peerDescriptorUrl: `${baseUrl}/.well-known/agent-card.json`,
-      // requireSignedCards defaults to false (lenient mode)
     });
 
+    // The unsigned card is ignored; the descriptor fallback also fails
+    // because the URL points to an agent card endpoint.
     const discovery = await initiatorTransport.discoverPeerAgentCard();
-    expect(discovery).not.toBeNull();
-    expect(discovery!.supportedPurposes).toContain('COMPATIBILITY');
+    expect(discovery).toBeNull();
   });
 
   it('rejects unsigned card in strict mode (falls back to descriptor, returns null)', async () => {
