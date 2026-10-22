@@ -21,6 +21,18 @@ import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
 import { ed25519 } from '@noble/curves/ed25519';
 import { createAndSubmit } from 'selkey';
 
+// This suite mocks `selkey/contracts` with schema-less contracts, which the
+// owner-side disclosure ledger (on by default) refuses. The ledger itself is
+// covered by entropy-ledger*.test.ts and the direct round trip in
+// responder-contract-checks.test.ts.
+beforeEach(() => {
+  process.env['SELKEY_ENTROPY_LEDGER'] = 'off';
+});
+afterEach(() => {
+  delete process.env['SELKEY_ENTROPY_LEDGER'];
+});
+
+
 // Mock selkey to avoid real HTTP calls
 vi.mock('selkey', () => ({
   createAndSubmit: vi.fn().mockResolvedValue({

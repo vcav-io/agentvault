@@ -34,6 +34,8 @@ export type ErrorCode =
   | 'USE_LIMIT_EXCEEDED'
   | 'CONTRACT_MISMATCH'
   | 'GRANT_REGISTRY_FULL'
+  | 'ENTROPY_BUDGET_EXCEEDED'
+  | 'ENTROPY_BOUND_UNAVAILABLE'
   | 'NEEDS_CONFIRMATION'
   | 'PEER_IDENTITY_MISMATCH'
   | 'UNKNOWN_ERROR';
@@ -81,6 +83,8 @@ const RETRYABLE_BY_DEFAULT: Record<ErrorCode, boolean> = {
   USE_LIMIT_EXCEEDED: false,
   CONTRACT_MISMATCH: false,
   GRANT_REGISTRY_FULL: false,
+  ENTROPY_BUDGET_EXCEEDED: false,
+  ENTROPY_BOUND_UNAVAILABLE: false,
   // Retrying does not help until a person confirms the key out of band.
   NEEDS_CONFIRMATION: false,
   PEER_IDENTITY_MISMATCH: false,

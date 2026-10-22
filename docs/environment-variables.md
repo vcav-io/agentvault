@@ -133,6 +133,17 @@ Unset variables use the default. A set value must be a positive integer, or the 
 | `SELKEY_RESUME_TOKEN_SECRET` | No | — | Secret for HMAC-signing resume tokens. Recommended for production |
 | `SELKEY_RELAY_VERIFYING_KEY_HEX` | No | — | Pinned relay Ed25519 verifying key (64 hex chars), obtained from the relay operator. Contracts this agent builds carry it as `relay_verifying_key_hex`, so a relay with a different key refuses the session before input is submitted (a responder expects the same value, so both parties should pin the same key). A pinned responder also still accepts the same contract without `relay_verifying_key_hex`, so that an initiator without a pin can reach it; in that case the relay key is not bound into the contract, and the responder relies on its own `/health` check and receipt verification against the pin. Session receipts must verify against it. `selkey.verify_receipt` uses it when no `public_key_hex` argument is given, and rejects an argument that differs from it. Without this or an argument, the tool returns an error |
 
+### Owner-side disclosure budget
+
+Before the agent submits its own input to a relay session, it charges the session's disclosure against a local ledger at `$SELKEY_WORKDIR/.selkey/budget-ledger.json` (mode 0600 in a 0700 directory). The charge is the upper bound on bits the contract's output schema can carry, computed locally (or the contract's `entropy_budget_bits`, if larger). Charges are recorded before submission, so sessions that abort still count. If a budget would be exceeded, or the bound cannot be computed (the schema can't be resolved locally or doesn't bound its output), the input is not submitted and `relay_signal` returns `ENTROPY_BUDGET_EXCEEDED` or `ENTROPY_BOUND_UNAVAILABLE`. A ledger file that is group- or world-writable or malformed also stops submissions. `selkey.get_identity` reports `remaining_budget` (with a warning when the ledger is off). The budgets are a probing rate limit: they bound how fast released bits accumulate per window, not what a counterparty can learn over many windows. Each relay session is charged once; array outputs with `uniqueItems` are counted as ordered selections.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `SELKEY_ENTROPY_LEDGER` | No | `enforce` | `enforce` or `off` |
+| `SELKEY_ENTROPY_BUDGET_PER_COUNTERPARTY_BITS` | No | `128` | Bits one counterparty (by `agent_id`) can be charged within the window |
+| `SELKEY_ENTROPY_BUDGET_GLOBAL_BITS` | No | `512` | Bits charged across all counterparties within the window. This bounds what many distinct counterparty identities can extract together |
+| `SELKEY_ENTROPY_BUDGET_WINDOW_SECONDS` | No | `86400` | Rolling window length in seconds |
+
 ### AFAL Direct Transport
 
 These enable the AFAL direct transport for INITIATE and RESPOND session modes (agent-to-agent without an orchestrator).

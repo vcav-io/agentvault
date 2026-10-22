@@ -4,6 +4,7 @@
 
 import { buildSuccess, type ToolResponse } from '../envelope.js';
 import type { NormalizedKnownAgent } from './relaySignal.js';
+import { remainingBudget, type RemainingBudget } from '../entropy-ledger.js';
 
 export interface InboxInvite {
   invite_id: string;
@@ -29,6 +30,8 @@ export interface GetIdentityOutput {
   pending_ifc_messages?: number;
   next_action?: NextAction;
   inbox_hint?: string;
+  /** Owner-side disclosure budget left in the current window (global and per counterparty). */
+  remaining_budget?: RemainingBudget;
 }
 
 export async function handleGetIdentity(
@@ -69,6 +72,7 @@ export async function handleGetIdentity(
   }
 
   result.pending_ifc_messages = ifcPendingCount;
+  result.remaining_budget = remainingBudget(knownAgents.map((agent) => agent.agent_id));
   if ((!result.pending_invites || result.pending_invites === 0) && ifcPendingCount > 0) {
     result.next_action = {
       tool: 'selkey.read_ifc_messages',

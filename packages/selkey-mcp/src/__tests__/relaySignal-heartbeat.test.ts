@@ -15,6 +15,18 @@ import { _resetHandlesForTesting } from '../tools/relayHandles.js';
 import type { AfalTransport, AfalInviteMessage } from '../afal-transport.js';
 import { findHeldReceipt } from '../held-receipts.js';
 
+// This suite mocks `selkey/contracts` with schema-less contracts, which the
+// owner-side disclosure ledger (on by default) refuses. The ledger itself is
+// covered by entropy-ledger*.test.ts and the direct round trip in
+// responder-contract-checks.test.ts.
+beforeEach(() => {
+  process.env['SELKEY_ENTROPY_LEDGER'] = 'off';
+});
+afterEach(() => {
+  delete process.env['SELKEY_ENTROPY_LEDGER'];
+});
+
+
 // Mock selkey to avoid real HTTP calls
 const { mockGetStatus, mockGetOutput } = vi.hoisted(() => ({
   mockGetStatus: vi.fn().mockResolvedValue({ state: 'PROCESSING' }),
