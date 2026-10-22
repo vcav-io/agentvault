@@ -62,6 +62,10 @@ if (result.state === 'COMPLETED' && result.receipt) {
 For responder-side usage, use `joinAndWait` with the tokens received from the initiator
 and a fresh nonce of its own.
 
+A relay that runs with `SELKEY_OPERATOR_TOKEN` requires that token to create sessions. Pass it
+as `operator_token` in the config (`{ relay_url, operator_token }`); the client sends it as
+`Authorization: Bearer <token>` on `POST /sessions` only, and never includes it in errors.
+
 ## Receipts and commitments
 
 Relays emit receipt v3 (`receipt_schema_version` `"3.0.0"`, specified in

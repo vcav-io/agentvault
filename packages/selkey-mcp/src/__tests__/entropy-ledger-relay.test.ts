@@ -49,6 +49,9 @@ const ENV_KEYS = [
   'SELKEY_ENTROPY_BUDGET_PER_COUNTERPARTY_BITS',
   'SELKEY_ENTROPY_BUDGET_GLOBAL_BITS',
   'SELKEY_ENTROPY_BUDGET_WINDOW_SECONDS',
+  'SELKEY_ENV',
+  'SELKEY_OPERATOR_TOKEN',
+  'SELKEY_RELAY_ALLOWLIST',
 ];
 let saved: Record<string, string | undefined> = {};
 let tmp: string;
@@ -76,6 +79,7 @@ beforeEach(() => {
   process.env['SELKEY_RELAY_URL'] = 'https://relay.test';
   process.env['SELKEY_AGENT_ID'] = 'alice-demo';
   process.env['SELKEY_ENTROPY_LEDGER'] = 'enforce';
+  process.env['SELKEY_ENV'] = 'dev';
   _resetHandlesForTesting();
   _setDiscoverPollConfigForTesting(0, 0);
   _setRelayPollConfigForTesting(0, 0);
@@ -601,5 +605,152 @@ describe('legacy JOIN', () => {
     expect(result.error?.code).toBe('CONTRACT_MISMATCH');
     expect(mockJoinAndWait).not.toHaveBeenCalled();
     expect(ledgerEntries()).toEqual([]);
+  });
+});
+
+// ── Relay key pin outside development ──────────────────────────────────────
+
+describe('relay key pin outside development', () => {
+  const RELAY_KEY = pubOf('0a'.repeat(32));
+
+  function bobResponder(): DirectAfalTransport {
+    return new DirectAfalTransport({
+      agentId: 'bob-demo',
+      seedHex: BOB_SEED,
+      localDescriptor: signedDescriptor('bob-demo', BOB_SEED),
+      relayUrl: 'https://relay.test',
+      respondMode: {
+        httpPort: 0,
+        bindAddress: '127.0.0.1',
+        policy: {
+          trustedAgents: [{ agentId: 'alice-demo', publicKeyHex: pubOf(ALICE_SEED) }],
+          allowedPurposeCodes: ['MEDIATION'],
+          allowedLaneIds: ['API_MEDIATED'],
+          maxEntropyBits: 256,
+          defaultTier: 'DENY',
+        },
+      },
+    });
+  }
+
+  function aliceInitiator(port: number): DirectAfalTransport {
+    return new DirectAfalTransport({
+      agentId: 'alice-demo',
+      seedHex: ALICE_SEED,
+      localDescriptor: signedDescriptor('alice-demo', ALICE_SEED),
+      relayUrl: 'https://relay.test',
+      peerDescriptorUrl: `http://127.0.0.1:${port}/afal/descriptor`,
+      pinStore: PinStore.inMemory([{ agentId: 'bob-demo', publicKeyHex: pubOf(BOB_SEED) }]),
+    });
+  }
+
+  beforeEach(() => {
+    mockCreateAndSubmit.mockImplementation(async (_config: unknown, contract: object) => ({
+      sessionId: 'sess-pin',
+      contractHash: computeRelayContractHash(contract),
+      initiatorReadToken: 'ir',
+      responderSubmitToken: 'rs',
+      responderReadToken: 'rr',
+    }));
+  });
+
+  it('refuses INITIATE, CREATE and RESPOND without a pinned relay key', async () => {
+    delete process.env['SELKEY_ENV'];
+    const initiate = await handleRelaySignal(
+      { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'a' },
+      transport(),
+    );
+    expect(initiate.error?.code).toBe('PRECONDITION_FAILED');
+    expect(initiate.error?.message ?? JSON.stringify(initiate)).toMatch(/SELKEY_RELAY_VERIFYING_KEY_HEX/);
+    const create = await handleRelaySignal({
+      mode: 'CREATE',
+      contract: buildRelayContract('MEDIATION', ['alice-demo', 'bob-demo'])!,
+      my_input: 'a',
+    });
+    expect(create.error?.code).toBe('PRECONDITION_FAILED');
+    const respond = await handleRelaySignal({ mode: 'RESPOND', from: 'alice-demo', my_input: 'b' }, transport());
+    expect(respond.error?.code).toBe('PRECONDITION_FAILED');
+    expect(mockCreateAndSubmit).not.toHaveBeenCalled();
+    expect(ledgerEntries()).toEqual([]);
+  });
+
+  it('runs without a pin in development', async () => {
+    const bob = bobResponder();
+    await bob.start();
+    try {
+      const port = (bob as unknown as { httpServer: { port: number } }).httpServer.port;
+      const initiated = await handleRelaySignal(
+        { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'a' },
+        aliceInitiator(port),
+      );
+      expect(initiated.ok).toBe(true);
+      const responded = await handleRelaySignal({ mode: 'RESPOND', from: 'alice-demo', my_input: 'b' }, bob);
+      const token = (responded.data as { resume_token: string }).resume_token;
+      const joined = await handleRelaySignal({ resume_token: token }, bob);
+      expect(joined.ok).toBe(true);
+      expect(vi.mocked(submitInput)).toHaveBeenCalledTimes(1);
+    } finally {
+      await bob.stop();
+    }
+  });
+
+  it('rejects, outside development, a contract from an initiator that did not pin the relay key', async () => {
+    const bob = bobResponder();
+    await bob.start();
+    try {
+      const port = (bob as unknown as { httpServer: { port: number } }).httpServer.port;
+      // The initiator runs without a pin (development), so its contract has no relay key.
+      const initiated = await handleRelaySignal(
+        { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'a' },
+        aliceInitiator(port),
+      );
+      expect(initiated.ok).toBe(true);
+      // The responder runs outside development with a pinned key.
+      delete process.env['SELKEY_ENV'];
+      process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'] = RELAY_KEY;
+      const responded = await handleRelaySignal({ mode: 'RESPOND', from: 'alice-demo', my_input: 'b' }, bob);
+      let result = responded;
+      const token = (responded.data as { resume_token?: string | null } | null)?.resume_token;
+      if (token) result = await handleRelaySignal({ resume_token: token }, bob);
+      expect((result.data as { state: string; error_code?: string }).state).toBe('FAILED');
+      expect((result.data as { error_code?: string }).error_code).toBe('CONTRACT_MISMATCH');
+      expect(vi.mocked(submitInput)).not.toHaveBeenCalled();
+    } finally {
+      await bob.stop();
+    }
+  });
+
+  it('refuses a legacy JOIN outside development unless the contract carries the pinned key', async () => {
+    delete process.env['SELKEY_ENV'];
+    process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'] = RELAY_KEY;
+    // The relay itself serves the pinned key, so only the contract check can refuse.
+    vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ verifying_key_hex: RELAY_KEY }), { status: 200 }));
+    const contract = buildRelayContract('MEDIATION', ['alice-demo', 'bob-demo'])!;
+    const result = await handleRelaySignal({
+      mode: 'JOIN',
+      session_id: 'sess-x',
+      submit_token: 's',
+      read_token: 'r',
+      contract,
+      contract_hash: computeRelayContractHash(contract),
+      my_input: 'b',
+    });
+    expect(result.error?.code).toBe('PRECONDITION_FAILED');
+    expect(mockJoinAndWait).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it('sends the operator token only to the configured relay', async () => {
+    process.env['SELKEY_OPERATOR_TOKEN'] = 'op-token-0123456789abcdef0123456789abcdef';
+    process.env['SELKEY_RELAY_ALLOWLIST'] = 'https://other-relay.test';
+    mockPollUntilDone.mockResolvedValue({ state: 'COMPLETED', output: {} });
+    const contract = buildRelayContract('MEDIATION', ['alice-demo', 'bob-demo'])!;
+    await handleRelaySignal({ mode: 'CREATE', contract, my_input: 'a' });
+    expect(mockCreateAndSubmit.mock.calls[0][0]).toEqual({
+      relay_url: 'https://relay.test',
+      operator_token: 'op-token-0123456789abcdef0123456789abcdef',
+    });
+    await handleRelaySignal({ mode: 'CREATE', contract, my_input: 'a', relay_url: 'https://other-relay.test' });
+    expect(mockCreateAndSubmit.mock.calls[1][0]).toEqual({ relay_url: 'https://other-relay.test' });
   });
 });

@@ -14,6 +14,12 @@ export type AbortReason = 'TIMEOUT' | 'SCHEMA_VALIDATION' | 'PROVIDER_ERROR' | '
 export interface RelayClientConfig {
   relay_url: string;
   timeout_ms?: number;
+  /**
+   * Operator bearer token for relays that run with SELKEY_OPERATOR_TOKEN.
+   * Sent as `Authorization: Bearer <token>` on session creation
+   * (POST /sessions). It is never included in errors or logs.
+   */
+  operator_token?: string;
 }
 
 export interface CreateSessionRequest {

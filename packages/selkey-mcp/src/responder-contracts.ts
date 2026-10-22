@@ -5,9 +5,11 @@
  * contract it would build itself from local configuration: the bundled
  * purpose templates and the local contract-offer catalogue and model
  * profiles. The counterparty's invite never decides which contracts are
- * acceptable. Pre-contract negotiation does not add to this set: a bespoke
- * contract is accepted only when the caller passes its exact hash as
- * expected_contract_hash.
+ * acceptable. Pre-contract negotiation does not add to this set: in
+ * development (SELKEY_ENV=dev) a bespoke contract is accepted only when the
+ * caller passes its exact hash as expected_contract_hash; outside development
+ * that hash must also be one of these locally built contracts, bound to the
+ * pinned relay key.
  */
 
 import {

@@ -45,7 +45,7 @@ import {
   selectNegotiatedContractOffer,
 } from './contract-negotiation.js';
 import {
-  supportsBespokePrecontractNegotiation,
+  advertisesBespokeContractNegotiation,
   validateBespokeContractSelection,
 } from './bespoke-contracts.js';
 import { listKnownModelProfiles } from './model-profiles.js';
@@ -176,7 +176,7 @@ export class AfalHttpServer {
       supportedTopicCodes: listSupportedTopicCodes(),
       supportedContractOffers,
       seedHex: this.config.seedHex,
-      supportsBespokeContractNegotiation: supportsBespokePrecontractNegotiation(),
+      supportsBespokeContractNegotiation: advertisesBespokeContractNegotiation(),
     });
   }
 
@@ -282,7 +282,7 @@ export class AfalHttpServer {
                   {
                     supportedOffers: supportedContractOffers,
                     localAgentId: this._localDescriptor.agent_id,
-                    supportsBespoke: supportsBespokePrecontractNegotiation(),
+                    supportsBespoke: advertisesBespokeContractNegotiation(),
                     supportedModelProfiles: listKnownModelProfiles(),
                     validateBespokeContract: validateBespokeContractSelection,
                   },
@@ -385,7 +385,7 @@ export class AfalHttpServer {
                   {
                     supportedOffers: supportedContractOffers,
                     localAgentId: this._localDescriptor.agent_id,
-                    supportsBespoke: supportsBespokePrecontractNegotiation(),
+                    supportsBespoke: advertisesBespokeContractNegotiation(),
                     supportedModelProfiles: listKnownModelProfiles(),
                     validateBespokeContract: validateBespokeContractSelection,
                   },
