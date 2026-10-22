@@ -247,8 +247,8 @@ Claims are optional and omitted when they have no value.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `initiator_submission_hash` | string (64 hex) or null | SHA-256 of the initiator's raw submission. |
-| `responder_submission_hash` | string (64 hex) or null | SHA-256 of the responder's raw submission. |
+| `initiator_submission_hash` | string (64 hex) or null | SHA-256 of the initiator's encrypted submission (ciphertext). |
+| `responder_submission_hash` | string (64 hex) or null | SHA-256 of the responder's encrypted submission (ciphertext). |
 
 **Assurance levels:**
 
@@ -468,7 +468,7 @@ hash_hex         = lowercase_hex(hash_bytes)   // 64 characters
 | Contract (full object) | `commitments.contract_hash` | Session creation. Contract hash v2. |
 | Effective output schema | `commitments.schema_hash` | Before inference. |
 | Prompt program | `commitments.prompt_template_hash` | Before inference. Verified against `contract.prompt_template_hash`. |
-| Guardian policy | `commitments.preflight_bundle.policy_hash` | Before inference. The policy selected by `contract.enforcement_policy_hash`, or the relay's default policy, from the lockfile-verified policies loaded at startup. |
+| Guardian policy | `commitments.preflight_bundle.policy_hash` | Before inference. The policy selected by `contract.enforcement_policy_hash`, or the relay's default policy, from the policies loaded at startup (lockfile-verified, or admission-verified in registry mode; Section 9.5). |
 | Model profile | `commitments.preflight_bundle.model_profile_hash` and `claims.model_profile_hash_asserted` | Before inference. `"none"` in the bundle (and the claim omitted) if the session uses no model profile. |
 | Relay git SHA (string) | `claims.runtime_hash_asserted` | Build time. `SHA-256(git_sha_string.as_utf8_bytes())`. |
 
@@ -926,6 +926,7 @@ This section describes the `selkey-tee` prototype as it is today. Check the
   commitments add `initiator_submission_hash` and `responder_submission_hash`
   (SHA-256 of each ciphertext).
 - Output that the schema rejects gets a failure receipt with status `rejected`.
+- The TypeScript `selkey/tee` helper (`packages/selkey-client`) currently computes only the v1 transcript, so it reports `transcript_hash_valid: false` for current TEE receipts; use the Rust `tee-verifier`.
 
 **Provider and model**
 

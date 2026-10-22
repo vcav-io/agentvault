@@ -9,13 +9,13 @@ Complete reference for all environment variables used by the Selkey relay and MC
 | Variable | Description |
 |----------|-------------|
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` or `GEMINI_API_KEY` | At least one provider API key. Each one that is set enables that provider; the relay refuses to start with none |
-| `SELKEY_SIGNING_KEY_HEX` | Receipt signing key; required outside `SELKEY_ENV=dev` (see below) |
+| `SELKEY_SIGNING_KEY_HEX` | 64-char hex Ed25519 signing key for receipt signing (e.g. `openssl rand -hex 32`). Outside `SELKEY_ENV=dev` the relay refuses to start without it. In dev, if unset, a random key is generated on each start and receipts won't verify across restarts. The key id logged at startup and reported by `/health` is `ed25519:` + hex(SHA-256(public key)) |
 
 ### Optional
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SELKEY_ENV` | unset | Set to `dev` for development mode: an ephemeral signing key if none is set, strict inline output schemas accepted, `POST /relay` open (unauthenticated) when no `SELKEY_OPERATOR_TOKEN` is set, and the development overrides below |
+| `SELKEY_ENV` | unset | Set to `dev` for development mode: an ephemeral signing key if none is set, strict inline output schemas accepted, `POST /relay` open (unauthenticated) when no `SELKEY_OPERATOR_TOKEN` is set, `GET /sessions/:id/metadata` (input sizes and timings, which the relay records only in dev), and the development overrides below |
 | `SELKEY_PORT` | `3100` | Port the relay listens on |
 | `SELKEY_ALLOWED_HOSTS` | unset | Comma-separated extra hostnames accepted in the `Host` header (e.g. a compose service name). When the relay listens on loopback, or when this is set, requests whose `Host` is not `localhost`, `127.0.0.1`, `[::1]` or a listed name get `403`. This blocks DNS-rebinding requests from browser pages to a local relay |
 | `SELKEY_ALLOW_UNAUTHENTICATED` | unset | Set to `1` to let the relay (dev or not) start on a non-loopback address without `SELKEY_OPERATOR_TOKEN` (only when access is controlled elsewhere, e.g. a container port published on loopback) |
@@ -26,7 +26,6 @@ Complete reference for all environment variables used by the Selkey relay and MC
 | `SELKEY_MAX_COMPLETION_TOKENS` | `4096` | Relay ceiling on completion tokens. A contract's `max_completion_tokens` can lower it for that session. An invalid value logs a warning and uses the default |
 | `SELKEY_HEALTH_EXPOSE_MODEL` | `false` | `true`, `1` or `yes` makes `GET /health` report the provider and model ID instead of `"redacted"` |
 | `SELKEY_DEFAULT_POLICY_HASH` | unset | Enforcement policy used when a contract has no `enforcement_policy_hash`. Must name a loaded, lockfile-verified policy. Required when more than one policy is loaded. Ignored when `SELKEY_REGISTRY_PATH` is set: the default then comes from `policies.default` in the admission config |
-| `SELKEY_SIGNING_KEY_HEX` | required outside dev | 64-char hex Ed25519 signing key for receipt signing (e.g. `openssl rand -hex 32`). Outside `SELKEY_ENV=dev` the relay refuses to start without it. In dev, if unset, a random key is generated on each start and receipts won't verify across restarts. The key id logged at startup and reported by `/health` is `ed25519:` + hex(SHA-256(public key)) |
 | `SELKEY_PROMPT_PROGRAM_DIR` | `prompt_programs` | Directory containing prompt programs, model profile lockfile, and enforcement policy lockfile |
 | `SELKEY_SCHEMA_DIR` | `<prompt dir>/../schemas/output` | Directory of content-addressed output schemas (the schema registry). Set it to the repo's `schemas/output` when running from a checkout; the Docker image sets it. The relay refuses to start if the directory cannot be read or a schema in it declares a JSON Schema draft other than draft 7 (see [Output schema acceptance](#output-schema-acceptance)) |
 | `SELKEY_SESSION_TTL_SECS` | `600` | Maximum session lifetime in seconds. A contract's `session_ttl_secs` can shorten it for that session. Background reaper cleans up expired sessions. A session still processing one TTL after inference started is aborted with `TIMEOUT` |

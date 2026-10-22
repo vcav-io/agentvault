@@ -723,8 +723,8 @@ object is a top-level receipt field alongside `commitments` and `claims`.
 | `transcript_hash_hex` | SHA-512 of the canonical session transcript (embedded in SEV-SNP `user_data`) |
 
 TEE commitments add `initiator_submission_hash` and `responder_submission_hash` to
-the `commitments` object, binding each participant's raw submission into the
-attestation chain.
+the `commitments` object: the SHA-256 of each participant's encrypted submission
+(ciphertext), bound into the attestation chain.
 
 `receipt_signing_pubkey_hex` is part of the receipt, so it is only meaningful once
 the quote itself has been verified (platform signature, measurement against an

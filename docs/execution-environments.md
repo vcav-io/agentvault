@@ -87,3 +87,4 @@ Both lanes produce signed receipts. TEE lane receipts additionally contain
   Full cryptographic verification (SEV-SNP report chain and TCB policy, measurement
   allowlist, transcript hash recomputation against the relay configuration) requires
   the `tee-verifier` crate (Rust), which also verifies against a pinned relay key.
+  The TypeScript `selkey/tee` helper (`packages/selkey-client`) currently computes only the v1 transcript, so it reports `transcript_hash_valid: false` for current TEE receipts; use the Rust `tee-verifier`.
