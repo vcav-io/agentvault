@@ -212,6 +212,27 @@ fn node_bound(node: &Value, path: &str, depth: usize) -> Result<u64, String> {
         }
     }
 
+    if obj.contains_key("enum") || obj.contains_key("const") {
+        // The bound below returns without visiting subschemas, so a value
+        // constrained by enum or const may not carry any (their keywords would
+        // otherwise go unchecked).
+        for key in ["properties", "items"] {
+            if obj.contains_key(key) {
+                return Err(format!(
+                    "{path}: '{key}' is not allowed alongside enum or const"
+                ));
+            }
+        }
+        if obj
+            .get("additionalProperties")
+            .is_some_and(|v| !v.is_boolean())
+        {
+            return Err(format!(
+                "{path}: 'additionalProperties' must be a boolean alongside enum or const"
+            ));
+        }
+    }
+
     if let Some(values) = obj.get("enum") {
         let values = values
             .as_array()
@@ -590,6 +611,38 @@ mod tests {
                 "schema {schema} should be rejected"
             );
         }
+    }
+
+    #[test]
+    fn test_subschemas_under_enum_or_const_rejected() {
+        let wrap = |prop: Value| {
+            json!({
+                "type": "object",
+                "properties": { "a": prop },
+                "required": ["a"],
+                "additionalProperties": false
+            })
+        };
+        let draft_04 = "http://json-schema.org/draft-04/schema#";
+        for schema in [
+            wrap(json!({"const": {"b": "OK"}, "properties": {"b": {"$ref": "#/properties/a"}}})),
+            wrap(json!({"const": {"b": "OK"}, "properties": {"b": {"$schema": draft_04}}})),
+            wrap(json!({"const": ["OK"], "items": {"$ref": "#"}})),
+            wrap(json!({"const": {"b": "OK"}, "additionalProperties": {"$schema": draft_04}})),
+            wrap(json!({"enum": [{"b": "OK"}], "properties": {"b": {"$ref": "#"}}})),
+            wrap(json!({"enum": [{"b": "OK"}], "properties": {"b": {"$schema": draft_04}}})),
+            wrap(json!({"enum": [["OK"]], "items": {"$schema": draft_04}})),
+            wrap(json!({"enum": [{"b": "OK"}], "additionalProperties": {"$ref": "#"}})),
+        ] {
+            let contract = contract_with(schema.clone(), None);
+            assert!(
+                resolve_output_schema(&contract, &SchemaRegistry::empty(), true).is_err(),
+                "schema {schema} should be rejected"
+            );
+        }
+        // Plain enum/const nodes, with a boolean additionalProperties, stay accepted.
+        let ok = wrap(json!({"const": {"b": "OK"}, "additionalProperties": false}));
+        assert_eq!(strict_schema_upper_bound(&ok).unwrap(), 0);
     }
 
     #[test]
