@@ -70,7 +70,12 @@ Even in confidential mode:
 Both lanes produce signed receipts. TEE lane receipts additionally contain
 `tee_attestation` with measurement, attestation hash, and transcript hash.
 
-- **Standard receipts:** Verify with `selkey.verify_receipt` (TS)
+- **Standard receipts:** Verify with `selkey.verify_receipt` (TS) against
+  the pinned relay verifying key.
 - **TEE receipts:** `verify_receipt` surfaces TEE fields for introspection.
+  The TS verifier does not verify quotes, so it never trusts
+  `tee_attestation.receipt_signing_pubkey_hex`: TEE receipts are verified
+  against the caller-supplied relay key, and a differing embedded key makes
+  the receipt invalid.
   Full cryptographic verification (measurement allowlist, transcript hash
   recomputation) requires the `tee-verifier` crate (Rust).

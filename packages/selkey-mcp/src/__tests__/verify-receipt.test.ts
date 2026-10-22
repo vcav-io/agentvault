@@ -9,7 +9,7 @@
  * - Missing signature
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { ed25519 } from '@noble/curves/ed25519';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex, hexToBytes, utf8ToBytes } from '@noble/hashes/utils';
@@ -297,5 +297,63 @@ describe('handleVerifyReceipt — TEE attestation introspection', () => {
     });
 
     expect(result.data?.tee_info).toBeUndefined();
+  });
+});
+
+describe('handleVerifyReceipt — relay key requirement', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  function buildTeeDeclaredReceipt(): { signed: Record<string, unknown>; publicKeyHex: string } {
+    const { seedHex, publicKeyHex } = generateKeypair();
+    const base = buildMinimalV2Receipt();
+    base['tee_attestation'] = { receipt_signing_pubkey_hex: publicKeyHex };
+    return { signed: signV2Receipt(base, seedHex), publicKeyHex };
+  }
+
+  it('returns an error when no relay key is supplied or configured', async () => {
+    vi.stubEnv('SELKEY_RELAY_VERIFYING_KEY_HEX', '');
+    const { signed } = buildTeeDeclaredReceipt();
+    const result = await handleVerifyReceipt({ receipt: signed });
+    expect(result.ok).toBe(false);
+    expect(result.data).toBeNull();
+    expect(result.error?.code).toBe('INVALID_INPUT');
+    expect(result.error?.detail).toContain('SELKEY_RELAY_VERIFYING_KEY_HEX');
+  });
+
+  it('uses the configured relay key when no argument is given', async () => {
+    const { seedHex, publicKeyHex } = generateKeypair();
+    vi.stubEnv('SELKEY_RELAY_VERIFYING_KEY_HEX', publicKeyHex);
+    const signed = signV2Receipt(buildMinimalV2Receipt(), seedHex);
+    const result = await handleVerifyReceipt({ receipt: signed });
+    expect(result.ok).toBe(true);
+    expect(result.data?.valid).toBe(true);
+  });
+
+  it('rejects a receipt signed by a key other than the configured relay key', async () => {
+    const { publicKeyHex: relayKey } = generateKeypair();
+    vi.stubEnv('SELKEY_RELAY_VERIFYING_KEY_HEX', relayKey);
+    const { signed } = buildTeeDeclaredReceipt();
+    const result = await handleVerifyReceipt({ receipt: signed });
+    expect(result.ok).toBe(true);
+    expect(result.data?.valid).toBe(false);
+  });
+
+  it('returns an error when the argument key differs from the configured relay key', async () => {
+    const { publicKeyHex: relayKey } = generateKeypair();
+    vi.stubEnv('SELKEY_RELAY_VERIFYING_KEY_HEX', relayKey);
+    const { signed, publicKeyHex } = buildTeeDeclaredReceipt();
+    const result = await handleVerifyReceipt({ receipt: signed, public_key_hex: publicKeyHex });
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('VERIFICATION_FAILED');
+  });
+
+  it('returns an error for a malformed public_key_hex', async () => {
+    vi.stubEnv('SELKEY_RELAY_VERIFYING_KEY_HEX', '');
+    const { signed } = buildTeeDeclaredReceipt();
+    const result = await handleVerifyReceipt({ receipt: signed, public_key_hex: 'zz' });
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('INVALID_INPUT');
   });
 });

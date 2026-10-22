@@ -275,38 +275,39 @@ export function verifyReceipt(
     };
   }
 
-  // Resolve the verification key: TEE-attested key takes priority for TEE receipts
-  let verifyKey: string | undefined;
-  let teeAttestedKey: string | undefined;
-
-  if (isV2 && typeof receipt['tee_attestation'] === 'object' && receipt['tee_attestation'] !== null) {
-    const att = receipt['tee_attestation'] as Record<string, unknown>;
-    if (typeof att['receipt_signing_pubkey_hex'] === 'string') {
-      teeAttestedKey = att['receipt_signing_pubkey_hex'] as string;
-    }
-  }
-
-  if (teeAttestedKey) {
-    // TEE receipt: verify against the TEE-attested key
-    verifyKey = teeAttestedKey;
-
-    // If caller also supplied a key, treat as secondary pinning check
-    if (publicKeyHex && publicKeyHex !== teeAttestedKey) {
-      warnings.push(
-        `Caller-supplied publicKeyHex differs from TEE-attested key; verifying against TEE-attested key`,
-      );
-    }
-  } else if (publicKeyHex) {
-    // Non-TEE receipt: verify against caller-supplied key
-    verifyKey = publicKeyHex;
-  } else {
-    errors.push('No verification key: neither publicKeyHex supplied nor TEE-attested key present');
+  // Resolve the verification key. The receipt is always verified against the
+  // caller-supplied (pinned) relay key. A key embedded in tee_attestation is
+  // receipt-controlled data: this client does not parse or verify TEE quotes,
+  // so the embedded key is never used as a verification key on its own. When
+  // present, it must equal the pinned key.
+  if (typeof publicKeyHex !== 'string' || publicKeyHex.length === 0) {
+    errors.push(
+      'No verification key: publicKeyHex (the pinned relay verifying key) is required; ' +
+        'keys embedded in the receipt are not trusted on their own',
+    );
     return {
       valid: false,
       schema_version: detectedVersion,
       errors,
       warnings,
     };
+  }
+  const verifyKey = publicKeyHex.toLowerCase();
+
+  let teeAttestedKey: string | undefined;
+  if (isV2 && typeof receipt['tee_attestation'] === 'object' && receipt['tee_attestation'] !== null) {
+    const att = receipt['tee_attestation'] as Record<string, unknown>;
+    if (att['receipt_signing_pubkey_hex'] !== undefined) {
+      teeAttestedKey = String(att['receipt_signing_pubkey_hex']);
+    }
+  }
+
+  let valid = true;
+  if (teeAttestedKey !== undefined && teeAttestedKey.toLowerCase() !== verifyKey) {
+    errors.push(
+      `tee_attestation.receipt_signing_pubkey_hex '${teeAttestedKey.slice(0, 12)}...' does not match the pinned relay key '${verifyKey.slice(0, 12)}...'`,
+    );
+    valid = false;
   }
 
   // Verify signature
@@ -315,7 +316,7 @@ export function verifyReceipt(
     : verifySignatureV1(receipt, verifyKey);
 
   errors.push(...sigResult.errors);
-  let valid = sigResult.valid;
+  if (!sigResult.valid) valid = false;
 
   // Verify commitments if artefacts provided
   let commitment_checks: CommitmentCheck[] | undefined;
@@ -333,7 +334,7 @@ export function verifyReceipt(
     if (artefacts.contract && typeof artefacts.contract === 'object') {
       const contractObj = artefacts.contract as Record<string, unknown>;
       if (typeof contractObj.relay_verifying_key_hex === 'string') {
-        if (contractObj.relay_verifying_key_hex !== verifyKey) {
+        if (contractObj.relay_verifying_key_hex.toLowerCase() !== verifyKey) {
           errors.push(
             `Contract pins relay key '${contractObj.relay_verifying_key_hex.slice(0, 12)}...' but receipt was signed by '${verifyKey.slice(0, 12)}...'`,
           );

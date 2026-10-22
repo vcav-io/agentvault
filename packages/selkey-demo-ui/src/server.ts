@@ -659,12 +659,23 @@ app.post('/api/verify-receipt', async (req, res) => {
       return;
     }
 
+    // Verify against the pinned relay key when one is configured. Without a
+    // pin the demo falls back to the configured relay's /health key, which is
+    // convenient locally but is not a trust anchor.
+    const pinnedKeyHex = process.env['SELKEY_RELAY_VERIFYING_KEY_HEX']?.trim().toLowerCase();
     let pubKeyHex: string;
     try {
-      pubKeyHex = await fetchRelayPublicKey(RELAY_URL);
+      pubKeyHex = (await fetchRelayPublicKey(RELAY_URL)).toLowerCase();
     } catch (err) {
       res.json({ verified: false, error: `Could not fetch relay public key: ${err instanceof Error ? err.message : String(err)}` });
       return;
+    }
+    if (pinnedKeyHex) {
+      if (pubKeyHex !== pinnedKeyHex) {
+        res.json({ verified: false, error: 'Relay /health key differs from SELKEY_RELAY_VERIFYING_KEY_HEX' });
+        return;
+      }
+      pubKeyHex = pinnedKeyHex;
     }
 
     const result = verifyReceipt(receipt, pubKeyHex);

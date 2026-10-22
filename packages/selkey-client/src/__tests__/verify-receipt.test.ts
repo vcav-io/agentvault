@@ -285,6 +285,25 @@ describe('verifyReceipt — relay key pinning', () => {
     expect(result.valid).toBe(true);
   });
 
+  it('accepts a contract relay key pinned in uppercase hex', () => {
+    const { seedHex, publicKeyHex } = generateKeypair();
+    const contractWithKey = {
+      ...sampleContract as object,
+      relay_verifying_key_hex: publicKeyHex.toUpperCase(),
+    };
+    const base: Record<string, unknown> = {
+      receipt_schema_version: '2.0.0',
+      session_id: 'sess-7u',
+      commitments: {
+        contract_hash: computeCommitmentHash(contractWithKey),
+      },
+    };
+    const signed = signV2(base, seedHex);
+
+    const result = verifyReceipt(signed, publicKeyHex, { contract: contractWithKey });
+    expect(result.valid).toBe(true);
+  });
+
   it('fails when contract relay key mismatches public key', () => {
     const { seedHex, publicKeyHex } = generateKeypair();
     const { publicKeyHex: otherKey } = generateKeypair();
@@ -330,7 +349,7 @@ describe('verifyReceipt — TEE pubkey binding', () => {
     expect(result.warnings).toHaveLength(0);
   });
 
-  it('verifies against TEE-attested key even when caller supplies different key', () => {
+  it('rejects a receipt whose TEE-declared key differs from the pinned relay key', () => {
     const { seedHex, publicKeyHex: teeKey } = generateKeypair();
     const { publicKeyHex: callerKey } = generateKeypair();
     const base: Record<string, unknown> = {
@@ -345,16 +364,46 @@ describe('verifyReceipt — TEE pubkey binding', () => {
         transcript_hash_hex: '789aaa',
       },
     };
-    // Receipt is signed with the TEE key's seed
+    // Receipt is signed with the key declared in tee_attestation, not the pinned key
     const signed = signV2(base, seedHex);
     const result = verifyReceipt(signed, callerKey);
-    // Should pass: verifies against TEE-attested key, not caller key
-    expect(result.valid).toBe(true);
-    expect(result.errors).toHaveLength(0);
-    expect(result.warnings.some((w) => w.includes('differs from TEE-attested key'))).toBe(true);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('does not match the pinned relay key'))).toBe(true);
   });
 
-  it('verifies TEE receipt without caller-supplied key', () => {
+  it('rejects a receipt re-signed with a fresh key declared in tee_attestation', () => {
+    // Genuine receipt signed by the relay key
+    const relay = generateKeypair();
+    const genuine = signV2(
+      {
+        receipt_schema_version: '2.1.0',
+        session_id: 'sess-tee-resign',
+        issued_at: '2024-01-01T00:00:00Z',
+        assurance_level: 'SELF_ASSERTED',
+        commitments: { output_hash: 'a'.repeat(64) },
+      },
+      relay.seedHex,
+    );
+    expect(verifyReceipt(genuine, relay.publicKeyHex).valid).toBe(true);
+
+    // Same receipt with altered content, re-signed under a fresh key that the
+    // receipt itself declares as its TEE signing key
+    const fresh = generateKeypair();
+    const { signature: _sig, ...unsigned } = genuine;
+    const altered: Record<string, unknown> = {
+      ...unsigned,
+      commitments: { output_hash: 'b'.repeat(64) },
+      assurance_level: 'TEE_ATTESTED',
+      tee_attestation: { receipt_signing_pubkey_hex: fresh.publicKeyHex },
+    };
+    const resigned = signV2(altered, fresh.seedHex);
+
+    const result = verifyReceipt(resigned, relay.publicKeyHex);
+    expect(result.valid).toBe(false);
+    expect(result.errors.length).toBeGreaterThan(0);
+  });
+
+  it('requires a caller-supplied key even when tee_attestation declares one', () => {
     const { seedHex, publicKeyHex: teeKey } = generateKeypair();
     const base: Record<string, unknown> = {
       receipt_schema_version: '2.0.0',
@@ -369,10 +418,20 @@ describe('verifyReceipt — TEE pubkey binding', () => {
       },
     };
     const signed = signV2(base, seedHex);
-    // No caller key — TEE-attested key used directly
     const result = verifyReceipt(signed);
-    expect(result.valid).toBe(true);
-    expect(result.errors).toHaveLength(0);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('No verification key'))).toBe(true);
+  });
+
+  it('returns invalid rather than throwing for a non-string key', () => {
+    const { seedHex } = generateKeypair();
+    const signed = signV2(
+      { receipt_schema_version: '2.0.0', session_id: 'sess-tee-5', issued_at: '2024-01-01T00:00:00Z' },
+      seedHex,
+    );
+    const result = verifyReceipt(signed, 42 as unknown as string);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('No verification key'))).toBe(true);
   });
 
   it('fails when no key is available (no caller key, no TEE key)', () => {
