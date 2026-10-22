@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use ed25519_dalek::SigningKey;
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
 
@@ -26,26 +25,34 @@ async fn main() {
         .and_then(|p| p.parse().ok())
         .unwrap_or(3100);
 
-    let signing_key = match std::env::var("SELKEY_SIGNING_KEY_HEX") {
-        Ok(hex_str) => {
-            let bytes = hex::decode(&hex_str).expect("SELKEY_SIGNING_KEY_HEX must be valid hex");
-            let bytes: [u8; 32] = bytes
-                .try_into()
-                .expect("SELKEY_SIGNING_KEY_HEX must be exactly 64 hex characters (32 bytes)");
-            let key = SigningKey::from_bytes(&bytes);
-            tracing::info!(
-                verifying_key_hex = %receipt_core::public_key_to_hex(&key.verifying_key()),
-                "Loaded relay signing key from SELKEY_SIGNING_KEY_HEX"
-            );
+    let is_dev = std::env::var("SELKEY_ENV")
+        .map(|v| v == "dev")
+        .unwrap_or(false);
+
+    let signing_key = match selkey_relay::load_signing_key(
+        std::env::var("SELKEY_SIGNING_KEY_HEX").ok().as_deref(),
+        is_dev,
+    ) {
+        Ok((key, ephemeral)) => {
+            let verifying_key = key.verifying_key();
+            if ephemeral {
+                tracing::warn!(
+                    verifying_key_hex = %receipt_core::public_key_to_hex(&verifying_key),
+                    key_id = %selkey_relay::relay_key_id(&verifying_key),
+                    "SELKEY_ENV=dev without SELKEY_SIGNING_KEY_HEX — generated ephemeral signing key (receipts will not verify across restarts)"
+                );
+            } else {
+                tracing::info!(
+                    verifying_key_hex = %receipt_core::public_key_to_hex(&verifying_key),
+                    key_id = %selkey_relay::relay_key_id(&verifying_key),
+                    "Loaded relay signing key from SELKEY_SIGNING_KEY_HEX"
+                );
+            }
             key
         }
-        Err(_) => {
-            let key = SigningKey::generate(&mut rand::thread_rng());
-            tracing::warn!(
-                verifying_key_hex = %receipt_core::public_key_to_hex(&key.verifying_key()),
-                "No SELKEY_SIGNING_KEY_HEX set — generated ephemeral signing key (receipts will not verify across restarts)"
-            );
-            key
+        Err(msg) => {
+            tracing::error!("{msg}");
+            std::process::exit(1);
         }
     };
 
@@ -245,7 +252,16 @@ async fn main() {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(600);
-    let session_store = SessionStore::new(Duration::from_secs(session_ttl_secs));
+    let limit_config = match selkey_relay::limits::LimitConfig::from_env() {
+        Ok(config) => config,
+        Err(msg) => {
+            tracing::error!("{msg} — refusing to start");
+            std::process::exit(1);
+        }
+    };
+    tracing::info!(limits = ?limit_config, "relay limits");
+    let session_store = SessionStore::new(Duration::from_secs(session_ttl_secs))
+        .with_max_sessions(limit_config.max_sessions);
 
     // Start background session reaper
     session_store.clone().start_reaper();
@@ -254,9 +270,6 @@ async fn main() {
     // Fail-closed: missing file = startup failure unless SELKEY_INBOX_AUTH=off + SELKEY_ENV=dev.
     let inbox_auth_off = std::env::var("SELKEY_INBOX_AUTH")
         .map(|v| v == "off")
-        .unwrap_or(false);
-    let is_dev = std::env::var("SELKEY_ENV")
-        .map(|v| v == "dev")
         .unwrap_or(false);
     if inbox_auth_off && !is_dev {
         tracing::error!(
@@ -320,10 +333,20 @@ async fn main() {
             }
         }
         Err(_) => InboxStore::new(Duration::from_secs(invite_ttl_secs)),
-    };
+    }
+    .with_limits(
+        limit_config.max_invites,
+        limit_config.max_pending_invites_per_agent,
+    )
+    .with_max_held_per_agent(limit_config.max_invites_per_agent);
 
     #[cfg(not(feature = "persistence"))]
-    let inbox_store = InboxStore::new(Duration::from_secs(invite_ttl_secs));
+    let inbox_store = InboxStore::new(Duration::from_secs(invite_ttl_secs))
+        .with_limits(
+            limit_config.max_invites,
+            limit_config.max_pending_invites_per_agent,
+        )
+        .with_max_held_per_agent(limit_config.max_invites_per_agent);
 
     // Start background inbox reaper
     inbox_store.clone().start_reaper();
@@ -437,6 +460,12 @@ async fn main() {
     let operator_token = std::env::var("SELKEY_OPERATOR_TOKEN")
         .ok()
         .filter(|t| !t.is_empty());
+    if let Some(ref token) = operator_token {
+        if let Err(reason) = selkey_relay::auth::check_token_strength(token) {
+            tracing::error!("SELKEY_OPERATOR_TOKEN rejected: {reason} — refusing to start");
+            std::process::exit(1);
+        }
+    }
     let bind_addr =
         selkey_relay::resolve_bind_addr(std::env::var("SELKEY_BIND_ADDR").ok().as_deref());
     match (&operator_token, is_dev) {
@@ -494,12 +523,28 @@ async fn main() {
         admitted_programs: registry_admission.as_ref().map(|a| a.programs.clone()),
         admitted_profiles: registry_admission.as_ref().map(|a| a.profiles.clone()),
         operator_token,
+        limits: selkey_relay::limits::Limits::new(limit_config),
     });
 
-    let app = build_router(state);
+    let host_policy = selkey_relay::host_guard::HostPolicy::for_bind(
+        bind_addr,
+        std::env::var("SELKEY_ALLOWED_HOSTS").ok().as_deref(),
+    );
+    match &host_policy {
+        Some(policy) => tracing::info!(?policy, "Host header check enabled"),
+        None => tracing::info!(
+            "Host header check disabled (non-loopback bind, no SELKEY_ALLOWED_HOSTS)"
+        ),
+    }
+    let app = selkey_relay::host_guard::apply(build_router(state), host_policy);
 
     let addr = std::net::SocketAddr::new(bind_addr, port);
     tracing::info!(%addr, session_ttl_secs, "Selkey relay starting");
     let listener = TcpListener::bind(&addr).await.expect("bind failed");
-    axum::serve(listener, app).await.expect("server error");
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await
+    .expect("server error");
 }

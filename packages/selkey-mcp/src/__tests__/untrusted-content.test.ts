@@ -14,6 +14,11 @@ import { handleVerifyReceipt } from '../tools/verify-receipt.js';
 import { RELAY_TOOLS, IFC_TOOLS } from '../toolDefs.js';
 import { DirectAfalTransport, type AgentDescriptor } from '../direct-afal-transport.js';
 import { computeProposalId } from '../afal-types.js';
+import { PinStore } from '../pin-store.js';
+import { ed25519 } from '@noble/curves/ed25519';
+import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
+
+const BOB_TEST_PUBKEY = bytesToHex(ed25519.getPublicKey(hexToBytes('02'.repeat(32))));
 
 vi.mock('selkey', () => ({
   createAndSubmit: vi.fn(),
@@ -33,10 +38,14 @@ const JOIN_ARGS = {
 beforeEach(() => {
   process.env['SELKEY_RELAY_URL'] = 'https://relay.test';
   delete process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'];
+  // These JOIN calls carry no contract; the disclosure ledger would refuse them
+  // before the labelling under test runs.
+  process.env['SELKEY_ENTROPY_LEDGER'] = 'off';
 });
 
 afterEach(() => {
   vi.mocked(joinAndWait).mockReset();
+  delete process.env['SELKEY_ENTROPY_LEDGER'];
 });
 
 describe('untrusted content labels', () => {
@@ -148,14 +157,15 @@ describe('untrusted content labels', () => {
       seedHex: '01'.repeat(32),
       localDescriptor: {} as AgentDescriptor,
       peerDescriptorUrl: 'https://peer.example.com/afal/descriptor',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-test', publicKeyHex: BOB_TEST_PUBKEY }]),
     });
     transport._setPeerDescriptorForTesting({
       descriptor_version: '1',
       agent_id: 'bob-test',
       issued_at: '2026-01-01T00:00:00Z',
       expires_at: '2099-01-01T00:00:00Z',
-      identity_key: { algorithm: 'ed25519', public_key_hex: 'b'.repeat(64) },
-      envelope_key: { algorithm: 'ed25519', public_key_hex: 'b'.repeat(64) },
+      identity_key: { algorithm: 'ed25519', public_key_hex: BOB_TEST_PUBKEY },
+      envelope_key: { algorithm: 'ed25519', public_key_hex: BOB_TEST_PUBKEY },
       endpoints: { propose: 'https://peer.example.com/afal/propose', commit: 'https://peer.example.com/afal/commit' },
       capabilities: {},
       policy_commitments: {},

@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { PinStore } from '../pin-store.js';
 import { ed25519 } from '@noble/curves/ed25519';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
 import {
@@ -303,22 +304,23 @@ describe('tryResolvePeerViaAgentCard card signature verification (transport-leve
     return `http://127.0.0.1:${server.httpServer.port}`;
   }
 
-  it('accepts unsigned card in lenient mode (default)', async () => {
+  it('does not use an unsigned card by default, even when its key is pinned', async () => {
     // Start responder WITHOUT seedHex — card will be unsigned
     const baseUrl = await startResponder({ seedHex: undefined });
 
     const localDescriptor = makeSignedDescriptor('local-agent', TEST_PUBLIC_KEY_HEX, TEST_SEED_HEX);
     initiatorTransport = new DirectAfalTransport({
       agentId: 'local-agent',
+      pinStore: PinStore.inMemory([{ agentId: 'peer-agent', publicKeyHex: PEER_PUBLIC_KEY_HEX }]),
       seedHex: TEST_SEED_HEX,
       localDescriptor,
       peerDescriptorUrl: `${baseUrl}/.well-known/agent-card.json`,
-      // requireSignedCards defaults to false (lenient mode)
     });
 
+    // The unsigned card is ignored; the descriptor fallback also fails
+    // because the URL points to an agent card endpoint.
     const discovery = await initiatorTransport.discoverPeerAgentCard();
-    expect(discovery).not.toBeNull();
-    expect(discovery!.supportedPurposes).toContain('COMPATIBILITY');
+    expect(discovery).toBeNull();
   });
 
   it('rejects unsigned card in strict mode (falls back to descriptor, returns null)', async () => {
@@ -328,6 +330,7 @@ describe('tryResolvePeerViaAgentCard card signature verification (transport-leve
     const localDescriptor = makeSignedDescriptor('local-agent', TEST_PUBLIC_KEY_HEX, TEST_SEED_HEX);
     initiatorTransport = new DirectAfalTransport({
       agentId: 'local-agent',
+      pinStore: PinStore.inMemory([{ agentId: 'peer-agent', publicKeyHex: PEER_PUBLIC_KEY_HEX }]),
       seedHex: TEST_SEED_HEX,
       localDescriptor,
       peerDescriptorUrl: `${baseUrl}/.well-known/agent-card.json`,
@@ -347,6 +350,7 @@ describe('tryResolvePeerViaAgentCard card signature verification (transport-leve
     const localDescriptor = makeSignedDescriptor('local-agent', TEST_PUBLIC_KEY_HEX, TEST_SEED_HEX);
     initiatorTransport = new DirectAfalTransport({
       agentId: 'local-agent',
+      pinStore: PinStore.inMemory([{ agentId: 'peer-agent', publicKeyHex: PEER_PUBLIC_KEY_HEX }]),
       seedHex: TEST_SEED_HEX,
       localDescriptor,
       peerDescriptorUrl: `${baseUrl}/.well-known/agent-card.json`,
@@ -432,6 +436,7 @@ describe('tryResolvePeerViaAgentCard card signature verification (transport-leve
     const localDescriptor = makeSignedDescriptor('local-agent', TEST_PUBLIC_KEY_HEX, TEST_SEED_HEX);
     initiatorTransport = new DirectAfalTransport({
       agentId: 'local-agent',
+      pinStore: PinStore.inMemory([{ agentId: 'peer-agent', publicKeyHex: PEER_PUBLIC_KEY_HEX }]),
       seedHex: TEST_SEED_HEX,
       localDescriptor,
       peerDescriptorUrl: `${baseUrl}/.well-known/agent-card.json`,

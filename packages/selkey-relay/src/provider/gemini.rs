@@ -121,7 +121,8 @@ impl GeminiProvider {
             .map_err(|e| RelayError::Provider(format!("failed to read response body: {e}")))?;
 
         if !status.is_success() {
-            tracing::debug!(status = %status, body = %response_text, "Gemini API error");
+            // Status only: an error body can echo the request (including inputs).
+            tracing::debug!(status = %status, "Gemini API error");
             return Err(match status.as_u16() {
                 401 | 403 => RelayError::Provider("Gemini API authentication error".to_string()),
                 429 => RelayError::Provider("Gemini API rate limited".to_string()),
@@ -172,7 +173,7 @@ fn extract_text(response: &Value) -> Result<String, RelayError> {
         .get("candidates")
         .and_then(|v| v.get(0))
         .ok_or_else(|| {
-            tracing::debug!(response = %response, "Gemini response missing candidates");
+            tracing::debug!("Gemini response missing candidates");
             RelayError::Provider("response missing candidates".to_string())
         })?;
 
@@ -181,7 +182,7 @@ fn extract_text(response: &Value) -> Result<String, RelayError> {
         .and_then(|v| v.get("parts"))
         .and_then(|v| v.as_array())
         .ok_or_else(|| {
-            tracing::debug!(candidate = %candidate, "Gemini candidate missing content parts");
+            tracing::debug!("Gemini candidate missing content parts");
             RelayError::Provider("candidate missing content parts".to_string())
         })?;
 

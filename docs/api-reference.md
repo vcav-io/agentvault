@@ -33,6 +33,7 @@ Health check. No authentication required.
   "provider": "redacted",
   "model_id": "redacted",
   "verifying_key_hex": "ab12...64-char hex Ed25519 public key...",
+  "verifying_key_id": "ed25519:...64-char hex SHA-256 of the public key...",
   "policy_summary": {
     "policy_id": "default-v1",
     "policy_hash": "...",
@@ -43,7 +44,7 @@ Health check. No authentication required.
 }
 ```
 
-`provider` and `model_id` are `"redacted"` unless `SELKEY_HEALTH_EXPOSE_MODEL=true`. `verifying_key_hex` is the relay's Ed25519 public key for receipt signature verification.
+`provider` and `model_id` are `"redacted"` unless `SELKEY_HEALTH_EXPOSE_MODEL=true`. `verifying_key_hex` is the relay's Ed25519 public key for receipt signature verification. `verifying_key_id` is its key id, `ed25519:` + hex(SHA-256(32-byte public key)); the hex part equals a receipt's `operator.operator_key_fingerprint`. `/health` is unauthenticated, so it is not a trust anchor: verify receipts against a key you pinned out of band, and use these fields only to check that the relay serves that key.
 
 ---
 
@@ -57,7 +58,7 @@ Relay capabilities. No authentication required.
   "execution_lane": "API_MEDIATED",
   "providers": ["anthropic", "openai", "gemini"],
   "purposes": ["COMPATIBILITY", "MEDIATION", "SCHEDULING", ...],
-  "entropy_enforcement": "ADVISORY",
+  "entropy_enforcement": "GATE",
   "receipt_schema_version": "3.0.0",
   "enforcement_capabilities": ["..."],
   "available_schema_hashes": ["...content-addressed output schema hashes..."],
@@ -104,6 +105,18 @@ The single caller supplies both inputs, so it generates both nonces: one fresh
 input is rejected if its nonce is missing or malformed. The contract follows
 the same rules as `POST /sessions`.
 
+`input_a` and `input_b` are labelled with `contract.participants[0]` and `[1]`;
+the `role` fields are ignored. Because one caller supplied both inputs, the
+receipt's `claims.signal_class` is `SINGLE_CALLER_COMPLETED`. Its input
+commitments are still keyed by contract participant.
+
+Sessions use `SESSION_COMPLETED`, which means the two inputs arrived through the
+session's two role-scoped submit tokens. It does not attest who held them:
+`POST /sessions` returns all four tokens to the creator, so one caller can
+produce a `SESSION_COMPLETED` receipt. Only the inbox lane binds the tokens to
+registry-authenticated agents (the sender gets the initiator tokens, the
+recipient the responder tokens).
+
 **Response** `200 OK`
 ```json
 {
@@ -142,6 +155,27 @@ members outside the contract member set (including a `contract_hash` member) are
 rejected with `400`, absent or `null` optional members are omitted, and the
 result is canonicalised with RFC 8785. Numbers anywhere in the contract must be
 within ±(2^53−1).
+
+The relay runs every contract check at creation, before any input is submitted:
+participants, enforcement policy (its `provider_allowlist`, `max_output_tokens` and
+`entropy_constraints` included), model profile and allowlist, relay key pin, model
+constraints, TTLs, output schema acceptance, the entropy limits below, the prompt
+program, and that the provider is configured. A contract that would fail at
+inference is rejected here with `400` and no session is created. The same checks
+run again when inference starts. They read only artefacts fixed at startup, so a
+contract accepted at creation passes them again; if one ever failed there, the
+session would abort without a receipt (the failure is logged).
+
+**Entropy limits.** The output schema's entropy upper bound must not exceed the
+relay's per-session cap (`SELKEY_MAX_ENTROPY_BITS_PER_SESSION`, default 64 bits),
+whatever the contract says. If the contract sets `entropy_budget_bits`, the bound
+must also fit the budget unless the contract sets `entropy_enforcement: "Advisory"`;
+`Gate` is the default. The receipt's `budget_usage.budget_limit` is the contract
+budget capped by the operator limit (the operator limit when there is no budget).
+
+**Limits.** Session creation (`POST /sessions` and `POST /relay`) is rate limited per
+client address (`429`), the number of live sessions is capped (`503`), and request
+bodies are limited to `SELKEY_MAX_BODY_BYTES` (default 256 KiB, `413`).
 
 **Response** `200 OK`
 ```json
@@ -302,6 +336,12 @@ other than `success`, `output_hash` = SHA-256 of zero bytes, no inline
 `null`. See [receipt-verification-guide.md](receipt-verification-guide.md) for
 verification.
 
+### `GET /sessions/:id/metadata` (dev only)
+
+Diagnostic timings and sizes, available only with `SELKEY_ENV=dev` (otherwise `401`).
+Requires a read token. Each participant sees its own input time and size; the
+counterparty's `*_input_at` and `*_input_bytes` are `null`.
+
 ## Inbox endpoints
 
 The inbox system enables asynchronous session setup. An agent sends an invite to another agent; the recipient can accept (creating a bilateral session), decline, or let it expire. All inbox endpoints use bearer token authentication via the **agent registry** — tokens are configured per-agent in the relay's agent registry, not session-scoped.
@@ -325,7 +365,7 @@ Create a new invite to another agent.
 }
 ```
 
-`provider` defaults to the first configured provider if empty. `from_agent_pubkey` is optional; if omitted, the relay uses the public key from the agent registry entry (if any).
+`provider` defaults to the first configured provider if empty. `to_agent_id` must be a registered agent, and the contract's `participants` must be `[sender, to_agent_id]` in that order (the sender receives the initiator tokens, whose input is committed under `participants[0]`). The contract checks described under `POST /sessions` run before the invite is stored, and again on accept. Invite creation is rate limited per sending agent, and each agent may have a limited number of pending invites (`429`); the total number of invites is capped (`503`). The invite expires after the contract's `invite_ttl_secs` if set (never above `SELKEY_INVITE_TTL_SECS`). The invite's `from_agent_pubkey` is always the sender's `public_key_hex` from the agent registry (or absent if none is registered). A request `from_agent_pubkey` is optional; if present it must equal the registered key, otherwise the request is rejected with `400`.
 
 **Response** `200 OK`
 ```json
@@ -406,7 +446,7 @@ When status is `ACCEPTED`, `session_id`, `submit_token`, and `read_token` are po
 
 ### `POST /invites/:id/accept`
 
-Accept a pending invite. Creates a bilateral session and returns role-scoped tokens.
+Accept a pending invite. Creates a bilateral session and returns role-scoped tokens. The contract checks run again first; if they fail the invite stays `PENDING` and no session is created.
 
 **Request**
 ```json
@@ -488,10 +528,13 @@ All errors return a JSON body with an `error` field:
 |--------|---------|
 | `400 Bad Request` | Invalid contract or prompt program |
 | `401 Unauthorized` | Invalid token, unknown session, or wrong role (constant-shape — no distinction) |
+| `413 Payload Too Large` | Request body above `SELKEY_MAX_BODY_BYTES` |
+| `429 Too Many Requests` | Creation rate limit or pending-invite limit reached (`{"error": "RATE_LIMITED"}`) |
+| `503 Service Unavailable` | Session or invite capacity reached (`{"error": "SERVICE_UNAVAILABLE"}`) |
 | `422 Unprocessable Entity` | Output failed schema validation or guardian policy gate |
 | `502 Bad Gateway` | Upstream provider error |
 | `500 Internal Server Error` | Receipt signing failure or internal error |
 
 ## Session lifecycle
 
-Sessions expire after `SELKEY_SESSION_TTL_SECS` (default: 600 seconds). A background reaper cleans up expired sessions. Tokens for expired sessions return `401 Unauthorized`.
+Sessions expire after the contract's `session_ttl_secs` if set, otherwise `SELKEY_SESSION_TTL_SECS` (default: 600 seconds); a contract TTL above the relay TTL is rejected. A background reaper cleans up expired sessions. A session still processing one TTL after inference started is aborted with `TIMEOUT` and its inference task is cancelled. Tokens for expired sessions return `401 Unauthorized`.

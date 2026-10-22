@@ -5,6 +5,8 @@
  * that INITIATE builds AfalPropose and RESPOND extracts it.
  */
 
+import { signCard } from './helpers/sign-card.js';
+import { PinStore } from '../pin-store.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { handleRelaySignal, _setDiscoverPollConfigForTesting } from '../tools/relaySignal.js';
 import { _resetHandlesForTesting } from '../tools/relayHandles.js';
@@ -18,6 +20,18 @@ import { signMessage, DOMAIN_PREFIXES } from '../afal-signing.js';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
 import { ed25519 } from '@noble/curves/ed25519';
 import { createAndSubmit } from 'selkey';
+
+// This suite mocks `selkey/contracts` with schema-less contracts, which the
+// owner-side disclosure ledger (on by default) refuses. The ledger itself is
+// covered by entropy-ledger*.test.ts and the direct round trip in
+// responder-contract-checks.test.ts.
+beforeEach(() => {
+  process.env['SELKEY_ENTROPY_LEDGER'] = 'off';
+});
+afterEach(() => {
+  delete process.env['SELKEY_ENTROPY_LEDGER'];
+});
+
 
 // Mock selkey to avoid real HTTP calls
 vi.mock('selkey', () => ({
@@ -128,18 +142,24 @@ function makeSignedAdmit(
       proposal_id: proposalId,
       admit_token_id: 'a'.repeat(64),
       admission_tier: 'DEFAULT',
-      expires_at: '2026-01-01T00:15:00Z',
+      expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
       ...(selectedModelProfile ? { selected_model_profile: selectedModelProfile } : {}),
     },
     PEER_SEED,
   );
 }
 
+/** The ADMIT must echo the proposal_id of the PROPOSE it answers. */
+function proposalIdFromRequest(init?: RequestInit): string {
+  const body = JSON.parse(String(init?.body ?? '{}')) as { propose?: { proposal_id?: string } };
+  return body.propose?.proposal_id ?? '';
+}
+
 beforeEach(() => {
   _resetHandlesForTesting();
   // Disable bounded polling — single check, no sleep
   _setDiscoverPollConfigForTesting(0, 0);
-  process.env['SELKEY_RELAY_URL'] = 'http://relay.test';
+  process.env['SELKEY_RELAY_URL'] = 'https://relay.test';
   process.env['SELKEY_AGENT_ID'] = 'alice-demo';
   vi.mocked(createAndSubmit).mockClear();
 });
@@ -216,6 +236,7 @@ describe('INITIATE with AFAL', () => {
 
     const transport = new DirectAfalTransport({
       agentId: 'alice-demo',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-demo', publicKeyHex: PEER_PUBKEY }]),
       seedHex: TEST_SEED,
       localDescriptor: makeLocalDescriptor(),
       peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
@@ -224,7 +245,7 @@ describe('INITIATE with AFAL', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () =>
-        Promise.resolve({
+        Promise.resolve(signCard({
           name: 'bob-demo',
           capabilities: {
             extensions: [
@@ -232,19 +253,21 @@ describe('INITIATE with AFAL', () => {
                 uri: SELKEY_A2A_EXTENSION_URI,
                 params: {
                   public_key_hex: PEER_PUBKEY,
-                  relay_url: 'http://relay.from.card',
+                  relay_url: 'https://relay.from.card',
                   supported_purposes: ['MEDIATION'],
                   afal_endpoint: 'http://peer.example.com/afal',
                 },
               },
             ],
           },
-        }),
+        }, PEER_SEED)),
     });
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve(makeSignedAdmit('d'.repeat(64))),
-    });
+    mockFetch.mockImplementationOnce((_url: string, init?: RequestInit) =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(makeSignedAdmit(proposalIdFromRequest(init))),
+      }),
+    );
     mockFetch.mockResolvedValueOnce({
       ok: true,
       text: () => Promise.resolve('ok'),
@@ -266,13 +289,14 @@ describe('INITIATE with AFAL', () => {
 
     const transport = new DirectAfalTransport({
       agentId: 'alice-demo',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-demo', publicKeyHex: PEER_PUBKEY }]),
       seedHex: TEST_SEED,
       localDescriptor: makeLocalDescriptor(),
-      relayUrl: 'http://relay.test',
+      relayUrl: 'https://relay.test',
       peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
     });
 
-    const card = {
+    const card = signCard({
       name: 'bob-demo',
       capabilities: {
         extensions: [
@@ -280,17 +304,20 @@ describe('INITIATE with AFAL', () => {
             uri: SELKEY_A2A_EXTENSION_URI,
             params: {
               public_key_hex: PEER_PUBKEY,
-              relay_url: 'http://relay.from.card',
+              relay_url: 'https://relay.from.card',
               supported_purposes: ['MEDIATION'],
               afal_endpoint: 'http://peer.example.com/afal',
             },
           },
         ],
       },
-    };
-    mockFetch.mockImplementation((url: string) => {
+    }, PEER_SEED);
+    mockFetch.mockImplementation((url: string, init?: RequestInit) => {
       if (url.endsWith('/propose')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve(makeSignedAdmit('d'.repeat(64))) });
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(makeSignedAdmit(proposalIdFromRequest(init))),
+        });
       }
       if (url.endsWith('/commit')) {
         return Promise.resolve({ ok: true, text: () => Promise.resolve('ok') });
@@ -304,14 +331,14 @@ describe('INITIATE with AFAL', () => {
     );
 
     expect(vi.mocked(createAndSubmit)).toHaveBeenCalledWith(
-      { relay_url: 'http://relay.test' },
+      { relay_url: 'https://relay.test' },
       expect.any(Object),
       'hello',
       'initiator',
       expect.stringMatching(/^[0-9a-f]{64}$/),
     );
     expect(vi.mocked(createAndSubmit)).not.toHaveBeenCalledWith(
-      { relay_url: 'http://relay.from.card' },
+      { relay_url: 'https://relay.from.card' },
       expect.anything(),
       expect.anything(),
       expect.anything(),
@@ -333,7 +360,7 @@ describe('INITIATE with AFAL', () => {
           session_id: 'sess-123',
           responder_submit_token: 'resp-submit',
           responder_read_token: 'resp-read',
-          relay_url: 'http://relay.test',
+          relay_url: 'https://relay.test',
         },
         afalPropose: {
           purpose_code: 'MEDIATION',
@@ -365,7 +392,7 @@ describe('INITIATE with AFAL', () => {
           session_id: 'sess-456',
           responder_submit_token: 'resp-submit',
           responder_read_token: 'resp-read',
-          relay_url: 'http://relay.test',
+          relay_url: 'https://relay.test',
         },
         afalPropose: {
           purpose_code: 'MEDIATION',
@@ -395,6 +422,7 @@ describe('INITIATE with AFAL', () => {
 
     const transport = new DirectAfalTransport({
       agentId: 'alice-demo',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-demo', publicKeyHex: PEER_PUBKEY }]),
       seedHex: TEST_SEED,
       localDescriptor: makeLocalDescriptor(),
       peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
@@ -403,7 +431,7 @@ describe('INITIATE with AFAL', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () =>
-        Promise.resolve({
+        Promise.resolve(signCard({
           name: 'bob-demo',
           capabilities: {
             extensions: [
@@ -411,7 +439,7 @@ describe('INITIATE with AFAL', () => {
                 uri: SELKEY_A2A_EXTENSION_URI,
                 params: {
                   public_key_hex: PEER_PUBKEY,
-                  relay_url: 'http://relay.from.card',
+                  relay_url: 'https://relay.from.card',
                   supported_purposes: ['MEDIATION'],
                   a2a_send_message_url: 'http://peer.example.com/a2a/send-message',
                   afal_endpoint: 'http://peer.example.com/afal',
@@ -432,7 +460,7 @@ describe('INITIATE with AFAL', () => {
               },
             ],
           },
-        }),
+        }, PEER_SEED)),
     });
     mockFetch.mockImplementationOnce(async (_url, init) => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
@@ -467,10 +495,12 @@ describe('INITIATE with AFAL', () => {
           }),
       };
     });
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve(makeSignedAdmit('d'.repeat(64))),
-    });
+    mockFetch.mockImplementationOnce((_url: string, init?: RequestInit) =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(makeSignedAdmit(proposalIdFromRequest(init))),
+      }),
+    );
     mockFetch.mockResolvedValueOnce({
       ok: true,
       text: () => Promise.resolve('ok'),
@@ -494,7 +524,7 @@ describe('INITIATE with AFAL', () => {
     expect(proposal['acceptable_offers']).toBeDefined();
 
     expect(vi.mocked(createAndSubmit)).toHaveBeenCalledWith(
-      { relay_url: 'http://relay.test' },
+      { relay_url: 'https://relay.test' },
       expect.objectContaining({
         purpose_code: 'MEDIATION',
         model_profile_id: 'api-claude-sonnet-v1',
@@ -523,6 +553,7 @@ describe('INITIATE with AFAL', () => {
 
     const transport = new DirectAfalTransport({
       agentId: 'alice-demo',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-demo', publicKeyHex: PEER_PUBKEY }]),
       seedHex: TEST_SEED,
       localDescriptor: makeLocalDescriptor(),
       peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
@@ -531,7 +562,7 @@ describe('INITIATE with AFAL', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () =>
-        Promise.resolve({
+        Promise.resolve(signCard({
           name: 'bob-demo',
           capabilities: {
             extensions: [
@@ -539,7 +570,7 @@ describe('INITIATE with AFAL', () => {
                 uri: SELKEY_A2A_EXTENSION_URI,
                 params: {
                   public_key_hex: PEER_PUBKEY,
-                  relay_url: 'http://relay.from.card',
+                  relay_url: 'https://relay.from.card',
                   supported_purposes: ['MEDIATION', 'COMPATIBILITY'],
                   a2a_send_message_url: 'http://peer.example.com/a2a/send-message',
                   afal_endpoint: 'http://peer.example.com/afal',
@@ -570,7 +601,7 @@ describe('INITIATE with AFAL', () => {
               },
             ],
           },
-        }),
+        }, PEER_SEED)),
     });
     mockFetch.mockImplementationOnce(async (_url, init) => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
@@ -605,10 +636,12 @@ describe('INITIATE with AFAL', () => {
           }),
       };
     });
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve(makeSignedAdmit('d'.repeat(64))),
-    });
+    mockFetch.mockImplementationOnce((_url: string, init?: RequestInit) =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(makeSignedAdmit(proposalIdFromRequest(init))),
+      }),
+    );
     mockFetch.mockResolvedValueOnce({
       ok: true,
       text: () => Promise.resolve('ok'),
@@ -637,7 +670,7 @@ describe('INITIATE with AFAL', () => {
       'selkey.compatibility.v1.standard',
     ]);
     expect(vi.mocked(createAndSubmit)).toHaveBeenCalledWith(
-      { relay_url: 'http://relay.test' },
+      { relay_url: 'https://relay.test' },
       expect.objectContaining({
         purpose_code: 'MEDIATION',
       }),
@@ -653,6 +686,7 @@ describe('INITIATE with AFAL', () => {
 
     const transport = new DirectAfalTransport({
       agentId: 'alice-demo',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-demo', publicKeyHex: PEER_PUBKEY }]),
       seedHex: TEST_SEED,
       localDescriptor: makeLocalDescriptor(),
       peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
@@ -661,7 +695,7 @@ describe('INITIATE with AFAL', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () =>
-        Promise.resolve({
+        Promise.resolve(signCard({
           name: 'bob-demo',
           capabilities: {
             extensions: [
@@ -669,7 +703,7 @@ describe('INITIATE with AFAL', () => {
                 uri: SELKEY_A2A_EXTENSION_URI,
                 params: {
                   public_key_hex: PEER_PUBKEY,
-                  relay_url: 'http://relay.from.card',
+                  relay_url: 'https://relay.from.card',
                   supported_purposes: ['MEDIATION'],
                   supported_topic_codes: ['salary_alignment', 'reference_check'],
                   supports_topic_alignment: true,
@@ -692,7 +726,7 @@ describe('INITIATE with AFAL', () => {
               },
             ],
           },
-        }),
+        }, PEER_SEED)),
     });
     mockFetch.mockImplementationOnce(async (_url, init) => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
@@ -755,10 +789,12 @@ describe('INITIATE with AFAL', () => {
           }),
       };
     });
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve(makeSignedAdmit('d'.repeat(64))),
-    });
+    mockFetch.mockImplementationOnce((_url: string, init?: RequestInit) =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(makeSignedAdmit(proposalIdFromRequest(init))),
+      }),
+    );
     mockFetch.mockResolvedValueOnce({
       ok: true,
       text: () => Promise.resolve('ok'),
@@ -794,6 +830,7 @@ describe('INITIATE with AFAL', () => {
 
     const transport = new DirectAfalTransport({
       agentId: 'alice-demo',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-demo', publicKeyHex: PEER_PUBKEY }]),
       seedHex: TEST_SEED,
       localDescriptor: makeLocalDescriptor(),
       peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-descriptor.json',
@@ -848,10 +885,12 @@ describe('INITIATE with AFAL', () => {
           }),
       };
     });
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve(makeSignedAdmit('d'.repeat(64))),
-    });
+    mockFetch.mockImplementationOnce((_url: string, init?: RequestInit) =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(makeSignedAdmit(proposalIdFromRequest(init))),
+      }),
+    );
     mockFetch.mockResolvedValueOnce({
       ok: true,
       text: () => Promise.resolve('ok'),
@@ -884,6 +923,7 @@ describe('INITIATE with AFAL', () => {
 
     const transport = new DirectAfalTransport({
       agentId: 'alice-demo',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-demo', publicKeyHex: PEER_PUBKEY }]),
       seedHex: TEST_SEED,
       localDescriptor: makeLocalDescriptor(),
       peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
@@ -892,7 +932,7 @@ describe('INITIATE with AFAL', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () =>
-        Promise.resolve({
+        Promise.resolve(signCard({
           name: 'bob-demo',
           capabilities: {
             extensions: [
@@ -900,7 +940,7 @@ describe('INITIATE with AFAL', () => {
                 uri: SELKEY_A2A_EXTENSION_URI,
                 params: {
                   public_key_hex: PEER_PUBKEY,
-                  relay_url: 'http://relay.from.card',
+                  relay_url: 'https://relay.from.card',
                   supported_purposes: ['MEDIATION'],
                   a2a_send_message_url: 'http://peer.example.com/a2a/send-message',
                   afal_endpoint: 'http://peer.example.com/afal',
@@ -915,7 +955,7 @@ describe('INITIATE with AFAL', () => {
               },
             ],
           },
-        }),
+        }, PEER_SEED)),
     });
     mockFetch.mockImplementationOnce(async (_url, init) => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
@@ -966,6 +1006,7 @@ describe('INITIATE with AFAL', () => {
 
     const transport = new DirectAfalTransport({
       agentId: 'alice-demo',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-demo', publicKeyHex: PEER_PUBKEY }]),
       seedHex: TEST_SEED,
       localDescriptor: makeLocalDescriptor(),
       peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
@@ -974,7 +1015,7 @@ describe('INITIATE with AFAL', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () =>
-        Promise.resolve({
+        Promise.resolve(signCard({
           name: 'bob-demo',
           capabilities: {
             extensions: [
@@ -982,7 +1023,7 @@ describe('INITIATE with AFAL', () => {
                 uri: SELKEY_A2A_EXTENSION_URI,
                 params: {
                   public_key_hex: PEER_PUBKEY,
-                  relay_url: 'http://relay.from.card',
+                  relay_url: 'https://relay.from.card',
                   supported_purposes: ['MEDIATION'],
                   supported_topic_codes: ['technical_architecture'],
                   supports_topic_alignment: true,
@@ -992,7 +1033,7 @@ describe('INITIATE with AFAL', () => {
               },
             ],
           },
-        }),
+        }, PEER_SEED)),
     });
     mockFetch.mockImplementationOnce(async (_url, init) => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
@@ -1049,6 +1090,7 @@ describe('INITIATE with AFAL', () => {
 
     const transport = new DirectAfalTransport({
       agentId: 'alice-demo',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-demo', publicKeyHex: PEER_PUBKEY }]),
       seedHex: TEST_SEED,
       localDescriptor: makeLocalDescriptor(),
       peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
@@ -1057,7 +1099,7 @@ describe('INITIATE with AFAL', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () =>
-        Promise.resolve({
+        Promise.resolve(signCard({
           name: 'bob-demo',
           capabilities: {
             extensions: [
@@ -1065,7 +1107,7 @@ describe('INITIATE with AFAL', () => {
                 uri: SELKEY_A2A_EXTENSION_URI,
                 params: {
                   public_key_hex: PEER_PUBKEY,
-                  relay_url: 'http://relay.from.card',
+                  relay_url: 'https://relay.from.card',
                   supported_purposes: ['MEDIATION'],
                   a2a_send_message_url: 'http://peer.example.com/a2a/send-message',
                   afal_endpoint: 'http://peer.example.com/afal',
@@ -1086,7 +1128,7 @@ describe('INITIATE with AFAL', () => {
               },
             ],
           },
-        }),
+        }, PEER_SEED)),
     });
     mockFetch.mockImplementationOnce(async (_url, init) => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
@@ -1137,7 +1179,7 @@ describe('INITIATE relay preference ordering', () => {
 
   function stubPeer(relayPreference: { relay_url: string; policy: 'REQUIRED' | 'PREFERRED' }) {
     const commits: Array<Record<string, unknown>> = [];
-    const card = {
+    const card = signCard({
       name: 'bob-demo',
       capabilities: {
         extensions: [
@@ -1151,7 +1193,7 @@ describe('INITIATE relay preference ordering', () => {
           },
         ],
       },
-    };
+    }, PEER_SEED);
     const mockFetch = vi.fn().mockImplementation((url: string, init?: { body?: string }) => {
       if (url.endsWith('/propose')) {
         const body = JSON.parse(init?.body ?? '{}') as { propose: { proposal_id: string } };
@@ -1187,6 +1229,7 @@ describe('INITIATE relay preference ordering', () => {
       localDescriptor: makeLocalDescriptor(),
       ...(relayUrl ? { relayUrl } : {}),
       peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-demo', publicKeyHex: PEER_PUBKEY }]),
     });
   }
 
@@ -1262,7 +1305,7 @@ describe('legacy payload type guard (isRelayInvitePayload)', () => {
         session_id: true, // truthy but not string — passes pre-filter, fails type guard
         responder_submit_token: 'sub-tok',
         responder_read_token: 'read-tok',
-        relay_url: 'http://relay.test',
+        relay_url: 'https://relay.test',
       },
     };
 
@@ -1289,7 +1332,7 @@ describe('legacy payload type guard (isRelayInvitePayload)', () => {
         session_id: 42, // should be string
         responder_submit_token: 'sub-tok',
         responder_read_token: 'read-tok',
-        relay_url: 'http://relay.test',
+        relay_url: 'https://relay.test',
       },
     };
 
@@ -1336,7 +1379,7 @@ describe('RESPOND with AFAL', () => {
         session_id: 'sess-bob',
         responder_submit_token: 'sub-tok',
         responder_read_token: 'read-tok',
-        relay_url: 'http://relay.test',
+        relay_url: 'https://relay.test',
       },
       afalPropose,
     };
@@ -1386,7 +1429,7 @@ describe('RESPOND with AFAL', () => {
         session_id: 'sess-bob',
         responder_submit_token: 'sub-tok',
         responder_read_token: 'read-tok',
-        relay_url: 'http://relay.test',
+        relay_url: 'https://relay.test',
       },
       afalPropose,
     };
@@ -1416,7 +1459,7 @@ describe('RESPOND with AFAL', () => {
         session_id: 'sess-bob',
         responder_submit_token: 'sub-tok',
         responder_read_token: 'read-tok',
-        relay_url: 'http://relay.test',
+        relay_url: 'https://relay.test',
       },
       // No afalPropose — legacy invite
     };
@@ -1431,5 +1474,78 @@ describe('RESPOND with AFAL', () => {
     expect(result.status).toBe('PENDING');
     const data = result.data as { phase: string };
     expect(data.phase).toBe('JOIN');
+  });
+});
+
+describe('counterparty aliases', () => {
+  it('matches aliases exactly, without case folding', async () => {
+    const transport = createMockAfalTransport();
+    await handleRelaySignal(
+      { mode: 'INITIATE', counterparty: 'BOB', purpose: 'MEDIATION', my_input: 'hello' },
+      transport,
+      [{ agent_id: 'bob-demo', aliases: ['Bob'] }],
+    );
+    const call = vi.mocked(transport.sendPropose).mock.calls[0]?.[0];
+    expect(call?.propose.to).toBe('BOB');
+  });
+
+  it('rejects an alias that names more than one agent', async () => {
+    const transport = createMockAfalTransport();
+    const result = await handleRelaySignal(
+      { mode: 'INITIATE', counterparty: 'Bob', purpose: 'MEDIATION', my_input: 'hello' },
+      transport,
+      [
+        { agent_id: 'bob-demo', aliases: ['Bob'] },
+        { agent_id: 'bob-other', aliases: ['Bob'] },
+      ],
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('INVALID_INPUT');
+    expect(result.error?.detail).toMatch(/more than one agent/);
+    expect(transport.sendPropose).not.toHaveBeenCalled();
+  });
+
+  it('reports first contact in tofu mode as needing human confirmation', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve(signCard({
+              name: 'bob-demo',
+              capabilities: {
+                extensions: [
+                  {
+                    uri: SELKEY_A2A_EXTENSION_URI,
+                    params: {
+                      public_key_hex: PEER_PUBKEY,
+                      supported_purposes: ['MEDIATION'],
+                      afal_endpoint: 'http://peer.example.com/afal',
+                    },
+                  },
+                ],
+              },
+            }, PEER_SEED)),
+        }),
+      ),
+    );
+    const transport = new DirectAfalTransport({
+      agentId: 'alice-demo',
+      pinStore: PinStore.inMemory([], 'tofu'),
+      seedHex: TEST_SEED,
+      localDescriptor: makeLocalDescriptor(),
+      relayUrl: 'http://relay.test',
+      peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
+    });
+    const result = await handleRelaySignal(
+      { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'hello' },
+      transport,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('NEEDS_CONFIRMATION');
+    expect(result.error?.detail).toContain('selkey-mcp pins confirm bob-demo');
+    expect(transport.pinStore.listPending()[0]?.agent_id).toBe('bob-demo');
+    expect(vi.mocked(createAndSubmit)).not.toHaveBeenCalled();
   });
 });

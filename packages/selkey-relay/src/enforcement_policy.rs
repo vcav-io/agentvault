@@ -109,6 +109,38 @@ pub fn validate_policy_scope(policy: &RelayEnforcementPolicy) -> Result<(), Rela
 /// Unicode categories supported by the relay's enforcement guard.
 const SUPPORTED_CATEGORIES: &[&str] = &["Nd", "Sc"];
 
+/// Whether the enforcement guard supports a unicode category.
+pub fn is_supported_category(category: &str) -> bool {
+    SUPPORTED_CATEGORIES.contains(&category)
+}
+
+/// Run every load-time check on a policy: scope, rule categories, required
+/// capabilities and entropy constraints. Every loading path (lockfile
+/// directory, registry admission, [`PolicyRegistry::new`]) runs it, so a
+/// policy the relay cannot enforce is refused at startup.
+pub fn validate_policy(policy: &RelayEnforcementPolicy) -> Result<(), RelayError> {
+    validate_policy_scope(policy)?;
+    validate_rule_categories(policy)?;
+    validate_capabilities(policy)?;
+    if let Some(ref constraints) = policy.entropy_constraints {
+        if constraints.review_trigger_pct.is_some_and(|pct| pct > 100) {
+            return Err(RelayError::EnforcementPolicy(format!(
+                "policy '{}': entropy_constraints.review_trigger_pct must be at most 100",
+                policy.policy_id
+            )));
+        }
+    }
+    for rule in &policy.rules {
+        if rule.rule_id.is_empty() {
+            return Err(RelayError::EnforcementPolicy(format!(
+                "policy '{}' has a rule with an empty rule_id",
+                policy.policy_id
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Validate that all rules reference supported unicode categories.
 ///
 /// Called at startup. Unknown categories cause a startup failure (fail-closed).
@@ -540,6 +572,9 @@ impl PolicyRegistry {
         policies: HashMap<String, RelayEnforcementPolicy>,
         default_hash: String,
     ) -> Result<Self, RelayError> {
+        for policy in policies.values() {
+            validate_policy(policy)?;
+        }
         if !policies.contains_key(&default_hash) {
             return Err(RelayError::NoPolicyResolvable(format!(
                 "default policy hash '{}' not found in loaded policies; available: {:?}",
@@ -667,9 +702,7 @@ pub fn load_all_policies(
         let policy = load_enforcement_policy(&policy_path)?;
 
         // Validate
-        validate_policy_scope(&policy)?;
-        validate_rule_categories(&policy)?;
-        validate_capabilities(&policy)?;
+        validate_policy(&policy)?;
 
         // Verify content hash matches lockfile
         let actual_hash = content_hash(&policy)?;

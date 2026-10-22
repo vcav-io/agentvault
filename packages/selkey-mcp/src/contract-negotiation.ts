@@ -291,3 +291,47 @@ export async function selectNegotiatedContractOffer(
     state: 'NO_COMMON_CONTRACT',
   };
 }
+
+/**
+ * An AGREED selection must name a candidate that was offered: the selected
+ * contract offer (or bespoke contract refs) must be one of the proposal's
+ * acceptable_offers, and the selected model profile must be one of that
+ * candidate's acceptable_model_profiles. Throws otherwise.
+ */
+export function assertSelectionWithinProposal(
+  proposal: ContractOfferProposal,
+  selection: ContractOfferSelection,
+): void {
+  if (selection.state !== 'AGREED') return;
+  const profile = selection.selected_model_profile;
+  if (!profile) {
+    throw new Error('Contract negotiation selection is missing selected_model_profile');
+  }
+  const candidates = proposal.acceptable_offers.filter((candidate) => {
+    if (selection.selected_contract_offer_id !== undefined) {
+      return (
+        candidate.kind === 'offer' &&
+        candidate.contract_offer_id === selection.selected_contract_offer_id
+      );
+    }
+    const bespoke = selection.selected_bespoke_contract;
+    return (
+      !!bespoke &&
+      candidate.kind === 'bespoke' &&
+      candidate.purpose_code === bespoke.purpose_code &&
+      candidate.schema_ref === bespoke.schema_ref &&
+      candidate.policy_ref === bespoke.policy_ref &&
+      candidate.program_ref === bespoke.program_ref
+    );
+  });
+  if (candidates.length === 0) {
+    throw new Error('Contract negotiation selection names a contract that was not offered');
+  }
+  if (
+    !candidates.some((candidate) =>
+      candidate.acceptable_model_profiles.some((offered) => profilesMatch(offered, profile)),
+    )
+  ) {
+    throw new Error('Contract negotiation selection names a model profile that was not offered');
+  }
+}

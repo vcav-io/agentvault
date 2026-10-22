@@ -16,6 +16,7 @@ import type { AfalPropose, RelayPreference, RelaySessionBinding } from './afal-t
 import { computeProposalId } from './afal-types.js';
 import { signMessage, verifyMessage, DOMAIN_PREFIXES, contentHash } from './afal-signing.js';
 import type { ModelProfileRef } from './model-profiles.js';
+import { PinStore, type PinResolver } from './pin-store.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -96,10 +97,16 @@ export interface AfalResponderConfig {
   seedHex: string;
   policy: AdmissionPolicy;
   supportedModelProfiles?: ModelProfileRef[];
+  /**
+   * Agent identity pins used to verify PROPOSE and COMMIT signatures. Defaults
+   * to an in-memory store seeded from policy.trustedAgents.
+   */
+  pins?: PinResolver;
 }
 
 export class AfalResponder {
   private readonly config: AfalResponderConfig;
+  readonly pins: PinResolver;
   private readonly nonceCache: NonceCache;
   private readonly admitStore = new Map<string, AdmittedProposal>();
   private queue: AdmittedProposal[] = [];
@@ -107,6 +114,15 @@ export class AfalResponder {
   constructor(config: AfalResponderConfig) {
     this.config = config;
     this.nonceCache = new NonceCache();
+    this.pins =
+      config.pins ??
+      PinStore.inMemory(
+        config.policy.trustedAgents.map((a) => ({ agentId: a.agentId, publicKeyHex: a.publicKeyHex })),
+      );
+  }
+
+  get agentId(): string {
+    return this.config.agentId;
   }
 
   handlePropose(body: unknown): { outcome: 'ADMIT' | 'DENY'; response: Record<string, unknown> } {
@@ -140,16 +156,15 @@ export class AfalResponder {
       return this.deny(proposalId, 'UNTRUSTED', now);
     }
 
-    // 5. Look up proposer in trustedAgents
-    //    In M4, LOW_TRUST behaves as DENY unless proposer is in trustedAgents
-    //    (no descriptor-fetch path yet).
-    const trustedAgent = this.config.policy.trustedAgents.find((a) => a.agentId === propose.from);
-    if (!trustedAgent) {
+    // 5. Look up the proposer's pinned key (exact NFC agent_id match).
+    //    LOW_TRUST behaves as DENY unless the proposer is pinned.
+    const proposerKeyHex = this.pins.pinnedKeyFor(propose.from);
+    if (!proposerKeyHex) {
       return this.deny(proposalId, 'UNTRUSTED', now);
     }
 
-    // 6. Verify Ed25519 signature
-    if (!verifyMessage(DOMAIN_PREFIXES.PROPOSE, wrapped.propose, trustedAgent.publicKeyHex)) {
+    // 6. Verify Ed25519 signature under the pin
+    if (!verifyMessage(DOMAIN_PREFIXES.PROPOSE, wrapped.propose, proposerKeyHex)) {
       return this.deny(proposalId, 'UNTRUSTED', now);
     }
 
@@ -231,7 +246,7 @@ export class AfalResponder {
       propose,
       admitTokenId,
       proposerAgentId: propose.from,
-      proposerPublicKeyHex: trustedAgent.publicKeyHex,
+      proposerPublicKeyHex: proposerKeyHex,
       expiresAt,
       selectedModelProfile: selectedModelProfile ?? undefined,
       admittedRelayPreference: relayPreference,
@@ -275,6 +290,10 @@ export class AfalResponder {
       return { ok: false, error: 'COMMIT proposal_id does not match ADMIT' };
     }
 
+    // The proposer's pin must be unchanged since PROPOSE.
+    if (this.pins.pinnedKeyFor(admitted.proposerAgentId) !== admitted.proposerPublicKeyHex) {
+      return { ok: false, error: 'COMMIT sender pin changed since PROPOSE' };
+    }
     if (!verifyMessage(DOMAIN_PREFIXES.COMMIT, commit, admitted.proposerPublicKeyHex)) {
       return { ok: false, error: 'COMMIT signature verification failed' };
     }

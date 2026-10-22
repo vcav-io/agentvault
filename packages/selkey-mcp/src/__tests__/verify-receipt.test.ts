@@ -202,6 +202,16 @@ describe('handleVerifyReceipt — v2 receipts', () => {
     expect(result.data?.operator_id).toBe('op-test');
   });
 
+  it('states that assurance_level and tee_info are relay-asserted', async () => {
+    const { seedHex, publicKeyHex } = generateKeypair();
+    const signed = signV2Receipt(buildMinimalV2Receipt(), seedHex);
+
+    const result = await handleVerifyReceipt({ receipt: signed, public_key_hex: publicKeyHex });
+    expect(result.data?.valid).toBe(true);
+    expect(result.data?.assurance_note).toMatch(/asserted by the relay/);
+    expect(result.data?.assurance_note).toMatch(/does not check TEE attestation quotes/);
+  });
+
   it('rejects a tampered v2 receipt', async () => {
     const { seedHex, publicKeyHex } = generateKeypair();
     const base = buildMinimalV2Receipt();

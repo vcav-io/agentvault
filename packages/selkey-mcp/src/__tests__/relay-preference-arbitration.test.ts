@@ -10,6 +10,7 @@
  * - COMMIT carries chosen_relay_url that matches admitted preference
  */
 
+import { PinStore } from '../pin-store.js';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { ed25519 } from '@noble/curves/ed25519';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
@@ -520,6 +521,7 @@ describe('Relay Preference Arbitration — Initiator E2E', () => {
 
     transportA = new DirectAfalTransport({
       agentId: 'alice-test',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-test', publicKeyHex: RESPONDER_PUBKEY }]),
       seedHex: PROPOSER_SEED,
       localDescriptor: aliceDescriptor,
       peerDescriptorUrl: peerUrl,

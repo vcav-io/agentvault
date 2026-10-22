@@ -7,6 +7,10 @@ import { signMessage, DOMAIN_PREFIXES } from '../afal-signing.js';
 import type { AdmissionPolicy } from '../afal-responder.js';
 import { IfcService } from '../ifc.js';
 import { createToolRegistry } from '../tool-registry.js';
+import { recordHeldReceipt } from '../held-receipts.js';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 const ALICE_SEED = '0101010101010101010101010101010101010101010101010101010101010101';
 const BOB_SEED = '0202020202020202020202020202020202020202020202020202020202020202';
@@ -79,14 +83,55 @@ describe('IFC first slice e2e', () => {
       },
     });
     transports.push(aliceTransport);
+    await aliceTransport.start();
+
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'selkey-ifc-e2e-'));
+    const bobDir = path.join(tmp, 'bob');
+    const aliceDir = path.join(tmp, 'alice');
+    // Bob completed a relay session with Alice and holds its receipt.
+    recordHeldReceipt(
+      {
+        agent_id: 'bob-test',
+        receipt_id: 'c0ffee00-0000-4000-8000-000000000044',
+        session_id: '4'.repeat(64),
+        counterparty: 'alice-test',
+        role: 'RESPONDER',
+        receipt_verified: true,
+        recorded_at: new Date().toISOString(),
+      },
+      bobDir,
+    );
 
     const bobIfc = new IfcService({
       agentId: 'bob-test',
       seedHex: BOB_SEED,
       verifyingKeyHex: BOB_PUB,
-      knownAgents: [],
+      knownAgents: [
+        {
+          agent_id: 'alice-test',
+          aliases: ['Alice'],
+          public_key_hex: ALICE_PUB,
+          a2a_send_message_url: aliceTransport.a2aSendMessageUrl ?? undefined,
+        },
+      ],
+      stateDir: bobDir,
     });
     bobTransport.setIfcService(bobIfc);
+    const aliceIfc = new IfcService({
+      agentId: 'alice-test',
+      seedHex: ALICE_SEED,
+      verifyingKeyHex: ALICE_PUB,
+      knownAgents: [
+        {
+          agent_id: 'bob-test',
+          aliases: ['Bob'],
+          public_key_hex: BOB_PUB,
+          a2a_send_message_url: bobUrl ?? undefined,
+        },
+      ],
+      stateDir: aliceDir,
+    });
+    aliceTransport.setIfcService(aliceIfc);
 
     const aliceRegistry = createToolRegistry({
       transport: aliceTransport,
@@ -98,45 +143,73 @@ describe('IFC first slice e2e', () => {
           a2a_send_message_url: bobUrl ?? undefined,
         },
       ],
-      ifcSeedHex: ALICE_SEED,
+      ifcService: aliceIfc,
     });
     const bobRegistry = createToolRegistry({
       transport: bobTransport,
-      knownAgents: [{ agent_id: 'alice-test', aliases: ['Alice'], public_key_hex: ALICE_PUB }],
+      knownAgents: [
+        {
+          agent_id: 'alice-test',
+          aliases: ['Alice'],
+          public_key_hex: ALICE_PUB,
+          a2a_send_message_url: aliceTransport.a2aSendMessageUrl ?? undefined,
+        },
+      ],
       ifcService: bobIfc,
     });
 
-    const grantResult = await aliceRegistry.handleCreateIfcGrant({
-      audience: 'bob-test',
-      receipt_id: 'd'.repeat(64),
-      session_id: '44444444-4444-4444-4444-444444444444',
-      message_classes: ['LOGISTICS'],
-      max_uses: 1,
-      expires_in_seconds: 60,
-    });
-    expect(grantResult.ok).toBe(true);
+    try {
+      // Bob, the recipient, grants Alice one LOGISTICS message.
+      const grantResult = await bobRegistry.handleCreateIfcGrant({
+        audience: 'alice-test',
+        receipt_id: 'c0ffee00-0000-4000-8000-000000000044',
+        message_classes: ['LOGISTICS'],
+        max_uses: 1,
+        expires_in_seconds: 60,
+      });
+      expect(grantResult.ok).toBe(true);
+      const grantData = grantResult.data as { grant_id: string; delivery: { delivered: boolean } };
+      expect(grantData.delivery).toEqual({ delivered: true });
 
-    const sendResult = await aliceRegistry.handleSendIfcMessage({
-      counterparty: 'bob-test',
-      grant: (grantResult.data as { grant: unknown }).grant as never,
-      message_class: 'LOGISTICS',
-      payload: 'Meet at 10:30 UTC tomorrow.',
-      related_receipt_id: 'd'.repeat(64),
-      related_session_id: '44444444-4444-4444-4444-444444444444',
-    });
-    expect(sendResult.ok).toBe(true);
-    expect((sendResult.data as { decision: string }).decision).toBe('ALLOW');
+      const listed = await aliceRegistry.handleListIfcGrants();
+      expect((listed.data as { received: Array<{ grant_id: string }> }).received[0]?.grant_id).toBe(
+        grantData.grant_id,
+      );
 
-    const identityBefore = await bobRegistry.handleGetIdentity();
-    expect(identityBefore.data?.pending_ifc_messages).toBe(1);
+      const sendResult = await aliceRegistry.handleSendIfcMessage({
+        counterparty: 'bob-test',
+        grant_id: grantData.grant_id,
+        message_class: 'LOGISTICS',
+        payload: 'Meet at 10:30 UTC tomorrow.',
+      });
+      expect(sendResult.ok).toBe(true);
+      expect((sendResult.data as { decision: string }).decision).toBe('ALLOW');
 
-    const readResult = await bobRegistry.handleReadIfcMessages({});
-    expect(readResult.ok).toBe(true);
-    const messages = (readResult.data as { messages: Array<Record<string, unknown>> }).messages;
-    expect(messages).toHaveLength(1);
-    expect(messages[0]?.['payload']).toBe('Meet at 10:30 UTC tomorrow.');
+      // The single permitted use is spent.
+      const second = await aliceRegistry.handleSendIfcMessage({
+        counterparty: 'bob-test',
+        grant_id: grantData.grant_id,
+        message_class: 'LOGISTICS',
+        payload: 'One more thing.',
+      });
+      expect((second.data as { decision: string }).decision).toBe('BLOCK');
 
-    const identityAfter = await bobRegistry.handleGetIdentity();
-    expect(identityAfter.data?.pending_ifc_messages).toBe(0);
+      const identityBefore = await bobRegistry.handleGetIdentity();
+      expect(identityBefore.data?.pending_ifc_messages).toBe(1);
+
+      const readResult = await bobRegistry.handleReadIfcMessages({});
+      expect(readResult.ok).toBe(true);
+      const messages = (readResult.data as { messages: Array<Record<string, unknown>> }).messages;
+      expect(messages).toHaveLength(1);
+      expect(messages[0]?.['payload']).toBe('Meet at 10:30 UTC tomorrow.');
+
+      const identityAfter = await bobRegistry.handleGetIdentity();
+      expect(identityAfter.data?.pending_ifc_messages).toBe(0);
+
+      const revoked = await bobRegistry.handleRevokeIfcGrant({ grant_id: grantData.grant_id });
+      expect(revoked.ok).toBe(true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });

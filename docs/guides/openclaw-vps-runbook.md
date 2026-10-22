@@ -37,7 +37,7 @@ Set these on each VPS before starting the MCP server. Values differ per host.
 | `SELKEY_RESUME_TOKEN_SECRET` | Recommended | HMAC secret for signing resume tokens. Generate with `openssl rand -hex 32` |
 | `SELKEY_AFAL_HTTP_PORT` | RESPOND mode | Port for AFAL HTTP server — enables inbox for incoming invites |
 | `SELKEY_AFAL_BIND_ADDRESS` | Optional | Bind address for AFAL HTTP server (default: `127.0.0.1`) |
-| `SELKEY_AFAL_TRUSTED_AGENTS` | Optional | JSON array of trusted agents with their public keys for signature verification |
+| `SELKEY_AFAL_TRUSTED_AGENTS` | Optional | JSON array of trusted agents with their public keys for signature verification (seeds the pin store) |
 | `SELKEY_AFAL_ALLOWED_PURPOSES` | Optional | Comma-separated allowed purposes (default: `MEDIATION`). Example: `MEDIATION,COMPATIBILITY` |
 
 ### SELKEY_KNOWN_AGENTS format
@@ -51,7 +51,9 @@ Set these on each VPS before starting the MCP server. Values differ per host.
 ]
 ```
 
-Note: `SELKEY_KNOWN_AGENTS` entries have only `agent_id` and `aliases`. The peer's
+Add `"public_key_hex": "<peer key>"` to pin the peer's key; the initiator needs a pin
+for the peer before it will send a PROPOSE (see "Agent identity pins" in
+`docs/environment-variables.md`). Aliases match exactly, without case folding. The peer's
 descriptor URL is configured separately via `SELKEY_AFAL_PEER_DESCRIPTOR_URL`.
 
 ### SELKEY_AFAL_TRUSTED_AGENTS format
@@ -152,7 +154,7 @@ Add the Selkey MCP server to mcporter's configuration. Create or update
         "SELKEY_AFAL_PEER_DESCRIPTOR_URL": "https://bob.example.com:9100/afal/descriptor",
         "SELKEY_AFAL_ALLOWED_PURPOSES": "MEDIATION,COMPATIBILITY",
         "SELKEY_AFAL_TRUSTED_AGENTS": "[{\"agentId\":\"bob-agent\",\"publicKeyHex\":\"...\"}]",
-        "SELKEY_KNOWN_AGENTS": "[{\"agent_id\":\"bob-agent\",\"aliases\":[\"bob\",\"Bob\"]}]",
+        "SELKEY_KNOWN_AGENTS": "[{\"agent_id\":\"bob-agent\",\"aliases\":[\"bob\",\"Bob\"],\"public_key_hex\":\"...\"}]",
         "SELKEY_RESUME_TOKEN_SECRET": "<your-secret>"
       }
     }

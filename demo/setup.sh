@@ -195,10 +195,14 @@ EOF
 ALICE_SEED="$(echo "${KEYS}" | python3 -c "import sys,json; print(json.load(sys.stdin)['as'])")"
 ALICE_PUB="$(echo "${KEYS}" | python3 -c "import sys,json; print(json.load(sys.stdin)['ap'])")"
 BOB_SEED="$(echo "${KEYS}" | python3 -c "import sys,json; print(json.load(sys.stdin)['bs'])")"
+BOB_PUB="$(echo "${KEYS}" | python3 -c "import sys,json; print(json.load(sys.stdin)['bp'])")"
 ALICE_RESUME="$(openssl rand -hex 32)"
 BOB_RESUME="$(openssl rand -hex 32)"
 
 log_success "Identities generated"
+# Pinning step: each agent is configured with the other's public key, which
+# seeds its pin store ($SELKEY_WORKDIR/.selkey/pins.json). Signatures from the
+# peer are verified only against that pin.
 
 # ---------------------------------------------------------------------------
 # Create workspaces in /tmp
@@ -219,7 +223,7 @@ cat >"${DEMO_DIR}/alice/.mcp.json" <<JSON
         "SELKEY_AGENT_ID": "alice",
         "SELKEY_AFAL_SEED_HEX": "${ALICE_SEED}",
         "SELKEY_AFAL_PEER_DESCRIPTOR_URL": "http://localhost:3201/afal/descriptor",
-        "SELKEY_KNOWN_AGENTS": "[{\"agent_id\":\"bob\",\"aliases\":[\"Bob\"]}]",
+        "SELKEY_KNOWN_AGENTS": "[{\"agent_id\":\"bob\",\"aliases\":[\"Bob\"],\"public_key_hex\":\"${BOB_PUB}\"}]",
         "SELKEY_RESUME_TOKEN_SECRET": "${ALICE_RESUME}",
         "SELKEY_WORKDIR": "${DEMO_DIR}/alice"
       }

@@ -2,12 +2,12 @@
   "agents": [
     {
       "agent_id": "alice",
-      "inbox_token": "test_alice_inbox_token_7f3a9b2e",
+      "inbox_token": "72b56e739768a2bde0a7a903250b05ce5148918bfa189f28fc1a88dd17727724",
       "public_key_hex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     },
     {
       "agent_id": "bob",
-      "inbox_token": "test_bob_inbox_token_4c8d1e5f",
+      "inbox_token": "8144ccf2c80db8cf9cb84278c04d38bdcc186d7007c97ca428ca0ac40e4959a3",
       "public_key_hex": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     }
   ]

@@ -7,16 +7,25 @@
  * (Agent Card, invite payload, COMMIT) are only used when they match one of
  * these.
  *
- * If SELKEY_RELAY_VERIFYING_KEY_HEX is set, the relay's /health
- * verifying_key_hex must match it before any input is submitted.
+ * If SELKEY_RELAY_VERIFYING_KEY_HEX is set:
+ * - contracts this agent builds carry it as `relay_verifying_key_hex`, so a
+ *   relay with a different key rejects the session before inputs are accepted;
+ * - the relay's /health verifying_key_hex must match it before any input is
+ *   submitted.
+ *
+ * Plain http:// relays are accepted only on loopback hosts (localhost,
+ * 127.0.0.0/8, [::1]) and on host names listed in
+ * SELKEY_RELAY_INSECURE_HTTP_HOSTS (comma-separated, for example "relay" on
+ * a private compose network in the local demo).
  */
 
-import { fetchRelayPublicKey, verifyReceipt } from 'selkey/verify';
+import { fetchRelayPublicKey, relayKeyId, verifyReceipt } from 'selkey/verify';
 import type { OwnInputArtefact, VerifyArtefacts } from 'selkey/verify';
 
 export const RELAY_URL_ENV = 'SELKEY_RELAY_URL';
 export const RELAY_ALLOWLIST_ENV = 'SELKEY_RELAY_ALLOWLIST';
 export const RELAY_VERIFYING_KEY_ENV = 'SELKEY_RELAY_VERIFYING_KEY_HEX';
+export const RELAY_INSECURE_HTTP_HOSTS_ENV = 'SELKEY_RELAY_INSECURE_HTTP_HOSTS';
 
 const KEY_HEX_RE = /^[0-9a-fA-F]{64}$/;
 
@@ -41,7 +50,40 @@ export function normalizeRelayUrl(url: string): string | null {
   return `${parsed.protocol}//${parsed.host}${pathname}`;
 }
 
-/** Locally configured relay URLs (normalised). */
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  if (host === 'localhost') return true;
+  if (host === '[::1]') return true;
+  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
+}
+
+function insecureHttpHosts(): Set<string> {
+  return new Set(
+    (process.env[RELAY_INSECURE_HTTP_HOSTS_ENV] ?? '')
+      .split(',')
+      .map((h) => h.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+/**
+ * Whether the relay URL uses an acceptable transport: https, or http on a
+ * loopback host or a host listed in SELKEY_RELAY_INSECURE_HTTP_HOSTS.
+ */
+export function isRelayTransportAllowed(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url.trim());
+  } catch {
+    return false;
+  }
+  if (parsed.protocol === 'https:') return true;
+  if (parsed.protocol !== 'http:') return false;
+  if (isLoopbackHost(parsed.hostname)) return true;
+  return insecureHttpHosts().has(parsed.hostname.toLowerCase());
+}
+
+/** Locally configured relay URLs (normalised). Non-loopback http:// entries are dropped. */
 export function getAllowedRelayUrls(extra: Array<string | undefined> = []): string[] {
   const raw: string[] = [];
   const primary = process.env[RELAY_URL_ENV];
@@ -54,7 +96,7 @@ export function getAllowedRelayUrls(extra: Array<string | undefined> = []): stri
   const out = new Set<string>();
   for (const url of raw) {
     const normalized = normalizeRelayUrl(url);
-    if (normalized) out.add(normalized);
+    if (normalized && isRelayTransportAllowed(normalized)) out.add(normalized);
   }
   return [...out];
 }
@@ -86,7 +128,62 @@ export function resolveLocalRelayUrl(argsUrl?: string): string {
       `relay_url is required (set ${RELAY_URL_ENV} to a locally trusted relay)`,
     );
   }
+  if (!isRelayTransportAllowed(configured)) {
+    throw new RelayTrustError(insecureRelayMessage(configured));
+  }
   return configured;
+}
+
+function insecureRelayMessage(url: string): string {
+  return (
+    `Relay "${url}" uses plain http on a non-loopback host. Use https, or add its host name to ` +
+    `${RELAY_INSECURE_HTTP_HOSTS_ENV} for a private network.`
+  );
+}
+
+/**
+ * The configured relay verifying key (lowercase hex), or undefined when no key
+ * is pinned. Throws if the configured value is malformed.
+ */
+export function configuredRelayKeyHex(): string | undefined {
+  const pinned = process.env[RELAY_VERIFYING_KEY_ENV]?.trim();
+  if (!pinned) return undefined;
+  if (!KEY_HEX_RE.test(pinned)) {
+    throw new RelayTrustError(
+      `${RELAY_VERIFYING_KEY_ENV} must be a 64-character hex Ed25519 public key`,
+    );
+  }
+  return pinned.toLowerCase();
+}
+
+/**
+ * Bind a contract to the configured relay key: when a key is pinned, the
+ * contract gets `relay_verifying_key_hex`, which the relay checks against its
+ * own signing key when the session is created. A contract that already names
+ * a different key is refused. Without a pin the contract is unchanged.
+ */
+export function withPinnedRelayKey<T extends object>(contract: T): T {
+  const pinned = configuredRelayKeyHex();
+  if (!pinned) return contract;
+  const existing = (contract as Record<string, unknown>)['relay_verifying_key_hex'];
+  if (existing !== undefined && existing !== null) {
+    if (typeof existing !== 'string' || existing.toLowerCase() !== pinned) {
+      throw new RelayTrustError(
+        `Contract relay_verifying_key_hex does not match ${RELAY_VERIFYING_KEY_ENV}`,
+      );
+    }
+    return contract;
+  }
+  return { ...contract, relay_verifying_key_hex: pinned };
+}
+
+/**
+ * Relay-key variants a responder accepts in an expected contract: the plain
+ * contract (no relay key), plus the contract bound to the configured key.
+ */
+export function expectedRelayKeyVariants(): Array<string | undefined> {
+  const pinned = configuredRelayKeyHex();
+  return pinned ? [undefined, pinned] : [undefined];
 }
 
 /** Throws unless the relay URL is allowlisted and (if pinned) serves the pinned verifying key. */
@@ -94,31 +191,25 @@ export async function assertRelayTrusted(
   relayUrl: string,
   extra: Array<string | undefined> = [],
 ): Promise<void> {
+  if (!isRelayTransportAllowed(relayUrl)) {
+    throw new RelayTrustError(insecureRelayMessage(relayUrl));
+  }
   if (!isRelayUrlAllowed(relayUrl, extra)) {
     throw new RelayTrustError(
       `Relay "${relayUrl}" is not a locally configured relay. ` +
         `Set ${RELAY_URL_ENV} or add it to ${RELAY_ALLOWLIST_ENV}.`,
     );
   }
-  const pinned = process.env[RELAY_VERIFYING_KEY_ENV]?.trim();
+  const pinned = configuredRelayKeyHex();
   if (!pinned) return;
-  if (!KEY_HEX_RE.test(pinned)) {
-    throw new RelayTrustError(
-      `${RELAY_VERIFYING_KEY_ENV} must be a 64-character hex Ed25519 public key`,
-    );
-  }
-  let served: string;
   try {
-    served = await fetchRelayPublicKey(relayUrl);
+    await fetchRelayPublicKey(relayUrl, relayKeyId(pinned));
   } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
     throw new RelayTrustError(
-      `Could not read relay verifying key from ${relayUrl}/health: ` +
-        `${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-  if (served.toLowerCase() !== pinned.toLowerCase()) {
-    throw new RelayTrustError(
-      `Relay verifying key at ${relayUrl} does not match ${RELAY_VERIFYING_KEY_ENV}`,
+      detail.includes('does not match')
+        ? `Relay verifying key at ${relayUrl} does not match ${RELAY_VERIFYING_KEY_ENV}`
+        : `Could not read relay verifying key from ${relayUrl}/health: ${detail}`,
     );
   }
 }

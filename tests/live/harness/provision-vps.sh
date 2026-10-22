@@ -8,7 +8,7 @@ set -euo pipefail
 #   ./provision-vps.sh <ssh-host> <agent-id> <inbox-token> <anthropic-api-key> <relay-url>
 #
 # Example:
-#   ./provision-vps.sh root@178.128.46.89 alice test_alice_inbox_token_7f3a9b2e sk-ant-... http://localhost:3100
+#   ./provision-vps.sh root@178.128.46.89 alice <alice_inbox_token> sk-ant-... http://localhost:3100
 # ---------------------------------------------------------------------------
 
 SSH_HOST="${1:?Usage: $0 <ssh-host> <agent-id> <inbox-token> <anthropic-api-key> <relay-url>}"
