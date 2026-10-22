@@ -6,7 +6,7 @@
 
 **Selkey is a trusted intermediary for AI agents.** Two agents agree a contract (purpose, prompt hash, and a JSON Schema for the answer), each sends its private context to a relay, and the relay runs a model over both inputs. It releases only output that matches the schema exactly, and both sides get a signed receipt that commits to what was agreed, what went in, and what came out. Neither agent sees the other's raw input.
 
-> **Status:** research software. The software lane works today; its receipts are `SELF_ASSERTED` (the relay's own word about what it ran). The TEE lane ([selkey-tee](https://github.com/vcav-io/selkey-tee)) is **experimental**: it is hardware-validated on GCP AMD SEV-SNP, but clients don't yet verify attestation before sending inputs, and builds aren't yet reproducible.
+> **Status:** research software. The software lane works today; its receipts are `SELF_ASSERTED` (the relay's own word about what it ran). The TEE lane ([selkey-tee](https://github.com/vcav-io/selkey-tee)) is a **prototype, not yet secure**: the shipped image runs a simulated runtime with no hardware isolation, the SEV-SNP measurement doesn't yet cover the relay binary, clients don't yet verify attestation before sending inputs, and model identity is provider-reported.
 
 People already share deeply personal context with AI — health concerns, financial anxieties, private doubts. AI agents that carry that context are beginning to coordinate directly with each other.
 
@@ -14,7 +14,7 @@ That creates huge potential utility, but also serious disclosure risk.
 
 The obvious mitigation is to strip agents of context before they coordinate. But context-free agents can only do shallow work. The real opportunity is the opposite: agents reasoning together with full context on things that are genuinely hard to do alone — negotiation, mediation, compatibility, dispute resolution.
 
-Selkey is built for those cases. It constrains what can be revealed during coordination through fixed contracts, schema-bound outputs, and verifiable receipts. The same protocol runs as a conventional relay (this repo) or inside a hardware-isolated TEE ([selkey-tee](https://github.com/vcav-io/selkey-tee)), where AMD SEV-SNP attestation binds the receipt to a measured execution environment.
+Selkey is built for those cases. It constrains what can be revealed during coordination through fixed contracts, schema-bound outputs, and verifiable receipts. The same protocol runs as a conventional relay (this repo) or, as a prototype, inside an AMD SEV-SNP confidential VM ([selkey-tee](https://github.com/vcav-io/selkey-tee)).
 
 ---
 
@@ -60,20 +60,21 @@ See [docs/getting-started.md](docs/getting-started.md) for provider options, mod
 agents → contract → relay enforcement → bounded signal → receipt
 ```
 
-> **The relay sees both inputs in plaintext.** Counterparty confidentiality is enforced, neither agent sees the other's raw context. Relay confidentiality is not. The bounded output is the point. The relay enforces a JSON Schema that structurally limits what can leave, independent of model behavior. The receipt proves the output satisfied the contract and schema. It does **not** prove the relay did not inspect or log the inputs, or fabricate the output. The [TEE lane](https://github.com/vcav-io/selkey-tee) removes this assumption. The same protocol runs inside an AMD SEV-SNP confidential VM (validated on GCP N2D), where hardware attestation binds the receipt to a measured execution environment. See [docs/threat-model.md](docs/threat-model.md).
+> **The relay sees both inputs in plaintext.** Counterparty confidentiality is enforced, neither agent sees the other's raw context. Relay confidentiality is not. The bounded output is the point. The relay enforces a JSON Schema that structurally limits what can leave, independent of model behavior. The receipt proves the output satisfied the contract and schema. It does **not** prove the relay did not inspect or log the inputs, or fabricate the output. The [TEE lane](https://github.com/vcav-io/selkey-tee) aims to remove this assumption by running the same protocol inside an AMD SEV-SNP confidential VM, but it is a prototype and doesn't remove it yet. See [docs/threat-model.md](docs/threat-model.md).
 
 ---
 
 ### Current trust model (today)
 
-| | Software lane | TEE lane |
+| | Software lane | TEE lane (prototype, not yet secure) |
 |---|---|---|
 | **Counterparty disclosure** | Bounded by schema | Bounded by schema |
-| **Relay operator** | Trusted (sees plaintext) | Excluded (hardware-encrypted) |
+| **Relay operator** | Trusted (sees plaintext) | Trusted for now (goal: excluded by hardware encryption and attestation) |
 | **Model provider** | Trusted (sees prompt) | Trusted (sees prompt) |
-| **Receipt assurance** | `SELF_ASSERTED` | `TEE_ATTESTED` |
+| **Model identity** | Provider-reported | Provider-reported |
+| **Receipt assurance** | `SELF_ASSERTED` | `SELF_ASSERTED` from the shipped image (simulated runtime); `TEE_ATTESTED` on real SEV-SNP, prototype only |
 
-The software lane is available now. The TEE lane is experimental: it has been hardware-validated on GCP N2D (AMD SEV-SNP), but clients do not yet verify attestation before sending inputs, and builds are not yet reproducible. See [docs/threat-model.md](docs/threat-model.md) for the full adversary analysis and assurance tier definitions.
+The software lane is available now. The TEE lane is a prototype, not yet secure: the SEV-SNP runtime has been exercised on GCP N2D, but the shipped image runs a simulated runtime with no hardware isolation, the SEV-SNP measurement doesn't yet cover the relay binary, clients don't yet verify attestation before sending inputs, and model identity is provider-reported (the relay records the model ID returned by the provider's API; nothing binds or verifies which model ran). See [docs/threat-model.md](docs/threat-model.md) for the full adversary analysis and assurance tier definitions.
 
 ---
 
@@ -104,7 +105,7 @@ After the run completes, click **Verify Signature** on any result card.
 - That the relay actually executed the model it claims to have run
 - That the relay did not inspect or log your input
 
-In the software lane, assurance level is `SELF_ASSERTED` — the relay asserts its own honesty. The [TEE lane](https://github.com/vcav-io/selkey-tee) raises this to `TEE_ATTESTED`: the same protocol runs inside an AMD SEV-SNP confidential VM (validated on GCP N2D), where attestation binding and transcript hashes are included in the receipt.
+In the software lane, assurance level is `SELF_ASSERTED` — the relay asserts its own honesty. The [TEE lane](https://github.com/vcav-io/selkey-tee) is a prototype, not yet secure. On real SEV-SNP hardware its receipts carry `TEE_ATTESTED` with attestation and transcript hashes, but the measurement doesn't yet cover the relay binary, so they don't yet prove which relay code ran or that the relay didn't see your input.
 
 See [docs/receipt-verification-guide.md](docs/receipt-verification-guide.md) for the full verification algorithm, field reference, and TypeScript/Python examples.
 
@@ -129,7 +130,7 @@ Shared protocol types and AFAL handshake implementation live in [vault-family-co
 
 ## Two execution lanes
 
-The same protocol runs in two lanes: a software lane (this repo) where the relay operator is trusted, and a sealed execution lane ([selkey-tee](https://github.com/vcav-io/selkey-tee)) where hardware attestation replaces that trust.
+The same protocol runs in two lanes: a software lane (this repo) where the relay operator is trusted, and a sealed execution lane ([selkey-tee](https://github.com/vcav-io/selkey-tee)) where hardware attestation is meant to replace that trust. The sealed lane is a prototype, not yet secure.
 
 ---
 

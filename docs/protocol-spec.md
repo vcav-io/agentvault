@@ -553,8 +553,8 @@ receipt alone.
 
 **Assurance levels** extend what receipts prove beyond `SELF_ASSERTED`. See
 [Section 2.6](#26-receipt) for the level definitions. The `TEE_ATTESTED` level is
-operational via the `selkey-tee` relay running on AMD SEV-SNP hardware (validated on
-GCP N2D instances). `OPERATOR_AUDITED` and `PROVIDER_ATTESTED` are defined in the
+produced by the `selkey-tee` relay on AMD SEV-SNP hardware; that lane is a prototype,
+not yet secure (see Section 11.4). `OPERATOR_AUDITED` and `PROVIDER_ATTESTED` are defined in the
 schema but are not yet active in production.
 
 ---
@@ -732,8 +732,9 @@ The protocol supports two execution lanes that run the same session protocol:
 - **Software lane** (`standard`, typically with `assurance_level = SELF_ASSERTED`) — the relay runs as a standard process. The
   operator is trusted not to tamper with inputs or fabricate output.
 - **TEE lane** (`tee`, with `assurance_level = TEE_ATTESTED`) — the relay runs inside a Trusted Execution
-  Environment (AMD SEV-SNP confidential VM). Hardware attestation binds the receipt
-  to the relay binary and session transcript, removing relay operator trust.
+  Environment (AMD SEV-SNP confidential VM). Hardware attestation binds the session
+  transcript to the attestation report. The lane is a prototype, not yet secure: it
+  does not yet remove relay operator trust (see Section 11.4).
 
 The TEE lane does not change the protocol — the same contract, input envelopes,
 prompt programs, and receipt structure are used. What changes is the assurance
@@ -764,11 +765,19 @@ proving the receipt was produced inside an attested CVM.
 
 ### 11.4 Trust Properties
 
-At `TEE_ATTESTED` level, the receipt additionally proves:
+The TEE lane is a prototype, not yet secure. At `TEE_ATTESTED` level, the receipt is
+intended to additionally prove:
 
 - The relay binary measurement matches the expected value (CVM launch digest).
 - The session transcript (inputs, prompt, output) was not tampered with.
 - The signing key was generated inside the CVM and never exposed to the host.
+
+Today these don't fully hold. Without measured boot, the CVM launch measurement does
+not cover the relay binary, so a matching measurement doesn't show which relay code
+ran, and the other two properties depend on that code. The shipped `selkey-tee` image
+runs a simulated runtime with no hardware attestation. Model identity in the
+transcript is provider-reported: it is the model ID returned by the provider's API,
+and nothing verifies which model ran.
 
 ---
 

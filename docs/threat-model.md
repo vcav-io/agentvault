@@ -148,9 +148,10 @@ assembled prompt, the raw LLM output, and the bounded result. Deploying Selkey
 does not constrain operator access to session data.
 
 Operators who need to limit their own access to session inputs should evaluate the
-TEE upgrade path described in Section 5. The `TEE_ATTESTED` tier has been
-hardware-validated on GCP N2D (AMD SEV-SNP) in the selkey-tee repo and produces
-receipts with populated `tee_attestation` fields. The `PROVIDER_ATTESTED` tier
+TEE upgrade path described in Section 5. The `TEE_ATTESTED` tier is a
+prototype, not yet secure: the selkey-tee relay produces receipts with populated
+`tee_attestation` fields on GCP N2D (AMD SEV-SNP), but the measurement doesn't yet
+cover the relay binary. The `PROVIDER_ATTESTED` tier
 is not yet implemented. Integration of TEE attestation into the Selkey relay
 is pending.
 
@@ -256,7 +257,7 @@ presented together with the assurance level.
 | `SELF_ASSERTED` | The relay signs its own receipt. Trust the operator. | Implemented |
 | `OPERATOR_AUDITED` | The operator publishes an independently verifiable audit trail. Trust is externally checkable but still rests on the operator. | Not yet implemented |
 | `PROVIDER_ATTESTED` | The LLM provider co-signs inference metadata, binding `model_identity` to a cryptographic commitment. | Not yet implemented |
-| `TEE_ATTESTED` | A hardware enclave (SGX, TDX, SEV-SNP) signs the receipt and binds it to an enclave measurement. The relay operator cannot see inputs or fabricate outputs without breaking the attestation. | Hardware validated (selkey-tee, GCP N2D AMD SEV-SNP). Not yet integrated into the Selkey relay. |
+| `TEE_ATTESTED` | A hardware enclave (SGX, TDX, SEV-SNP) binds the receipt to an enclave measurement. The goal is that the relay operator cannot see inputs or fabricate outputs without breaking the attestation; this doesn't hold yet, because the measurement doesn't cover the relay binary. Model identity remains provider-reported. | Prototype, not yet secure (selkey-tee). Not integrated into the Selkey relay. |
 
 All current Selkey deployments operate at `SELF_ASSERTED`. The operator-audited
 tier is the near-term upgrade path. TEE attestation is the intended end state for
@@ -384,11 +385,13 @@ or enumerating session state through error shapes.
 **TEE execution**
 
 A hardware-attested execution environment (VCAV-H) binds the receipt to an enclave
-measurement, preventing relay operators from observing inputs or fabricating outputs
-without breaking the attestation. This has been hardware-validated on GCP N2D
-(AMD SEV-SNP) in the selkey-tee repo: real SEV-SNP attestation reports, sealed key
-material, and transcript-bound receipts with populated `tee_attestation` fields.
-Integration into the Selkey relay is the remaining step.
+measurement, with the goal of preventing relay operators from observing inputs or
+fabricating outputs without breaking the attestation. The selkey-tee prototype has
+produced real SEV-SNP attestation reports, sealed key material, and transcript-bound
+receipts on GCP N2D (AMD SEV-SNP). It is not yet secure: the shipped image runs a
+simulated runtime, the launch measurement doesn't yet cover the relay binary (no
+measured boot), and model identity is provider-reported. Integration into the Selkey
+relay is also pending.
 
 ### 7.3 Planned (Not Yet Implemented)
 

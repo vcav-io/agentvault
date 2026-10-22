@@ -497,10 +497,12 @@ of external evidence backing the receipt.
 | `SELF_ASSERTED` | The relay signs its own receipt. No external attestation. Claims are relay assertions only. |
 | `OPERATOR_AUDITED` | The operator publishes a verifiable audit trail. Claims can be cross-checked against the audit log. |
 | `PROVIDER_ATTESTED` | The model provider supplied signed inference metadata. `claims.model_identity_attested` can be trusted. |
-| `TEE_ATTESTED` | Hardware TEE attestation (AMD SEV-SNP) binds the receipt to the CVM measurement. The relay binary, signing key, and session transcript are hardware-verified. Operational via `selkey-tee` relay. |
+| `TEE_ATTESTED` | Hardware TEE attestation (AMD SEV-SNP) binds the session transcript to the CVM's attestation report. Prototype, not yet secure: the launch measurement doesn't yet cover the relay binary, and model identity remains provider-reported. Produced by the `selkey-tee` relay on real SEV-SNP hardware. |
 
-The software relay operates at `SELF_ASSERTED`. The TEE relay (`selkey-tee`) operates
-at `TEE_ATTESTED` on AMD SEV-SNP hardware (validated on GCP N2D instances).
+The software relay operates at `SELF_ASSERTED`. The TEE relay (`selkey-tee`) is a
+prototype, not yet secure: its shipped image runs a simulated runtime and issues
+`SELF_ASSERTED` receipts, and on real AMD SEV-SNP hardware it issues `TEE_ATTESTED`
+receipts whose measurement doesn't yet cover the relay binary.
 Never display "receipt verified" without also showing the assurance level — a
 `SELF_ASSERTED` receipt is much weaker than a `TEE_ATTESTED` one.
 
