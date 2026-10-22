@@ -16,13 +16,13 @@ Complete reference for all environment variables used by the Selkey relay and MC
 |----------|---------|-------------|
 | `SELKEY_PORT` | `3100` | Port the relay listens on |
 | `SELKEY_ALLOWED_HOSTS` | unset | Comma-separated extra hostnames accepted in the `Host` header (e.g. a compose service name). When the relay listens on loopback, or when this is set, requests whose `Host` is not `localhost`, `127.0.0.1`, `[::1]` or a listed name get `403`. This blocks DNS-rebinding requests from browser pages to a local relay |
-| `SELKEY_ALLOW_UNAUTHENTICATED` | unset | Set to `1` to let a non-dev relay start on a non-loopback address without `SELKEY_OPERATOR_TOKEN` (only when access is controlled elsewhere) |
+| `SELKEY_ALLOW_UNAUTHENTICATED` | unset | Set to `1` to let the relay (dev or not) start on a non-loopback address without `SELKEY_OPERATOR_TOKEN` (only when access is controlled elsewhere, e.g. a container port published on loopback) |
 | `SELKEY_BIND_ADDR` | `127.0.0.1` | IP address the relay listens on. Loopback by default; set `0.0.0.0` (or a specific interface) to accept remote connections, e.g. inside a container |
 | `SELKEY_OPERATOR_TOKEN` | — | Operator bearer token. When set, `POST /relay` and `POST /sessions` require `Authorization: Bearer <token>`. Use at least 32 characters from a random generator (e.g. `openssl rand -hex 32`). The relay refuses to start with a token that is shorter, has few distinct characters or repeats a shorter sequence; these checks catch obvious mistakes, not weak generators |
 | `SELKEY_MODEL_ID` | `claude-sonnet-4-6` | Anthropic model ID |
 | `SELKEY_SIGNING_KEY_HEX` | required outside dev | 64-char hex Ed25519 signing key for receipt signing (e.g. `openssl rand -hex 32`). Outside `SELKEY_ENV=dev` the relay refuses to start without it. In dev, if unset, a random key is generated on each start and receipts won't verify across restarts. The key id logged at startup and reported by `/health` is `ed25519:` + hex(SHA-256(public key)) |
 | `SELKEY_PROMPT_PROGRAM_DIR` | `prompt_programs` | Directory containing prompt programs, model profile lockfile, and enforcement policy lockfile |
-| `SELKEY_SCHEMA_DIR` | `<prompt dir>/../schemas/output` | Directory of content-addressed output schemas (the schema registry). Set it to the repo's `schemas/output` when running from a checkout; the Docker image sets it |
+| `SELKEY_SCHEMA_DIR` | `<prompt dir>/../schemas/output` | Directory of content-addressed output schemas (the schema registry). Set it to the repo's `schemas/output` when running from a checkout; the Docker image sets it. The relay refuses to start if the directory cannot be read or a schema in it declares a JSON Schema draft other than draft 7 (see [Output schema acceptance](#output-schema-acceptance)) |
 | `SELKEY_SESSION_TTL_SECS` | `600` | Maximum session lifetime in seconds. A contract's `session_ttl_secs` can shorten it for that session. Background reaper cleans up expired sessions. A session still processing one TTL after inference started is aborted with `TIMEOUT` |
 | `OPENAI_API_KEY` | — | Enables the OpenAI provider when set |
 | `SELKEY_OPENAI_MODEL_ID` | `gpt-4o` | OpenAI model ID (only used if `OPENAI_API_KEY` is set) |
@@ -36,9 +36,11 @@ The relay listens on `127.0.0.1` unless `SELKEY_BIND_ADDR` says otherwise. In Do
 `SELKEY_BIND_ADDR=0.0.0.0` inside the container and choose exposure when publishing the port
 (the demo compose file publishes `127.0.0.1:3100:3100`).
 
-Outside dev, the relay refuses to start on a non-loopback address unless `SELKEY_OPERATOR_TOKEN`
-is set. If access is controlled some other way (for example an authenticating reverse proxy),
-set `SELKEY_ALLOW_UNAUTHENTICATED=1` to start anyway.
+The relay refuses to start on a non-loopback address unless `SELKEY_OPERATOR_TOKEN` is set. This
+applies with `SELKEY_ENV=dev` too. The demo compose file sets a shared
+`SELKEY_OPERATOR_TOKEN` (a published demo value, not a secret) for the relay and the demo service.
+If access is controlled some other way (for example an authenticating reverse proxy), set
+`SELKEY_ALLOW_UNAUTHENTICATED=1` to start without a token.
 
 | Endpoint | `SELKEY_ENV=dev`, no token | Non-dev, no token | `SELKEY_OPERATOR_TOKEN` set |
 |---|---|---|---|
@@ -62,11 +64,22 @@ With `SELKEY_ENV=dev`, the relay also accepts inline schemas that are not in the
 strict ones: `additionalProperties: false` and every property `required` on every object; every
 string bounded by `enum` or `maxLength`; every array bounded by `maxItems`; integers bounded by
 `minimum`/`maximum`; `number` (non-integer) values only through `enum`; `const` allowed (0 bits);
-no `true`/`{}` subschemas, composition (`anyOf`, `oneOf`, ...), `$ref` or `patternProperties`. For
+no `true`/`{}` subschemas, composition (`anyOf`, `oneOf`, ...), `$ref`, `patternProperties` or
+`$schema`. Object keywords (`properties`, `required`, `additionalProperties`) are allowed only on
+`type: "object"` nodes, and array keywords (`items`, `minItems`, `maxItems`, `uniqueItems`) only
+on `type: "array"` nodes, in both cases without `enum`/`const`. For
 these schemas the relay computes the entropy bound from the structure and ignores any
 `x-vcav-entropy-bits-upper-bound` annotations. The per-session cap
 (`SELKEY_MAX_ENTROPY_BITS_PER_SESSION`, default 64 bits) applies to inline schemas too, so a
 free-text field of more than a few characters needs the operator to raise it.
+
+Model output is validated against the output schema as JSON Schema draft 7. A schema may name
+draft 7 in a root `$schema` keyword; any other `$schema` (another draft at the root, or `$schema`
+anywhere below the root, such as in a `$ref` target) is rejected, because the validator would
+otherwise switch drafts for that part of the schema. A registry directory containing such a schema
+stops the relay at startup, and contracts using one are rejected. Every output schema is also
+compiled when the contract is accepted, so a schema the validator cannot compile (for example an
+invalid `pattern`) is rejected before any provider call.
 
 Before release, integral numbers in the model output are rewritten as JSON integers (`2.0`,
 `2e0` → `2`), so a value has one representation.

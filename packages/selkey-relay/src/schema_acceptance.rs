@@ -19,8 +19,8 @@ use entropy_core::{calculate_schema_entropy_upper_bound, enum_entropy_bits};
 use serde_json::Value;
 
 use crate::error::RelayError;
-use crate::relay::compute_output_schema_hash;
-use crate::schema_registry::SchemaRegistry;
+use crate::relay::{compile_output_schema, compute_output_schema_hash};
+use crate::schema_registry::{check_declared_draft, SchemaRegistry};
 use crate::types::Contract;
 
 /// An output schema the relay has accepted for a contract.
@@ -88,6 +88,7 @@ pub fn resolve_output_schema(
     let bits = strict_schema_upper_bound(&contract.output_schema).map_err(|reason| {
         RelayError::ContractValidation(format!("inline output schema rejected: {reason}"))
     })?;
+    ensure_compiles(&contract.output_schema)?;
     Ok(ResolvedOutputSchema {
         schema: contract.output_schema.clone(),
         hash: candidate_hash,
@@ -97,6 +98,10 @@ pub fn resolve_output_schema(
 }
 
 fn accept_registry_schema(schema: Value, hash: String) -> Result<ResolvedOutputSchema, RelayError> {
+    check_declared_draft(&schema).map_err(|e| {
+        RelayError::ContractValidation(format!("registry output schema rejected: {e}"))
+    })?;
+    ensure_compiles(&schema)?;
     let bits = calculate_schema_entropy_upper_bound(&schema).map_err(|e| {
         RelayError::ContractValidation(format!(
             "entropy upper bound could not be computed for output schema: {e}"
@@ -110,6 +115,14 @@ fn accept_registry_schema(schema: Value, hash: String) -> Result<ResolvedOutputS
     })
 }
 
+/// Reject a schema the output validator cannot compile (for example, an
+/// invalid `pattern`), so the contract fails before any provider call.
+fn ensure_compiles(schema: &Value) -> Result<(), RelayError> {
+    compile_output_schema(schema)
+        .map(|_| ())
+        .map_err(|e| RelayError::ContractValidation(format!("output schema does not compile: {e}")))
+}
+
 /// Bits used to bound one Unicode scalar value in a length-bounded string.
 const BITS_PER_CHAR: u64 = 21;
 
@@ -118,8 +131,13 @@ const MAX_DEPTH: usize = 32;
 
 /// Keywords accepted in strict inline schemas. Keys starting with `x-` are
 /// annotations and are ignored (including `x-vcav-entropy-bits-upper-bound`).
+///
+/// Output is validated as JSON Schema draft 7 (see
+/// [`crate::relay::OUTPUT_SCHEMA_DRAFT`]), and each keyword here has the
+/// meaning the bound below assumes under that draft. `$schema` is not
+/// accepted: a schema must not select a draft in which these keywords mean
+/// something else (for example, `const` is not a draft-04 keyword).
 const ALLOWED_KEYWORDS: &[&str] = &[
-    "$schema",
     "$comment",
     "title",
     "description",
@@ -143,13 +161,19 @@ const ALLOWED_KEYWORDS: &[&str] = &[
     "maximum",
 ];
 
+/// Keywords allowed only on `type: "object"` nodes without `enum`/`const`.
+const OBJECT_KEYWORDS: &[&str] = &["properties", "required", "additionalProperties"];
+
+/// Keywords allowed only on `type: "array"` nodes without `enum`/`const`.
+const ARRAY_KEYWORDS: &[&str] = &["items", "minItems", "maxItems", "uniqueItems"];
+
 /// Check that an inline schema is strict and compute its entropy upper bound.
 ///
 /// A strict schema:
 /// - is a JSON object at every node (no `true`/`false` schemas) and every node
 ///   declares a single `type`, an `enum`, or a `const`;
-/// - uses only [`ALLOWED_KEYWORDS`] (no composition, references, pattern or
-///   dynamic properties);
+/// - uses only [`ALLOWED_KEYWORDS`] (no `$schema`, composition, references,
+///   `patternProperties` or other dynamic properties);
 /// - sets `additionalProperties: false` on every object and lists every
 ///   property in `required`;
 /// - bounds every string with `enum` or `maxLength`, every array with
@@ -191,6 +215,22 @@ fn node_bound(node: &Value, path: &str, depth: usize) -> Result<u64, String> {
     for key in obj.keys() {
         if !key.starts_with("x-") && !ALLOWED_KEYWORDS.contains(&key.as_str()) {
             return Err(format!("{path}: keyword '{key}' is not allowed"));
+        }
+    }
+
+    // The bound below visits only the subschemas of the node's own type and
+    // none at enum/const nodes, so object and array keywords are accepted
+    // only where they are bounded; elsewhere their subschemas would go
+    // unchecked.
+    let value_constrained = obj.contains_key("enum") || obj.contains_key("const");
+    let declared_type = obj.get("type").and_then(Value::as_str);
+    for (keywords, ty) in [(OBJECT_KEYWORDS, "object"), (ARRAY_KEYWORDS, "array")] {
+        for key in keywords {
+            if obj.contains_key(*key) && (value_constrained || declared_type != Some(ty)) {
+                return Err(format!(
+                    "{path}: '{key}' is only allowed on a type '{ty}' node without enum or const"
+                ));
+            }
         }
     }
 
@@ -502,6 +542,217 @@ mod tests {
             "additionalProperties": false
         });
         assert_eq!(strict_schema_upper_bound(&schema).unwrap(), 1 + 3);
+    }
+
+    #[test]
+    fn test_inline_schema_declaring_a_draft_rejected_in_dev() {
+        let with_schema_keyword = |schema_uri: &str| {
+            let mut schema = json!({
+                "type": "object",
+                "properties": { "signal": { "const": "OK" } },
+                "required": ["signal"],
+                "additionalProperties": false
+            });
+            schema["$schema"] = json!(schema_uri);
+            schema
+        };
+        let nested = json!({
+            "type": "object",
+            "properties": {
+                "signal": { "$schema": "http://json-schema.org/draft-04/schema#", "const": "OK" }
+            },
+            "required": ["signal"],
+            "additionalProperties": false
+        });
+        for schema in [
+            with_schema_keyword("http://json-schema.org/draft-04/schema#"),
+            with_schema_keyword("http://json-schema.org/draft-06/schema#"),
+            with_schema_keyword("http://json-schema.org/draft-07/schema#"),
+            with_schema_keyword("https://json-schema.org/draft/2020-12/schema"),
+            with_schema_keyword("https://example.com/custom-meta-schema"),
+            nested,
+        ] {
+            let contract = contract_with(schema.clone(), None);
+            let err = resolve_output_schema(&contract, &SchemaRegistry::empty(), true)
+                .expect_err(&format!("schema {schema} should be rejected"));
+            assert!(
+                err.to_string().contains("keyword '$schema' is not allowed"),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_strict_inline_schema_rejects_draft_dependent_keywords() {
+        // Keywords whose meaning differs between drafts are outside the strict
+        // subset, so the bound never depends on which draft a reader assumes.
+        let wrap = |prop: Value| {
+            json!({
+                "type": "object",
+                "properties": { "a": prop },
+                "required": ["a"],
+                "additionalProperties": false
+            })
+        };
+        for schema in [
+            wrap(json!({"type": "array", "maxItems": 2, "items": [{"type": "boolean"}]})),
+            wrap(
+                json!({"type": "array", "maxItems": 2, "prefixItems": [{"type": "boolean"}], "items": {"type": "boolean"}}),
+            ),
+            wrap(json!({"type": "integer", "minimum": 0, "maximum": 3, "exclusiveMinimum": true})),
+            wrap(json!({"type": "integer", "minimum": 0, "maximum": 3, "exclusiveMaximum": 3})),
+            json!({"type": "object", "properties": {}, "additionalProperties": false, "dependencies": {"a": ["b"]}}),
+            wrap(json!({"id": "x", "type": "boolean"})),
+            wrap(json!({"$id": "x", "type": "boolean"})),
+            json!({"type": "object", "properties": {}, "additionalProperties": false, "definitions": {}}),
+            json!({"type": "object", "properties": {}, "additionalProperties": false, "$defs": {}}),
+        ] {
+            assert!(
+                strict_schema_upper_bound(&schema).is_err(),
+                "schema {schema} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn test_subschemas_under_enum_or_const_rejected() {
+        let wrap = |prop: Value| {
+            json!({
+                "type": "object",
+                "properties": { "a": prop },
+                "required": ["a"],
+                "additionalProperties": false
+            })
+        };
+        let draft_04 = "http://json-schema.org/draft-04/schema#";
+        for schema in [
+            wrap(json!({"const": {"b": "OK"}, "properties": {"b": {"$ref": "#/properties/a"}}})),
+            wrap(json!({"const": {"b": "OK"}, "properties": {"b": {"$schema": draft_04}}})),
+            wrap(json!({"const": ["OK"], "items": {"$ref": "#"}})),
+            wrap(json!({"const": {"b": "OK"}, "additionalProperties": {"$schema": draft_04}})),
+            wrap(json!({"enum": [{"b": "OK"}], "properties": {"b": {"$ref": "#"}}})),
+            wrap(json!({"enum": [{"b": "OK"}], "properties": {"b": {"$schema": draft_04}}})),
+            wrap(json!({"enum": [["OK"]], "items": {"$schema": draft_04}})),
+            wrap(json!({"enum": [{"b": "OK"}], "additionalProperties": {"$ref": "#"}})),
+        ] {
+            let contract = contract_with(schema.clone(), None);
+            assert!(
+                resolve_output_schema(&contract, &SchemaRegistry::empty(), true).is_err(),
+                "schema {schema} should be rejected"
+            );
+        }
+        // Plain enum/const nodes stay accepted.
+        let ok = wrap(json!({"const": {"b": "OK"}}));
+        assert_eq!(strict_schema_upper_bound(&ok).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_container_keywords_on_other_types_rejected() {
+        let wrap = |prop: Value| {
+            json!({
+                "type": "object",
+                "properties": { "a": prop },
+                "required": ["a"],
+                "additionalProperties": false
+            })
+        };
+        let draft_04 = "http://json-schema.org/draft-04/schema#";
+        let hidden_ref = json!({"$ref": "#/properties/a"});
+        let hidden_draft = json!({"$schema": draft_04, "const": "OK"});
+        let mut schemas = Vec::new();
+        for base in [
+            json!({"type": "string", "maxLength": 5}),
+            json!({"type": "integer", "minimum": 0, "maximum": 3}),
+            json!({"type": "boolean"}),
+        ] {
+            for hidden in [&hidden_ref, &hidden_draft] {
+                let mut with_properties = base.clone();
+                with_properties["properties"] = json!({ "x": hidden });
+                schemas.push(wrap(with_properties));
+                let mut with_items = base.clone();
+                with_items["items"] = hidden.clone();
+                schemas.push(wrap(with_items));
+                let mut with_additional = base.clone();
+                with_additional["additionalProperties"] = hidden.clone();
+                schemas.push(wrap(with_additional));
+            }
+        }
+        // Array keywords on an object node, object keywords on an array node.
+        schemas.push(json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false,
+            "items": hidden_ref.clone()
+        }));
+        schemas.push(wrap(json!({
+            "type": "array",
+            "maxItems": 1,
+            "items": { "type": "boolean" },
+            "properties": { "x": hidden_draft.clone() }
+        })));
+        schemas.push(wrap(
+            json!({"type": "string", "maxLength": 5, "maxItems": 1}),
+        ));
+        schemas.push(wrap(json!({"type": "boolean", "required": ["x"]})));
+        for schema in schemas {
+            let contract = contract_with(schema.clone(), None);
+            let err = resolve_output_schema(&contract, &SchemaRegistry::empty(), true)
+                .expect_err(&format!("schema {schema} should be rejected"));
+            assert!(
+                err.to_string().contains("is only allowed on a type"),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_shipped_registry_schemas_are_strict() {
+        // The shipped registry schemas also satisfy the strict inline rules.
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/output");
+        let registry = SchemaRegistry::load_from_dir(&dir).unwrap();
+        for hash in registry.hashes() {
+            strict_schema_upper_bound(registry.get(hash).unwrap())
+                .unwrap_or_else(|e| panic!("registry schema {hash}: {e}"));
+        }
+    }
+
+    #[test]
+    fn test_uncompilable_schema_rejected_at_admission() {
+        let schema = json!({
+            "type": "object",
+            "properties": { "a": { "type": "string", "maxLength": 3, "pattern": "(" } },
+            "required": ["a"],
+            "additionalProperties": false
+        });
+        let contract = contract_with(schema.clone(), None);
+        let err = resolve_output_schema(&contract, &SchemaRegistry::empty(), true).unwrap_err();
+        assert!(err.to_string().contains("does not compile"), "{err}");
+
+        let (registry, hash) = registry_with(&schema);
+        let contract = contract_with(json!({}), Some(hash));
+        let err = resolve_output_schema(&contract, &registry, false).unwrap_err();
+        assert!(err.to_string().contains("does not compile"), "{err}");
+    }
+
+    #[test]
+    fn test_registry_schema_with_ref_target_declaring_a_draft_rejected() {
+        let schema = json!({
+            "type": "object",
+            "$defs": {
+                "signal": { "$schema": "http://json-schema.org/draft-04/schema#", "const": "OK" }
+            },
+            "properties": { "signal": { "$ref": "#/$defs/signal" } },
+            "required": ["signal"],
+            "additionalProperties": false
+        });
+        let (registry, hash) = registry_with(&schema);
+        let contract = contract_with(json!({}), Some(hash));
+        let err = resolve_output_schema(&contract, &registry, false).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("$schema is only allowed at the root"),
+            "{err}"
+        );
     }
 
     #[test]

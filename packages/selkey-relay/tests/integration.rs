@@ -353,7 +353,7 @@ fn test_entropy_computation_for_mediation_schema() {
 #[test]
 fn test_schema_validation_rejects_invalid_output() {
     let schema = mediation_schema();
-    let compiled = jsonschema::JSONSchema::compile(&schema).unwrap();
+    let compiled = selkey_relay::relay::compile_output_schema(&schema).unwrap();
 
     // Valid output
     let valid = serde_json::json!({
@@ -707,6 +707,64 @@ async fn test_relay_endpoint_end_to_end() {
         .expect("receipt signature must verify");
 
     // Clean up
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}
+
+#[tokio::test]
+async fn test_dev_relay_does_not_release_output_for_inline_schema_declaring_a_draft() {
+    let (prompt_dir, prompt_hash) = setup_prompt_program("e2e-dev-declared-draft");
+
+    // Provider output that does not match the schema's `const`.
+    let mock_output = serde_json::json!({
+        "signal": "free text that is not the constant value"
+    });
+    let mock_base_url = start_mock_anthropic(mock_output).await;
+
+    let mut state = test_app_state(&mock_base_url, &prompt_dir);
+    state.is_dev = true;
+    let app = build_router(Arc::new(state));
+
+    let relay_request = serde_json::json!({
+        "contract": {
+            "purpose_code": "MEDIATION",
+            "output_schema_id": "inline_const_signal",
+            "output_schema": {
+                "$schema": "http://json-schema.org/draft-04/schema#",
+                "type": "object",
+                "properties": { "signal": { "const": "OK" } },
+                "required": ["signal"],
+                "additionalProperties": false
+            },
+            "participants": ["alice", "bob"],
+            "prompt_template_hash": prompt_hash
+        },
+        "input_a": { "role": "alice", "context": { "x": "a" }, "commitment_nonce": TEST_NONCE },
+        "input_b": { "role": "bob", "context": { "x": "b" }, "commitment_nonce": TEST_NONCE },
+        "provider": "anthropic"
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/relay")
+                .header("authorization", format!("Bearer {TEST_OPERATOR_TOKEN}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&relay_request).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body = String::from_utf8_lossy(&body);
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.contains("$schema"), "{body}");
+    assert!(!body.contains("free text"), "{body}");
+
     std::fs::remove_dir_all(&prompt_dir).ok();
 }
 

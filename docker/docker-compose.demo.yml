@@ -11,6 +11,8 @@ services:
       - "127.0.0.1:3100:3100"
     environment:
       - SELKEY_BIND_ADDR=0.0.0.0
+      # The relay refuses a non-loopback bind without SELKEY_OPERATOR_TOKEN;
+      # the token below satisfies that and is shared with the demo service.
       # Host header check: the demo reaches the relay as "relay"; the host
       # reaches it as localhost.
       - SELKEY_ALLOWED_HOSTS=relay
