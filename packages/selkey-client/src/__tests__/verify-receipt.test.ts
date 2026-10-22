@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { ed25519 } from '@noble/curves/ed25519';
 import { sha256 } from '@noble/hashes/sha256';
+import { sha512 } from '@noble/hashes/sha512';
 import { bytesToHex, hexToBytes, utf8ToBytes } from '@noble/hashes/utils';
 import { canonicalize } from 'json-canonicalize';
 import * as fs from 'node:fs';
@@ -599,5 +600,100 @@ describe('verifyReceipt — own input and output cross-checks (v2)', () => {
       seedHex,
     );
     expect(verifyReceipt(signed, publicKeyHex, { outputSchema: sampleSchema }).valid).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// verifyReceipt — strict signature encoding (v1, v2)
+// ---------------------------------------------------------------------------
+
+describe('verifyReceipt — strict signature encoding (v1, v2)', () => {
+  const ORDER_L = 2n ** 252n + 27742317777372353535851937790883648493n;
+  // A point of order 8.
+  const TORSION_POINT_HEX = 'c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a';
+
+  function le(bytes: Uint8Array): bigint {
+    let n = 0n;
+    for (let i = bytes.length - 1; i >= 0; i--) n = (n << 8n) | BigInt(bytes[i]);
+    return n;
+  }
+
+  function toLE32(value: bigint): Uint8Array {
+    const out = new Uint8Array(32);
+    let n = value;
+    for (let i = 0; i < 32; i++) {
+      out[i] = Number(n & 255n);
+      n >>= 8n;
+    }
+    return out;
+  }
+
+  /** A signature whose R carries a small-order component (cofactored-valid only). */
+  function signWithMixedOrderR(message: Uint8Array, seed: Uint8Array): Uint8Array {
+    const { scalar, pointBytes } = ed25519.utils.getExtendedPublicKey(seed);
+    const torsion = ed25519.ExtendedPoint.fromHex(TORSION_POINT_HEX);
+    const r = 987654321987654321987654321n;
+    const R = ed25519.ExtendedPoint.BASE.multiply(r).add(torsion).toRawBytes();
+    const k = le(sha512(new Uint8Array([...R, ...pointBytes, ...message]))) % ORDER_L;
+    const s = (r + k * scalar) % ORDER_L;
+    return new Uint8Array([...R, ...toLE32(s)]);
+  }
+
+  const seed = new Uint8Array(32).fill(7);
+  const publicKeyHex = bytesToHex(ed25519.getPublicKey(seed));
+
+  it('rejects a v1 signature whose R has a small-order component', () => {
+    const unsigned = { schema_version: '1.0.0', session_id: 'sess-strict-1' };
+    const digest = sha256(utf8ToBytes('VCAV-RECEIPT-V1:' + canonicalize(unsigned)));
+    const sig = signWithMixedOrderR(digest, seed);
+    // Plain cofactored verification accepts it; strict verification must not.
+    expect(ed25519.verify(sig, digest, hexToBytes(publicKeyHex))).toBe(true);
+    const result = verifyReceipt({ ...unsigned, signature: bytesToHex(sig) }, publicKeyHex);
+    expect(result.valid).toBe(false);
+  });
+
+  it('rejects a v2 signature whose R has a small-order component', () => {
+    const unsigned = { receipt_schema_version: '2.0.0', session_id: 'sess-strict-2' };
+    const digest = sha256(utf8ToBytes('VCAV-RECEIPT-V2:' + canonicalize(unsigned)));
+    const sig = signWithMixedOrderR(digest, seed);
+    expect(ed25519.verify(sig, digest, hexToBytes(publicKeyHex))).toBe(true);
+    const result = verifyReceipt(
+      { ...unsigned, signature: { alg: 'Ed25519', value: bytesToBase64url(sig) } },
+      publicKeyHex,
+    );
+    expect(result.valid).toBe(false);
+  });
+
+  it('rejects a v2 signature value with base64 padding', () => {
+    const signed = signV2({ receipt_schema_version: '2.0.0', session_id: 'sess-pad' }, bytesToHex(seed));
+    const sig = signed['signature'] as Record<string, unknown>;
+    const padded = { ...signed, signature: { ...sig, value: `${sig['value'] as string}==` } };
+    expect(verifyReceipt(signed, publicKeyHex).valid).toBe(true);
+    const result = verifyReceipt(padded, publicKeyHex);
+    expect(result.valid).toBe(false);
+    expect(result.errors.join(' ')).toContain('canonical unpadded base64url');
+  });
+
+  it('rejects a v2 signature value with non-zero trailing bits', () => {
+    const signed = signV2({ receipt_schema_version: '2.0.0', session_id: 'sess-bits' }, bytesToHex(seed));
+    const sig = signed['signature'] as Record<string, unknown>;
+    const value = sig['value'] as string;
+    // 64 bytes encode to 86 characters; the last one carries 4 unused bits.
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    const last = alphabet.indexOf(value[value.length - 1]!);
+    const altered = value.slice(0, -1) + alphabet[last | 1];
+    expect(altered).not.toBe(value);
+    const result = verifyReceipt({ ...signed, signature: { ...sig, value: altered } }, publicKeyHex);
+    expect(result.valid).toBe(false);
+  });
+
+  it('rejects a v2 signature value with characters outside the base64url alphabet', () => {
+    const signed = signV2({ receipt_schema_version: '2.0.0', session_id: 'sess-alpha' }, bytesToHex(seed));
+    const sig = signed['signature'] as Record<string, unknown>;
+    // Same bytes in the standard base64 alphabet ('+' and '/').
+    expect(sig['value'] as string).toMatch(/[-_]/);
+    const withStd = (sig['value'] as string).replace(/-/g, '+').replace(/_/g, '/');
+    const result = verifyReceipt({ ...signed, signature: { ...sig, value: withStd } }, publicKeyHex);
+    expect(result.valid).toBe(false);
   });
 });

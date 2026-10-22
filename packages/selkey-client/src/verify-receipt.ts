@@ -15,7 +15,7 @@
  * ./receipt-v3.ts).
  */
 
-import { ed25519 } from '@noble/curves/ed25519';
+import { verifyEd25519Strict } from './ed25519-strict.js';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex, hexToBytes, utf8ToBytes } from '@noble/hashes/utils';
 import { canonicalize } from 'json-canonicalize';
@@ -27,6 +27,7 @@ import {
   checkContractV3,
   checkOwnInputV3,
   checkReceivedOutputV3,
+  decodeBase64urlCanonical,
   verifyReceiptV3,
 } from './receipt-v3.js';
 
@@ -100,21 +101,6 @@ export interface VerifyResult {
   tee_info?: TeeInfo;
   /** v3 only: informative class of the first rule that rejected the receipt. */
   error_class?: string;
-}
-
-// ---------------------------------------------------------------------------
-// Base64url decode (v2)
-// ---------------------------------------------------------------------------
-
-function base64urlToBytes(b64url: string): Uint8Array {
-  const b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
-  const padded = b64.padEnd(b64.length + ((4 - (b64.length % 4)) % 4), '=');
-  const binary = atob(padded);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
 }
 
 // ---------------------------------------------------------------------------
@@ -192,13 +178,9 @@ function verifySignatureV1(
     return { valid: false, errors };
   }
 
-  let valid: boolean;
-  try {
-    valid = ed25519.verify(sigBytes, digest, pubKeyBytes);
-  } catch (err) {
-    errors.push(`Ed25519 verification threw: ${err instanceof Error ? err.message : String(err)}`);
-    return { valid: false, errors };
-  }
+  // Strict rules (s < L, canonical prime-order R and key, RFC 8032 equation),
+  // shared with v3, so every conforming verifier accepts the same signatures.
+  const valid = verifyEd25519Strict(sigBytes, digest, pubKeyBytes);
 
   if (!valid) {
     errors.push('Signature verification failed');
@@ -234,14 +216,13 @@ function verifySignatureV2(
   const message = 'VCAV-RECEIPT-V2:' + canonical;
   const digest = sha256(utf8ToBytes(message));
 
-  let sigBytes: Uint8Array;
   let pubKeyBytes: Uint8Array;
-  try {
-    sigBytes = base64urlToBytes(sig['value'] as string);
-  } catch {
-    errors.push('signature.value is not valid base64url');
+  const decodedSig = decodeBase64urlCanonical(sig['value'] as string);
+  if (!decodedSig || decodedSig.length !== 64) {
+    errors.push('signature.value is not 64 bytes of canonical unpadded base64url');
     return { valid: false, errors };
   }
+  const sigBytes = decodedSig;
   try {
     pubKeyBytes = hexToBytes(publicKeyHex);
   } catch {
@@ -249,13 +230,9 @@ function verifySignatureV2(
     return { valid: false, errors };
   }
 
-  let valid: boolean;
-  try {
-    valid = ed25519.verify(sigBytes, digest, pubKeyBytes);
-  } catch (err) {
-    errors.push(`Ed25519 verification threw: ${err instanceof Error ? err.message : String(err)}`);
-    return { valid: false, errors };
-  }
+  // Strict rules (s < L, canonical prime-order R and key, RFC 8032 equation),
+  // shared with v3, so every conforming verifier accepts the same signatures.
+  const valid = verifyEd25519Strict(sigBytes, digest, pubKeyBytes);
 
   if (!valid) {
     errors.push('Signature verification failed');
