@@ -386,9 +386,9 @@ describe('sending (sender side uses a received grant)', () => {
     bobHoldsReceipt();
     const grant = issueToAlice(bobService());
     const { signature: _s, ...unsigned } = grant;
-    const forged = signMessage(DOMAIN_PREFIXES.IFC_GRANT, unsigned, MALLORY_SEED) as IfcGrant;
+    const resigned = signMessage(DOMAIN_PREFIXES.IFC_GRANT, unsigned, MALLORY_SEED) as IfcGrant;
     await expect(
-      aliceService().sendMessage({ counterparty: 'bob-test', grant: forged, message_class: 'LOGISTICS', payload: 'hi' }),
+      aliceService().sendMessage({ counterparty: 'bob-test', grant: resigned, message_class: 'LOGISTICS', payload: 'hi' }),
     ).rejects.toThrow(/does not verify under the issuer pin/);
   });
 
