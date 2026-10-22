@@ -544,6 +544,11 @@ value currently issued.
 
 ## 6. Getting the Verification Key
 
+Get the relay's verifying key once, over a channel you trust (for example from the relay
+operator), and pin it: pass it to the verifier, or set `SELKEY_RELAY_VERIFYING_KEY_HEX`. The
+`/health` endpoint below is convenient for local development, but a key fetched from the relay
+you're checking is not a trust anchor on its own.
+
 ### From the relay /health endpoint
 
 The relay exposes its Ed25519 verifying key at the `/health` endpoint:

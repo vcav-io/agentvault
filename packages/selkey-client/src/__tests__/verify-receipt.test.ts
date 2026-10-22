@@ -285,6 +285,25 @@ describe('verifyReceipt — relay key pinning', () => {
     expect(result.valid).toBe(true);
   });
 
+  it('accepts a contract relay key pinned in uppercase hex', () => {
+    const { seedHex, publicKeyHex } = generateKeypair();
+    const contractWithKey = {
+      ...sampleContract as object,
+      relay_verifying_key_hex: publicKeyHex.toUpperCase(),
+    };
+    const base: Record<string, unknown> = {
+      receipt_schema_version: '2.0.0',
+      session_id: 'sess-7u',
+      commitments: {
+        contract_hash: computeCommitmentHash(contractWithKey),
+      },
+    };
+    const signed = signV2(base, seedHex);
+
+    const result = verifyReceipt(signed, publicKeyHex, { contract: contractWithKey });
+    expect(result.valid).toBe(true);
+  });
+
   it('fails when contract relay key mismatches public key', () => {
     const { seedHex, publicKeyHex } = generateKeypair();
     const { publicKeyHex: otherKey } = generateKeypair();
@@ -400,6 +419,17 @@ describe('verifyReceipt — TEE pubkey binding', () => {
     };
     const signed = signV2(base, seedHex);
     const result = verifyReceipt(signed);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('No verification key'))).toBe(true);
+  });
+
+  it('returns invalid rather than throwing for a non-string key', () => {
+    const { seedHex } = generateKeypair();
+    const signed = signV2(
+      { receipt_schema_version: '2.0.0', session_id: 'sess-tee-5', issued_at: '2024-01-01T00:00:00Z' },
+      seedHex,
+    );
+    const result = verifyReceipt(signed, 42 as unknown as string);
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.includes('No verification key'))).toBe(true);
   });

@@ -94,7 +94,7 @@ After the run completes, click **Verify Signature** on any result card.
 
 ### What verification proves
 
-- The receipt was signed by the relay key you pinned (the verifier never trusts a key embedded in the receipt)
+- The receipt was signed by the relay key given to the verifier (the verifier never trusts a key embedded in the receipt). The demo uses `SELKEY_RELAY_VERIFYING_KEY_HEX` if set, and otherwise the configured relay's `/health` key, which is fine locally but isn't a trust anchor: pin the key for real use
 - The output in the receipt has not been modified since signing
 - The contract, schema, prompt template, and guardian policy hashes are internally consistent
 - Your input commitment (SHA-256 of your own input) matches what the relay recorded

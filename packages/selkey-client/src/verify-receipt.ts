@@ -280,7 +280,7 @@ export function verifyReceipt(
   // receipt-controlled data: this client does not parse or verify TEE quotes,
   // so the embedded key is never used as a verification key on its own. When
   // present, it must equal the pinned key.
-  if (!publicKeyHex) {
+  if (typeof publicKeyHex !== 'string' || publicKeyHex.length === 0) {
     errors.push(
       'No verification key: publicKeyHex (the pinned relay verifying key) is required; ' +
         'keys embedded in the receipt are not trusted on their own',
@@ -334,7 +334,7 @@ export function verifyReceipt(
     if (artefacts.contract && typeof artefacts.contract === 'object') {
       const contractObj = artefacts.contract as Record<string, unknown>;
       if (typeof contractObj.relay_verifying_key_hex === 'string') {
-        if (contractObj.relay_verifying_key_hex !== verifyKey) {
+        if (contractObj.relay_verifying_key_hex.toLowerCase() !== verifyKey) {
           errors.push(
             `Contract pins relay key '${contractObj.relay_verifying_key_hex.slice(0, 12)}...' but receipt was signed by '${verifyKey.slice(0, 12)}...'`,
           );
