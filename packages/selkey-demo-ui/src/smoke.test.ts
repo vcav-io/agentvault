@@ -143,6 +143,16 @@ describe('demo ui smoke flow', () => {
       return (status?.textContent || '').includes('Signature valid');
     });
 
+    // Both agents run with the relay key pinned automatically.
+    const status = (await (await fetch(`${BASE_URL}/api/status`)).json()) as {
+      relay_key_pin: { key_id: string; source: string } | null;
+    };
+    expect(status.relay_key_pin?.source).toBe('local-relay');
+    expect(status.relay_key_pin?.key_id).toMatch(/^ed25519:[0-9a-f]{64}$/);
+    const verifyText = await page.locator('.receipt-card__verify-status').textContent();
+    expect(verifyText).toContain('relay key pinned from the local relay at demo start');
+    expect(verifyText).not.toContain('not pinned');
+
     await page.click('a[href="/replay.html"]');
     await page.waitForSelector('#replay-btn');
     await page.click('#replay-btn');

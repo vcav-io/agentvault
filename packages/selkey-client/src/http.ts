@@ -22,6 +22,16 @@ class RelayHttpError extends Error {
   }
 }
 
+/** `Authorization` header for operator-authenticated endpoints, if a token is configured. */
+function operatorAuthHeader(config: RelayClientConfig): Record<string, string> {
+  const token = config.operator_token;
+  if (token === undefined || token === '') return {};
+  if (typeof token !== 'string' || !/^[\x21-\x7e]+$/.test(token)) {
+    throw new Error('operator_token must be printable ASCII without whitespace');
+  }
+  return { Authorization: `Bearer ${token}` };
+}
+
 async function relayFetch(
   config: RelayClientConfig,
   path: string,
@@ -54,7 +64,7 @@ export async function createSession(
   }
   const res = await relayFetch(config, '/sessions', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...operatorAuthHeader(config) },
     body: JSON.stringify(body),
   });
   return res.json() as Promise<CreateSessionResponse>;

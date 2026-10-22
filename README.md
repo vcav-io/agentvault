@@ -36,7 +36,7 @@ docker compose -f docker/docker-compose.demo.yml --env-file .env up
 # 3. Open http://127.0.0.1:3200 and click "Start Protocol"
 ```
 
-The demo publishes the relay (3100) and UI (3200) on `127.0.0.1` only. It runs the relay with `SELKEY_ENV=dev` and no inbox auth, and the UI streams both agents' sessions, so don't expose these ports beyond your machine. To run a relay for other people, see [docs/environment-variables.md](docs/environment-variables.md#network-binding-and-operator-access) (`SELKEY_BIND_ADDR`, `SELKEY_OPERATOR_TOKEN`).
+The demo publishes the relay (3100) and UI (3200) on `127.0.0.1` only. It runs the relay with `SELKEY_ENV=dev` and no inbox auth, shares one operator token between the relay and the demo agents (a fixed demo default; set your own with `export SELKEY_OPERATOR_TOKEN=` followed by the output of `openssl rand -hex 32`, or put it in `.env`), and pins the relay's verifying key for both agents automatically at the first start, and the UI streams both agents' sessions, so don't expose these ports beyond your machine. To run a relay for other people, see [docs/environment-variables.md](docs/environment-variables.md#network-binding-and-operator-access) (`SELKEY_BIND_ADDR`, `SELKEY_OPERATOR_TOKEN`).
 
 With prebuilt images you should be running in under five minutes. If the images can't be pulled, Compose builds them from your checkout instead. To update later, run `docker compose -f docker/docker-compose.demo.yml pull`.
 
@@ -97,7 +97,7 @@ After the run completes, click **Verify Signature** on any result card.
 
 ### What verification proves
 
-- The receipt was signed by the relay key given to the verifier (the verifier never trusts a key embedded in the receipt). The demo uses `SELKEY_RELAY_VERIFYING_KEY_HEX` if set. Without it, the local demo reads the relay's `/health` key and labels the result "relay key not pinned"; that key isn't a trust anchor, so pin the key for real use
+- The receipt was signed by the relay key given to the verifier (the verifier never trusts a key embedded in the receipt). The demo uses `SELKEY_RELAY_VERIFYING_KEY_HEX` if set. Without it, the demo pins the key its local relay serves on `/health` at the first start, uses it for both agents and the verifier, and labels the result "relay key pinned from the local relay at demo start". Outside the local demo, obtain the key from the relay operator and set `SELKEY_RELAY_VERIFYING_KEY_HEX`: agents refuse relay sessions without it unless `SELKEY_ENV=dev`
 - The output in the receipt has not been modified since signing
 - The contract, schema, prompt template, and guardian policy hashes are internally consistent
 - Your client can check that your input commitment (salted with a nonce only your client knows) matches the input it sent

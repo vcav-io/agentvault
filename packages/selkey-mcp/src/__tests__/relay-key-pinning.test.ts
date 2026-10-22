@@ -27,6 +27,7 @@ import {
   getAllowedRelayUrls,
   isRelayTransportAllowed,
   isRelayUrlAllowed,
+  expectedRelayKeyVariants,
   resolveLocalRelayUrl,
   withPinnedRelayKey,
 } from '../relay-trust.js';
@@ -224,10 +225,61 @@ describe('responder expects the pinned contract', () => {
     expect(data.error_code).toBe('CONTRACT_MISMATCH');
   });
 
-  it('still accepts the unpinned contract', async () => {
+  it('accepts the unpinned contract in development only', async () => {
     process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'] = PINNED;
     const data = await respond(computeRelayContractHash(contractFor()));
     expect(data.phase).toBe('JOIN');
+  });
+
+  it('rejects the unpinned contract outside development', async () => {
+    process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'] = PINNED;
+    const prior = process.env['SELKEY_ENV'];
+    delete process.env['SELKEY_ENV'];
+    try {
+      const data = await respond(computeRelayContractHash(contractFor()));
+      expect(data.phase).toBe('FAILED');
+      expect(data.error_code).toBe('CONTRACT_MISMATCH');
+      const pinned = await respond(
+        computeRelayContractHash({ ...contractFor(), relay_verifying_key_hex: PINNED }),
+      );
+      expect(pinned.phase).toBe('JOIN');
+    } finally {
+      if (prior === undefined) delete process.env['SELKEY_ENV'];
+      else process.env['SELKEY_ENV'] = prior;
+    }
+  });
+});
+
+describe('expected relay key variants', () => {
+  let prior: Record<string, string | undefined>;
+  beforeEach(() => {
+    prior = { env: process.env['SELKEY_ENV'], key: process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'] };
+  });
+  afterEach(() => {
+    for (const [k, v] of [
+      ['SELKEY_ENV', prior.env],
+      ['SELKEY_RELAY_VERIFYING_KEY_HEX', prior.key],
+    ] as const) {
+      if (v === undefined) Reflect.deleteProperty(process.env, k);
+      else process.env[k] = v;
+    }
+  });
+
+  it('accepts only the pinned variant outside development', () => {
+    delete process.env['SELKEY_ENV'];
+    process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'] = PINNED;
+    expect(expectedRelayKeyVariants()).toEqual([PINNED]);
+    process.env['SELKEY_ENV'] = 'dev';
+    expect(expectedRelayKeyVariants()).toEqual([undefined, PINNED]);
+  });
+
+  it('requires a pin outside development', () => {
+    delete process.env['SELKEY_ENV'];
+    delete process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'];
+    expect(() => expectedRelayKeyVariants()).toThrow(/SELKEY_RELAY_VERIFYING_KEY_HEX is not set/);
+    expect(() => withPinnedRelayKey({})).toThrow(/SELKEY_RELAY_VERIFYING_KEY_HEX is not set/);
+    process.env['SELKEY_ENV'] = 'dev';
+    expect(expectedRelayKeyVariants()).toEqual([undefined]);
   });
 });
 

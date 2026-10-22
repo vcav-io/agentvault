@@ -64,6 +64,9 @@ import {
   resolveLocalRelayUrl,
   RelayTrustError,
   withPinnedRelayKey,
+  requireRelayKeyPin,
+  assertContractCarriesRelayPin,
+  relayClientConfig,
 } from '../relay-trust.js';
 import { buildExpectedContractHashes, localAllowedPurposes } from '../responder-contracts.js';
 import { chargeOwnDisclosure, EntropyLedgerError } from '../entropy-ledger.js';
@@ -1332,7 +1335,7 @@ async function createDirectSession(params: {
     fallbackCounterparty: params.handle.counterparty,
     purpose: params.purposeHint ?? undefined,
   });
-  const config = { relay_url: params.relayUrl };
+  const config = relayClientConfig(params.relayUrl);
   const nonce = generateCommitmentNonce();
   const created = await createAndSubmit(config, params.contract, params.myInput, 'initiator', nonce);
   params.handle.inputCommitment = {
@@ -1768,7 +1771,7 @@ async function phaseInvite(
       fallbackCounterparty: counterparty,
       purpose: purposeHint ?? undefined,
     });
-    const config = { relay_url: relayUrl };
+    const config = relayClientConfig(relayUrl);
     const myContext = args.my_input ?? '';
     const nonce = generateCommitmentNonce();
     const created = await createAndSubmit(config, contract, myContext, 'initiator', nonce);
@@ -1952,7 +1955,7 @@ async function phasePollInvite(
       }
       throw err;
     }
-    const config = { relay_url: handle.relayUrl };
+    const config = relayClientConfig(handle.relayUrl);
     const myContext = handle.myInput ?? '';
     try {
       await rawSubmitInput(
@@ -2021,7 +2024,7 @@ async function phasePollRelay(
     return failedResponse(handle, 'SESSION_ERROR', 'Missing session data in POLL_RELAY phase.');
   }
 
-  const config = { relay_url: handle.relayUrl };
+  const config = relayClientConfig(handle.relayUrl);
   const pollDeadline = Math.min(Date.now() + _relayPollBudgetMs, handle.timeoutDeadline);
   let isFirstCheck = true;
 
@@ -2588,7 +2591,7 @@ async function phaseJoin(
     return failedResponse(handle, 'SESSION_ERROR', 'Missing inviteId in JOIN phase.');
   }
 
-  const config = { relay_url: handle.relayUrl };
+  const config = relayClientConfig(handle.relayUrl);
 
   // Submit input if not yet done (uses stored myInput from handle, not args)
   if (!handle.submitted) {
@@ -2785,6 +2788,7 @@ async function handleCreate(args: RelaySignalArgs): Promise<ToolResponse<RelaySi
   if (!args.contract) {
     return buildError('INVALID_INPUT', 'contract is required for CREATE mode');
   }
+  requireRelayKeyPin('start a relay session');
   const relayUrl = resolveRelayUrl(args.relay_url);
   await assertRelayTrusted(relayUrl);
   // Bind the relay key before charging, so a pin mismatch never leaves a charge.
@@ -2794,7 +2798,7 @@ async function handleCreate(args: RelaySignalArgs): Promise<ToolResponse<RelaySi
     contract,
     selfId: localParticipantId(contract, 0),
   });
-  const config = { relay_url: relayUrl };
+  const config = relayClientConfig(relayUrl);
 
   const myContext = args.my_input ?? '';
   const nonce = generateCommitmentNonce();
@@ -2834,6 +2838,7 @@ async function handleJoin(args: RelaySignalArgs): Promise<ToolResponse<RelaySign
       'contract does not hash to contract_hash; input was not submitted',
     );
   }
+  assertContractCarriesRelayPin(args.contract);
   const relayUrl = resolveRelayUrl(args.relay_url);
   await assertRelayTrusted(relayUrl);
   // The disclosure bound comes from the caller's contract; without it the
@@ -2843,7 +2848,7 @@ async function handleJoin(args: RelaySignalArgs): Promise<ToolResponse<RelaySign
     contract: args.contract,
     selfId: localParticipantId(args.contract, 1),
   });
-  const config = { relay_url: relayUrl };
+  const config = relayClientConfig(relayUrl);
 
   const myContext = args.my_input ?? '';
   const nonce = generateCommitmentNonce();
@@ -3000,6 +3005,7 @@ async function handleRelaySignalUnlabelled(
             'INITIATE mode requires AfalTransport (agent mode only)',
           );
         }
+        requireRelayKeyPin('start a relay session');
         if (!args.counterparty) {
           return buildError('INVALID_INPUT', 'counterparty is required for INITIATE mode');
         }
@@ -3100,6 +3106,7 @@ async function handleRelaySignalUnlabelled(
             'RESPOND mode requires AfalTransport (agent mode only)',
           );
         }
+        requireRelayKeyPin('respond to a relay session');
 
         if (!args.from) {
           const knownNames = knownAgents.map(a => a.agent_id).join(', ');
