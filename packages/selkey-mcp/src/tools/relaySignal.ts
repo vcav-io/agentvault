@@ -63,6 +63,7 @@ import {
 } from '../relay-trust.js';
 import { buildExpectedContractHashes, localAllowedPurposes } from '../responder-contracts.js';
 import { chargeOwnDisclosure, EntropyLedgerError } from '../entropy-ledger.js';
+import { isRetryableTransportError, relayHttpStatus } from '../transport-errors.js';
 import { appendPrivateLine, ensurePrivateDir, selkeyStateDir, writePrivateJson } from '../secure-fs.js';
 import {
   encodeRelayToken,
@@ -166,6 +167,11 @@ interface DirectProposeRetryState {
   contract: object;
   relayUrl: string;
   purposeHint?: string | null;
+  /**
+   * Set once the relay session exists and this agent's input is submitted:
+   * a retry re-sends the COMMIT for this session and never creates another.
+   */
+  committedSession?: RelaySessionBinding;
 }
 
 // ── Types ───────────────────────────────────────────────────────────────
@@ -683,15 +689,12 @@ function mapRelayError(error: unknown): { code: ErrorCode; detail: string } {
   }
   if (error instanceof Error) {
     const msg = error.message;
-    if (msg.includes('Relay HTTP 4')) {
+    const relayStatus = relayHttpStatus(error);
+    if (relayStatus !== undefined && relayStatus >= 400 && relayStatus < 500) {
       return { code: 'INVALID_INPUT', detail: msg };
     }
-    if (
-      msg.includes('fetch failed') ||
-      msg.includes('ECONNREFUSED') ||
-      msg.includes('abort') ||
-      msg.includes('Relay HTTP 5')
-    ) {
+    // Classified by error type and status code, never by message text.
+    if (isRetryableTransportError(error)) {
       return {
         code: 'COUNTERPARTY_UNREACHABLE',
         detail: `Counterparty not reachable (they may not have started yet). ${msg}`,
@@ -793,19 +796,13 @@ function hashInput(input: string): string {
   return createHash('sha256').update(input).digest('hex');
 }
 
-/** Check whether an error from sendPropose is a network-level failure worth retrying.
- *  Must stay aligned with mapRelayError's transient-error detection. */
-function isRetryableTransportError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const msg = err.message;
-  return (
-    msg.includes('fetch failed') ||
-    msg.includes('ECONNREFUSED') ||
-    msg.includes('ECONNRESET') ||
-    msg.includes('ETIMEDOUT') ||
-    msg.includes('abort') ||
-    msg.includes('Relay HTTP 5')
-  );
+/**
+ * Charge key for one relay session this agent submits input to. Sessions
+ * not yet created get a fresh key per creation attempt, so every new
+ * session is charged.
+ */
+function newSessionChargeKey(handle: RelayHandle): string {
+  return `${handle.id}:new:${randomUUID()}`;
 }
 
 function getResumeTokenSecret(): string | null {
@@ -1231,7 +1228,11 @@ function tryAdoptPreferredPurpose(
   return null;
 }
 
-async function createCommittedDirectSession(params: {
+/**
+ * Create the relay session and submit this agent's input (charged once per
+ * session). Returns the binding to COMMIT; does not contact the peer.
+ */
+async function createDirectSession(params: {
   handle: RelayHandle;
   transport: AfalTransport;
   relayUrl: string;
@@ -1239,10 +1240,10 @@ async function createCommittedDirectSession(params: {
   myInput: string;
   proposalId: string;
   purposeHint?: string | null;
-}): Promise<void> {
+}): Promise<RelaySessionBinding> {
   await assertRelayTrusted(params.relayUrl, [transportLocalRelayUrl(params.transport)]);
   chargeSessionDisclosure({
-    key: params.handle.id,
+    key: newSessionChargeKey(params.handle),
     contract: params.contract,
     selfId: params.transport.agentId,
     fallbackCounterparty: params.handle.counterparty,
@@ -1276,10 +1277,32 @@ async function createCommittedDirectSession(params: {
   params.handle.proposalId = params.proposalId;
 
   writeLastSessionFile(created.sessionId, 'INITIATOR', created.initiatorReadToken, params.relayUrl);
+  return relaySession;
+}
 
-  if (params.transport.commitAdmit) {
-    await params.transport.commitAdmit(params.proposalId, relaySession);
+/**
+ * Create the session, then COMMIT it. A COMMIT that fails because the peer
+ * was unreachable leaves the handle in PROPOSE_RETRY with the existing
+ * session, so the retry re-sends the COMMIT only.
+ */
+async function createAndCommitDirectSession(
+  params: Parameters<typeof createDirectSession>[0],
+  retryBase: Omit<DirectProposeRetryState, 'committedSession'>,
+): Promise<'COMMITTED' | 'COMMIT_PENDING'> {
+  const relaySession = await createDirectSession(params);
+  try {
+    if (params.transport.commitAdmit) {
+      await params.transport.commitAdmit(params.proposalId, relaySession);
+    }
+  } catch (err) {
+    if (isRetryableTransportError(err)) {
+      params.handle.retryState = { ...retryBase, committedSession: relaySession } satisfies DirectProposeRetryState;
+      params.handle.phase = 'PROPOSE_RETRY';
+      return 'COMMIT_PENDING';
+    }
+    throw err;
   }
+  return 'COMMITTED';
 }
 
 // ── INITIATE Phases ─────────────────────────────────────────────────────
@@ -1641,7 +1664,7 @@ async function phaseInvite(
   if (!(transport instanceof DirectAfalTransport)) {
     await assertRelayTrusted(relayUrl, [transportLocalRelayUrl(transport)]);
     chargeSessionDisclosure({
-      key: handle.id,
+      key: newSessionChargeKey(handle),
       contract,
       selfId: agentId,
       fallbackCounterparty: counterparty,
@@ -1699,28 +1722,19 @@ async function phaseInvite(
   // 4. Send via AFAL transport — if peer is unreachable, transition to PROPOSE_RETRY
   //    so the FSM retries across tool calls (up to the overall timeout).
   const proposeParams = { propose, templateId, budgetTier: 'SMALL' as const };
+  const retryBase = {
+    retryKind: 'direct' as const,
+    proposeParams,
+    contract,
+    relayUrl,
+    purposeHint,
+  };
+  let response: Awaited<ReturnType<AfalTransport['sendPropose']>>;
   try {
-    const response = await transport.sendPropose(proposeParams);
-    const selectedProfile = response?.selectedModelProfile ?? preferredProfile;
-    const finalContract = bindSelectedProfile(contract, selectedProfile);
-    await createCommittedDirectSession({
-      handle,
-      transport,
-      relayUrl,
-      contract: finalContract,
-      myInput: args.my_input ?? '',
-      proposalId,
-      purposeHint,
-    });
+    response = await transport.sendPropose(proposeParams);
   } catch (err) {
     if (isRetryableTransportError(err)) {
-      handle.retryState = {
-        retryKind: 'direct',
-        proposeParams,
-        contract,
-        relayUrl,
-        purposeHint,
-      } satisfies DirectProposeRetryState;
+      handle.retryState = retryBase satisfies DirectProposeRetryState;
       handle.phase = 'PROPOSE_RETRY';
       return awaitingResponse(
         handle,
@@ -1729,6 +1743,26 @@ async function phaseInvite(
       );
     }
     throw err; // non-retryable — let outer catch handle
+  }
+  const selectedProfile = response?.selectedModelProfile ?? preferredProfile;
+  const committed = await createAndCommitDirectSession(
+    {
+      handle,
+      transport,
+      relayUrl,
+      contract: bindSelectedProfile(contract, selectedProfile),
+      myInput: args.my_input ?? '',
+      proposalId,
+      purposeHint,
+    },
+    retryBase,
+  );
+  if (committed === 'COMMIT_PENDING') {
+    return awaitingResponse(
+      handle,
+      'Relay session created; the counterparty did not receive the session tokens yet. Will keep trying.',
+      { strategy: 'DEFERRED', seconds: 60 },
+    );
   }
 
   handle.phase = 'POLL_RELAY';
@@ -1808,7 +1842,7 @@ async function phasePollInvite(
     }
     try {
       chargeSessionDisclosure({
-        key: handle.id,
+        key: `${handle.id}:${handle.sessionId ?? `invite:${handle.inviteId ?? ''}`}`,
         contract: handle.contract,
         selfId: transport.agentId,
         fallbackCounterparty: handle.counterparty,
@@ -2021,7 +2055,32 @@ async function phaseRetryPropose(
       );
     }
 
-    const response = await transport.sendPropose(params.proposeParams);
+    if (params.committedSession) {
+      // The session exists and holds this agent's input: only re-send COMMIT.
+      if (transport.commitAdmit) {
+        await transport.commitAdmit(params.proposeParams.propose.proposal_id, params.committedSession);
+      }
+      handle.phase = 'POLL_RELAY';
+      handle.retryState = undefined;
+      return awaitingResponse(
+        handle,
+        'Counterparty admitted the invite. Waiting for relay session to complete.',
+        { strategy: 'IMMEDIATE', seconds: 5 },
+      );
+    }
+
+    let response: Awaited<ReturnType<AfalTransport['sendPropose']>>;
+    try {
+      response = await transport.sendPropose(params.proposeParams);
+    } catch (err) {
+      if (isRetryableTransportError(err)) {
+        return awaitingResponse(handle, 'Counterparty still not reachable. Will keep trying.', {
+          strategy: 'DEFERRED',
+          seconds: 60,
+        });
+      }
+      throw err;
+    }
     const preferredProfile =
       params.proposeParams.propose.acceptable_model_profiles?.[0] ??
       (params.proposeParams.propose.model_profile_hash
@@ -2033,17 +2092,32 @@ async function phaseRetryPropose(
         : undefined);
     const selectedProfile = response?.selectedModelProfile ?? preferredProfile;
     const finalContract = bindSelectedProfile(params.contract, selectedProfile);
-    await createCommittedDirectSession({
-      handle,
-      transport,
-      relayUrl: params.relayUrl,
-      contract: finalContract,
-      myInput: handle.myInput ?? '',
-      proposalId: params.proposeParams.propose.proposal_id,
-      purposeHint: params.purposeHint,
-    });
+    const committed = await createAndCommitDirectSession(
+      {
+        handle,
+        transport,
+        relayUrl: params.relayUrl,
+        contract: finalContract,
+        myInput: handle.myInput ?? '',
+        proposalId: params.proposeParams.propose.proposal_id,
+        purposeHint: params.purposeHint,
+      },
+      params,
+    );
+    if (committed === 'COMMIT_PENDING') {
+      return awaitingResponse(
+        handle,
+        'Relay session created; the counterparty did not receive the session tokens yet. Will keep trying.',
+        { strategy: 'DEFERRED', seconds: 60 },
+      );
+    }
   } catch (err) {
-    if (isRetryableTransportError(err)) {
+    // Only re-sends of an existing invite or COMMIT are retried here; a
+    // failure while creating a new session is not.
+    if (
+      isRetryableTransportError(err) &&
+      (params.retryKind === 'legacy' || params.committedSession !== undefined)
+    ) {
       return awaitingResponse(handle, 'Counterparty still not reachable. Will keep trying.', {
         strategy: 'DEFERRED',
         seconds: 60,
@@ -2098,8 +2172,10 @@ async function phaseDiscover(
     // The responder only accepts a contract that hashes to one it would build
     // itself from local configuration (or to an explicitly supplied hash).
     // Rebuilt each poll so configuration changes take effect.
-    const expectedContractHashes = handle.expectedContractHash
-      ? new Set([handle.expectedContractHash])
+    // Maps each accepted hash to the locally built contract (undefined for an
+    // explicitly supplied hash, whose contract is not known locally).
+    const expectedContractHashes: Map<string, RelayContract | undefined> = handle.expectedContractHash
+      ? new Map([[handle.expectedContractHash, undefined]])
       : await buildExpectedContractHashes({
           purposes: responderAcceptablePurposes(handle, transport),
           participants: [handle.counterparty, handle.agentId],
@@ -2290,7 +2366,11 @@ async function phaseDiscover(
         // Bind confirmed contract to handle
         handle.inviteId = invite.invite_id;
         handle.contractHash = detail.contract_hash;
-        handle.contract = detail.contract_json;
+        // Same hash, but prefer the locally built contract over the copy the
+        // invite carried.
+        handle.contract =
+          (expectedContractHashes.get(computedHash) as Record<string, unknown> | undefined) ??
+          detail.contract_json;
         handle.proposalId = invite.afalPropose?.proposal_id;
         handle.relayUrl = handle.relayUrl ?? transport.relayUrl;
       } else {
@@ -2319,6 +2399,10 @@ async function phaseDiscover(
 
         handle.inviteId = invite.invite_id;
         handle.contractHash = invite.contract_hash;
+        // The contract charged and checked locally is the one this responder
+        // built itself for that hash; the invite carries only the hash.
+        const localContract = expectedContractHashes.get(invite.contract_hash);
+        if (localContract) handle.contract = localContract as unknown as Record<string, unknown>;
         handle.proposalId = invite.afalPropose?.proposal_id;
         handle.sessionId = payload.session_id;
         handle.relayUrl = payload.relay_url;
@@ -2411,7 +2495,7 @@ async function phaseJoin(
     // Charge the owner-side disclosure budget before accepting or submitting.
     try {
       chargeSessionDisclosure({
-        key: handle.id,
+        key: `${handle.id}:${handle.sessionId ?? `invite:${handle.inviteId ?? ''}`}`,
         contract: handle.contract,
         selfId: transport.agentId,
         fallbackCounterparty: handle.counterparty,
@@ -2633,6 +2717,12 @@ async function handleJoin(args: RelaySignalArgs): Promise<ToolResponse<RelaySign
   if (!args.contract_hash)
     return buildError('INVALID_INPUT', 'contract_hash is required for JOIN mode');
 
+  if (args.contract !== undefined && computeRelayContractHash(args.contract) !== args.contract_hash) {
+    return buildError(
+      'CONTRACT_MISMATCH',
+      'contract does not hash to contract_hash; input was not submitted',
+    );
+  }
   const relayUrl = resolveRelayUrl(args.relay_url);
   await assertRelayTrusted(relayUrl);
   // The disclosure bound comes from the caller's contract; without it the

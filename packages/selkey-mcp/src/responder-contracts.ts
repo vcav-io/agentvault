@@ -45,21 +45,25 @@ function tryBuild(fn: () => RelayContract | undefined): RelayContract | undefine
 
 /**
  * Build every contract this responder would accept for the given purposes and
- * participants, and return their hashes.
+ * participants. Returns hash -> the locally built contract, so callers can
+ * use the local contract (never a peer-supplied one) for a matching hash.
  *
  * `participants` is [initiator, responder], matching the contract layout.
  */
 export async function buildExpectedContractHashes(params: {
   purposes: string[];
   participants: [string, string];
-}): Promise<Set<string>> {
-  const hashes = new Set<string>();
+}): Promise<Map<string, RelayContract>> {
+  const hashes = new Map<string, RelayContract>();
   const participants = [...params.participants];
   const profiles = listKnownModelProfiles();
   const purposes = new Set(params.purposes);
 
   const add = (contract: RelayContract | undefined) => {
-    if (contract) hashes.add(computeRelayContractHash(contract));
+    if (contract) {
+      const hash = computeRelayContractHash(contract);
+      if (!hashes.has(hash)) hashes.set(hash, contract);
+    }
   };
 
   for (const purpose of purposes) {

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { buildRelayContract } from 'selkey/contracts';
+import { buildRelayContract, computeRelayContractHash } from 'selkey/contracts';
 
 const { mockCreateAndSubmit, mockJoinAndWait, mockPollUntilDone } = vi.hoisted(() => ({
   mockCreateAndSubmit: vi.fn(),
@@ -31,6 +31,13 @@ import {
 } from '../tools/relaySignal.js';
 import { _resetHandlesForTesting } from '../tools/relayHandles.js';
 import type { AfalTransport } from '../afal-transport.js';
+import { ed25519 } from '@noble/curves/ed25519';
+import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
+import { submitInput } from 'selkey/http';
+import { DirectAfalTransport, type AgentDescriptor } from '../direct-afal-transport.js';
+import { DOMAIN_PREFIXES, signMessage } from '../afal-signing.js';
+import { listKnownModelProfiles } from '../model-profiles.js';
+import { listSupportedContractOffers } from '../contract-offers.js';
 
 const ENV_KEYS = [
   'SELKEY_WORKDIR',
@@ -80,6 +87,7 @@ beforeEach(() => {
   });
   mockJoinAndWait.mockReset();
   mockPollUntilDone.mockReset();
+  vi.mocked(submitInput).mockClear();
 });
 
 afterEach(() => {
@@ -158,7 +166,7 @@ describe('relay_signal owner-side disclosure budget', () => {
       session_id: 'sess-9',
       submit_token: 's',
       read_token: 'r',
-      contract_hash: 'c'.repeat(64),
+      contract_hash: computeRelayContractHash(contract),
       my_input: 'hi',
     };
     await handleRelaySignal({ ...joinArgs, contract });
@@ -182,5 +190,200 @@ describe('relay_signal owner-side disclosure budget', () => {
     const result = await handleRelaySignal({ mode: 'CREATE', contract, my_input: 'hello' });
     expect(result.error?.code).toBe('ENTROPY_BOUND_UNAVAILABLE');
     expect(mockCreateAndSubmit).not.toHaveBeenCalled();
+  });
+});
+
+// ── Direct AFAL: one charge per relay session, local contracts ────────────
+
+const ALICE_SEED = '01'.repeat(32);
+const BOB_SEED = '02'.repeat(32);
+const pubOf = (seed: string) => bytesToHex(ed25519.getPublicKey(hexToBytes(seed)));
+
+function signedDescriptor(agentId: string, seed: string, base = '', offers = true): AgentDescriptor {
+  return signMessage(
+    DOMAIN_PREFIXES.DESCRIPTOR,
+    {
+      descriptor_version: '1',
+      agent_id: agentId,
+      issued_at: '2026-01-01T00:00:00Z',
+      expires_at: '2099-12-31T23:59:59Z',
+      identity_key: { algorithm: 'ed25519', public_key_hex: pubOf(seed) },
+      envelope_key: { algorithm: 'ed25519', public_key_hex: pubOf(seed) },
+      endpoints: { propose: base ? `${base}/propose` : '', commit: base ? `${base}/commit` : '' },
+      capabilities: {
+        supported_body_formats: ['wrapped_v1'],
+        supports_commit: true,
+        supported_model_profiles: listKnownModelProfiles(),
+        ...(offers ? { supported_contract_offers: listSupportedContractOffers() } : {}),
+      },
+      policy_commitments: {},
+    },
+    seed,
+  ) as unknown as AgentDescriptor;
+}
+
+describe('direct AFAL sessions and the disclosure budget', () => {
+  /** A peer that admits every PROPOSE and answers COMMIT with `commit()`. */
+  function stubPeer(commit: () => Promise<unknown>) {
+    const commits: unknown[] = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/agent-card.json')) return { ok: false, status: 404, json: async () => ({}) };
+      if (url.endsWith('/afal/descriptor')) {
+        return { ok: true, json: async () => signedDescriptor('bob-demo', BOB_SEED, 'http://peer.example.com/afal', false) };
+      }
+      if (url.endsWith('/propose')) {
+        const body = JSON.parse(String(init?.body)) as { propose: { proposal_id: string } };
+        const admit = signMessage(
+          DOMAIN_PREFIXES.ADMIT,
+          {
+            admission_version: '1',
+            proposal_id: body.propose.proposal_id,
+            outcome: 'ADMIT',
+            admit_token_id: 'a'.repeat(64),
+            admission_tier: 'DEFAULT',
+            expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+          },
+          BOB_SEED,
+        );
+        return { ok: true, json: async () => admit };
+      }
+      if (url.endsWith('/commit')) {
+        commits.push(JSON.parse(String(init?.body)));
+        return commit();
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return { commits };
+  }
+
+  function alice(): DirectAfalTransport {
+    return new DirectAfalTransport({
+      agentId: 'alice-demo',
+      seedHex: ALICE_SEED,
+      localDescriptor: signedDescriptor('alice-demo', ALICE_SEED),
+      relayUrl: 'https://relay.test',
+      peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
+    });
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('does not create another session when the peer rejects the COMMIT', async () => {
+    const { commits } = stubPeer(async () => ({ ok: false, status: 500, text: async () => 'abort' }));
+    const transport = alice();
+    let result = await handleRelaySignal(
+      { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'hello' },
+      transport,
+    );
+    for (let i = 0; i < 3 && result.ok; i++) {
+      const token = (result.data as { resume_token?: string | null } | null)?.resume_token;
+      if (!token) break;
+      result = await handleRelaySignal({ resume_token: token }, transport);
+    }
+    expect(result.ok).toBe(false);
+    expect(mockCreateAndSubmit).toHaveBeenCalledTimes(1);
+    expect(commits).toHaveLength(1);
+    expect(ledgerEntries()).toHaveLength(1);
+  });
+
+  it('re-sends the COMMIT for the existing session when the peer was unreachable', async () => {
+    let attempt = 0;
+    const { commits } = stubPeer(async () => {
+      attempt += 1;
+      if (attempt === 1) throw new TypeError('fetch failed');
+      return { ok: true, text: async () => 'ok' };
+    });
+    const transport = alice();
+    const first = await handleRelaySignal(
+      { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'hello' },
+      transport,
+    );
+    expect(first.ok).toBe(true);
+    const token = (first.data as { resume_token: string }).resume_token;
+    const second = await handleRelaySignal({ resume_token: token }, transport);
+    expect(second.ok).toBe(true);
+    expect(mockCreateAndSubmit).toHaveBeenCalledTimes(1);
+    expect(commits).toHaveLength(2);
+    const sessions = commits.map((c) => (c as { relay_session: { session_id: string } }).relay_session.session_id);
+    expect(sessions).toEqual(['sess-1', 'sess-1']);
+    expect(ledgerEntries()).toHaveLength(1);
+  });
+
+  it('charges both sides of a direct round trip with the locally built contract', async () => {
+    mockCreateAndSubmit.mockImplementation(async (_config: unknown, contract: object) => ({
+      sessionId: 'sess-rt',
+      contractHash: computeRelayContractHash(contract),
+      initiatorReadToken: 'ir',
+      responderSubmitToken: 'rs',
+      responderReadToken: 'rr',
+    }));
+    const bob = new DirectAfalTransport({
+      agentId: 'bob-demo',
+      seedHex: BOB_SEED,
+      localDescriptor: signedDescriptor('bob-demo', BOB_SEED),
+      relayUrl: 'https://relay.test',
+      respondMode: {
+        httpPort: 0,
+        bindAddress: '127.0.0.1',
+        policy: {
+          trustedAgents: [{ agentId: 'alice-demo', publicKeyHex: pubOf(ALICE_SEED) }],
+          allowedPurposeCodes: ['MEDIATION'],
+          allowedLaneIds: ['API_MEDIATED'],
+          maxEntropyBits: 256,
+          defaultTier: 'DENY',
+        },
+      },
+    });
+    await bob.start();
+    try {
+      const port = (bob as unknown as { httpServer: { port: number } }).httpServer.port;
+      const initiator = new DirectAfalTransport({
+        agentId: 'alice-demo',
+        seedHex: ALICE_SEED,
+        localDescriptor: signedDescriptor('alice-demo', ALICE_SEED),
+        relayUrl: 'https://relay.test',
+        peerDescriptorUrl: `http://127.0.0.1:${port}/afal/descriptor`,
+      });
+      const initiated = await handleRelaySignal(
+        { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'a' },
+        initiator,
+      );
+      expect(initiated.ok).toBe(true);
+
+      const responded = await handleRelaySignal({ mode: 'RESPOND', from: 'alice-demo', my_input: 'b' }, bob);
+      const token = (responded.data as { resume_token: string }).resume_token;
+      const joined = await handleRelaySignal({ resume_token: token }, bob);
+      expect(joined.ok).toBe(true);
+      expect(vi.mocked(submitInput)).toHaveBeenCalledTimes(1);
+      expect(ledgerEntries()).toEqual([
+        expect.objectContaining({ counterparty: 'bob-demo', bits: 12 }),
+        expect.objectContaining({ counterparty: 'alice-demo', bits: 12 }),
+      ]);
+    } finally {
+      await bob.stop();
+    }
+  });
+});
+
+describe('legacy JOIN', () => {
+  it('refuses a contract that does not hash to contract_hash, before charging', async () => {
+    process.env['SELKEY_AGENT_ID'] = 'bob-demo';
+    const contract = buildRelayContract('MEDIATION', ['alice-demo', 'bob-demo'])!;
+    const result = await handleRelaySignal({
+      mode: 'JOIN',
+      session_id: 'sess-9',
+      submit_token: 's',
+      read_token: 'r',
+      contract_hash: 'c'.repeat(64),
+      contract,
+      my_input: 'hi',
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('CONTRACT_MISMATCH');
+    expect(mockJoinAndWait).not.toHaveBeenCalled();
+    expect(ledgerEntries()).toEqual([]);
   });
 });

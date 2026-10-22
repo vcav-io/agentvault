@@ -15,6 +15,7 @@ import { signMessage, verifyMessage, DOMAIN_PREFIXES, contentHash } from './afal
 import { AfalResponder } from './afal-responder.js';
 import type { AdmissionPolicy, AdmittedProposal } from './afal-responder.js';
 import { AfalHttpServer } from './afal-http-server.js';
+import { fetchPeer } from './transport-errors.js';
 import { SELKEY_A2A_EXTENSION_URI, verifyAgentCardSignature } from './a2a-agent-card.js';
 import type { SelkeyA2AExtensionParams } from './a2a-agent-card.js';
 import type { ModelProfileRef } from './model-profiles.js';
@@ -335,7 +336,7 @@ export class DirectAfalTransport implements AfalTransport {
           'A2A-native direct transport does not accept inline relay payloads; send session tokens via commitAdmit() after ADMIT',
         );
       }
-      response = await fetch(transportTarget.proposeUrl, {
+      response = await fetchPeer(transportTarget.proposeUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(
@@ -348,7 +349,7 @@ export class DirectAfalTransport implements AfalTransport {
         ),
       });
     } else {
-      response = await fetch(peer.endpoints.propose, {
+      response = await fetchPeer(peer.endpoints.propose, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(wrappedBody),
@@ -554,7 +555,7 @@ export class DirectAfalTransport implements AfalTransport {
     let response: Response;
     const commitTaskId = `task-propose-${inviteId}`;
     if (transportTarget.useA2ANative) {
-      response = await fetch(transportTarget.commitUrl, {
+      response = await fetchPeer(transportTarget.commitUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(
@@ -567,7 +568,7 @@ export class DirectAfalTransport implements AfalTransport {
         ),
       });
     } else {
-      response = await fetch(peer.endpoints.commit, {
+      response = await fetchPeer(peer.endpoints.commit, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(signedCommit),
@@ -764,7 +765,7 @@ export class DirectAfalTransport implements AfalTransport {
 
     let response: Response;
     try {
-      response = await fetch(agentCardUrl);
+      response = await fetchPeer(agentCardUrl);
     } catch {
       return null;
     }
@@ -968,7 +969,7 @@ export class DirectAfalTransport implements AfalTransport {
     if (!target) return null;
 
     const negotiateTaskId = `task-negotiate-${proposal.negotiation_id}`;
-    const response = await fetch(
+    const response = await fetchPeer(
       target.negotiateUrl,
       target.useA2ANative
         ? {
@@ -1030,7 +1031,7 @@ export class DirectAfalTransport implements AfalTransport {
     const target = this.resolvePeerNegotiationTarget(peer);
     if (!target) return null;
 
-    const response = await fetch(
+    const response = await fetchPeer(
       target.negotiateUrl,
       target.useA2ANative
         ? {
@@ -1082,7 +1083,7 @@ export class DirectAfalTransport implements AfalTransport {
     descriptorUrl: string,
     expectedPeerAgentId?: string,
   ): Promise<AgentDescriptor> {
-    const response = await fetch(descriptorUrl);
+    const response = await fetchPeer(descriptorUrl);
     if (!response.ok) {
       throw new Error(`Failed to fetch peer descriptor: ${response.status}`);
     }

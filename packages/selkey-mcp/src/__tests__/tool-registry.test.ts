@@ -5,6 +5,18 @@ import { IfcService } from '../ifc.js';
 import { _setDiscoverPollConfigForTesting } from '../tools/relaySignal.js';
 import { _resetHandlesForTesting } from '../tools/relayHandles.js';
 
+// This suite mocks `selkey/contracts` with schema-less contracts, which the
+// owner-side disclosure ledger (on by default) refuses. The ledger itself is
+// covered by entropy-ledger*.test.ts and the direct round trip in
+// responder-contract-checks.test.ts.
+beforeEach(() => {
+  process.env['SELKEY_ENTROPY_LEDGER'] = 'off';
+});
+afterEach(() => {
+  delete process.env['SELKEY_ENTROPY_LEDGER'];
+});
+
+
 // Mock selkey to avoid real HTTP calls
 vi.mock('selkey', () => ({
   createAndSubmit: vi.fn().mockResolvedValue({

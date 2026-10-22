@@ -625,6 +625,15 @@ describe('receipt verification against the pinned relay key', () => {
   });
 
   describe('JOIN mode', () => {
+    // These legacy JOIN calls pass no contract, which the disclosure ledger
+    // refuses; they test receipt checks only.
+    beforeEach(() => {
+      process.env['SELKEY_ENTROPY_LEDGER'] = 'off';
+    });
+    afterEach(() => {
+      delete process.env['SELKEY_ENTROPY_LEDGER'];
+    });
+
     function joinWith(makeReceipt: (context: unknown, nonce: string) => Record<string, unknown>) {
       vi.stubGlobal(
         'fetch',
