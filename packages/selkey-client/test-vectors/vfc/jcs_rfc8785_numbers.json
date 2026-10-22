@@ -1,0 +1,125 @@
+{
+  "cases": [
+    {
+      "expected_canonical": "0",
+      "ieee754_hex": "0000000000000000",
+      "within_v3_number_limit": true
+    },
+    {
+      "expected_canonical": "0",
+      "ieee754_hex": "8000000000000000",
+      "within_v3_number_limit": true
+    },
+    {
+      "expected_canonical": "5e-324",
+      "ieee754_hex": "0000000000000001",
+      "within_v3_number_limit": true
+    },
+    {
+      "expected_canonical": "-5e-324",
+      "ieee754_hex": "8000000000000001",
+      "within_v3_number_limit": true
+    },
+    {
+      "expected_canonical": "1.7976931348623157e+308",
+      "ieee754_hex": "7fefffffffffffff",
+      "within_v3_number_limit": false
+    },
+    {
+      "expected_canonical": "-1.7976931348623157e+308",
+      "ieee754_hex": "ffefffffffffffff",
+      "within_v3_number_limit": false
+    },
+    {
+      "expected_canonical": "9007199254740992",
+      "ieee754_hex": "4340000000000000",
+      "within_v3_number_limit": false
+    },
+    {
+      "expected_canonical": "-9007199254740992",
+      "ieee754_hex": "c340000000000000",
+      "within_v3_number_limit": false
+    },
+    {
+      "expected_canonical": "295147905179352830000",
+      "ieee754_hex": "4430000000000000",
+      "within_v3_number_limit": false
+    },
+    {
+      "expected_canonical": "9.999999999999997e+22",
+      "ieee754_hex": "44b52d02c7e14af5",
+      "within_v3_number_limit": false
+    },
+    {
+      "expected_canonical": "1e+23",
+      "ieee754_hex": "44b52d02c7e14af6",
+      "within_v3_number_limit": false
+    },
+    {
+      "expected_canonical": "1.0000000000000001e+23",
+      "ieee754_hex": "44b52d02c7e14af7",
+      "within_v3_number_limit": false
+    },
+    {
+      "expected_canonical": "999999999999999700000",
+      "ieee754_hex": "444b1ae4d6e2ef4e",
+      "within_v3_number_limit": false
+    },
+    {
+      "expected_canonical": "999999999999999900000",
+      "ieee754_hex": "444b1ae4d6e2ef4f",
+      "within_v3_number_limit": false
+    },
+    {
+      "expected_canonical": "1e+21",
+      "ieee754_hex": "444b1ae4d6e2ef50",
+      "within_v3_number_limit": false
+    },
+    {
+      "expected_canonical": "9.999999999999997e-7",
+      "ieee754_hex": "3eb0c6f7a0b5ed8c",
+      "within_v3_number_limit": true
+    },
+    {
+      "expected_canonical": "0.000001",
+      "ieee754_hex": "3eb0c6f7a0b5ed8d",
+      "within_v3_number_limit": true
+    },
+    {
+      "expected_canonical": "333333333.3333332",
+      "ieee754_hex": "41b3de4355555553",
+      "within_v3_number_limit": true
+    },
+    {
+      "expected_canonical": "333333333.33333325",
+      "ieee754_hex": "41b3de4355555554",
+      "within_v3_number_limit": true
+    },
+    {
+      "expected_canonical": "333333333.3333333",
+      "ieee754_hex": "41b3de4355555555",
+      "within_v3_number_limit": true
+    },
+    {
+      "expected_canonical": "333333333.3333334",
+      "ieee754_hex": "41b3de4355555556",
+      "within_v3_number_limit": true
+    },
+    {
+      "expected_canonical": "333333333.33333343",
+      "ieee754_hex": "41b3de4355555557",
+      "within_v3_number_limit": true
+    },
+    {
+      "expected_canonical": "-0.0000033333333333333333",
+      "ieee754_hex": "becbf647612f3696",
+      "within_v3_number_limit": true
+    },
+    {
+      "expected_canonical": "1424953923781206.2",
+      "ieee754_hex": "43143ff3c1cb0959",
+      "within_v3_number_limit": true
+    }
+  ],
+  "description": "RFC 8785 Appendix B: IEEE-754 double (big-endian hex bits) to canonical text. within_v3_number_limit=false values are rejected by the v3 profile."
+}

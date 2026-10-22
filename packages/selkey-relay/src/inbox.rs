@@ -13,7 +13,6 @@ use tokio::sync::{broadcast, Mutex, RwLock};
 
 use crate::error::RelayError;
 use crate::inbox_types::*;
-use crate::relay::compute_contract_hash;
 use crate::session::SessionStore;
 use crate::types::Contract;
 
@@ -176,13 +175,15 @@ impl InboxStore {
                 "purpose_code must not be empty".to_string(),
             ));
         }
+        let accepted = crate::relay::accept_contract(&request.contract)?;
         Self::validate_invite_contract_binding(
             from_agent_id,
             &request.to_agent_id,
             &request.purpose_code,
-            &request.contract,
+            &accepted.contract,
         )?;
-        let contract_hash = compute_contract_hash(&request.contract)?;
+        let contract_hash = accepted.contract_hash.clone();
+        let purpose_code = accepted.contract.purpose_code.to_string();
 
         let now = Utc::now();
         let invite_ttl_chrono = chrono::Duration::from_std(self.invite_ttl).unwrap_or_else(|e| {
@@ -198,10 +199,11 @@ impl InboxStore {
             from_agent_id: from_agent_id.to_string(),
             to_agent_id: request.to_agent_id.clone(),
             from_agent_pubkey,
-            contract: request.contract.clone(),
+            contract: accepted.contract,
+            contract_json: accepted.contract_json,
             contract_hash: contract_hash.clone(),
             provider: request.provider.clone(),
-            purpose_code: request.contract.purpose_code.to_string(),
+            purpose_code,
             status: InviteStatus::Pending,
             created_at: now,
             updated_at: now,
@@ -883,7 +885,7 @@ mod tests {
     fn test_create_request() -> CreateInviteRequest {
         CreateInviteRequest {
             to_agent_id: "bob".to_string(),
-            contract: test_contract(),
+            contract: serde_json::to_value(test_contract()).unwrap(),
             provider: "anthropic".to_string(),
             purpose_code: "COMPATIBILITY".to_string(),
             from_agent_pubkey: None,
@@ -912,12 +914,32 @@ mod tests {
             "z".repeat(64),
         ] {
             let mut request = test_create_request();
-            request.contract.relay_verifying_key_hex = Some(key);
+            request.contract["relay_verifying_key_hex"] = serde_json::json!(key);
             let err = store
                 .create_invite("alice", &request, None)
                 .await
                 .unwrap_err();
             assert!(matches!(err, RelayError::ContractValidation(_)));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_invite_rejects_repeated_or_empty_participants() {
+        let store = InboxStore::new(Duration::from_secs(604800));
+        for participants in [
+            serde_json::json!(["alice", "alice"]),
+            serde_json::json!(["alice", ""]),
+        ] {
+            let mut request = test_create_request();
+            request.contract["participants"] = participants.clone();
+            let err = store
+                .create_invite("alice", &request, None)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err, RelayError::ContractValidation(_)),
+                "participants {participants} must be rejected, got {err:?}"
+            );
         }
     }
 
@@ -1529,7 +1551,7 @@ mod tests {
     async fn test_create_invite_contract_participants_must_match_inbox_agents() {
         let store = InboxStore::new(Duration::from_secs(604800));
         let mut request = test_create_request();
-        request.contract.participants = vec!["mallory".to_string(), "bob".to_string()];
+        request.contract["participants"] = serde_json::json!(["mallory", "bob"]);
 
         let result = store.create_invite("alice", &request, None).await;
         assert!(matches!(result, Err(RelayError::ContractValidation(_))));
@@ -1724,11 +1746,7 @@ mod tests {
     async fn test_create_invite_wrong_participant_count() {
         let store = InboxStore::new(Duration::from_secs(604800));
         let mut request = test_create_request();
-        request.contract.participants = vec![
-            "alice".to_string(),
-            "bob".to_string(),
-            "charlie".to_string(),
-        ];
+        request.contract["participants"] = serde_json::json!(["alice", "bob", "charlie"]);
 
         let result = store.create_invite("alice", &request, None).await;
         assert!(
@@ -1741,7 +1759,7 @@ mod tests {
         let store = InboxStore::new(Duration::from_secs(604800));
         let mut request = test_create_request();
         // Reverse the order: ["bob", "alice"] instead of ["alice", "bob"]
-        request.contract.participants = vec!["bob".to_string(), "alice".to_string()];
+        request.contract["participants"] = serde_json::json!(["bob", "alice"]);
 
         // Should succeed — order doesn't matter, just membership
         let result = store.create_invite("alice", &request, None).await;

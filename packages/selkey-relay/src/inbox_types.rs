@@ -6,10 +6,30 @@ use crate::types::Contract;
 // Re-export protocol types from vault-family-types for use within this crate.
 // InviteDetailResponse is defined locally (extended with contract_json).
 pub use vault_family_types::{
-    AcceptInviteRequest, AcceptInviteResponse, CreateInviteRequest, CreateInviteResponse,
-    DeclineInviteRequest, DeclineReasonCode, InboxEvent, InboxEventType, InboxQuery, InboxResponse,
-    InviteStatus, InviteSummary,
+    AcceptInviteRequest, AcceptInviteResponse, CreateInviteResponse, DeclineInviteRequest,
+    DeclineReasonCode, InboxEvent, InboxEventType, InboxQuery, InboxResponse, InviteStatus,
+    InviteSummary,
 };
+
+/// Request to create an invite (POST /invites).
+///
+/// The contract is kept as received: its contract hash v2 is computed from
+/// this JSON, and unknown members are rejected.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CreateInviteRequest {
+    pub to_agent_id: String,
+    pub contract: serde_json::Value,
+    #[serde(default = "default_invite_provider")]
+    pub provider: String,
+    pub purpose_code: String,
+    /// Sender's public key (hex). Optional — if omitted, the registry's key is used.
+    #[serde(default)]
+    pub from_agent_pubkey: Option<String>,
+}
+
+fn default_invite_provider() -> String {
+    "anthropic".to_string()
+}
 
 /// Caller-dependent invite detail response (extended from vault-family-types).
 ///
@@ -69,6 +89,9 @@ pub struct Invite {
     pub from_agent_pubkey: Option<String>,
     /// Full contract (stored server-side, used on accept to create session).
     pub contract: Contract,
+    /// The normalised contract JSON whose contract hash v2 is `contract_hash`.
+    /// Returned to the recipient as `contract_json`.
+    pub contract_json: serde_json::Value,
     pub contract_hash: String,
     pub provider: String,
     pub purpose_code: String,
@@ -122,7 +145,7 @@ impl Invite {
             status: self.status,
             purpose_code: self.purpose_code.clone(),
             contract_hash: self.contract_hash.clone(),
-            contract_json: serde_json::to_value(&self.contract).unwrap_or(serde_json::Value::Null),
+            contract_json: self.contract_json.clone(),
             provider: self.provider.clone(),
             created_at: self.created_at,
             updated_at: self.updated_at,
@@ -175,7 +198,7 @@ mod tests {
 
     fn test_invite() -> Invite {
         let now = Utc::now();
-        Invite {
+        let mut invite = Invite {
             version: "1".to_string(),
             invite_id: "inv_test123".to_string(),
             from_agent_id: "alice".to_string(),
@@ -201,6 +224,7 @@ mod tests {
                 entropy_enforcement: None,
                 relay_verifying_key_hex: None,
             },
+            contract_json: serde_json::json!({}),
             contract_hash: "c".repeat(64),
             provider: "anthropic".to_string(),
             purpose_code: "COMPATIBILITY".to_string(),
@@ -211,7 +235,12 @@ mod tests {
             session_id: None,
             session_tokens: None,
             decline_reason_code: None,
-        }
+        };
+        invite.contract_json =
+            crate::relay::accept_contract(&serde_json::to_value(&invite.contract).unwrap())
+                .unwrap()
+                .contract_json;
+        invite
     }
 
     // ── Serde round-trip ─────────────────────────────────────────────────

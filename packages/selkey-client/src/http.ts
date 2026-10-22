@@ -10,6 +10,7 @@ import type {
   SessionStatusResponse,
   SessionOutputResponse,
 } from './types.js';
+import { isValidCommitmentNonce } from './commitment-v3.js';
 
 class RelayHttpError extends Error {
   constructor(
@@ -59,15 +60,34 @@ export async function createSession(
   return res.json() as Promise<CreateSessionResponse>;
 }
 
+/**
+ * Submit this party's input.
+ *
+ * `commitmentNonce` is a fresh nonce from `generateCommitmentNonce()` (64
+ * lowercase hex characters), generated for this submission only. The relay
+ * commits to the input with it, and the caller keeps it with its input to
+ * check its own commitment in the receipt later. It is a local secret: do not
+ * log it or share it with the counterparty.
+ */
 export async function submitInput(
   config: RelayClientConfig,
   sessionId: string,
   token: string,
   role: string,
   context: unknown,
+  commitmentNonce: string,
   expectedContractHash?: string,
 ): Promise<SessionStatusResponse> {
-  const payload: Record<string, unknown> = { role, context };
+  if (!isValidCommitmentNonce(commitmentNonce)) {
+    throw new Error(
+      'commitmentNonce must be 64 lowercase hex characters (use generateCommitmentNonce())',
+    );
+  }
+  const payload: Record<string, unknown> = {
+    role,
+    context,
+    commitment_nonce: commitmentNonce,
+  };
   if (expectedContractHash) {
     payload.expected_contract_hash = expectedContractHash;
   }

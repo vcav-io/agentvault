@@ -10,11 +10,64 @@ use crate::session::{AbortReason, SessionState};
 // Contract is now defined in vault-family-types. Re-export for use within crate.
 pub use vault_family_types::Contract;
 
+/// Client-generated input commitment nonce (32 bytes).
+///
+/// Sent as `commitment_nonce`: exactly 64 lowercase hex characters. The relay
+/// uses it only to compute the participant's input commitment; it is never
+/// written to receipts, logs or responses, and its bytes are zeroed when the
+/// input is cleared.
+#[derive(Clone)]
+pub struct CommitmentNonce([u8; receipt_core::commitment_v3::COMMITMENT_NONCE_LEN]);
+
+impl CommitmentNonce {
+    /// Parse the wire form (64 lowercase hex characters).
+    pub fn parse(hex_nonce: &str) -> Result<Self, receipt_core::CommitmentError> {
+        receipt_core::parse_commitment_nonce(hex_nonce).map(Self)
+    }
+
+    pub fn as_bytes(&self) -> &[u8; receipt_core::commitment_v3::COMMITMENT_NONCE_LEN] {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for CommitmentNonce {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CommitmentNonce(<redacted>)")
+    }
+}
+
+impl Drop for CommitmentNonce {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.0);
+    }
+}
+
+impl<'de> Deserialize<'de> for CommitmentNonce {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let mut hex_nonce = String::deserialize(deserializer)?;
+        let parsed = CommitmentNonce::parse(&hex_nonce).map_err(|_| {
+            serde::de::Error::custom(
+                "commitment_nonce must be 64 lowercase hex characters (32 bytes)",
+            )
+        });
+        zeroize::Zeroize::zeroize(&mut hex_nonce);
+        parsed
+    }
+}
+
+/// A fixed, well-formed nonce for unit tests.
+#[cfg(test)]
+pub(crate) fn test_nonce() -> CommitmentNonce {
+    CommitmentNonce::parse(&"11".repeat(32)).expect("valid test nonce")
+}
+
 /// One party's input to the relay.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RelayInput {
     pub role: String,
     pub context: serde_json::Value,
+    /// Required. Salts this party's input commitment in the receipt.
+    pub commitment_nonce: CommitmentNonce,
 }
 
 /// Tier 2 model profile — describes the cognitive class consented to by both
@@ -42,9 +95,13 @@ pub struct ModelProfile {
 // ============================================================================
 
 /// Relay request: contract + both party inputs (single-shot).
+///
+/// The single caller supplies both inputs, each with its own
+/// `commitment_nonce`. The contract is kept as received: its contract hash v2
+/// is computed from this JSON.
 #[derive(Debug, Deserialize)]
 pub struct RelayRequest {
-    pub contract: Contract,
+    pub contract: serde_json::Value,
     pub input_a: RelayInput,
     pub input_b: RelayInput,
     pub provider: String,
@@ -54,10 +111,8 @@ pub struct RelayRequest {
 #[derive(Debug, Serialize)]
 pub struct RelayResponse {
     pub output: serde_json::Value,
-    pub receipt: receipt_core::Receipt,
-    pub receipt_signature: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub receipt_v2: Option<receipt_core::ReceiptV2>,
+    /// Signed v3 receipt.
+    pub receipt: receipt_core::ReceiptV3,
 }
 
 // ============================================================================
@@ -67,7 +122,8 @@ pub struct RelayResponse {
 /// POST /sessions request body.
 #[derive(Debug, Deserialize)]
 pub struct CreateSessionRequest {
-    pub contract: Contract,
+    /// The contract as received; its contract hash v2 is computed from this JSON.
+    pub contract: serde_json::Value,
     #[serde(default = "default_provider")]
     pub provider: String,
 }
@@ -101,6 +157,9 @@ pub struct SubmitInputRequest {
     /// session with a permissive contract while advertising a different hash.
     #[serde(default)]
     pub expected_contract_hash: Option<String>,
+    /// Required. Client-generated nonce that salts this party's input
+    /// commitment (64 lowercase hex characters).
+    pub commitment_nonce: CommitmentNonce,
 }
 
 /// Constant-shape status response (same structure regardless of state).
@@ -116,9 +175,8 @@ pub struct SessionOutputResponse {
     pub state: SessionState,
     pub abort_reason: Option<AbortReason>,
     pub output: Option<serde_json::Value>,
-    pub receipt: Option<receipt_core::Receipt>,
-    pub receipt_signature: Option<String>,
-    pub receipt_v2: Option<receipt_core::ReceiptV2>,
+    /// Signed v3 receipt (success or failure), once the session is terminal.
+    pub receipt: Option<receipt_core::ReceiptV3>,
 }
 
 // ============================================================================

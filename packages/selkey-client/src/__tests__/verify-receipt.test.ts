@@ -12,6 +12,7 @@ import * as path from 'node:path';
 import {
   verifyReceipt,
   computeCommitmentHash,
+  computePromptProgramHash,
   computePromptTemplateHash,
 } from '../verify-receipt.js';
 import type { VerifyArtefacts } from '../verify-receipt.js';
@@ -78,6 +79,14 @@ const sampleContract = loadFixture('sample-contract.json');
 const sampleOutput = loadFixture('sample-output.json');
 const sampleSchema = loadFixture('sample-schema.json');
 const samplePromptTemplate = loadTextFixture('sample-prompt-template.txt');
+// A prompt program: prompt_template_hash is the hash of its JCS form.
+const sampleProgram = {
+  version: '1.0.0',
+  system_instruction: samplePromptTemplate,
+  input_format: 'json',
+};
+// computePromptProgramHash(program) is SHA-256 of the JCS form of the program.
+const sampleProgramHash = computeCommitmentHash(sampleProgram);
 
 // ---------------------------------------------------------------------------
 // computeCommitmentHash — golden vectors
@@ -181,7 +190,7 @@ describe('verifyReceipt — with artefacts', () => {
         output_hash: expectedHashes.output_hash,
         contract_hash: expectedHashes.contract_hash,
         schema_hash: expectedHashes.schema_hash,
-        prompt_template_hash: expectedHashes.prompt_template_hash,
+        prompt_template_hash: sampleProgramHash,
       },
     };
     const signed = signV2(base, seedHex);
@@ -190,7 +199,7 @@ describe('verifyReceipt — with artefacts', () => {
       output: sampleOutput,
       contract: sampleContract,
       outputSchema: sampleSchema,
-      promptTemplate: samplePromptTemplate,
+      promptProgram: sampleProgram,
     };
     const result = verifyReceipt(signed, publicKeyHex, artefacts);
     expect(result.valid).toBe(true);
@@ -204,10 +213,10 @@ describe('verifyReceipt — with artefacts', () => {
     const base: Record<string, unknown> = {
       schema_version: '1.0.0',
       session_id: 'sess-4',
-      output_hash: expectedHashes.output_hash,
+      output: sampleOutput,
       contract_hash: expectedHashes.contract_hash,
-      schema_hash: expectedHashes.schema_hash,
-      prompt_template_hash: expectedHashes.prompt_template_hash,
+      output_schema_hash: expectedHashes.schema_hash,
+      prompt_template_hash: sampleProgramHash,
     };
     const signed = signV1(base, seedHex);
 
@@ -215,7 +224,7 @@ describe('verifyReceipt — with artefacts', () => {
       output: sampleOutput,
       contract: sampleContract,
       outputSchema: sampleSchema,
-      promptTemplate: samplePromptTemplate,
+      promptProgram: sampleProgram,
     };
     const result = verifyReceipt(signed, publicKeyHex, artefacts);
     expect(result.valid).toBe(true);
@@ -445,5 +454,150 @@ describe('verifyReceipt — TEE pubkey binding', () => {
     const result = verifyReceipt(signed);
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.includes('No verification key'))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// verifyReceipt — commitment field mapping and cross-checks (v1, v2)
+// ---------------------------------------------------------------------------
+
+describe('verifyReceipt — v1 commitment fields', () => {
+  it('checks the schema against output_schema_hash on v1 receipts', () => {
+    const { seedHex, publicKeyHex } = generateKeypair();
+    const signed = signV1(
+      {
+        schema_version: '1.0.0',
+        session_id: 'sess-v1-schema',
+        output_schema_hash: 'deadbeef'.repeat(8),
+      },
+      seedHex,
+    );
+    const result = verifyReceipt(signed, publicKeyHex, { outputSchema: sampleSchema });
+    expect(result.valid).toBe(false);
+    expect(result.commitment_checks?.[0]).toMatchObject({ field: 'output_schema_hash', match: false });
+  });
+
+  it('checks the received output against the inline output on v1 receipts', () => {
+    const { seedHex, publicKeyHex } = generateKeypair();
+    const signed = signV1(
+      { schema_version: '1.0.0', session_id: 'sess-v1-output', output: { decision: 'reject' } },
+      seedHex,
+    );
+    expect(verifyReceipt(signed, publicKeyHex, { output: { decision: 'approve' } }).valid).toBe(false);
+    expect(verifyReceipt(signed, publicKeyHex, { output: { decision: 'reject' } }).valid).toBe(true);
+  });
+});
+
+describe('verifyReceipt — prompt program hash', () => {
+  it('checks prompt_template_hash as the hash of the JCS prompt program', () => {
+    const { seedHex, publicKeyHex } = generateKeypair();
+    const signed = signV2(
+      {
+        receipt_schema_version: '2.0.0',
+        session_id: 'sess-prog',
+        commitments: { prompt_template_hash: sampleProgramHash },
+      },
+      seedHex,
+    );
+    const ok = verifyReceipt(signed, publicKeyHex, { promptProgram: sampleProgram });
+    expect(ok.valid).toBe(true);
+    expect(ok.commitment_checks).toEqual([
+      expect.objectContaining({ field: 'prompt_template_hash', match: true }),
+    ]);
+    const changed = verifyReceipt(signed, publicKeyHex, {
+      promptProgram: { ...sampleProgram, input_format: 'text' },
+    });
+    expect(changed.valid).toBe(false);
+  });
+
+  it('the program hash is not the hash of the raw template text', () => {
+    expect(computePromptProgramHash(sampleProgram)).toBe(sampleProgramHash);
+    expect(computePromptProgramHash(sampleProgram)).not.toBe(
+      computePromptTemplateHash(samplePromptTemplate),
+    );
+  });
+});
+
+describe('verifyReceipt — contract envelope', () => {
+  it('ignores a stored contract_hash member when checking the contract (v2)', () => {
+    const { seedHex, publicKeyHex } = generateKeypair();
+    const signed = signV2(
+      {
+        receipt_schema_version: '2.0.0',
+        session_id: 'sess-envelope',
+        commitments: { contract_hash: expectedHashes.contract_hash },
+      },
+      seedHex,
+    );
+    const stored = { ...(sampleContract as object), contract_hash: expectedHashes.contract_hash };
+    const result = verifyReceipt(signed, publicKeyHex, { contract: stored });
+    expect(result.valid).toBe(true);
+    expect(result.commitment_checks?.[0]).toMatchObject({ field: 'contract_hash', match: true });
+  });
+});
+
+describe('verifyReceipt — own input and output cross-checks (v2)', () => {
+  const myContext = { offer: 120 };
+
+  function v2WithInputs(seedHex: string, extra: Record<string, unknown> = {}) {
+    return signV2(
+      {
+        receipt_schema_version: '2.0.0',
+        session_id: 'sess-own',
+        commitments: {
+          output_hash: expectedHashes.output_hash,
+          input_commitments: [
+            {
+              participant_id: 'alice',
+              input_hash: computeCommitmentHash(myContext),
+              hash_alg: 'SHA-256',
+              canonicalization: 'CANONICAL_JSON_V1',
+            },
+          ],
+          ...extra,
+        },
+      },
+      seedHex,
+    );
+  }
+
+  it('passes for this participant input', () => {
+    const { seedHex, publicKeyHex } = generateKeypair();
+    const result = verifyReceipt(v2WithInputs(seedHex), publicKeyHex, {
+      ownInput: { participantId: 'alice', context: myContext },
+    });
+    expect(result.valid).toBe(true);
+  });
+
+  it('fails when the committed input differs from this participant input', () => {
+    const { seedHex, publicKeyHex } = generateKeypair();
+    const result = verifyReceipt(v2WithInputs(seedHex), publicKeyHex, {
+      ownInput: { participantId: 'alice', context: { offer: 121 } },
+    });
+    expect(result.valid).toBe(false);
+  });
+
+  it('fails when the receipt has no entry for this participant', () => {
+    const { seedHex, publicKeyHex } = generateKeypair();
+    const result = verifyReceipt(v2WithInputs(seedHex), publicKeyHex, {
+      ownInput: { participantId: 'bob', context: myContext },
+    });
+    expect(result.valid).toBe(false);
+  });
+
+  it('fails when the inline output differs from the received output', () => {
+    const { seedHex, publicKeyHex } = generateKeypair();
+    const signed = v2WithInputs(seedHex, { output: { decision: 'reject' } });
+    const result = verifyReceipt(signed, publicKeyHex, { output: sampleOutput });
+    expect(result.valid).toBe(false);
+  });
+
+  it('fails a requested check when the receipt lacks that commitment', () => {
+    const { seedHex, publicKeyHex } = generateKeypair();
+    const signed = signV2(
+      { receipt_schema_version: '2.0.0', session_id: 'sess-missing', commitments: {} },
+      seedHex,
+    );
+    expect(verifyReceipt(signed, publicKeyHex, { outputSchema: sampleSchema }).valid).toBe(false);
   });
 });

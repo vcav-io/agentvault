@@ -18,10 +18,12 @@ Execution mode: EVERYDAY (Selkey)
 
 ## Receipt Format
 
-- Schema version: 1.0.0
-- Signing: Ed25519, domain prefix VCAV-RECEIPT-V1:
-- Canonicalization: urn:vcav:vssp:canon:json-sha256-v1
-- Verification: compatible with verifier-core Tier 1/2/3
+- Schema version: 3.0.0 (receipt v3, the only format emitted)
+- Signing: Ed25519 over SHA-256("VCAV-RECEIPT-V3:" || JCS(unsigned receipt))
+- Canonicalization: JCS_RFC8785 (RFC 8785, numbers limited to +/-(2^53-1))
+- Input commitments: SHA256_N32_JCS_V3, salted with a client-supplied `commitment_nonce`
+- Contract hash: SHA256_JCS_V2
+- Verification: verifier-core / receipt-core `verify_receipt_v3_json` and the TS client `verifyReceipt`
 
 ## MVP Scope
 

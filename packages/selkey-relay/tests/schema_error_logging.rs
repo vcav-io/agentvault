@@ -20,6 +20,9 @@ use selkey_relay::{
     AppState,
 };
 
+/// Well-formed client commitment nonce (64 lowercase hex characters).
+const TEST_NONCE: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+
 #[derive(Clone, Default)]
 struct CapturedLogs(Arc<Mutex<Vec<u8>>>);
 
@@ -175,7 +178,7 @@ async fn test_session_schema_error_log_omits_output_values() {
                     .header("content-type", "application/json")
                     .header("authorization", format!("Bearer {token}"))
                     .body(Body::from(
-                        serde_json::to_vec(&serde_json::json!({ "role": role, "context": {} }))
+                        serde_json::to_vec(&serde_json::json!({ "role": role, "context": {}, "commitment_nonce": TEST_NONCE }))
                             .unwrap(),
                     ))
                     .unwrap(),

@@ -103,7 +103,10 @@ RESPONDER_READ_TOKEN="..."
 
 ### 2. Submit inputs (both parties)
 
-Each party submits their input using their submit token:
+Each party submits their input using their submit token, with a fresh
+`commitment_nonce` (32 random bytes as 64 lowercase hex characters) that salts its
+input commitment in the receipt. Keep the nonce if you want to check your own
+commitment later; never reuse it.
 
 ```bash
 # Initiator
@@ -113,7 +116,8 @@ curl -s -X POST http://localhost:3100/sessions/$SESSION_ID/input \
   -d '{
     "role": "alice",
     "context": { "profile": "Early-stage SaaS startup, Series A, B2B fintech, 15 employees" },
-    "expected_contract_hash": "'$CONTRACT_HASH'"
+    "expected_contract_hash": "'$CONTRACT_HASH'",
+    "commitment_nonce": "'"$(openssl rand -hex 32)"'"
   }'
 
 # Responder
@@ -122,7 +126,8 @@ curl -s -X POST http://localhost:3100/sessions/$SESSION_ID/input \
   -H "Authorization: Bearer $RESPONDER_SUBMIT_TOKEN" \
   -d '{
     "role": "bob",
-    "context": { "profile": "VC fund focused on B2B fintech, Series A-B, check sizes $2-10M" }
+    "context": { "profile": "VC fund focused on B2B fintech, Series A-B, check sizes $2-10M" },
+    "commitment_nonce": "'"$(openssl rand -hex 32)"'"
   }'
 ```
 
@@ -150,9 +155,8 @@ Response:
   "state": "Completed",
   "abort_reason": null,
   "output": { "...bounded signal..." },
-  "receipt": { "...full receipt..." },
-  "receipt_signature": "...hex Ed25519 signature..."
+  "receipt": { "...signed receipt v3, signature embedded..." }
 }
 ```
 
-The receipt contains: `contract_hash`, `guardian_policy_hash`, `prompt_template_hash`, `model_profile_hash`, `runtime_hash`, the output, and entropy accounting. See the [API Reference](api-reference.md) for full details.
+The v3 receipt commits to the contract (contract hash v2), the enforced output schema, the output, each participant's salted input commitment, the prompt template and the preflight bundle (policy, model profile, enforcement parameters), and records relay claims such as the model identity and channel capacity. See the [API Reference](api-reference.md) and the [Receipt Verification Guide](receipt-verification-guide.md) for full details.

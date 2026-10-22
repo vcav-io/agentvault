@@ -44,7 +44,9 @@ fn extract_inbox_agent<'a>(
 pub async fn create_invite_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(mut request): Json<CreateInviteRequest>,
+    crate::strict_json::StrictJson(mut request): crate::strict_json::StrictJson<
+        CreateInviteRequest,
+    >,
 ) -> Result<Json<CreateInviteResponse>, RelayError> {
     let agent_id = extract_inbox_agent(&headers, &state.agent_registry)?;
 

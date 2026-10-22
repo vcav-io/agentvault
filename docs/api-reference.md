@@ -58,7 +58,7 @@ Relay capabilities. No authentication required.
   "providers": ["anthropic", "openai", "gemini"],
   "purposes": ["COMPATIBILITY", "MEDIATION", "SCHEDULING", ...],
   "entropy_enforcement": "ADVISORY",
-  "receipt_schema_version": "2.1.0",
+  "receipt_schema_version": "3.0.0",
   "enforcement_capabilities": ["..."],
   "available_schema_hashes": ["...content-addressed output schema hashes..."],
   "available_policy_hashes": ["...content-addressed enforcement policy hashes..."]
@@ -87,22 +87,28 @@ Single-shot relay: submit both inputs and get a result in one call. No session m
   },
   "input_a": {
     "role": "alice",
-    "context": { "...structured input..." }
+    "context": { "...structured input..." },
+    "commitment_nonce": "...64 lowercase hex characters..."
   },
   "input_b": {
     "role": "bob",
-    "context": { "...structured input..." }
+    "context": { "...structured input..." },
+    "commitment_nonce": "...64 lowercase hex characters..."
   },
   "provider": "anthropic"
 }
 ```
 
+The single caller supplies both inputs, so it generates both nonces: one fresh
+32-byte nonce per input (see [`commitment_nonce`](#commitment_nonce)). Each
+input is rejected if its nonce is missing or malformed. The contract follows
+the same rules as `POST /sessions`.
+
 **Response** `200 OK`
 ```json
 {
   "output": { "...validated JSON matching output_schema..." },
-  "receipt": { "...signed receipt..." },
-  "receipt_signature": "...128-char hex Ed25519 signature..."
+  "receipt": { "...signed receipt v3 (see GET /sessions/:id/output)..." }
 }
 ```
 
@@ -130,11 +136,18 @@ Create a bilateral session. Returns a session ID and four role-scoped tokens.
 
 `provider` defaults to `"anthropic"` if omitted.
 
+The contract is hashed exactly as received with **contract hash v2**
+(`SHA256_JCS_V2`, see [receipt-verification-guide.md](receipt-verification-guide.md#contract-hash-v2)):
+members outside the contract member set (including a `contract_hash` member) are
+rejected with `400`, absent or `null` optional members are omitted, and the
+result is canonicalised with RFC 8785. Numbers anywhere in the contract must be
+within ±(2^53−1).
+
 **Response** `200 OK`
 ```json
 {
   "session_id": "...",
-  "contract_hash": "...64-char hex SHA-256 of JCS-canonicalized contract...",
+  "contract_hash": "...64-char hex contract hash v2 (SHA256_JCS_V2)...",
   "initiator_submit_token": "...",
   "initiator_read_token": "...",
   "responder_submit_token": "...",
@@ -155,11 +168,39 @@ Submit one participant's input. Requires a submit token.
 {
   "role": "alice",
   "context": { "...structured input..." },
-  "expected_contract_hash": "...optional, verified against session..."
+  "expected_contract_hash": "...optional, verified against session...",
+  "commitment_nonce": "...required, 64 lowercase hex characters..."
 }
 ```
 
-`expected_contract_hash` is optional but recommended. If provided, the relay verifies it matches the session's contract hash before accepting input. This prevents a contract substitution attack where a malicious session creator advertises one contract hash while using a different (more permissive) contract.
+`expected_contract_hash` is optional but recommended. If provided, the relay verifies it matches the session's contract hash (contract hash v2) before accepting input, so the input is only used under the contract the submitter expects.
+
+#### `commitment_nonce`
+
+**Required.** A fresh 32-byte value from a cryptographically secure random
+generator, encoded as exactly **64 lowercase hex characters**. Generate a new
+nonce for every submission and never reuse one. The relay rejects the
+submission (`4xx`, the input is not recorded) if the nonce is missing, not a
+string, or not exactly 64 lowercase hex characters. There is no relay-generated
+fallback.
+
+The nonce salts this party's input commitment in the receipt:
+
+```
+input_commitment = SHA-256("VCAV-INPUT-COMMIT-V3:" || nonce (32 raw bytes) || JCS(context))
+```
+
+The relay never writes the nonce to the receipt, logs or any response, and
+clears it together with the inputs. Keep the nonce and the exact `context`
+locally: together they let you check your own entry in the receipt (see
+[receipt-verification-guide.md](receipt-verification-guide.md#own-input-check)).
+The counterparty never sees your nonce, so it cannot test guesses of your input
+against the commitment. Inputs appear in receipts only through these salted
+commitments: no receipt field holds an unsalted hash of an input or of the
+assembled prompt.
+
+`context` must also be canonicalisable under the receipt v3 profile: numbers
+must be within ±(2^53−1) (encode larger values as strings).
 
 **Response** `200 OK`
 ```json
@@ -214,24 +255,52 @@ Retrieve the bounded output and signed receipt. Requires a read token.
   "abort_reason": null,
   "output": { "...validated JSON..." },
   "receipt": {
-    "schema_version": "2.1.0",
+    "receipt_schema_version": "3.0.0",
+    "receipt_canonicalization": "JCS_RFC8785",
+    "receipt_id": "...",
     "session_id": "...",
-    "purpose_code": "COMPATIBILITY",
-    "participant_ids": ["alice", "bob"],
-    "contract_hash": "...",
-    "guardian_policy_hash": "...",
-    "prompt_template_hash": "...",
-    "model_profile_hash": "...",
-    "runtime_hash": "...",
-    "output": { "..." },
-    "output_entropy_bits": 4.2,
-    "...additional fields..."
-  },
-  "receipt_signature": "...128-char hex Ed25519 signature..."
+    "issued_at": "2026-10-22T12:00:00Z",
+    "assurance_level": "SELF_ASSERTED",
+    "operator": {
+      "operator_id": "...",
+      "operator_key_fingerprint": "...SHA-256 of the 32-byte relay public key..."
+    },
+    "commitments": {
+      "contract_hash": "...",
+      "contract_hash_alg": "SHA256_JCS_V2",
+      "schema_hash": "...",
+      "output_hash": "...",
+      "input_commitments": [
+        { "participant_id": "alice", "input_commitment": "...", "scheme": "SHA256_N32_JCS_V3" },
+        { "participant_id": "bob", "input_commitment": "...", "scheme": "SHA256_N32_JCS_V3" }
+      ],
+      "prompt_assembly_version": "1.0.0",
+      "output": { "..." },
+      "prompt_template_hash": "...",
+      "effective_config_hash": "...",
+      "preflight_bundle": { "..." }
+    },
+    "claims": {
+      "status": "success",
+      "signal_class": "SESSION_COMPLETED",
+      "budget_usage": { "scope": "SESSION", "bits_used_before": 0, "bits_used_after": 6, "budget_limit": 32 },
+      "...additional claims..."
+    },
+    "signature": {
+      "alg": "Ed25519",
+      "value": "...base64url, no padding...",
+      "signed_fields": "ALL_EXCEPT_SIGNATURE"
+    }
+  }
 }
 ```
 
-If the session is not yet completed, `output`, `receipt`, and `receipt_signature` are `null`.
+`receipt` is a **receipt v3** (the only format the relay emits). An aborted
+session that reached inference carries a signed failure receipt (`claims.status`
+other than `success`, `output_hash` = SHA-256 of zero bytes, no inline
+`output`). If the session is not yet completed, `output` and `receipt` are
+`null`. See [receipt-verification-guide.md](receipt-verification-guide.md) for
+verification.
 
 ## Inbox endpoints
 
@@ -262,7 +331,7 @@ Create a new invite to another agent.
 ```json
 {
   "invite_id": "inv_...",
-  "contract_hash": "...64-char hex SHA-256...",
+  "contract_hash": "...64-char hex contract hash v2 (SHA256_JCS_V2)...",
   "status": "PENDING",
   "expires_at": "2026-03-14T12:00:00Z"
 }
@@ -317,6 +386,7 @@ Get full invite details. Both sender and recipient can access their own invites.
   "status": "PENDING",
   "purpose_code": "MEDIATION",
   "contract_hash": "...",
+  "contract_json": { "...the normalised proposed contract..." },
   "provider": "gemini",
   "created_at": "2026-03-07T12:00:00Z",
   "updated_at": "2026-03-07T12:00:00Z",
@@ -327,6 +397,8 @@ Get full invite details. Both sender and recipient can access their own invites.
   "read_token": null
 }
 ```
+
+`contract_json` is the proposed contract as normalised by contract hash v2 (absent and `null` optional members omitted). Its contract hash v2 equals `contract_hash`, so a recipient can check the proposal locally before accepting.
 
 When status is `ACCEPTED`, `session_id`, `submit_token`, and `read_token` are populated. Tokens are **role-redacted**: the sender sees initiator tokens, the recipient sees responder tokens. Neither side can access the other's tokens.
 

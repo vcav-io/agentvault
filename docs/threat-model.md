@@ -129,8 +129,7 @@ Every completed session produces a signed receipt that cryptographically binds:
 - The model profile hash (if specified)
 - The relay build hash
 - The bounded output hash
-- Input commitment hashes (one per participant)
-- The assembled prompt hash
+- Salted input commitments (one per participant; the only way input-derived values appear in a receipt)
 
 A recipient of a receipt who holds the relay's public key can verify that the
 receipt was produced by a relay holding the corresponding private key and that none
@@ -427,9 +426,12 @@ A receipt that passes signature verification against a trusted public key proves
 4. If the verifier holds the artefacts: the contract, schema, policy, and prompt template
    hashes in the receipt match the artefacts the verifier holds.
 5. The bounded output hash in the receipt matches the output the verifier received.
-6. The input commitment hashes match the canonical hashes of the inputs each participant
-   submitted (each participant can verify their own commitment; they cannot verify the
-   counterparty's without the counterparty's input).
+6. The input commitments match the inputs each participant submitted. Each commitment
+   is salted with a secret nonce chosen by that participant's client, so each
+   participant can verify its own commitment, and the counterparty can neither verify
+   it nor test guesses of the input against it. Inputs appear in a receipt only
+   through these salted commitments: no receipt field holds an unsalted hash of an
+   input, of the assembled prompt or of output that was not released.
 
 ### 8.2 What a Verified Receipt Does Not Prove
 

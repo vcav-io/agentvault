@@ -18,7 +18,11 @@ import { submitInput, getStatus, getOutput } from 'selkey/http';
 import { sha256 } from '@noble/hashes/sha256';
 import { utf8ToBytes } from '@noble/hashes/utils';
 import { canonicalize } from 'json-canonicalize';
-import { createAndSubmit } from 'selkey';
+import { createAndSubmit, joinAndWait } from 'selkey';
+import { computeInputCommitmentV3, generateCommitmentNonce } from 'selkey/commitment';
+import { hashV3 } from 'selkey/jcs';
+import { computeCommitmentHash } from 'selkey/verify';
+import { signingDigestV3, type ReceiptV3 } from 'selkey/receipt-v3';
 import { ed25519 } from '@noble/curves/ed25519';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
 import { DirectAfalTransport, type AgentDescriptor } from '../direct-afal-transport.js';
@@ -429,6 +433,7 @@ describe('direct AFAL round trip with locally configured relays', () => {
       expect.any(Object),
       'a',
       'initiator',
+      expect.stringMatching(/^[0-9a-f]{64}$/),
     );
 
     const responded = await handleRelaySignal(
@@ -444,6 +449,7 @@ describe('receipt verification against the pinned relay key', () => {
   const RELAY_SEED = '03'.repeat(32);
   const OTHER_SEED = '04'.repeat(32);
   const keyOf = (seed: string) => bytesToHex(ed25519.getPublicKey(hexToBytes(seed)));
+  const OUTPUT = { mediation_signal: 'ALIGNED' };
 
   function signedReceiptV2(seed: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
     const unsigned = {
@@ -457,7 +463,75 @@ describe('receipt verification against the pinned relay key', () => {
     return { ...unsigned, signature: { alg: 'Ed25519', value: sig } };
   }
 
-  async function runToCompletion(receiptV2: Record<string, unknown>): Promise<RelaySignalOutput> {
+  /** The (context, nonce) the responder sent with its submission. */
+  function submitted(): { context: unknown; nonce: string } {
+    const call = vi.mocked(submitInput).mock.calls.at(-1);
+    if (!call) throw new Error('no submission');
+    return { context: call[4], nonce: call[5] as string };
+  }
+
+  interface V3Opts {
+    seed?: string;
+    responderNonce?: string;
+    responderContext?: unknown;
+    output?: unknown;
+    /** Use this submission instead of the last submitInput call. */
+    sent?: { context: unknown; nonce: string };
+    responderId?: string;
+  }
+
+  /** A v3 receipt over the responder's actual submission (unless overridden). */
+  function signedReceiptV3(opts: V3Opts = {}): Record<string, unknown> {
+    const seed = opts.seed ?? RELAY_SEED;
+    const sent = opts.sent ?? submitted();
+    const contract = localContract();
+    const output = opts.output ?? OUTPUT;
+    const unsigned = {
+      receipt_schema_version: '3.0.0',
+      receipt_canonicalization: 'JCS_RFC8785',
+      receipt_id: 'c0ffee00-0000-4000-8000-000000000010',
+      session_id: 'sess-1',
+      issued_at: '2026-10-22T12:00:00Z',
+      assurance_level: 'SELF_ASSERTED',
+      operator: {
+        operator_id: 'relay.test',
+        operator_key_fingerprint: bytesToHex(sha256(hexToBytes(keyOf(seed)))),
+      },
+      commitments: {
+        contract_hash: computeRelayContractHash(contract),
+        contract_hash_alg: 'SHA256_JCS_V2',
+        schema_hash: hashV3(contract.output_schema),
+        output_hash: hashV3(output),
+        input_commitments: [
+          {
+            participant_id: INITIATOR,
+            input_commitment: computeInputCommitmentV3(generateCommitmentNonce(), 'initiator input'),
+            scheme: 'SHA256_N32_JCS_V3',
+          },
+          {
+            participant_id: opts.responderId ?? RESPONDER,
+            input_commitment: computeInputCommitmentV3(
+              opts.responderNonce ?? sent.nonce,
+              opts.responderContext ?? sent.context,
+            ),
+            scheme: 'SHA256_N32_JCS_V3',
+          },
+        ],
+        prompt_assembly_version: '1.0.0',
+      },
+      claims: { status: 'success' },
+    };
+    const digest = signingDigestV3(unsigned as unknown as ReceiptV3);
+    const sig = Buffer.from(ed25519.sign(digest, hexToBytes(seed))).toString('base64url');
+    return {
+      ...unsigned,
+      signature: { alg: 'Ed25519', value: sig, signed_fields: 'ALL_EXCEPT_SIGNATURE' },
+    };
+  }
+
+  async function runToCompletion(
+    makeOutput: () => Record<string, unknown>,
+  ): Promise<RelaySignalOutput> {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
@@ -466,46 +540,206 @@ describe('receipt verification against the pinned relay key', () => {
       }),
     );
     vi.mocked(getStatus).mockResolvedValueOnce({ state: 'COMPLETED' } as never);
-    vi.mocked(getOutput).mockResolvedValueOnce({
-      state: 'COMPLETED',
-      output: { mediation_signal: 'ALIGNED' },
-      receipt_v2: receiptV2,
-    } as never);
+    vi.mocked(getOutput).mockImplementationOnce(async () => makeOutput() as never);
     const transport = mockTransport([legacyInvite(computeRelayContractHash(localContract()))]);
     const first = await respond(transport);
     const second = await handleRelaySignal({ resume_token: first.resume_token ?? '' }, transport);
     return second.data as RelaySignalOutput;
   }
 
+  const v3Output = (opts: V3Opts = {}) => () => ({
+    state: 'COMPLETED',
+    output: OUTPUT,
+    receipt: signedReceiptV3(opts),
+  });
+
   it('returns an error instead of output when the receipt is not signed by the pinned key', async () => {
     process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'] = keyOf(RELAY_SEED);
-    const data = await runToCompletion(signedReceiptV2(OTHER_SEED));
+    const data = await runToCompletion(v3Output({ seed: OTHER_SEED }));
     expect(data.phase).toBe('FAILED');
     expect(data.error_code).toBe('RECEIPT_VERIFICATION_FAILED');
     expect(data.output).toBeUndefined();
   });
 
-  it('returns an error when the receipt declares a different embedded signing key', async () => {
+  it('returns an error when a v2 receipt declares a different embedded signing key', async () => {
     process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'] = keyOf(RELAY_SEED);
-    const data = await runToCompletion(
-      signedReceiptV2(OTHER_SEED, { tee_attestation: { receipt_signing_pubkey_hex: keyOf(OTHER_SEED) } }),
-    );
+    const data = await runToCompletion(() => ({
+      state: 'COMPLETED',
+      output: OUTPUT,
+      receipt_v2: signedReceiptV2(OTHER_SEED, {
+        tee_attestation: { receipt_signing_pubkey_hex: keyOf(OTHER_SEED) },
+      }),
+    }));
     expect(data.phase).toBe('FAILED');
     expect(data.error_code).toBe('RECEIPT_VERIFICATION_FAILED');
   });
 
-  it('completes when the receipt verifies against the pinned key', async () => {
+  it('completes when the v3 receipt verifies and commits to this agent input', async () => {
     process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'] = keyOf(RELAY_SEED);
-    const data = await runToCompletion(signedReceiptV2(RELAY_SEED));
+    const data = await runToCompletion(v3Output());
     expect(data.phase).toBe('COMPLETED');
     expect(JSON.stringify(data.interpretation_context)).toContain('verified against the pinned relay key');
   });
 
+  it('sends a fresh commitment nonce and keeps it out of tool results', async () => {
+    process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'] = keyOf(RELAY_SEED);
+    const data = await runToCompletion(v3Output());
+    const { nonce } = submitted();
+    expect(nonce).toMatch(/^[0-9a-f]{64}$/);
+    expect(JSON.stringify(data)).not.toContain(nonce);
+    const workdir = process.env['SELKEY_WORKDIR'] as string;
+    for (const file of fs.readdirSync(workdir, { recursive: true }) as string[]) {
+      const full = path.join(workdir, file);
+      if (fs.statSync(full).isFile()) expect(fs.readFileSync(full, 'utf8')).not.toContain(nonce);
+    }
+  });
+
+  it('returns an error when the receipt commits to this agent input under a different nonce', async () => {
+    process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'] = keyOf(RELAY_SEED);
+    const data = await runToCompletion(v3Output({ responderNonce: generateCommitmentNonce() }));
+    expect(data.phase).toBe('FAILED');
+    expect(data.error_code).toBe('RECEIPT_VERIFICATION_FAILED');
+    expect(data.output).toBeUndefined();
+  });
+
+  it('returns an error when the receipt commits to a different input for this agent', async () => {
+    process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'] = keyOf(RELAY_SEED);
+    const data = await runToCompletion(v3Output({ responderContext: 'something else' }));
+    expect(data.phase).toBe('FAILED');
+    expect(data.error_code).toBe('RECEIPT_VERIFICATION_FAILED');
+  });
+
+  it('returns an error when the receipt commits to a different output', async () => {
+    process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'] = keyOf(RELAY_SEED);
+    const data = await runToCompletion(v3Output({ output: { mediation_signal: 'OTHER' } }));
+    expect(data.phase).toBe('FAILED');
+    expect(data.error_code).toBe('RECEIPT_VERIFICATION_FAILED');
+  });
+
   it('says the receipt is not verified when no relay key is pinned', async () => {
-    const data = await runToCompletion(signedReceiptV2(OTHER_SEED));
+    const data = await runToCompletion(v3Output({ seed: OTHER_SEED }));
     expect(data.phase).toBe('COMPLETED');
     const text = JSON.stringify(data.interpretation_context);
     expect(text).toContain('not verified: no relay key pinned');
     expect(text).not.toContain('cryptographically receipted');
+  });
+
+  describe('JOIN mode', () => {
+    function joinWith(makeReceipt: (context: unknown, nonce: string) => Record<string, unknown>) {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve({ verifying_key_hex: keyOf(RELAY_SEED) }),
+        }),
+      );
+      vi.mocked(joinAndWait).mockImplementationOnce((async (...a: unknown[]) => ({
+        state: 'COMPLETED',
+        output: OUTPUT,
+        receipt: makeReceipt(a[5], a[7] as string),
+      })) as never);
+      return handleRelaySignal({
+        mode: 'JOIN',
+        session_id: 'sess-1',
+        submit_token: 'sub',
+        read_token: 'read',
+        contract_hash: 'c'.repeat(64),
+        my_input: 'hi',
+      });
+    }
+
+    it('checks this agent input under its configured participant id', async () => {
+      process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'] = keyOf(RELAY_SEED);
+      const result = await joinWith((context, nonce) => signedReceiptV3({ sent: { context, nonce } }));
+      expect(result.ok).toBe(true);
+    });
+
+    it('fails when the receipt names this agent differently, even if the entry opens', async () => {
+      process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'] = keyOf(RELAY_SEED);
+      const result = await joinWith((context, nonce) =>
+        signedReceiptV3({ sent: { context, nonce }, responderId: 'someone-else' }),
+      );
+      expect(result.ok).toBe(false);
+      expect(result.error?.code).toBe('VERIFICATION_FAILED');
+    });
+
+    it('fails when this agent participant id is not configured locally', async () => {
+      process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'] = keyOf(RELAY_SEED);
+      Reflect.deleteProperty(process.env, 'SELKEY_AGENT_ID');
+      const result = await joinWith((context, nonce) => signedReceiptV3({ sent: { context, nonce } }));
+      expect(result.ok).toBe(false);
+      expect(result.error?.code).toBe('VERIFICATION_FAILED');
+    });
+  });
+
+  it('does not accept a v2 receipt on a live session', async () => {
+    process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'] = keyOf(RELAY_SEED);
+    // A v2 receipt signed by the pinned key that commits to this agent's
+    // input and to the received output: it would pass every other check.
+    const data = await runToCompletion(() => {
+      const sent = submitted();
+      return {
+        state: 'COMPLETED',
+        output: OUTPUT,
+        receipt_v2: signedReceiptV2(RELAY_SEED, {
+          commitments: {
+            output_hash: computeCommitmentHash(OUTPUT),
+            input_commitments: [
+              {
+                participant_id: RESPONDER,
+                input_hash: computeCommitmentHash(sent.context),
+                hash_alg: 'SHA-256',
+                canonicalization: 'CANONICAL_JSON_V1',
+              },
+            ],
+          },
+        }),
+      };
+    });
+    expect(data.phase).toBe('FAILED');
+    expect(data.error_code).toBe('RECEIPT_VERIFICATION_FAILED');
+  });
+
+  it('reuses the nonce when the same submission to the same session is retried', async () => {
+    vi.mocked(submitInput).mockRejectedValueOnce(new Error('Relay HTTP 503: unavailable'));
+    const transport = mockTransport([legacyInvite(computeRelayContractHash(localContract()))]);
+    const first = await respond(transport);
+    const token = first.resume_token ?? '';
+    await handleRelaySignal({ resume_token: token }, transport).catch(() => undefined);
+    await handleRelaySignal({ resume_token: token }, transport).catch(() => undefined);
+    const calls = vi.mocked(submitInput).mock.calls;
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(calls.map((c) => c[5])).size).toBe(1);
+    expect(calls[0][5]).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('completes after an ambiguous submit failure when the relay kept the first attempt', async () => {
+    process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'] = keyOf(RELAY_SEED);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ verifying_key_hex: keyOf(RELAY_SEED) }),
+      }),
+    );
+    // The first attempt reaches the relay but the client sees an error; the
+    // retry goes through and the relay's receipt commits under the first
+    // attempt's nonce.
+    vi.mocked(submitInput).mockRejectedValueOnce(new Error('fetch failed'));
+    vi.mocked(getStatus).mockResolvedValueOnce({ state: 'COMPLETED' } as never);
+    vi.mocked(getOutput).mockImplementationOnce(async () => {
+      const firstCall = vi.mocked(submitInput).mock.calls[0];
+      return {
+        state: 'COMPLETED',
+        output: OUTPUT,
+        receipt: signedReceiptV3({ sent: { context: firstCall[4], nonce: firstCall[5] as string } }),
+      } as never;
+    });
+    const transport = mockTransport([legacyInvite(computeRelayContractHash(localContract()))]);
+    const first = await respond(transport);
+    const token = first.resume_token ?? '';
+    await handleRelaySignal({ resume_token: token }, transport).catch(() => undefined);
+    const done = await handleRelaySignal({ resume_token: token }, transport);
+    expect((done.data as RelaySignalOutput).phase).toBe('COMPLETED');
   });
 });

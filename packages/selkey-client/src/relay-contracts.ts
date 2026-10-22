@@ -5,24 +5,30 @@
  * New code should use `buildContract` from `./contract-builder.js` with a
  * registry index for composable, registry-backed contract construction.
  *
- * `computeRelayContractHash` uses RFC 8785 (JCS) canonicalization + SHA-256,
- * matching the Rust relay's `compute_contract_hash` (relay.rs). No domain
- * prefix — this is a contract hash, not a signature hash.
+ * `computeRelayContractHash` is contract hash v2 (`SHA256_JCS_V2`): the
+ * contract is validated (unknown members rejected), null and absent optional
+ * members are omitted, and the result is hashed with RFC 8785 + SHA-256. The
+ * relay computes the same value over the contract JSON it receives.
  */
 
-import { canonicalize } from 'json-canonicalize';
-import { sha256 } from '@noble/hashes/sha256';
-import { bytesToHex } from '@noble/hashes/utils';
+import { canonicalizeV3, sha256Hex } from './jcs-v3.js';
+import { computeContractHashV2 } from './contract-hash-v2.js';
 
 /**
- * Full relay contract as sent to the relay. All fields must be present
- * (including nulls) to ensure hash parity with Rust serde serialization.
+ * Model constraints. Contract hash v2 hashes exactly the members present, so
+ * omit a member rather than sending an empty default.
  */
 export interface ModelConstraints {
-  allowed_providers: string[];
-  allowed_models: string[];
+  allowed_providers?: string[];
+  allowed_models?: string[];
   min_tier?: string;
 }
+
+/**
+ * Relay contract as sent to the relay. Optional members are omitted when
+ * absent (never sent as null), and the contract carries no `contract_hash`
+ * member.
+ */
 
 export interface RelayContract {
   purpose_code: string;
@@ -30,13 +36,12 @@ export interface RelayContract {
   output_schema: object;
   participants: string[];
   prompt_template_hash: string;
-  entropy_budget_bits: number | null;
-  timing_class: string | null;
-  metadata: Record<string, string> | null;
-  model_profile_id: string | null;
+  entropy_budget_bits?: number;
+  timing_class?: string;
+  metadata?: Record<string, string>;
+  model_profile_id?: string;
   model_profile_hash?: string;
 
-  // v2 contract fields (optional — Rust uses skip_serializing_if = "Option::is_none")
   /** Content hash of the enforcement policy governing this session. */
   enforcement_policy_hash?: string;
   /** SHA-256 of JCS(output_schema) — allows schema lookup by hash. */
@@ -73,8 +78,7 @@ const MODEL_PROFILE_HASHES: Record<string, string> = {
 };
 
 /**
- * Bundled contract templates. Fields match the Rust `Contract` struct
- * serialization exactly — all Optional fields present as null when absent.
+ * Bundled contract templates. Absent optional members are omitted.
  *
  * @deprecated Use `buildContract` from `./contract-builder.js` with a registry
  * index for composable contract construction. These templates are preserved
@@ -131,7 +135,6 @@ const TEMPLATES: Record<string, ContractTemplate> = {
     model_profile_id: 'api-claude-sonnet-v1',
     model_profile_hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
     metadata: { scenario: 'cofounder-mediation', version: '3' },
-    timing_class: null,
     // v2 fields — enforcement_policy_hash from relay_policies.lock
     enforcement_policy_hash: 'fda48c90d65dc2f4a9d6bc6efc07026577f6a1df7043f59303d1d836e14cc64d',
     entropy_enforcement: 'Advisory',
@@ -222,7 +225,6 @@ const TEMPLATES: Record<string, ContractTemplate> = {
     model_profile_id: 'api-claude-sonnet-v1',
     model_profile_hash: '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
     metadata: { scenario: 'scheduling-compatibility', version: '2' },
-    timing_class: null,
     // v2 fields — enforcement_policy_hash from relay_policies.lock
     enforcement_policy_hash: 'fda48c90d65dc2f4a9d6bc6efc07026577f6a1df7043f59303d1d836e14cc64d',
     entropy_enforcement: 'Advisory',
@@ -341,20 +343,19 @@ export function buildRelayContractWithSchemaRef(
 }
 
 /**
- * Compute SHA-256 hash of a relay contract using RFC 8785 (JCS)
- * canonicalization. Matches the Rust relay's `compute_contract_hash`.
+ * Contract hash v2 (`SHA256_JCS_V2`) of a relay contract, as the relay
+ * computes it. Throws if the contract has members contract hash v2 does not
+ * define (including a `contract_hash` member).
  */
 export function computeRelayContractHash(contract: object): string {
-  const canonical = canonicalize(contract);
-  return bytesToHex(sha256(canonical));
+  return computeContractHashV2(contract);
 }
 
 /**
- * Compute SHA-256 hash of an output schema using RFC 8785 (JCS)
- * canonicalization. Matches the Rust relay's `compute_output_schema_hash`.
- * The hash is bound into receipts as `output_schema_hash`.
+ * SHA-256 of the RFC 8785 form of an output schema: `H(JCS(output_schema))`,
+ * bound into receipts as `schema_hash` and into contracts as
+ * `output_schema_hash`.
  */
 export function computeOutputSchemaHash(schema: object): string {
-  const canonical = canonicalize(schema);
-  return bytesToHex(sha256(canonical));
+  return sha256Hex(canonicalizeV3(schema));
 }

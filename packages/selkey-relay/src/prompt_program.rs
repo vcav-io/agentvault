@@ -308,10 +308,12 @@ mod tests {
         let input_a = RelayInput {
             role: "alice".to_string(),
             context: serde_json::json!({"preference": "morning"}),
+            commitment_nonce: crate::types::test_nonce(),
         };
         let input_b = RelayInput {
             role: "bob".to_string(),
             context: serde_json::json!({"preference": "evening"}),
+            commitment_nonce: crate::types::test_nonce(),
         };
 
         let result = program.assemble(&contract, &input_a, &input_b).unwrap();

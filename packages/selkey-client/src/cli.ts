@@ -2,6 +2,7 @@
 
 import { loadRegistryIndex, buildContract } from './contract-builder.js';
 import type { ContractOptions } from './contract-builder.js';
+import { CONTRACT_HASH_ALG_V2, computeContractHashV2 } from './contract-hash-v2.js';
 
 function printUsage(): void {
   console.error(`Usage: selkey-contract build \\
@@ -121,6 +122,7 @@ async function main(): Promise<void> {
   const registry = await loadRegistryIndex(registryPath);
   const contract = buildContract(registry, options);
   console.log(JSON.stringify(contract, null, 2));
+  console.error(`contract_hash (${CONTRACT_HASH_ALG_V2}): ${computeContractHashV2(contract)}`);
 }
 
 main().catch((err: unknown) => {

@@ -1,12 +1,11 @@
 use chrono::Utc;
 use receipt_core::{
-    AssuranceLevel, BudgetEnforcementMode, BudgetUsageRecord, BudgetUsageV2, Claims, Commitments,
-    ExecutionLane, ExecutionLaneV2, HashAlgorithm, InputCommitment, Operator, PreflightBundle,
-    Receipt, ReceiptStatus, ReceiptV2, SessionStatus, SignalClass, UnsignedReceiptV2,
-    CANONICALIZATION_V2, CHANNEL_CAPACITY_MEASUREMENT_VERSION, SCHEMA_VERSION_V2,
+    AssuranceLevel, BudgetEnforcementMode, BudgetScope, BudgetUsageV3, ClaimsV3, CommitmentsV3,
+    ContractHashAlg, ExecutionLaneV2, InputCommitmentScheme, InputCommitmentV3, OperatorV3,
+    PreflightBundle, ReceiptV3, SessionStatus, UnsignedReceiptV3, CANONICALIZATION_V3,
+    CHANNEL_CAPACITY_MEASUREMENT_VERSION, SCHEMA_VERSION_V3,
 };
 use sha2::{Digest, Sha256};
-use vault_family_types::{generate_pair_id, BudgetTier};
 
 use crate::error::RelayError;
 use crate::profile_resolution::resolve_runtime_profile;
@@ -23,23 +22,91 @@ use crate::AppState;
 /// Falls back to "unknown" in environments where .git/ is not present.
 const GIT_SHA: &str = env!("SELKEY_GIT_SHA");
 
-/// Compute SHA-256 hash of an output schema using JCS canonicalization.
-/// Bound into receipts as `output_schema_hash`.
-pub fn compute_output_schema_hash(schema: &serde_json::Value) -> Result<String, RelayError> {
-    let canonical = receipt_core::canonicalize_serializable(schema)
-        .map_err(|e| RelayError::ContractValidation(format!("schema canonicalization: {e}")))?;
-    let mut hasher = Sha256::new();
-    hasher.update(canonical.as_bytes());
-    Ok(hex::encode(hasher.finalize()))
+/// `hex(SHA-256(JCS(value)))` with the receipt v3 canonicalisation profile
+/// (RFC 8785, numbers limited to +/-(2^53-1)).
+pub fn hash_json_v3(value: &serde_json::Value) -> Result<String, receipt_core::JcsError> {
+    receipt_core::jcs::hash_v3(value)
 }
 
-/// Compute SHA-256 hash of canonical contract JSON for receipt binding.
-pub fn compute_contract_hash(contract: &Contract) -> Result<String, RelayError> {
-    let canonical = receipt_core::canonicalize_serializable(contract)
-        .map_err(|e| RelayError::ContractValidation(format!("contract canonicalization: {e}")))?;
-    let mut hasher = Sha256::new();
-    hasher.update(canonical.as_bytes());
-    Ok(hex::encode(hasher.finalize()))
+/// Compute SHA-256 hash of an output schema using RFC 8785 canonicalization
+/// (receipt v3 profile). Bound into receipts as `schema_hash`.
+pub fn compute_output_schema_hash(schema: &serde_json::Value) -> Result<String, RelayError> {
+    hash_json_v3(schema)
+        .map_err(|e| RelayError::ContractValidation(format!("schema canonicalization: {e}")))
+}
+
+/// A contract accepted from a request, with its contract hash v2.
+#[derive(Debug, Clone)]
+pub struct AcceptedContract {
+    /// Typed contract used by the relay.
+    pub contract: Contract,
+    /// The normalised contract JSON (absent and `null` optionals omitted).
+    /// Its contract hash v2 is `contract_hash`.
+    pub contract_json: serde_json::Value,
+    /// Contract hash v2 (`SHA256_JCS_V2`).
+    pub contract_hash: String,
+}
+
+/// Validate a contract as received and compute its contract hash v2.
+///
+/// The hash is computed from the received JSON (normalised per contract hash
+/// v2), never from a re-serialised typed contract. Unknown members, including
+/// a `contract_hash` member, are rejected.
+pub fn accept_contract(contract_json: &serde_json::Value) -> Result<AcceptedContract, RelayError> {
+    let normalized = receipt_core::normalize_contract_v2(contract_json)
+        .map_err(|e| RelayError::ContractValidation(format!("contract: {e}")))?;
+    let contract_hash = hash_json_v3(&normalized)
+        .map_err(|e| RelayError::ContractValidation(format!("contract: {e}")))?;
+    let contract: Contract = serde_json::from_value(normalized.clone())
+        .map_err(|e| RelayError::ContractValidation(format!("contract: {e}")))?;
+    // Receipts need one input commitment per participant, keyed by a unique,
+    // non-empty participant id; reject anything else before inputs are taken.
+    let mut seen = std::collections::BTreeSet::new();
+    for participant in &contract.participants {
+        if participant.is_empty() || !seen.insert(participant.as_str()) {
+            return Err(RelayError::ContractValidation(
+                "contract participants must be distinct and non-empty".to_string(),
+            ));
+        }
+    }
+    Ok(AcceptedContract {
+        contract,
+        contract_json: normalized,
+        contract_hash,
+    })
+}
+
+/// Check that an input context can be committed to (receipt v3 profile).
+pub fn validate_input_context(context: &serde_json::Value) -> Result<(), RelayError> {
+    receipt_core::canonicalize_v3(context)
+        .map(|_| ())
+        .map_err(|e| RelayError::ContractValidation(format!("input context: {e}")))
+}
+
+/// Compute the v3 input commitments, in `contract.participants` order.
+pub fn compute_input_commitments(
+    contract: &Contract,
+    input_a: &RelayInput,
+    input_b: &RelayInput,
+) -> Result<Vec<InputCommitmentV3>, RelayError> {
+    [
+        (&contract.participants[0], input_a),
+        (&contract.participants[1], input_b),
+    ]
+    .iter()
+    .map(|(participant_id, input)| {
+        let input_commitment = receipt_core::compute_input_commitment_v3(
+            input.commitment_nonce.as_bytes(),
+            &input.context,
+        )
+        .map_err(|e| RelayError::ContractValidation(format!("input commitment: {e}")))?;
+        Ok(InputCommitmentV3 {
+            participant_id: (*participant_id).clone(),
+            input_commitment,
+            scheme: InputCommitmentScheme::Sha256N32JcsV3,
+        })
+    })
+    .collect()
 }
 
 /// Validate JSON output against the contract's output schema.
@@ -210,22 +277,6 @@ fn unicode_category_contains(c: char, category: &str) -> bool {
     }
 }
 
-/// Pre-computed context for building failure receipts.
-/// Computed before relay_core so the data is available if relay_core fails.
-pub struct FailureReceiptContext {
-    pub contract_hash: String,
-    pub output_schema_hash: String,
-    pub input_commitments: Vec<InputCommitment>,
-    pub assembled_prompt_hash: String,
-    pub prompt_template_hash: String,
-    pub model_profile_hash: Option<String>,
-    pub runtime_hash: String,
-    pub effective_model_id: String,
-    pub effective_max_tokens: u32,
-    pub entropy_bits: u32,
-    pub entropy_budget_bits: Option<u32>,
-}
-
 /// Diagnostic timing from relay_core. Not part of the production result type.
 pub struct InferenceTiming {
     pub inference_start_at: chrono::DateTime<chrono::Utc>,
@@ -235,9 +286,7 @@ pub struct InferenceTiming {
 /// Result of core relay execution.
 pub struct RelayResult {
     pub output: serde_json::Value,
-    pub receipt: Receipt,
-    pub receipt_signature: String,
-    pub receipt_v2: ReceiptV2,
+    pub receipt: ReceiptV3,
 }
 
 /// Length of a hex-encoded Ed25519 public key.
@@ -276,13 +325,12 @@ fn allowlist_matches_profile(entry: &str, profile_id: &str, profile_hash: &str) 
 /// bilateral session processing.
 pub async fn relay_core(
     contract: &Contract,
+    contract_hash: &str,
     input_a: &RelayInput,
     input_b: &RelayInput,
     provider_name: &str,
     state: &AppState,
 ) -> Result<(RelayResult, InferenceTiming), RelayError> {
-    let session_start = Utc::now();
-
     // 1. Validate contract has exactly 2 participants
     if contract.participants.len() != 2 {
         return Err(RelayError::ContractValidation(
@@ -433,8 +481,7 @@ pub async fn relay_core(
         None => state.max_completion_tokens,
     };
 
-    // 3. Compute contract hash and resolve output schema
-    let contract_hash = compute_contract_hash(contract)?;
+    // 3. Contract hash v2 was computed from the contract JSON as received.
 
     // 3b. Resolve and accept the output schema (registry schemas; strict inline
     //     schemas in dev only) and compute its entropy upper bound. Any failure
@@ -491,40 +538,7 @@ pub async fn relay_core(
     let assembled = program.assemble(contract, input_a, input_b)?;
 
     // Compute input commitments (one per participant) — must be done before provider call.
-    let input_commitments: Vec<InputCommitment> = {
-        let inputs = [
-            (&contract.participants[0], input_a),
-            (&contract.participants[1], input_b),
-        ];
-        let mut commitments = Vec::with_capacity(2);
-        for (participant_id, input) in &inputs {
-            let canonical = receipt_core::canonicalize_serializable(&input.context)
-                .map_err(|e| RelayError::Internal(format!("input canonicalization: {e}")))?;
-            let mut hasher = Sha256::new();
-            hasher.update(canonical.as_bytes());
-            commitments.push(InputCommitment {
-                participant_id: (*participant_id).clone(),
-                input_hash: hex::encode(hasher.finalize()),
-                hash_alg: HashAlgorithm::Sha256,
-                canonicalization: "CANONICAL_JSON_V1".to_string(),
-            });
-        }
-        commitments
-    };
-
-    // Compute assembled_prompt_hash — hash of the assembled prompt JSON (system + user_message).
-    // Computed once before the first provider call; never recomputed on retry.
-    let assembled_prompt_hash = {
-        let prompt_json = serde_json::json!({
-            "system": assembled.system,
-            "user_message": assembled.user_message,
-        });
-        let canonical = receipt_core::canonicalize_serializable(&prompt_json)
-            .map_err(|e| RelayError::Internal(format!("prompt canonicalization: {e}")))?;
-        let mut hasher = Sha256::new();
-        hasher.update(canonical.as_bytes());
-        hex::encode(hasher.finalize())
-    };
+    let input_commitments = compute_input_commitments(contract, input_a, input_b)?;
 
     let provider_request = ProviderRequest {
         system: assembled.system,
@@ -588,99 +602,25 @@ pub async fn relay_core(
     // 8b. Enforcement rules: reject forbidden characters in string values
     validate_output_enforcement_rules(&output, &resolved_policy.rules)?;
 
-    let session_end = Utc::now();
-
     // 10. Generate session ID
     let session_id = hex::encode(Sha256::digest(uuid::Uuid::new_v4().as_bytes()));
 
-    // 11. Build budget usage record
-    let pair_id = generate_pair_id(&contract.participants[0], &contract.participants[1]);
-
-    let budget_usage = BudgetUsageRecord {
-        pair_id,
-        window_start: session_start,
-        bits_used_before: 0,
-        bits_used_after: entropy_bits,
-        budget_limit: contract.entropy_budget_bits.unwrap_or(128),
-        budget_tier: BudgetTier::Default,
-        budget_enforcement: Some(
-            match entropy_mode {
-                vault_family_types::EntropyEnforcementMode::Advisory => "advisory",
-                vault_family_types::EntropyEnforcementMode::Gate => "gate",
-                vault_family_types::EntropyEnforcementMode::Strict => "strict",
-            }
-            .to_string(),
-        ),
-        compartment_id: None,
-    };
-
-    // 12. Build and sign receipt
+    // 11. Build and sign the v3 receipt
     let prompt_template_hash = program.content_hash()?;
     // runtime_hash: real git SHA embedded at build time by build.rs
     let runtime_hash = hex::encode(Sha256::digest(GIT_SHA.as_bytes()));
-    // model_weights_hash: honest "n/a" — relay is API-mediated; no local weights
-    let model_weights_hash = hex::encode(Sha256::digest(b"api-mediated-no-local-weights"));
-    // inference_config_hash: honest "n/a" — relay is API-mediated; no local inference
-    let inference_config_hash = hex::encode(Sha256::digest(b"api-mediated-no-local-inference"));
-    let guardian_policy_hash = resolved_hash.clone();
 
-    // model_profile_hash already resolved in step 2b — no duplicate lookup needed.
-
-    let unsigned = Receipt::builder()
-        .session_id(session_id.clone())
-        .purpose_code(contract.purpose_code)
-        .participant_ids(contract.participants.clone())
-        .runtime_hash(&runtime_hash)
-        .guardian_policy_hash(&guardian_policy_hash)
-        .model_weights_hash(&model_weights_hash)
-        .llama_cpp_version("n/a")
-        .inference_config_hash(&inference_config_hash)
-        .output_schema_version("1.0.0")
-        .session_start(session_start)
-        .session_end(session_end)
-        .fixed_window_duration_seconds(0)
-        .status(ReceiptStatus::Completed)
-        .execution_lane(ExecutionLane::ApiMediated)
-        .output(Some(output.clone()))
-        .output_entropy_bits(entropy_bits)
-        .budget_usage(budget_usage)
-        .contract_hash(Some(contract_hash.clone()))
-        .output_schema_id(Some(contract.output_schema_id.clone()))
-        .output_schema_hash(Some(output_schema_hash.clone()))
-        .signal_class(Some(SignalClass::SessionCompleted))
-        .entropy_budget_bits_opt(contract.entropy_budget_bits)
-        .prompt_template_hash(Some(prompt_template_hash.clone()))
-        .contract_timing_class(contract.timing_class.clone())
-        .model_profile_hash(model_profile_hash.clone())
-        .model_identity(Some(receipt_core::ModelIdentity {
-            provider: effective_provider.to_string(),
-            model_id: effective_model_id.clone(),
-            model_version: provider_response.model_id.clone().into(),
-        }))
-        .build_unsigned()
-        .ok_or_else(|| {
-            RelayError::ReceiptSigning("receipt builder missing required fields".to_string())
-        })?;
-
-    let signature = receipt_core::sign_receipt(&unsigned, &state.signing_key)
-        .map_err(|e| RelayError::ReceiptSigning(format!("signing failed: {e}")))?;
-
-    let receipt_signature = signature.clone();
-    let receipt = unsigned.sign(signature);
-
-    // --- v2 receipt construction ---
-    let v2_enforcement_mode = match entropy_mode {
+    let budget_enforcement_mode = match entropy_mode {
         vault_family_types::EntropyEnforcementMode::Advisory => BudgetEnforcementMode::Advisory,
         vault_family_types::EntropyEnforcementMode::Gate
         | vault_family_types::EntropyEnforcementMode::Strict => BudgetEnforcementMode::Enforced,
     };
-    let receipt_v2 = build_receipt_v2(
+    let receipt = build_receipt_v3(
         &session_id,
-        &contract_hash,
+        contract_hash,
         &output_schema_hash,
         &output,
         input_commitments,
-        assembled_prompt_hash,
         &prompt_template_hash,
         model_profile_hash.as_deref(),
         &effective_model_id,
@@ -690,7 +630,7 @@ pub async fn relay_core(
         state,
         inference_start,
         inference_end,
-        v2_enforcement_mode,
+        budget_enforcement_mode,
         effective_max_tokens,
         entropy_bits,
         contract.entropy_budget_bits,
@@ -701,28 +641,56 @@ pub async fn relay_core(
         inference_end_at: inference_end,
     };
 
-    Ok((
-        RelayResult {
-            output,
-            receipt,
-            receipt_signature,
-            receipt_v2,
-        },
-        timing,
-    ))
+    Ok((RelayResult { output, receipt }, timing))
 }
 
-/// Build and sign a v2 receipt from relay execution data.
+/// Operator identity for v3 receipts signed with the relay key.
+fn operator_v3(state: &AppState) -> OperatorV3 {
+    OperatorV3 {
+        operator_id: std::env::var("SELKEY_OPERATOR_ID")
+            .ok()
+            .filter(|id| !id.is_empty())
+            .unwrap_or_else(|| "selkey-relay-dev".to_string()),
+        operator_key_fingerprint: receipt_core::receipt_v3::operator_key_fingerprint(
+            &state.signing_key.verifying_key(),
+        ),
+        operator_key_discovery: None,
+    }
+}
+
+/// Preflight bundle and its `effective_config_hash`.
+fn preflight_bundle_v3(
+    policy_hash: &str,
+    prompt_template_hash: &str,
+    model_profile_hash: Option<&str>,
+    schema_hash: &str,
+    effective_max_tokens: u32,
+) -> Result<(PreflightBundle, String), RelayError> {
+    let preflight_bundle = PreflightBundle {
+        policy_hash: policy_hash.to_string(),
+        prompt_template_hash: prompt_template_hash.to_string(),
+        model_profile_hash: model_profile_hash.unwrap_or("none").to_string(),
+        schema_hash: schema_hash.to_string(),
+        enforcement_parameters: serde_json::json!({
+            "max_completion_tokens": effective_max_tokens,
+        }),
+    };
+    let canonical = receipt_core::canonicalize_v3_serializable(&preflight_bundle)
+        .map_err(|e| RelayError::ReceiptSigning(format!("preflight canonicalization: {e}")))?;
+    let effective_config_hash = hex::encode(Sha256::digest(canonical.as_bytes()));
+    Ok((preflight_bundle, effective_config_hash))
+}
+
+/// Build and sign a v3 receipt from relay execution data.
 ///
-/// Returns a signed ReceiptV2. Errors are propagated as RelayError::ReceiptSigning.
+/// Returns a signed ReceiptV3. Errors are propagated as RelayError::ReceiptSigning.
 #[allow(clippy::too_many_arguments)]
-fn build_receipt_v2(
+fn build_receipt_v3(
     session_id: &str,
     contract_hash: &str,
     schema_hash: &str,
     output: &serde_json::Value,
-    input_commitments: Vec<InputCommitment>,
-    assembled_prompt_hash: String,
+    input_commitments: Vec<InputCommitmentV3>,
     prompt_template_hash: &str,
     model_profile_hash: Option<&str>,
     model_id: &str,
@@ -736,87 +704,49 @@ fn build_receipt_v2(
     effective_max_tokens: u32,
     entropy_bits: u32,
     entropy_budget_bits: Option<u32>,
-) -> Result<ReceiptV2, RelayError> {
-    // Compute output hash
-    let output_hash = {
-        let canonical = receipt_core::canonicalize_serializable(output)
-            .map_err(|e| RelayError::ReceiptSigning(format!("output canonicalization: {e}")))?;
-        let mut hasher = Sha256::new();
-        hasher.update(canonical.as_bytes());
-        hex::encode(hasher.finalize())
-    };
+) -> Result<ReceiptV3, RelayError> {
+    let output_hash = hash_json_v3(output)
+        .map_err(|e| RelayError::ReceiptSigning(format!("output canonicalization: {e}")))?;
 
-    // Build preflight bundle
-    let enforcement_parameters = serde_json::json!({
-        "max_completion_tokens": effective_max_tokens,
-    });
-    let preflight_bundle = PreflightBundle {
-        policy_hash: policy_hash.to_string(),
-        prompt_template_hash: prompt_template_hash.to_string(),
-        model_profile_hash: model_profile_hash.unwrap_or("none").to_string(),
-        schema_hash: schema_hash.to_string(),
-        enforcement_parameters: enforcement_parameters.clone(),
-    };
-
-    // Compute effective_config_hash from preflight bundle
-    let effective_config_hash = {
-        let canonical = receipt_core::canonicalize_serializable(&preflight_bundle)
-            .map_err(|e| RelayError::ReceiptSigning(format!("preflight canonicalization: {e}")))?;
-        let mut hasher = Sha256::new();
-        hasher.update(canonical.as_bytes());
-        Some(hex::encode(hasher.finalize()))
-    };
-
-    // Compute operator key fingerprint: SHA-256(hex bytes of verifying key)
-    let verifying_key_hex = receipt_core::public_key_to_hex(&state.signing_key.verifying_key());
-    let operator_key_fingerprint = {
-        let key_bytes = hex::decode(&verifying_key_hex).unwrap_or_default();
-        let mut hasher = Sha256::new();
-        hasher.update(&key_bytes);
-        hex::encode(hasher.finalize())
-    };
-
-    let operator_id =
-        std::env::var("SELKEY_OPERATOR_ID").unwrap_or_else(|_| "selkey-relay-dev".to_string());
+    let (preflight_bundle, effective_config_hash) = preflight_bundle_v3(
+        policy_hash,
+        prompt_template_hash,
+        model_profile_hash,
+        schema_hash,
+        effective_max_tokens,
+    )?;
 
     let provider_latency_ms = (inference_end - inference_start)
         .num_milliseconds()
         .try_into()
         .unwrap_or(0u64);
 
-    let receipt_id = uuid::Uuid::new_v4().to_string();
-
-    let unsigned = UnsignedReceiptV2 {
-        receipt_schema_version: SCHEMA_VERSION_V2.to_string(),
-        receipt_canonicalization: CANONICALIZATION_V2.to_string(),
-        receipt_id,
+    let unsigned = UnsignedReceiptV3 {
+        receipt_schema_version: SCHEMA_VERSION_V3.to_string(),
+        receipt_canonicalization: CANONICALIZATION_V3.to_string(),
+        receipt_id: uuid::Uuid::new_v4().to_string(),
         session_id: session_id.to_string(),
-        issued_at: Utc::now(),
+        issued_at: receipt_core::format_issued_at_v3(Utc::now()),
         assurance_level: AssuranceLevel::SelfAsserted,
-        operator: Operator {
-            operator_id,
-            operator_key_fingerprint,
-            operator_key_discovery: None,
-        },
-        commitments: Commitments {
+        operator: operator_v3(state),
+        commitments: CommitmentsV3 {
             contract_hash: contract_hash.to_string(),
+            contract_hash_alg: ContractHashAlg::Sha256JcsV2,
             schema_hash: schema_hash.to_string(),
             output_hash,
             input_commitments,
-            assembled_prompt_hash,
             prompt_assembly_version: "1.0.0".to_string(),
             output: Some(output.clone()),
-            rejected_output_hash: None,
-            initiator_submission_hash: None,
-            responder_submission_hash: None,
             prompt_template_hash: Some(prompt_template_hash.to_string()),
-            effective_config_hash,
+            effective_config_hash: Some(effective_config_hash),
             preflight_bundle: Some(preflight_bundle),
             output_retrieval_uri: None,
             output_media_type: None,
             preflight_bundle_uri: None,
+            initiator_submission_hash: None,
+            responder_submission_hash: None,
         },
-        claims: Claims {
+        claims: ClaimsV3 {
             model_identity_asserted: Some(format!("{provider_name}/{model_id}")),
             model_identity_attested: None,
             model_profile_hash_asserted: model_profile_hash.map(str::to_string),
@@ -826,20 +756,19 @@ fn build_receipt_v2(
             provider_latency_ms: Some(provider_latency_ms),
             token_usage: None,
             relay_software_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-            // Session outcome (#189)
             status: Some(SessionStatus::Success),
             signal_class: Some("SESSION_COMPLETED".to_string()),
-            // Execution lane (#190)
             execution_lane: Some(ExecutionLaneV2::Standard),
-            // Channel capacity (#188)
             channel_capacity_bits_upper_bound: Some(entropy_bits),
             channel_capacity_measurement_version: Some(
                 CHANNEL_CAPACITY_MEASUREMENT_VERSION.to_string(),
             ),
             entropy_budget_bits,
             schema_entropy_ceiling_bits: Some(entropy_bits),
-            budget_usage: Some(BudgetUsageV2 {
-                bits_used_before: 0, // cross-session ledger not yet wired
+            // Figures cover this session only (no cross-session ledger).
+            budget_usage: Some(BudgetUsageV3 {
+                scope: BudgetScope::Session,
+                bits_used_before: 0,
                 bits_used_after: entropy_bits,
                 budget_limit: entropy_budget_bits.unwrap_or(128),
             }),
@@ -848,8 +777,8 @@ fn build_receipt_v2(
         tee_attestation: None,
     };
 
-    receipt_core::sign_and_assemble_receipt_v2(unsigned, &state.signing_key)
-        .map_err(|e| RelayError::ReceiptSigning(format!("v2 signing failed: {e}")))
+    receipt_core::sign_and_assemble_receipt_v3(unsigned, &state.signing_key)
+        .map_err(|e| RelayError::ReceiptSigning(format!("v3 signing failed: {e}")))
 }
 
 /// Map a RelayError to an AbortReason for session state.
@@ -863,7 +792,7 @@ pub fn error_to_abort_reason(error: &RelayError) -> AbortReason {
     }
 }
 
-/// Map an AbortReason to a v2 receipt (SessionStatus, signal_class) pair.
+/// Map an AbortReason to a receipt (SessionStatus, signal_class) pair.
 fn abort_reason_to_receipt_status(reason: AbortReason) -> (SessionStatus, &'static str) {
     match reason {
         AbortReason::SchemaValidation => (SessionStatus::Rejected, "schema_validation_failed"),
@@ -874,19 +803,17 @@ fn abort_reason_to_receipt_status(reason: AbortReason) -> (SessionStatus, &'stat
     }
 }
 
-/// Build and sign a v2 failure receipt.
+/// Build and sign a v3 failure receipt.
 ///
 /// Failure receipts record that an inference session did not produce accepted output.
-/// The `output_hash` is set to the SHA-256 of an empty string (no valid output).
-/// `rejected_output_hash` will be populated when the VFC rev pin is bumped (#184).
+/// The `output_hash` is the SHA-256 of zero bytes (no output was accepted).
 #[allow(clippy::too_many_arguments)]
-pub fn build_failure_receipt_v2(
+pub fn build_failure_receipt_v3(
     abort_reason: AbortReason,
     session_id: &str,
     contract_hash: &str,
     schema_hash: &str,
-    input_commitments: Vec<InputCommitment>,
-    assembled_prompt_hash: String,
+    input_commitments: Vec<InputCommitmentV3>,
     prompt_template_hash: &str,
     model_profile_hash: Option<&str>,
     model_id: &str,
@@ -899,47 +826,19 @@ pub fn build_failure_receipt_v2(
     effective_max_tokens: u32,
     entropy_bits: u32,
     entropy_budget_bits: Option<u32>,
-    rejected_output_bytes: Option<&[u8]>,
-) -> Result<ReceiptV2, RelayError> {
+) -> Result<ReceiptV3, RelayError> {
     let (status, signal_class) = abort_reason_to_receipt_status(abort_reason);
 
-    // output_hash: SHA-256 of empty string — no valid output was produced/accepted
+    // output_hash: SHA-256 of zero bytes — no output was accepted
     let output_hash = hex::encode(Sha256::digest(b""));
 
-    // rejected_output_hash: SHA-256 of rejected output bytes, if any (#184)
-    let rejected_output_hash =
-        rejected_output_bytes.map(|bytes| hex::encode(Sha256::digest(bytes)));
-
-    // Build preflight bundle (same as success path)
-    let enforcement_parameters = serde_json::json!({
-        "max_completion_tokens": effective_max_tokens,
-    });
-    let preflight_bundle = PreflightBundle {
-        policy_hash: policy_hash.to_string(),
-        prompt_template_hash: prompt_template_hash.to_string(),
-        model_profile_hash: model_profile_hash.unwrap_or("none").to_string(),
-        schema_hash: schema_hash.to_string(),
-        enforcement_parameters: enforcement_parameters.clone(),
-    };
-
-    let effective_config_hash = {
-        let canonical = receipt_core::canonicalize_serializable(&preflight_bundle)
-            .map_err(|e| RelayError::ReceiptSigning(format!("preflight canonicalization: {e}")))?;
-        let mut hasher = Sha256::new();
-        hasher.update(canonical.as_bytes());
-        Some(hex::encode(hasher.finalize()))
-    };
-
-    let verifying_key_hex = receipt_core::public_key_to_hex(&state.signing_key.verifying_key());
-    let operator_key_fingerprint = {
-        let key_bytes = hex::decode(&verifying_key_hex).unwrap_or_default();
-        let mut hasher = Sha256::new();
-        hasher.update(&key_bytes);
-        hex::encode(hasher.finalize())
-    };
-
-    let operator_id =
-        std::env::var("SELKEY_OPERATOR_ID").unwrap_or_else(|_| "selkey-relay-dev".to_string());
+    let (preflight_bundle, effective_config_hash) = preflight_bundle_v3(
+        policy_hash,
+        prompt_template_hash,
+        model_profile_hash,
+        schema_hash,
+        effective_max_tokens,
+    )?;
 
     let provider_latency_ms = match (inference_start, inference_end) {
         (Some(start), Some(end)) => {
@@ -948,46 +847,38 @@ pub fn build_failure_receipt_v2(
         _ => None,
     };
 
-    let receipt_id = uuid::Uuid::new_v4().to_string();
-    let budget_enforcement_mode = BudgetEnforcementMode::Advisory;
-
-    let unsigned = UnsignedReceiptV2 {
-        receipt_schema_version: SCHEMA_VERSION_V2.to_string(),
-        receipt_canonicalization: CANONICALIZATION_V2.to_string(),
-        receipt_id,
+    let unsigned = UnsignedReceiptV3 {
+        receipt_schema_version: SCHEMA_VERSION_V3.to_string(),
+        receipt_canonicalization: CANONICALIZATION_V3.to_string(),
+        receipt_id: uuid::Uuid::new_v4().to_string(),
         session_id: session_id.to_string(),
-        issued_at: Utc::now(),
+        issued_at: receipt_core::format_issued_at_v3(Utc::now()),
         assurance_level: AssuranceLevel::SelfAsserted,
-        operator: Operator {
-            operator_id,
-            operator_key_fingerprint,
-            operator_key_discovery: None,
-        },
-        commitments: Commitments {
+        operator: operator_v3(state),
+        commitments: CommitmentsV3 {
             contract_hash: contract_hash.to_string(),
+            contract_hash_alg: ContractHashAlg::Sha256JcsV2,
             schema_hash: schema_hash.to_string(),
             output_hash,
             input_commitments,
-            assembled_prompt_hash,
             prompt_assembly_version: "1.0.0".to_string(),
-            output: None, // no valid output for failure receipts
-            rejected_output_hash: rejected_output_hash.clone(),
-            initiator_submission_hash: None,
-            responder_submission_hash: None,
+            output: None, // no accepted output for failure receipts
             prompt_template_hash: Some(prompt_template_hash.to_string()),
-            effective_config_hash,
+            effective_config_hash: Some(effective_config_hash),
             preflight_bundle: Some(preflight_bundle),
             output_retrieval_uri: None,
             output_media_type: None,
             preflight_bundle_uri: None,
+            initiator_submission_hash: None,
+            responder_submission_hash: None,
         },
-        claims: Claims {
+        claims: ClaimsV3 {
             model_identity_asserted: Some(format!("{provider_name}/{model_id}")),
             model_identity_attested: None,
             model_profile_hash_asserted: model_profile_hash.map(str::to_string),
             runtime_hash_asserted: Some(runtime_hash.to_string()),
             runtime_hash_attested: None,
-            budget_enforcement_mode: Some(budget_enforcement_mode),
+            budget_enforcement_mode: Some(BudgetEnforcementMode::Advisory),
             provider_latency_ms,
             token_usage: None,
             relay_software_version: Some(env!("CARGO_PKG_VERSION").to_string()),
@@ -1000,7 +891,8 @@ pub fn build_failure_receipt_v2(
             ),
             entropy_budget_bits,
             schema_entropy_ceiling_bits: Some(entropy_bits),
-            budget_usage: Some(BudgetUsageV2 {
+            budget_usage: Some(BudgetUsageV3 {
+                scope: BudgetScope::Session,
                 bits_used_before: 0,
                 bits_used_after: 0, // no capacity consumed on failure
                 budget_limit: entropy_budget_bits.unwrap_or(128),
@@ -1010,16 +902,20 @@ pub fn build_failure_receipt_v2(
         tee_attestation: None,
     };
 
-    receipt_core::sign_and_assemble_receipt_v2(unsigned, &state.signing_key)
-        .map_err(|e| RelayError::ReceiptSigning(format!("v2 failure receipt signing failed: {e}")))
+    receipt_core::sign_and_assemble_receipt_v3(unsigned, &state.signing_key)
+        .map_err(|e| RelayError::ReceiptSigning(format!("v3 failure receipt signing failed: {e}")))
 }
 
 /// Single-shot relay endpoint handler (POST /relay).
 /// Delegates to `relay_core`.
 pub async fn relay(request: RelayRequest, state: &AppState) -> Result<RelayResponse, RelayError> {
     let provider = crate::resolve_provider(&request.provider, state)?;
+    let accepted = accept_contract(&request.contract)?;
+    validate_input_context(&request.input_a.context)?;
+    validate_input_context(&request.input_b.context)?;
     let (result, _timing) = relay_core(
-        &request.contract,
+        &accepted.contract,
+        &accepted.contract_hash,
         &request.input_a,
         &request.input_b,
         &provider,
@@ -1030,8 +926,6 @@ pub async fn relay(request: RelayRequest, state: &AppState) -> Result<RelayRespo
     Ok(RelayResponse {
         output: result.output,
         receipt: result.receipt,
-        receipt_signature: result.receipt_signature,
-        receipt_v2: Some(result.receipt_v2),
     })
 }
 
@@ -1040,7 +934,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_compute_contract_hash_deterministic() {
+    fn test_accepted_contract_hash_is_contract_hash_v2() {
         let contract = Contract {
             purpose_code: vault_family_types::Purpose::Mediation,
             output_schema_id: "vault_result_mediation".to_string(),
@@ -1062,10 +956,24 @@ mod tests {
             relay_verifying_key_hex: None,
         };
 
-        let h1 = compute_contract_hash(&contract).unwrap();
-        let h2 = compute_contract_hash(&contract).unwrap();
+        // The typed struct serialises absent optionals as null; contract hash
+        // v2 treats those as absent, so the hash equals that of the minimal JSON.
+        let typed_json = serde_json::to_value(&contract).unwrap();
+        let minimal = serde_json::json!({
+            "purpose_code": "MEDIATION",
+            "output_schema_id": "vault_result_mediation",
+            "output_schema": {"type": "object"},
+            "participants": ["alice", "bob"],
+            "prompt_template_hash": "a".repeat(64),
+        });
+        let h1 = accept_contract(&typed_json).unwrap().contract_hash;
+        let h2 = accept_contract(&minimal).unwrap().contract_hash;
         assert_eq!(h1, h2);
-        assert_eq!(h1.len(), 64);
+        assert_eq!(
+            h1,
+            receipt_core::compute_contract_hash_v2(&minimal).unwrap()
+        );
+        assert_eq!(accept_contract(&typed_json).unwrap().contract_json, minimal);
     }
 
     #[test]
@@ -1096,67 +1004,6 @@ mod tests {
         assert_eq!(h1.len(), 64);
 
         std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn test_model_profile_bound_in_receipt() {
-        use crate::types::ModelProfile;
-        use chrono::Utc;
-        use receipt_core::{BudgetUsageRecord, ExecutionLane, Receipt, ReceiptStatus};
-        use sha2::{Digest, Sha256};
-        use vault_family_types::BudgetTier;
-
-        let profile = ModelProfile {
-            profile_version: "1".to_string(),
-            profile_id: "receipt-test-profile-v1".to_string(),
-            provider: "anthropic".to_string(),
-            model_id: "claude-sonnet-4-6".to_string(),
-            model_family: "claude-sonnet".to_string(),
-            reasoning_mode: "unconstrained".to_string(),
-            structured_output: true,
-        };
-
-        // Hash the profile directly without file system
-        let profile_hash = profile.content_hash().unwrap();
-
-        // Build a receipt with model_profile_hash
-        let runtime_hash = hex::encode(Sha256::digest(GIT_SHA.as_bytes()));
-        let guardian_hash = hex::encode(Sha256::digest(b"guardian-core-v0.1.0"));
-        let model_weights_hash = hex::encode(Sha256::digest(b"api-mediated-no-local-weights"));
-        let inference_config_hash = hex::encode(Sha256::digest(b"api-mediated-no-local-inference"));
-
-        let now = Utc::now();
-        let unsigned = Receipt::builder()
-            .session_id("a".repeat(64))
-            .purpose_code(vault_family_types::Purpose::Mediation)
-            .participant_ids(vec!["alice".to_string(), "bob".to_string()])
-            .runtime_hash(&runtime_hash)
-            .guardian_policy_hash(&guardian_hash)
-            .model_weights_hash(&model_weights_hash)
-            .llama_cpp_version("n/a")
-            .inference_config_hash(&inference_config_hash)
-            .output_schema_version("1.0.0")
-            .session_start(now)
-            .session_end(now)
-            .fixed_window_duration_seconds(0)
-            .status(ReceiptStatus::Completed)
-            .execution_lane(ExecutionLane::ApiMediated)
-            .output_entropy_bits(6)
-            .budget_usage(BudgetUsageRecord {
-                pair_id: "b".repeat(64),
-                window_start: now,
-                bits_used_before: 0,
-                bits_used_after: 6,
-                budget_limit: 128,
-                budget_tier: BudgetTier::Default,
-                budget_enforcement: Some("disabled".to_string()),
-                compartment_id: None,
-            })
-            .model_profile_hash(Some(profile_hash.clone()))
-            .build_unsigned()
-            .expect("receipt builder should succeed");
-
-        assert_eq!(unsigned.model_profile_hash, Some(profile_hash));
     }
 
     fn make_failure_test_state(seed: u8) -> crate::AppState {
@@ -1230,45 +1077,37 @@ mod tests {
         ];
         for (reason, expected_status, expected_signal) in cases {
             let (status, signal) = abort_reason_to_receipt_status(reason);
-            assert_eq!(status, expected_status, "wrong status for {:?}", reason);
-            assert_eq!(
-                signal, expected_signal,
-                "wrong signal_class for {:?}",
-                reason
-            );
+            assert_eq!(status, expected_status, "wrong status for {reason:?}");
+            assert_eq!(signal, expected_signal, "wrong signal_class for {reason:?}");
         }
     }
 
+    fn test_commitments() -> Vec<InputCommitmentV3> {
+        ["alice", "bob"]
+            .iter()
+            .zip(["a", "b"])
+            .map(|(participant, fill)| InputCommitmentV3 {
+                participant_id: participant.to_string(),
+                input_commitment: fill.repeat(64),
+                scheme: InputCommitmentScheme::Sha256N32JcsV3,
+            })
+            .collect()
+    }
+
     #[test]
-    fn test_build_failure_receipt_v2_schema_validation() {
-        use receipt_core::{HashAlgorithm, InputCommitment, SessionStatus};
+    fn test_build_failure_receipt_v3_schema_validation() {
         let state = make_failure_test_state(42);
-        let input_commitments = vec![
-            InputCommitment {
-                participant_id: "alice".to_string(),
-                input_hash: "a".repeat(64),
-                hash_alg: HashAlgorithm::Sha256,
-                canonicalization: "CANONICAL_JSON_V1".to_string(),
-            },
-            InputCommitment {
-                participant_id: "bob".to_string(),
-                input_hash: "b".repeat(64),
-                hash_alg: HashAlgorithm::Sha256,
-                canonicalization: "CANONICAL_JSON_V1".to_string(),
-            },
-        ];
-        let receipt = build_failure_receipt_v2(
+        let receipt = build_failure_receipt_v3(
             AbortReason::SchemaValidation,
-            &"s".repeat(64),
+            &"5".repeat(64),
             &"c".repeat(64),
-            &"h".repeat(64),
-            input_commitments,
-            "p".repeat(64),
-            &"t".repeat(64),
+            &"d".repeat(64),
+            test_commitments(),
+            &"f".repeat(64),
             None,
             "test-model",
             "anthropic",
-            &"r".repeat(64),
+            &"1".repeat(64),
             &"a".repeat(64),
             &state,
             None,
@@ -1276,10 +1115,10 @@ mod tests {
             4096,
             6,
             Some(128),
-            None,
         )
         .expect("failure receipt should build");
 
+        assert_eq!(receipt.receipt_schema_version, "3.0.0");
         assert_eq!(receipt.claims.status, Some(SessionStatus::Rejected));
         assert_eq!(
             receipt.claims.signal_class.as_deref(),
@@ -1288,50 +1127,37 @@ mod tests {
         let expected_empty_hash = hex::encode(sha2::Sha256::digest(b""));
         assert_eq!(receipt.commitments.output_hash, expected_empty_hash);
         assert!(receipt.commitments.output.is_none());
-        assert_eq!(
-            receipt
-                .claims
-                .budget_usage
-                .as_ref()
-                .unwrap()
-                .bits_used_after,
-            0
-        );
+        let usage = receipt.claims.budget_usage.as_ref().unwrap();
+        assert_eq!(usage.scope, BudgetScope::Session);
+        assert_eq!(usage.bits_used_before, 0);
+        assert_eq!(usage.bits_used_after, 0);
         assert!(receipt.claims.provider_latency_ms.is_none());
         let verifying_key = state.signing_key.verifying_key();
-        let (unsigned, sig) = receipt.split();
-        assert!(receipt_core::verify_receipt_v2(&unsigned, &sig, &verifying_key).is_ok());
+        let json = serde_json::to_string(&receipt).unwrap();
+        receipt_core::verify_receipt_v3_json(&json, &verifying_key)
+            .expect("failure receipt must verify");
     }
 
     #[test]
-    fn test_build_failure_receipt_v2_provider_error() {
-        use receipt_core::{HashAlgorithm, InputCommitment, SessionStatus};
+    fn test_build_failure_receipt_v3_provider_error() {
         let state = make_failure_test_state(99);
-        let input_commitments = vec![InputCommitment {
-            participant_id: "alice".to_string(),
-            input_hash: "a".repeat(64),
-            hash_alg: HashAlgorithm::Sha256,
-            canonicalization: "CANONICAL_JSON_V1".to_string(),
-        }];
-        let receipt = build_failure_receipt_v2(
+        let receipt = build_failure_receipt_v3(
             AbortReason::ProviderError,
-            &"s".repeat(64),
+            &"5".repeat(64),
             &"c".repeat(64),
-            &"h".repeat(64),
-            input_commitments,
-            "p".repeat(64),
-            &"t".repeat(64),
+            &"d".repeat(64),
+            test_commitments(),
+            &"f".repeat(64),
             None,
             "test-model",
             "openai",
-            &"r".repeat(64),
+            &"1".repeat(64),
             &"a".repeat(64),
             &state,
             Some(chrono::Utc::now()),
             Some(chrono::Utc::now()),
             4096,
             10,
-            None,
             None,
         )
         .expect("failure receipt should build");
@@ -1342,6 +1168,9 @@ mod tests {
             Some("provider_error")
         );
         assert!(receipt.claims.provider_latency_ms.is_some());
+        let json = serde_json::to_value(&receipt).unwrap();
+        assert!(json["commitments"].get("assembled_prompt_hash").is_none());
+        assert!(json["commitments"].get("rejected_output_hash").is_none());
     }
 
     #[test]
@@ -1807,8 +1636,12 @@ mod tests {
             "additionalProperties": false
         });
 
-        let h1 = compute_contract_hash(&base_contract).unwrap();
-        let h2 = compute_contract_hash(&alt_contract).unwrap();
+        let h1 = accept_contract(&serde_json::to_value(&base_contract).unwrap())
+            .unwrap()
+            .contract_hash;
+        let h2 = accept_contract(&serde_json::to_value(&alt_contract).unwrap())
+            .unwrap()
+            .contract_hash;
         assert_ne!(
             h1, h2,
             "contracts with different output_schema must have different contract hashes"
@@ -2087,37 +1920,28 @@ mod tests {
     #[test]
     fn test_preflight_and_receipt_agree_on_policy_hash() {
         // Both preflight bundle and final receipt must contain the same policy_hash.
-        // We verify this by building a v2 receipt and checking the preflight bundle's
+        // We verify this by building a v3 receipt and checking the preflight bundle's
         // policy_hash matches what we pass in.
         let state = make_failure_test_state(77);
         let policy_hash = "b".repeat(64);
 
-        let input_commitments = vec![InputCommitment {
-            participant_id: "alice".to_string(),
-            input_hash: "a".repeat(64),
-            hash_alg: HashAlgorithm::Sha256,
-            canonicalization: "CANONICAL_JSON_V1".to_string(),
-        }];
-
-        let receipt = build_failure_receipt_v2(
+        let receipt = build_failure_receipt_v3(
             AbortReason::ProviderError,
-            &"s".repeat(64),
+            &"5".repeat(64),
             &"c".repeat(64),
-            &"h".repeat(64),
-            input_commitments,
-            "p".repeat(64),
-            &"t".repeat(64),
+            &"d".repeat(64),
+            test_commitments(),
+            &"f".repeat(64),
             None,
             "test-model",
             "anthropic",
-            &"r".repeat(64),
+            &"1".repeat(64),
             &policy_hash,
             &state,
             None,
             None,
             4096,
             10,
-            None,
             None,
         )
         .expect("failure receipt should build");
@@ -2129,6 +1953,14 @@ mod tests {
         assert!(
             receipt.commitments.effective_config_hash.is_some(),
             "effective_config_hash should be set (computed from preflight with our policy_hash)"
+        );
+        assert_eq!(
+            receipt
+                .commitments
+                .preflight_bundle
+                .as_ref()
+                .map(|b| b.policy_hash.as_str()),
+            Some(policy_hash.as_str())
         );
     }
 

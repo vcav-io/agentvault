@@ -1,0 +1,106 @@
+{
+  "contract_hash_alg": "SHA256_JCS_V2",
+  "description": "Contract hash v2 (SHA256_JCS_V2): reject unknown members, drop null/absent optional members, hex(SHA-256(JCS_v3(contract))). Parse contract_json strictly.",
+  "negative": [
+    {
+      "contract_json": "{\"purpose_code\":\"MEDIATION\",\"output_schema_id\":\"urn:vcav:schema:mediation.e18.v1\",\"output_schema\":{},\"participants\":[\"agent-alice\",\"agent-bob\"],\"prompt_template_hash\":\"a3f2f8f5ed1b68f2ba0c2fb0216f49f23eb2e8285e4a6575d72a4f75f2ef7e3c\",\"output_schema_hash\":\"8278e0910d750195b448797616e091ad6dd17d43db59e148f8d7b9727e1e48d0\",\"notes\":\"x\"}",
+      "expected_error": "INVALID_CONTRACT",
+      "name": "unknown_top_level_member"
+    },
+    {
+      "contract_json": "{\"purpose_code\":\"MEDIATION\",\"output_schema_id\":\"urn:vcav:schema:mediation.e18.v1\",\"output_schema\":{},\"participants\":[\"agent-alice\",\"agent-bob\"],\"prompt_template_hash\":\"a3f2f8f5ed1b68f2ba0c2fb0216f49f23eb2e8285e4a6575d72a4f75f2ef7e3c\",\"output_schema_hash\":\"8278e0910d750195b448797616e091ad6dd17d43db59e148f8d7b9727e1e48d0\",\"contract_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\"}",
+      "expected_error": "INVALID_CONTRACT",
+      "name": "contract_hash_member_present"
+    },
+    {
+      "contract_json": "{\"purpose_code\":\"MEDIATION\",\"output_schema_id\":\"urn:vcav:schema:mediation.e18.v1\",\"output_schema\":{},\"participants\":[\"agent-alice\",\"agent-bob\"],\"prompt_template_hash\":\"a3f2f8f5ed1b68f2ba0c2fb0216f49f23eb2e8285e4a6575d72a4f75f2ef7e3c\",\"output_schema_hash\":\"8278e0910d750195b448797616e091ad6dd17d43db59e148f8d7b9727e1e48d0\",\"model_constraints\":{\"allowed_models\":[],\"region\":\"eu\"}}",
+      "expected_error": "INVALID_CONTRACT",
+      "name": "unknown_model_constraints_member"
+    },
+    {
+      "contract_json": "{\"purpose_code\":\"MEDIATION\",\"output_schema_id\":\"urn:vcav:schema:mediation.e18.v1\",\"output_schema\":{},\"prompt_template_hash\":\"a3f2f8f5ed1b68f2ba0c2fb0216f49f23eb2e8285e4a6575d72a4f75f2ef7e3c\",\"output_schema_hash\":\"8278e0910d750195b448797616e091ad6dd17d43db59e148f8d7b9727e1e48d0\"}",
+      "expected_error": "INVALID_CONTRACT",
+      "name": "missing_participants"
+    },
+    {
+      "contract_json": "{\"purpose_code\":\"MEDIATION\",\"output_schema_id\":\"urn:vcav:schema:mediation.e18.v1\",\"output_schema\":{},\"participants\":[\"agent-alice\",\"agent-bob\"],\"prompt_template_hash\":\"a3f2f8f5ed1b68f2ba0c2fb0216f49f23eb2e8285e4a6575d72a4f75f2ef7e3c\",\"output_schema_hash\":\"8278e0910d750195b448797616e091ad6dd17d43db59e148f8d7b9727e1e48d0\",\"entropy_budget_bits\":\"8\"}",
+      "expected_error": "INVALID_CONTRACT",
+      "name": "wrong_type_entropy_budget"
+    },
+    {
+      "contract_json": "{\"purpose_code\":\"MEDIATION\",\"output_schema_id\":\"urn:vcav:schema:mediation.e18.v1\",\"output_schema\":{},\"participants\":[\"agent-alice\",\"agent-bob\"],\"prompt_template_hash\":\"a3f2f8f5ed1b68f2ba0c2fb0216f49f23eb2e8285e4a6575d72a4f75f2ef7e3c\",\"output_schema_hash\":\"8278e0910d750195b448797616e091ad6dd17d43db59e148f8d7b9727e1e48d0\",\"entropy_budget_bits\":-1}",
+      "expected_error": "INVALID_CONTRACT",
+      "name": "negative_entropy_budget"
+    },
+    {
+      "contract_json": "{\"purpose_code\":\"MEDIATION\",\"output_schema_id\":\"urn:vcav:schema:mediation.e18.v1\",\"output_schema\":{},\"participants\":[\"agent-alice\",\"agent-bob\"],\"prompt_template_hash\":\"a3f2f8f5ed1b68f2ba0c2fb0216f49f23eb2e8285e4a6575d72a4f75f2ef7e3c\",\"output_schema_hash\":\"8278e0910d750195b448797616e091ad6dd17d43db59e148f8d7b9727e1e48d0\",\"entropy_enforcement\":\"gate\"}",
+      "expected_error": "INVALID_CONTRACT",
+      "name": "unknown_enforcement_mode"
+    },
+    {
+      "contract_json": "{\"purpose_code\":null,\"output_schema_id\":\"urn:vcav:schema:mediation.e18.v1\",\"output_schema\":{},\"participants\":[\"agent-alice\",\"agent-bob\"],\"prompt_template_hash\":\"a3f2f8f5ed1b68f2ba0c2fb0216f49f23eb2e8285e4a6575d72a4f75f2ef7e3c\",\"output_schema_hash\":\"8278e0910d750195b448797616e091ad6dd17d43db59e148f8d7b9727e1e48d0\"}",
+      "expected_error": "INVALID_CONTRACT",
+      "name": "null_required_member"
+    },
+    {
+      "contract_json": "{\"purpose_code\":\"MEDIATION\",\"output_schema_id\":\"urn:vcav:schema:mediation.e18.v1\",\"output_schema\":{\"maximum\":9007199254740992},\"participants\":[\"agent-alice\",\"agent-bob\"],\"prompt_template_hash\":\"a3f2f8f5ed1b68f2ba0c2fb0216f49f23eb2e8285e4a6575d72a4f75f2ef7e3c\",\"output_schema_hash\":\"8278e0910d750195b448797616e091ad6dd17d43db59e148f8d7b9727e1e48d0\"}",
+      "expected_error": "NUMBER_OUT_OF_RANGE",
+      "name": "number_out_of_range_in_schema"
+    },
+    {
+      "contract_json": "{\"purpose_code\":\"MEDIATION\",\"output_schema_id\":\"urn:vcav:schema:mediation.e18.v1\",\"output_schema\":{},\"participants\":[\"agent-alice\",\"agent-bob\"],\"prompt_template_hash\":\"a3f2f8f5ed1b68f2ba0c2fb0216f49f23eb2e8285e4a6575d72a4f75f2ef7e3c\",\"output_schema_hash\":\"8278e0910d750195b448797616e091ad6dd17d43db59e148f8d7b9727e1e48d0\",\"purpose_code\":\"COMPATIBILITY\"}",
+      "expected_error": "DUPLICATE_KEY",
+      "name": "duplicate_member"
+    },
+    {
+      "contract_json": "[]",
+      "expected_error": "INVALID_CONTRACT",
+      "name": "not_an_object"
+    },
+    {
+      "contract_json": "{\"purpose_code\":\"MEDIATION\",\"output_schema_id\":\"urn:vcav:schema:mediation.e18.v1\",\"output_schema\":{},\"participants\":[\"agent-alice\",\"agent-bob\"],\"prompt_template_hash\":\"a3f2f8f5ed1b68f2ba0c2fb0216f49f23eb2e8285e4a6575d72a4f75f2ef7e3c\",\"output_schema_hash\":\"8278e0910d750195b448797616e091ad6dd17d43db59e148f8d7b9727e1e48d0\",\"entropy_budget_bits\":8.0}",
+      "expected_error": "INVALID_CONTRACT",
+      "name": "integer_field_with_fraction"
+    },
+    {
+      "contract_json": "{\"purpose_code\":\"MEDIATION\",\"output_schema_id\":\"urn:vcav:schema:mediation.e18.v1\",\"output_schema\":{},\"participants\":[\"agent-alice\",\"agent-bob\"],\"prompt_template_hash\":\"a3f2f8f5ed1b68f2ba0c2fb0216f49f23eb2e8285e4a6575d72a4f75f2ef7e3c\",\"output_schema_hash\":\"8278e0910d750195b448797616e091ad6dd17d43db59e148f8d7b9727e1e48d0\",\"entropy_budget_bits\":8e0}",
+      "expected_error": "INVALID_CONTRACT",
+      "name": "integer_field_with_exponent"
+    },
+    {
+      "contract_json": "{\"purpose_code\":\"MEDIATION\",\"output_schema_id\":\"urn:vcav:schema:mediation.e18.v1\",\"output_schema\":{},\"participants\":[\"agent-alice\",\"agent-bob\"],\"prompt_template_hash\":\"a3f2f8f5ed1b68f2ba0c2fb0216f49f23eb2e8285e4a6575d72a4f75f2ef7e3c\",\"output_schema_hash\":\"8278e0910d750195b448797616e091ad6dd17d43db59e148f8d7b9727e1e48d0\",\"max_completion_tokens\":-0}",
+      "expected_error": "INVALID_CONTRACT",
+      "name": "integer_field_negative_zero"
+    }
+  ],
+  "positive": [
+    {
+      "contract_json": "{\"purpose_code\":\"MEDIATION\",\"output_schema_id\":\"urn:vcav:schema:mediation.e18.v1\",\"output_schema\":{},\"participants\":[\"agent-alice\",\"agent-bob\"],\"prompt_template_hash\":\"a3f2f8f5ed1b68f2ba0c2fb0216f49f23eb2e8285e4a6575d72a4f75f2ef7e3c\",\"output_schema_hash\":\"8278e0910d750195b448797616e091ad6dd17d43db59e148f8d7b9727e1e48d0\"}",
+      "expected_contract_hash": "619fcc5f01379b1e27baea6e9f96c3901595b4e9df3c0b357a27314f97b5ff5b",
+      "expected_normalized_canonical": "{\"output_schema\":{},\"output_schema_hash\":\"8278e0910d750195b448797616e091ad6dd17d43db59e148f8d7b9727e1e48d0\",\"output_schema_id\":\"urn:vcav:schema:mediation.e18.v1\",\"participants\":[\"agent-alice\",\"agent-bob\"],\"prompt_template_hash\":\"a3f2f8f5ed1b68f2ba0c2fb0216f49f23eb2e8285e4a6575d72a4f75f2ef7e3c\",\"purpose_code\":\"MEDIATION\"}",
+      "name": "minimal_registry_stub",
+      "note": "absent optionals are omitted"
+    },
+    {
+      "contract_json": "{\"purpose_code\":\"MEDIATION\",\"output_schema_id\":\"urn:vcav:schema:mediation.e18.v1\",\"output_schema\":{},\"participants\":[\"agent-alice\",\"agent-bob\"],\"prompt_template_hash\":\"a3f2f8f5ed1b68f2ba0c2fb0216f49f23eb2e8285e4a6575d72a4f75f2ef7e3c\",\"output_schema_hash\":\"8278e0910d750195b448797616e091ad6dd17d43db59e148f8d7b9727e1e48d0\",\"entropy_budget_bits\":null,\"timing_class\":null,\"metadata\":null,\"model_profile_id\":null}",
+      "expected_contract_hash": "619fcc5f01379b1e27baea6e9f96c3901595b4e9df3c0b357a27314f97b5ff5b",
+      "expected_normalized_canonical": "{\"output_schema\":{},\"output_schema_hash\":\"8278e0910d750195b448797616e091ad6dd17d43db59e148f8d7b9727e1e48d0\",\"output_schema_id\":\"urn:vcav:schema:mediation.e18.v1\",\"participants\":[\"agent-alice\",\"agent-bob\"],\"prompt_template_hash\":\"a3f2f8f5ed1b68f2ba0c2fb0216f49f23eb2e8285e4a6575d72a4f75f2ef7e3c\",\"purpose_code\":\"MEDIATION\"}",
+      "name": "null_optionals_are_absent",
+      "note": "same hash as minimal_registry_stub: null optional members are removed"
+    },
+    {
+      "contract_json": "{\n  \"purpose_code\": \"MEDIATION\",\n  \"output_schema_id\": \"urn:vcav:schema:mediation.e18.v1\",\n  \"output_schema\": {\"type\": \"object\", \"properties\": {\"x\": {\"type\": \"integer\", \"minimum\": -9007199254740991, \"maximum\": 9007199254740991}}},\n  \"participants\": [\"agent-alice\", \"agent-bob\"],\n  \"prompt_template_hash\": \"a3f2f8f5ed1b68f2ba0c2fb0216f49f23eb2e8285e4a6575d72a4f75f2ef7e3c\",\n  \"entropy_budget_bits\": 16,\n  \"timing_class\": \"fixed-window\",\n  \"metadata\": {\"ui\": \"selkey\", \"flow\": \"bilateral\", \"empty\": {}},\n  \"model_profile_id\": \"sealed-demo-v2\",\n  \"model_profile_hash\": \"bc5593f8efd4b85d785cf871c4539daea1fc5af6c6f69055f5f166c4ff8c8e07\",\n  \"enforcement_policy_hash\": \"6d6c6cc26d91708d7fd8f12cf5d7f7f86d5b59f60f9748f2d2730a4ac89d56be\",\n  \"output_schema_hash\": \"8278e0910d750195b448797616e091ad6dd17d43db59e148f8d7b9727e1e48d0\",\n  \"model_constraints\": {\"allowed_providers\": [\"anthropic\", \"openai\"], \"allowed_models\": [], \"min_tier\": \"mid\"},\n  \"max_completion_tokens\": 512,\n  \"session_ttl_secs\": 600,\n  \"invite_ttl_secs\": 300,\n  \"entropy_enforcement\": \"Strict\",\n  \"relay_verifying_key_hex\": \"8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c\"\n}",
+      "expected_contract_hash": "d74e9fac1705d38e34e4c1442d81c8aa42367d872670bf1c2a44f57a2b1e3081",
+      "expected_normalized_canonical": "{\"enforcement_policy_hash\":\"6d6c6cc26d91708d7fd8f12cf5d7f7f86d5b59f60f9748f2d2730a4ac89d56be\",\"entropy_budget_bits\":16,\"entropy_enforcement\":\"Strict\",\"invite_ttl_secs\":300,\"max_completion_tokens\":512,\"metadata\":{\"empty\":{},\"flow\":\"bilateral\",\"ui\":\"selkey\"},\"model_constraints\":{\"allowed_models\":[],\"allowed_providers\":[\"anthropic\",\"openai\"],\"min_tier\":\"mid\"},\"model_profile_hash\":\"bc5593f8efd4b85d785cf871c4539daea1fc5af6c6f69055f5f166c4ff8c8e07\",\"model_profile_id\":\"sealed-demo-v2\",\"output_schema\":{\"properties\":{\"x\":{\"maximum\":9007199254740991,\"minimum\":-9007199254740991,\"type\":\"integer\"}},\"type\":\"object\"},\"output_schema_hash\":\"8278e0910d750195b448797616e091ad6dd17d43db59e148f8d7b9727e1e48d0\",\"output_schema_id\":\"urn:vcav:schema:mediation.e18.v1\",\"participants\":[\"agent-alice\",\"agent-bob\"],\"prompt_template_hash\":\"a3f2f8f5ed1b68f2ba0c2fb0216f49f23eb2e8285e4a6575d72a4f75f2ef7e3c\",\"purpose_code\":\"MEDIATION\",\"relay_verifying_key_hex\":\"8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c\",\"session_ttl_secs\":600,\"timing_class\":\"fixed-window\"}",
+      "name": "all_members",
+      "note": "empty arrays and objects are kept"
+    },
+    {
+      "contract_json": "{\n  \"purpose_code\": \"COMPATIBILITY\",\n  \"output_schema_id\": \"urn:vcav:schema:compatibility.v1\",\n  \"output_schema\": {\n    \"type\": \"object\",\n    \"additionalProperties\": false,\n    \"required\": [\"decision\", \"note\"],\n    \"properties\": {\n      \"decision\": {\"type\": \"string\", \"enum\": [\"PROCEED\", \"DECLINE\"]},\n      \"note\": {\"type\": \"string\", \"maxLength\": 64}\n    }\n  },\n  \"participants\": [\"agent-alice\", \"agent-bob\"],\n  \"prompt_template_hash\": \"8888888888888888888888888888888888888888888888888888888888888888\",\n  \"entropy_budget_bits\": 8,\n  \"metadata\": {\"\\ufb33\": \"hebrew\", \"\\ud83d\\ude00\": \"emoji\"},\n  \"model_constraints\": {\"allowed_providers\": [\"anthropic\"]},\n  \"entropy_enforcement\": \"Gate\"\n}",
+      "expected_contract_hash": "8eff8018bef6b35cb0fa7422a1ffd38e84fb7663e1a467584a1af3839800a798",
+      "expected_normalized_canonical": "{\"entropy_budget_bits\":8,\"entropy_enforcement\":\"Gate\",\"metadata\":{\"😀\":\"emoji\",\"דּ\":\"hebrew\"},\"model_constraints\":{\"allowed_providers\":[\"anthropic\"]},\"output_schema\":{\"additionalProperties\":false,\"properties\":{\"decision\":{\"enum\":[\"PROCEED\",\"DECLINE\"],\"type\":\"string\"},\"note\":{\"maxLength\":64,\"type\":\"string\"}},\"required\":[\"decision\",\"note\"],\"type\":\"object\"},\"output_schema_id\":\"urn:vcav:schema:compatibility.v1\",\"participants\":[\"agent-alice\",\"agent-bob\"],\"prompt_template_hash\":\"8888888888888888888888888888888888888888888888888888888888888888\",\"purpose_code\":\"COMPATIBILITY\"}",
+      "name": "receipt_vector_contract",
+      "note": "contract of receipt_v3_positive_01; metadata keys sort by UTF-16 code units"
+    }
+  ]
+}

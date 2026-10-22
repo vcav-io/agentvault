@@ -1,0 +1,90 @@
+{
+  "description": "Input commitments v3: hex(SHA-256(\"VCAV-INPUT-COMMIT-V3:\" || nonce[32 raw bytes] || JCS_v3(context))). nonce_hex is the wire form of SubmitInputRequest.commitment_nonce (64 lowercase hex).",
+  "domain_prefix": "VCAV-INPUT-COMMIT-V3:",
+  "negative": [
+    {
+      "commitment": "ff3cff1affc4c45d9fcd8ff6e3c0b3b2adbecbc4d7d3b5a3cb3a5d81c82089c4",
+      "context_json": "{\"role\":\"initiator\",\"preferences\":{\"budget\":5000,\"city\":\"Lisbon\",\"flexible\":true}}",
+      "expected_result": "MISMATCH",
+      "name": "wrong_nonce",
+      "nonce_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1e"
+    },
+    {
+      "commitment": "ff3cff1affc4c45d9fcd8ff6e3c0b3b2adbecbc4d7d3b5a3cb3a5d81c82089c4",
+      "context_json": "{\"role\":\"initiator\",\"preferences\":{\"budget\":5001,\"city\":\"Lisbon\",\"flexible\":true}}",
+      "expected_result": "MISMATCH",
+      "name": "wrong_context",
+      "nonce_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+    },
+    {
+      "commitment": "8a0406a89c9fd4e180d0d1af0a0df8b487d0565384ad67755eac2fd042587aab",
+      "context_json": "{\"role\":\"initiator\",\"preferences\":{\"budget\":5000,\"city\":\"Lisbon\",\"flexible\":true}}",
+      "expected_result": "MISMATCH",
+      "name": "unsalted_hash_is_not_a_commitment",
+      "nonce_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+    },
+    {
+      "commitment": "ff3cff1affc4c45d9fcd8ff6e3c0b3b2adbecbc4d7d3b5a3cb3a5d81c82089c4",
+      "context_json": "{\"role\":\"initiator\",\"preferences\":{\"budget\":5000,\"city\":\"Lisbon\",\"flexible\":true}}",
+      "expected_result": "INVALID_NONCE",
+      "name": "nonce_too_short",
+      "nonce_hex": "ababababababababababababababababababababababababababababababab"
+    },
+    {
+      "commitment": "ff3cff1affc4c45d9fcd8ff6e3c0b3b2adbecbc4d7d3b5a3cb3a5d81c82089c4",
+      "context_json": "{\"role\":\"initiator\",\"preferences\":{\"budget\":5000,\"city\":\"Lisbon\",\"flexible\":true}}",
+      "expected_result": "INVALID_NONCE",
+      "name": "nonce_uppercase_hex",
+      "nonce_hex": "ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB"
+    },
+    {
+      "commitment": "ff3cff1affc4c45d9fcd8ff6e3c0b3b2adbecbc4d7d3b5a3cb3a5d81c82089c4",
+      "context_json": "{\"budget\":9007199254740992}",
+      "expected_result": "NUMBER_OUT_OF_RANGE",
+      "name": "context_number_out_of_range",
+      "nonce_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+    },
+    {
+      "commitment": "ff3cff1affc4c45d9fcd8ff6e3c0b3b2adbecbc4d7d3b5a3cb3a5d81c82089c4",
+      "context_json": "{\"role\":\"a\",\"role\":\"b\"}",
+      "expected_result": "DUPLICATE_KEY",
+      "name": "context_duplicate_key",
+      "nonce_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+    }
+  ],
+  "positive": [
+    {
+      "context_json": "{\"role\":\"initiator\",\"preferences\":{\"budget\":5000,\"city\":\"Lisbon\",\"flexible\":true}}",
+      "expected_canonical_context": "{\"preferences\":{\"budget\":5000,\"city\":\"Lisbon\",\"flexible\":true},\"role\":\"initiator\"}",
+      "expected_commitment": "ff3cff1affc4c45d9fcd8ff6e3c0b3b2adbecbc4d7d3b5a3cb3a5d81c82089c4",
+      "expected_preimage_hex": "564341562d494e5055542d434f4d4d49542d56333a000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f7b22707265666572656e636573223a7b22627564676574223a353030302c2263697479223a224c6973626f6e222c22666c657869626c65223a747275657d2c22726f6c65223a22696e69746961746f72227d",
+      "name": "alice_context",
+      "nonce_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+    },
+    {
+      "context_json": "{\"role\":\"responder\",\"notes\":\"café 😀\",\"scores\":[1,2.5,-0]}",
+      "expected_canonical_context": "{\"notes\":\"café 😀\",\"role\":\"responder\",\"scores\":[1,2.5,0]}",
+      "expected_commitment": "0fe5b61ce97ef51ae82c979b130b677e4e0c9938548672fde81f223b178d6fd9",
+      "expected_preimage_hex": "564341562d494e5055542d434f4d4d49542d56333ab0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b07b226e6f746573223a22636166c3a920f09f9880222c22726f6c65223a22726573706f6e646572222c2273636f726573223a5b312c322e352c305d7d",
+      "name": "bob_context_unicode_and_numbers",
+      "nonce_hex": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+    },
+    {
+      "context_json": "{}",
+      "expected_canonical_context": "{}",
+      "expected_commitment": "1a7bf41a9cf789617a359b7a88dbd87553b1e1ee30d706d6926367ca2cda4d97",
+      "expected_preimage_hex": "564341562d494e5055542d434f4d4d49542d56333a00000000000000000000000000000000000000000000000000000000000000007b7d",
+      "name": "empty_object_zero_nonce",
+      "nonce_hex": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "context_json": "\"plain string context\"",
+      "expected_canonical_context": "\"plain string context\"",
+      "expected_commitment": "eebca29e42d766a407d16f310841fd6d40ced5a7d5f1602b54e406c7affdb3fb",
+      "expected_preimage_hex": "564341562d494e5055542d434f4d4d49542d56333a111111111111111111111111111111111111111111111111111111111111111122706c61696e20737472696e6720636f6e7465787422",
+      "name": "string_context",
+      "nonce_hex": "1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  ],
+  "scheme": "SHA256_N32_JCS_V3"
+}

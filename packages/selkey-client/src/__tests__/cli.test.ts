@@ -115,7 +115,8 @@ describe('selkey-contract CLI', () => {
     expect(contract.model_profile_id).toBe('api-claude-sonnet-v1');
     expect(contract.entropy_budget_bits).toBe(12);
     expect(contract.entropy_enforcement).toBe('Advisory');
-    expect(contract.contract_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(contract).not.toHaveProperty('contract_hash');
+    expect(result.stderr).toMatch(/contract_hash \(SHA256_JCS_V2\): [0-9a-f]{64}/);
     // Warnings go to stderr, not stdout
     expect(result.stdout).not.toContain('WARNING');
   });

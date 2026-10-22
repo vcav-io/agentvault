@@ -12,6 +12,7 @@
  */
 
 import { fetchRelayPublicKey, verifyReceipt } from 'selkey/verify';
+import type { OwnInputArtefact, VerifyArtefacts } from 'selkey/verify';
 
 export const RELAY_URL_ENV = 'SELKEY_RELAY_URL';
 export const RELAY_ALLOWLIST_ENV = 'SELKEY_RELAY_ALLOWLIST';
@@ -131,15 +132,49 @@ export function isRelayKeyPinned(): boolean {
   return Boolean(process.env[RELAY_VERIFYING_KEY_ENV]?.trim());
 }
 
+/** Data this agent holds locally about its own side of the session. */
+export interface LocalSessionData {
+  /** This agent's input, its participant id and the commitment nonce it sent. */
+  ownInput?: OwnInputArtefact;
+  /** The contract this agent agreed to, if it holds it. */
+  contract?: unknown;
+  /**
+   * True when this agent submitted input to the session. The receipt must
+   * then commit to that input; without the data for the own-input check the
+   * receipt is not accepted.
+   */
+  submittedInput?: boolean;
+}
+
+/**
+ * The session receipt. Relays emit receipt v3 only, under `receipt`; any
+ * other version or location is not accepted on live flows.
+ */
+function pickReceipt(output: { receipt?: unknown }): Record<string, unknown> | undefined {
+  const r = output.receipt;
+  if (!r || typeof r !== 'object' || Array.isArray(r)) return undefined;
+  const receipt = r as Record<string, unknown>;
+  return receipt['receipt_schema_version'] === '3.0.0' ? receipt : undefined;
+}
+
 /**
  * Verify a session output's receipt against SELKEY_RELAY_VERIFYING_KEY_HEX.
  * Returns NOT_PINNED when no key is configured.
+ *
+ * Besides the signature, the receipt must commit to what this agent holds
+ * locally: the output it received, its own input (opened with the commitment
+ * nonce it sent; receipt v3), and the contract when it is known.
  */
-export function checkReceiptAgainstPinnedKey(output: {
-  receipt?: unknown;
-  receipt_signature?: string;
-  receipt_v2?: Record<string, unknown>;
-}): ReceiptCheck {
+export function checkReceiptAgainstPinnedKey(
+  output: {
+    state?: string;
+    output?: unknown;
+    receipt?: unknown;
+    receipt_signature?: string | null;
+    receipt_v2?: Record<string, unknown> | null;
+  },
+  local: LocalSessionData = {},
+): ReceiptCheck {
   const pinned = process.env[RELAY_VERIFYING_KEY_ENV]?.trim();
   if (!pinned) return { status: 'NOT_PINNED' };
   if (!KEY_HEX_RE.test(pinned)) {
@@ -150,18 +185,18 @@ export function checkReceiptAgainstPinnedKey(output: {
   }
   const key = pinned.toLowerCase();
 
-  let receipt: Record<string, unknown> | undefined;
-  if (output.receipt_v2 && typeof output.receipt_v2 === 'object') {
-    receipt = output.receipt_v2;
-  } else if (output.receipt && typeof output.receipt === 'object') {
-    const v1 = output.receipt as Record<string, unknown>;
-    receipt =
-      v1['signature'] === undefined && typeof output.receipt_signature === 'string'
-        ? { ...v1, signature: output.receipt_signature }
-        : v1;
-  }
+  const receipt = pickReceipt(output);
   if (!receipt) {
-    return { status: 'FAILED', detail: 'Session output has no receipt to verify' };
+    return {
+      status: 'FAILED',
+      detail: 'Session output has no receipt v3 (receipt_schema_version "3.0.0") to verify',
+    };
+  }
+  if (local.submittedInput && !local.ownInput) {
+    return {
+      status: 'FAILED',
+      detail: "Cannot check the receipt's commitment to this agent's input (missing participant id or nonce)",
+    };
   }
 
   // A key embedded in the receipt is never trusted in place of the pinned key.
@@ -176,7 +211,16 @@ export function checkReceiptAgainstPinnedKey(output: {
     }
   }
 
-  const result = verifyReceipt(receipt, key);
+  const artefacts: VerifyArtefacts = {};
+  if (output.output !== undefined && output.output !== null) artefacts.output = output.output;
+  if (local.ownInput) artefacts.ownInput = local.ownInput;
+  if (local.contract !== undefined) artefacts.contract = local.contract;
+
+  const result = verifyReceipt(
+    receipt,
+    key,
+    Object.keys(artefacts).length > 0 ? artefacts : undefined,
+  );
   if (!result.valid) {
     return {
       status: 'FAILED',

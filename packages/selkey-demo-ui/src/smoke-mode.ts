@@ -18,47 +18,54 @@ export const SMOKE_RELAY_HEALTH: Record<string, unknown> = {
   },
 };
 
-const SMOKE_RECEIPT_V2 = {
+// Illustrative receipt v3 shape for the offline smoke flow (not signed).
+const SMOKE_RECEIPT = {
+  receipt_schema_version: '3.0.0',
+  receipt_canonicalization: 'JCS_RFC8785',
+  receipt_id: 'smoke-receipt-001',
+  session_id: 'smoke-session-001',
+  issued_at: '2026-01-01T00:00:00Z',
   assurance_level: 'SELF_ASSERTED',
   operator: {
     operator_id: 'demo-smoke-relay',
-    operator_key_fingerprint: 'smoke-key',
+    operator_key_fingerprint: '22'.repeat(32),
   },
-  session_id: 'smoke-session-001',
   commitments: {
     contract_hash: '33'.repeat(32),
-    output_schema_hash: '44'.repeat(32),
+    contract_hash_alg: 'SHA256_JCS_V2',
+    schema_hash: '44'.repeat(32),
     output_hash: '55'.repeat(32),
+    input_commitments: [
+      { participant_id: 'alice', input_commitment: '77'.repeat(32), scheme: 'SHA256_N32_JCS_V3' },
+      { participant_id: 'bob', input_commitment: '88'.repeat(32), scheme: 'SHA256_N32_JCS_V3' },
+    ],
+    prompt_assembly_version: '1.0.0',
     prompt_template_hash: '66'.repeat(32),
-    input_commitments: {
-      alice: { input_hash: '77'.repeat(32) },
-      bob: { input_hash: '88'.repeat(32) },
-    },
   },
   claims: {
-    status: 'completed',
-    signal_class: 'BOUNDED_SIGNAL',
-    execution_lane: 'API_MEDIATED',
-    budget_enforcement_mode: 'schema+guardian',
-    model_identity_asserted: {
-      provider: 'openai',
-      model_id: 'gpt-5',
-    },
+    status: 'success',
+    signal_class: 'SESSION_COMPLETED',
+    execution_lane: 'standard',
+    budget_enforcement_mode: 'enforced',
+    model_identity_asserted: 'openai/gpt-5',
     token_usage: {
       prompt_tokens: 128,
       completion_tokens: 18,
+      total_tokens: 146,
     },
     channel_capacity_bits_upper_bound: 12,
     entropy_budget_bits: 12,
     budget_usage: {
+      scope: 'SESSION',
       bits_used_before: 0,
       bits_used_after: 3,
       budget_limit: 12,
     },
   },
   signature: {
-    algorithm: 'ed25519',
-    signature_hex: '99'.repeat(64),
+    alg: 'Ed25519',
+    value: 'smoke-signature',
+    signed_fields: 'ALL_EXCEPT_SIGNATURE',
   },
 };
 
@@ -206,7 +213,7 @@ const SMOKE_EVENTS: Array<{ delayMs: number; event: Omit<DemoEvent, 'ts'> }> = [
                 compatibility_signal: 'WORKABLE_COMPROMISE',
                 recommendation: 'Proceed with a bounded follow-up discussion.',
               },
-              receipt_v2: SMOKE_RECEIPT_V2,
+              receipt: SMOKE_RECEIPT,
             },
           },
         },
@@ -267,7 +274,7 @@ export function verifySmokeReceipt(): {
 } {
   return {
     verified: true,
-    schema_version: '2',
+    schema_version: '3.0.0',
     assurance_level: 'SELF_ASSERTED',
     operator_id: 'demo-smoke-relay',
     errors: [],

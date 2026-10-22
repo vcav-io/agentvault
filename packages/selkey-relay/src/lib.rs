@@ -16,6 +16,7 @@ pub mod relay;
 pub mod schema_acceptance;
 pub mod schema_registry;
 pub mod session;
+pub mod strict_json;
 pub mod types;
 
 use std::collections::HashMap;
@@ -33,7 +34,6 @@ use crate::agent_registry::AgentRegistry;
 use crate::enforcement_policy::PolicyRegistry;
 use crate::error::RelayError;
 use crate::inbox::InboxStore;
-use crate::relay::compute_contract_hash;
 use crate::schema_registry::SchemaRegistry;
 use crate::session::{AbortReason, SessionState, SessionStore, TokenRole};
 use crate::types::{
@@ -92,8 +92,7 @@ const GIT_SHA: &str = env!("SELKEY_GIT_SHA");
 struct FailureReceiptContext {
     contract_hash: String,
     output_schema_hash: String,
-    input_commitments: Vec<receipt_core::InputCommitment>,
-    assembled_prompt_hash: String,
+    input_commitments: Vec<receipt_core::InputCommitmentV3>,
     prompt_template_hash: String,
     model_profile_hash: Option<String>,
     runtime_hash: String,
@@ -321,7 +320,7 @@ async fn capabilities_handler(State(state): State<Arc<AppState>>) -> Json<Capabi
             .map(|p| p.to_string())
             .collect(),
         entropy_enforcement: "ADVISORY",
-        receipt_schema_version: receipt_core::SCHEMA_VERSION,
+        receipt_schema_version: receipt_core::SCHEMA_VERSION_V3,
         enforcement_capabilities: enforcement_policy::supported_capability_strings(),
         available_schema_hashes,
         available_policy_hashes,
@@ -335,7 +334,7 @@ async fn capabilities_handler(State(state): State<Arc<AppState>>) -> Json<Capabi
 async fn relay_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(request): Json<RelayRequest>,
+    crate::strict_json::StrictJson(request): crate::strict_json::StrictJson<RelayRequest>,
 ) -> Result<Json<RelayResponse>, RelayError> {
     check_single_shot_relay_access(&state, &headers)?;
     let response = relay::relay(request, &state).await?;
@@ -350,28 +349,29 @@ async fn relay_handler(
 async fn create_session_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(request): Json<CreateSessionRequest>,
+    crate::strict_json::StrictJson(request): crate::strict_json::StrictJson<CreateSessionRequest>,
 ) -> Result<Json<CreateSessionResponse>, RelayError> {
     check_operator_token(&state, &headers)?;
 
     // Resolve and validate provider
     let provider = resolve_provider(&request.provider, &state)?;
 
+    // Validate the contract as received and compute its contract hash v2
+    let accepted = relay::accept_contract(&request.contract)?;
+
     // Validate contract has exactly 2 participants
-    if request.contract.participants.len() != 2 {
+    if accepted.contract.participants.len() != 2 {
         return Err(RelayError::ContractValidation(
             "contract must have exactly 2 participants".to_string(),
         ));
     }
-    relay::validate_contract_key_fields(&request.contract)?;
-
-    // Compute contract hash deterministically
-    let contract_hash = compute_contract_hash(&request.contract)?;
+    relay::validate_contract_key_fields(&accepted.contract)?;
+    let contract_hash = accepted.contract_hash;
 
     // Create session with tokens
     let (session_id, tokens) = state
         .session_store
-        .create(request.contract, contract_hash.clone(), provider)
+        .create(accepted.contract, contract_hash.clone(), provider)
         .await;
 
     Ok(Json(CreateSessionResponse {
@@ -389,7 +389,7 @@ async fn submit_input_handler(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
     headers: HeaderMap,
-    Json(request): Json<SubmitInputRequest>,
+    crate::strict_json::StrictJson(request): crate::strict_json::StrictJson<SubmitInputRequest>,
 ) -> Result<Json<SessionStatusResponse>, RelayError> {
     let token = extract_bearer_token(&headers)?;
 
@@ -407,7 +407,11 @@ async fn submit_input_handler(
         _ => return Err(RelayError::Unauthorized),
     };
 
-    // Verify contract hash if the caller provided one
+    // The input must be committable under the v3 profile (numbers within
+    // +/-(2^53-1)). The nonce was validated when the request was parsed.
+    relay::validate_input_context(&request.context)?;
+
+    // Verify contract hash (v2) if the caller provided one
     if let Some(ref expected_hash) = request.expected_contract_hash {
         let hash_matches = state
             .session_store
@@ -462,6 +466,7 @@ async fn submit_input_handler(
             let input = RelayInput {
                 role,
                 context: request.context.clone(),
+                commitment_nonce: request.commitment_nonce.clone(),
             };
 
             if is_initiator {
@@ -531,6 +536,7 @@ async fn take_inputs_for_inference(
     session_id: &str,
 ) -> Option<(
     types::Contract,
+    String,
     Option<RelayInput>,
     Option<RelayInput>,
     String,
@@ -540,6 +546,7 @@ async fn take_inputs_for_inference(
             session.processing_started_at = Some(chrono::Utc::now());
             (
                 session.contract.clone(),
+                session.contract_hash.clone(),
                 session.initiator_input.take(),
                 session.responder_input.take(),
                 session.provider.clone(),
@@ -552,7 +559,8 @@ async fn take_inputs_for_inference(
 async fn spawn_inference(state: Arc<AppState>, session_id: String) {
     let session_data = take_inputs_for_inference(&state.session_store, &session_id).await;
 
-    let Some((contract, Some(input_a), Some(input_b), provider)) = session_data else {
+    let Some((contract, contract_hash, Some(input_a), Some(input_b), provider)) = session_data
+    else {
         tracing::error!(session_id = %session_id, "session vanished or missing inputs before inference could start");
         state
             .session_store
@@ -568,10 +576,7 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
     // needed in the error arm to build a signed failure receipt, but some of
     // it (contract, inputs) will have been consumed by relay_core.
     let failure_ctx = (|| -> Option<FailureReceiptContext> {
-        use crate::relay::compute_contract_hash;
         use sha2::{Digest as _, Sha256};
-
-        let contract_hash = compute_contract_hash(&contract).ok()?;
 
         // Resolve the output schema with the same acceptance rules as relay_core
         let resolved_schema = schema_acceptance::resolve_output_schema(
@@ -582,26 +587,11 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
         .ok()?;
         let output_schema_hash = resolved_schema.hash;
 
-        // Input commitments — same logic as relay_core
-        let input_commitments: Vec<receipt_core::InputCommitment> = [
-            (&contract.participants[0], &input_a),
-            (&contract.participants[1], &input_b),
-        ]
-        .iter()
-        .map(|(pid, input)| {
-            let canonical =
-                receipt_core::canonicalize_serializable(&input.context).unwrap_or_default();
-            let hash = hex::encode(Sha256::digest(canonical.as_bytes()));
-            receipt_core::InputCommitment {
-                participant_id: pid.to_string(),
-                input_hash: hash,
-                hash_alg: receipt_core::HashAlgorithm::Sha256,
-                canonicalization: "CANONICAL_JSON_V1".to_string(),
-            }
-        })
-        .collect();
+        // Input commitments — same computation as relay_core
+        let input_commitments =
+            relay::compute_input_commitments(&contract, &input_a, &input_b).ok()?;
 
-        // Prompt template + assembled prompt hashes
+        // Prompt template hash
         let prompt_program = match &state.admitted_programs {
             Some(programs) => programs.get(&contract.prompt_template_hash).cloned()?,
             None => crate::prompt_program::load_prompt_program(
@@ -611,15 +601,6 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
             .ok()?,
         };
         let prompt_template_hash = prompt_program.content_hash().ok()?;
-        let assembled = prompt_program
-            .assemble(&contract, &input_a, &input_b)
-            .ok()?;
-        let prompt_json = serde_json::json!({
-            "system": assembled.system,
-            "user_message": assembled.user_message,
-        });
-        let canonical = receipt_core::canonicalize_serializable(&prompt_json).ok()?;
-        let assembled_prompt_hash = hex::encode(Sha256::digest(canonical.as_bytes()));
 
         // Model profile resolution (shared helper)
         let resolved_profile = profile_resolution::resolve_runtime_profile(
@@ -659,10 +640,9 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
         let policy_hash = resolved.hash.to_string();
 
         Some(FailureReceiptContext {
-            contract_hash,
+            contract_hash: contract_hash.clone(),
             output_schema_hash,
             input_commitments,
-            assembled_prompt_hash,
             prompt_template_hash,
             model_profile_hash,
             runtime_hash,
@@ -677,7 +657,17 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
     let inference = {
         let state = state.clone();
         let provider = provider.clone();
-        async move { relay::relay_core(&contract, &input_a, &input_b, &provider, &state).await }
+        async move {
+            relay::relay_core(
+                &contract,
+                &contract_hash,
+                &input_a,
+                &input_b,
+                &provider,
+                &state,
+            )
+            .await
+        }
     };
     tokio::spawn(complete_inference(
         state,
@@ -751,8 +741,6 @@ async fn complete_inference<F>(
 
                     session.output = Some(result.output);
                     session.receipt = Some(result.receipt);
-                    session.receipt_signature = Some(result.receipt_signature);
-                    session.receipt_v2 = Some(result.receipt_v2);
                     session.state = SessionState::Completed;
 
                     if is_dev {
@@ -782,14 +770,13 @@ async fn complete_inference<F>(
             );
 
             // Build failure receipt if context was pre-computed
-            let failure_receipt_v2 = if let Some(ref ctx) = failure_ctx {
-                match relay::build_failure_receipt_v2(
+            let failure_receipt = if let Some(ref ctx) = failure_ctx {
+                match relay::build_failure_receipt_v3(
                     abort_reason,
                     &session_id,
                     &ctx.contract_hash,
                     &ctx.output_schema_hash,
                     ctx.input_commitments.clone(),
-                    ctx.assembled_prompt_hash.clone(),
                     &ctx.prompt_template_hash,
                     ctx.model_profile_hash.as_deref(),
                     &ctx.effective_model_id,
@@ -802,7 +789,6 @@ async fn complete_inference<F>(
                     ctx.effective_max_tokens,
                     ctx.entropy_bits,
                     ctx.entropy_budget_bits,
-                    None, // rejected_output_bytes
                 ) {
                     Ok(receipt) => Some(receipt),
                     Err(re) => {
@@ -833,7 +819,7 @@ async fn complete_inference<F>(
                     }
                     session.state = SessionState::Aborted;
                     session.abort_reason = Some(abort_reason);
-                    session.receipt_v2 = failure_receipt_v2;
+                    session.receipt = failure_receipt;
                 })
                 .await;
         }
@@ -894,8 +880,6 @@ async fn session_output_handler(
             abort_reason: session.abort_reason,
             output: session.output.clone(),
             receipt: session.receipt.clone(),
-            receipt_signature: session.receipt_signature.clone(),
-            receipt_v2: session.receipt_v2.clone(),
         })
         .await
         .ok_or(RelayError::Unauthorized)?;
@@ -1079,10 +1063,12 @@ mod tests {
                 session.initiator_input = Some(RelayInput {
                     role: "alice".to_string(),
                     context: serde_json::json!({"text": "initiator input"}),
+                    commitment_nonce: crate::types::test_nonce(),
                 });
                 session.responder_input = Some(RelayInput {
                     role: "bob".to_string(),
                     context: serde_json::json!({"text": "responder input"}),
+                    commitment_nonce: crate::types::test_nonce(),
                 });
                 session.initiator_submitted = true;
                 session.responder_submitted = true;
@@ -1090,7 +1076,7 @@ mod tests {
             })
             .await;
 
-        let (_, input_a, input_b, provider) =
+        let (_, _, input_a, input_b, provider) =
             take_inputs_for_inference(&state.session_store, &session_id)
                 .await
                 .unwrap();

@@ -5,7 +5,7 @@ version = 4
 [[package]]
 name = "afal-core"
 version = "0.1.0"
-source = "git+https://github.com/vcav-io/vault-family-core?rev=3061b55#3061b557b2617bd2e78981192f34f43e12f3d6f4"
+source = "git+https://github.com/vcav-io/vault-family-core?rev=734b8854cc826e2f2c6776ffe857f209f467d7b1#734b8854cc826e2f2c6776ffe857f209f467d7b1"
 dependencies = [
  "chrono",
  "ed25519-dalek",
@@ -391,7 +391,7 @@ dependencies = [
 [[package]]
 name = "entropy-core"
 version = "0.1.0"
-source = "git+https://github.com/vcav-io/vault-family-core?rev=3061b55#3061b557b2617bd2e78981192f34f43e12f3d6f4"
+source = "git+https://github.com/vcav-io/vault-family-core?rev=734b8854cc826e2f2c6776ffe857f209f467d7b1#734b8854cc826e2f2c6776ffe857f209f467d7b1"
 dependencies = [
  "chrono",
  "receipt-core",
@@ -1423,16 +1423,19 @@ dependencies = [
 [[package]]
 name = "receipt-core"
 version = "0.1.0"
-source = "git+https://github.com/vcav-io/vault-family-core?rev=3061b55#3061b557b2617bd2e78981192f34f43e12f3d6f4"
+source = "git+https://github.com/vcav-io/vault-family-core?rev=734b8854cc826e2f2c6776ffe857f209f467d7b1#734b8854cc826e2f2c6776ffe857f209f467d7b1"
 dependencies = [
  "base64",
  "chrono",
+ "curve25519-dalek",
  "ed25519-dalek",
  "hex",
  "rand",
  "serde",
  "serde_json",
+ "serde_json_canonicalizer",
  "sha2",
+ "subtle",
  "thiserror",
  "unicode-normalization",
  "vault-family-types",
@@ -1612,6 +1615,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
+name = "ryu-js"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04d056b875a9d2e6cb9a61d127afee9ac5999b9f87bcb32079d1318e505be714"
+
+[[package]]
 name = "schannel"
 version = "0.1.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1679,6 +1688,7 @@ dependencies = [
  "uuid",
  "vault-family-types",
  "verifier-core",
+ "zeroize",
 ]
 
 [[package]]
@@ -1728,6 +1738,17 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "serde_json_canonicalizer"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87f7bb64f8c7e9f783fdfe883b5fe93a90bee1597c63705baa91842c5f698620"
+dependencies = [
+ "ryu-js",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2300,7 +2321,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 [[package]]
 name = "vault-family-types"
 version = "0.1.0"
-source = "git+https://github.com/vcav-io/vault-family-core?rev=3061b55#3061b557b2617bd2e78981192f34f43e12f3d6f4"
+source = "git+https://github.com/vcav-io/vault-family-core?rev=734b8854cc826e2f2c6776ffe857f209f467d7b1#734b8854cc826e2f2c6776ffe857f209f467d7b1"
 dependencies = [
  "chrono",
  "serde",
@@ -2318,7 +2339,7 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 [[package]]
 name = "verifier-core"
 version = "0.1.0"
-source = "git+https://github.com/vcav-io/vault-family-core?rev=3061b55#3061b557b2617bd2e78981192f34f43e12f3d6f4"
+source = "git+https://github.com/vcav-io/vault-family-core?rev=734b8854cc826e2f2c6776ffe857f209f467d7b1#734b8854cc826e2f2c6776ffe857f209f467d7b1"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -2327,6 +2348,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "thiserror",
 ]
 
 [[package]]

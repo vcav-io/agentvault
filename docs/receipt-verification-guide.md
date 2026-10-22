@@ -4,6 +4,14 @@ Selkey relay receipts are signed JSON documents that bind a session's inputs,
 outputs, and governance artefacts to a specific relay execution. This guide explains
 what receipts prove, how to verify them, and how to interpret the fields they contain.
 
+The relay emits **receipt v3** (`receipt_schema_version: "3.0.0"`). The normative
+specification of v3 (format, canonicalisation, input commitments, contract hash v2
+and verifier rules) is `docs/receipt-v3.md` in
+[vault-family-core](https://github.com/vcav-io/vault-family-core), with golden
+test vectors in its `data/test-vectors/`. This guide summarises it for
+integrators; where they differ, the specification wins. v1 and v2 receipts
+issued by older relays remain verifiable (Sections 3 and 4).
+
 For full protocol context see [docs/protocol-spec.md](protocol-spec.md).
 
 ---
@@ -12,8 +20,8 @@ For full protocol context see [docs/protocol-spec.md](protocol-spec.md).
 
 1. [Introduction](#1-introduction)
 2. [Receipt Versions](#2-receipt-versions)
-3. [Verification Algorithm — v1](#3-verification-algorithm--v1)
-4. [Verification Algorithm — v2](#4-verification-algorithm--v2)
+3. [Verification Algorithm — v3](#3-verification-algorithm--v3)
+4. [Legacy Verification — v1 and v2](#4-legacy-verification--v1-and-v2)
 5. [Receipt Field Reference](#5-receipt-field-reference)
 6. [Getting the Verification Key](#6-getting-the-verification-key)
 7. [Using the MCP Tool](#7-using-the-mcp-tool)
@@ -39,8 +47,9 @@ A valid receipt signature proves:
   exact ones that governed execution (via content hashes).
 - The output in the receipt is the output the relay produced — it has not been
   altered after signing.
-- The input commitments (participant input hashes) were computed by the same relay
-  that signed the receipt.
+- The input commitments were computed by the same relay that signed the receipt.
+  Each participant can check its own commitment against the input and nonce it
+  submitted (see [Own-input check](#own-input-check)).
 
 ### What do receipts not prove?
 
@@ -49,23 +58,80 @@ A valid receipt signature proves:
   relay attests; they do not prove the relay behaved honestly.
 - **Model identity.** `claims.model_identity_asserted` is the model ID returned by
   the provider API. The relay asserts it but cannot independently prove it.
-- **Input privacy.** The relay receives participant inputs in plaintext. Inputs are
-  not encrypted end-to-end. The relay discards raw inputs after receipt construction,
-  retaining only commitment hashes.
+- **Input privacy from the relay.** The relay receives participant inputs in
+  plaintext. Inputs are not encrypted end-to-end. The relay discards raw inputs
+  (and their commitment nonces) after receipt construction, retaining only the
+  commitments.
+- **Input privacy in the receipt.** Values derived from a participant's input appear
+  in a v3 receipt only through the salted input commitments: no field holds an
+  unsalted hash of an input, of the assembled prompt or of output that was not
+  released (receipt v3 specification, section 8). Each commitment is salted with a
+  secret per-submission nonce chosen by that participant, so a party holding the
+  receipt cannot test guesses of the other party's input against it. The released
+  output itself is derived from both inputs, as the contract intends.
 - **Simultaneous delivery.** Receipts do not prove both parties received the output
   at the same time.
 
 ### Assurance level is mandatory context
 
 A receipt signature alone is not a full security guarantee. You must also read
-`assurance_level` (v2 receipts) to understand what external evidence backs the
+`assurance_level` (v2 and v3 receipts) to understand what external evidence backs the
 receipt. See [Assurance Levels](#assurance-levels) below.
 
 ---
 
 ## 2. Receipt Versions
 
-### v1 receipts
+### v3 receipts (current)
+
+v3 keeps the v2 layout (`operator`, `commitments`, `claims`, `signature`) and
+changes how every hashed or signed value is encoded:
+
+| Area | v2 | v3 |
+|---|---|---|
+| `receipt_schema_version` | `2.x.y` | `3.0.0` |
+| `receipt_canonicalization` | `JCS_V1` (legacy canonicaliser) | `JCS_RFC8785` (RFC 8785, numbers limited to ±(2^53−1)) |
+| Domain separator | `VCAV-RECEIPT-V2:` | `VCAV-RECEIPT-V3:` |
+| Ed25519 verification | permissive | strict (prime-order key and `R`, `s < L`, cofactorless) |
+| Input commitment | `SHA-256(JCS(context))` | `SHA-256("VCAV-INPUT-COMMIT-V3:" ‖ nonce ‖ JCS(context))` |
+| Input commitment entry | `{participant_id, input_hash, hash_alg, canonicalization}` | `{participant_id, input_commitment, scheme: "SHA256_N32_JCS_V3"}` |
+| Contract hash | v1 (typed struct, absent optionals as `null`) | v2 (`contract_hash_alg: "SHA256_JCS_V2"`, see [Contract hash v2](#contract-hash-v2)) |
+| `issued_at` | any RFC 3339 form | exactly `YYYY-MM-DDTHH:MM:SSZ` |
+| `claims.budget_usage` | no scope | required `scope: "SESSION"`, `bits_used_before: 0` |
+| Unknown fields, `null` optionals | tolerated by some verifiers | rejected |
+
+```json
+{
+  "receipt_schema_version": "3.0.0",
+  "receipt_canonicalization": "JCS_RFC8785",
+  "receipt_id": "...",
+  "session_id": "...",
+  "issued_at": "2026-10-22T12:00:00Z",
+  "assurance_level": "SELF_ASSERTED",
+  "operator": { "operator_id": "...", "operator_key_fingerprint": "..." },
+  "commitments": {
+    "contract_hash": "...",
+    "contract_hash_alg": "SHA256_JCS_V2",
+    "input_commitments": [
+      { "participant_id": "alice", "input_commitment": "...", "scheme": "SHA256_N32_JCS_V3" },
+      { "participant_id": "bob", "input_commitment": "...", "scheme": "SHA256_N32_JCS_V3" }
+    ],
+    "...": "..."
+  },
+  "claims": { "budget_usage": { "scope": "SESSION", "bits_used_before": 0, "...": "..." } },
+  "signature": {
+    "alg": "Ed25519",
+    "value": "base64url, no padding (86 characters)",
+    "signed_fields": "ALL_EXCEPT_SIGNATURE"
+  }
+}
+```
+
+The relay returns the receipt as `receipt` in `POST /relay` and
+`GET /sessions/:id/output` responses. Older relays also returned `receipt_signature`
+and `receipt_v2`; a v3 relay does not.
+
+### v1 receipts (legacy)
 
 v1 receipts have a flat field layout. The `schema_version` field is `"1.0.0"`.
 The signature is a hex-encoded string in the `signature` field.
@@ -87,7 +153,7 @@ Key signing properties:
 }
 ```
 
-### v2 receipts
+### v2 receipts (legacy)
 
 v2 receipts reorganise all fields into two sections — `commitments` (independently
 verifiable) and `claims` (relay-asserted). The `receipt_schema_version` field is
@@ -117,15 +183,181 @@ Key signing properties:
 }
 ```
 
-The domain separator change ensures that a valid v1 signature cannot be
-misinterpreted as a valid v2 signature even if the JSON happens to parse under
-both schemas.
+The domain separators differ per version, so a valid signature for one version
+cannot be read as a valid signature for another, even if the JSON happens to
+parse under both schemas.
 
 ---
 
-## 3. Verification Algorithm — v1
+## 3. Verification Algorithm — v3
 
 ### Step-by-step
+
+Apply these rules in order and reject the receipt at the first failure
+(specification Section 6).
+
+```
+1. Dispatch: read receipt_schema_version from the strictly parsed document.
+   "3.0.0" -> v3. Any other "3.x" -> reject. "2.x" -> v2 rules. "1.0.0" -> v1.
+   Anything else -> reject.
+2. Parse and shape:
+   - parse the JSON text strictly: reject repeated member names at any depth,
+     lone UTF-16 surrogates and trailing content;
+   - reject any number with magnitude above 2^53-1;
+   - check the v3 shape: required fields present, no unknown fields, no null
+     for defined fields, known enum values, receipt_canonicalization ==
+     "JCS_RFC8785", contract_hash_alg == "SHA256_JCS_V2", every scheme ==
+     "SHA256_N32_JCS_V3", hashes are 64 lowercase hex characters, issued_at is
+     YYYY-MM-DDTHH:MM:SSZ, participant_ids unique and non-empty, integer fields
+     written as plain integers (no 8.0, 8e0 or -0).
+   Evaluate everything below on the validated receipt, never on the raw input.
+3. Signature:
+   - signature.alg == "Ed25519", signature.signed_fields == "ALL_EXCEPT_SIGNATURE",
+     signature.value is canonical base64url without padding, 64 bytes;
+   - the verifying key is the PINNED relay key from your configuration, never a key
+     taken from the receipt; if tee_attestation.receipt_signing_pubkey_hex is
+     present it must equal the pinned key;
+   - the pinned key must be a canonical encoding of a prime-order point
+     (not small order, no torsion component);
+   - operator.operator_key_fingerprint == SHA-256(pinned key bytes) (hex);
+   - unsigned  = receipt without the "signature" member
+     message   = "VCAV-RECEIPT-V3:" || JCS_RFC8785(unsigned)
+     digest    = SHA-256(message)
+     verify the Ed25519 signature (R, s) over digest with: s < L, R a canonical
+     prime-order point, and the cofactorless equation [s]B = R + [k]A.
+4. Internal consistency:
+   - if commitments.output is present: output_hash == SHA-256(JCS(output));
+   - if preflight_bundle and effective_config_hash are both present:
+     effective_config_hash == SHA-256(JCS(preflight_bundle));
+   - budget_usage.scope == "SESSION" requires bits_used_before == 0.
+5. Participant checks (when you hold the data):
+   - own input: see "Own-input check";
+   - output: output_hash == SHA-256(JCS(output you received)), and an inline
+     commitments.output must equal it (compare JCS bytes);
+   - contract: see "Contract check".
+```
+
+Steps 1 to 4 make the signature check meaningful; step 5 is what ties the
+receipt to *your* session.
+
+### Implementations
+
+- **TypeScript:** `verifyReceipt` from `selkey/verify` (the `selkey-client`
+  package) implements v3 including strict Ed25519, the strict parser and the
+  participant checks. Prefer it over hand-written code.
+- **Rust:** `receipt_core::verify_receipt_v3_json` (rules 1 to 4) and
+  `verifier_core::{check_own_input_v3, check_received_output_v3, check_contract_v3}`
+  (rule 5) in vault-family-core.
+- **Other languages:** use an RFC 8785 library, a JSON parser that rejects
+  duplicate member names, and an Ed25519 verifier you can run with the strict
+  rules above. Check your implementation against every vector in
+  `data/test-vectors/` (`receipt_v3_*`, `input_commitment_v3.json`,
+  `contract_hash_v2.json`, `jcs_*`): all positive vectors must verify and all
+  negative vectors must be rejected.
+
+### Strict Ed25519 in TypeScript
+
+Ed25519 libraries disagree on edge cases (cofactored vs cofactorless equations),
+so v3 requires prime-order `A` and `R`, which makes both equations agree. With
+`@noble/curves` 1.x:
+
+```typescript
+import { ed25519 } from '@noble/curves/ed25519';
+
+const L = 2n ** 252n + 27742317777372353535851937790883648493n;
+
+function isPrimeOrderPoint(bytes: Uint8Array): boolean {
+  try {
+    const p = ed25519.ExtendedPoint.fromHex(bytes); // ed25519.Point.fromHex in 2.x
+    const reencoded = p.toRawBytes();
+    if (reencoded.length !== bytes.length || reencoded.some((b, i) => b !== bytes[i])) {
+      return false; // non-canonical encoding
+    }
+    return !p.isSmallOrder() && p.isTorsionFree();
+  } catch {
+    return false;
+  }
+}
+
+function leBytesToBigInt(bytes: Uint8Array): bigint {
+  let n = 0n;
+  for (let i = bytes.length - 1; i >= 0; i--) n = (n << 8n) | BigInt(bytes[i]);
+  return n;
+}
+
+/** sig: 64 bytes, digest: SHA-256 of the signing message, pinnedKey: 32 bytes. */
+function verifyStrictEd25519(sig: Uint8Array, digest: Uint8Array, pinnedKey: Uint8Array): boolean {
+  if (sig.length !== 64 || pinnedKey.length !== 32) return false;
+  if (!isPrimeOrderPoint(pinnedKey)) return false;
+  if (!isPrimeOrderPoint(sig.subarray(0, 32))) return false;
+  if (leBytesToBigInt(sig.subarray(32)) >= L) return false;
+  return ed25519.verify(sig, digest, pinnedKey, { zip215: false });
+}
+```
+
+### Own-input check
+
+Each participant generates a fresh 32-byte nonce for its submission, sends it as
+`commitment_nonce` (64 lowercase hex characters), and keeps the nonce and the exact
+`context` it submitted. After the session:
+
+```
+1. Find the single commitments.input_commitments entry whose participant_id is
+   your own participant id. Reject if there is none.
+2. Recompute SHA-256("VCAV-INPUT-COMMIT-V3:" || nonce (32 raw bytes) || JCS(context))
+   and compare it with the entry's input_commitment in constant time.
+   Reject on mismatch.
+```
+
+A match shows the relay committed to the input you actually sent. Nobody else can
+run this check for your entry: without your nonce, the commitment cannot be opened,
+so the counterparty learns nothing from it about your input.
+
+### Contract hash v2
+
+```
+contract_hash = SHA-256( JCS_RFC8785( normalise(contract) ) )
+```
+
+`normalise` accepts only the contract members (`purpose_code`, `output_schema_id`,
+`output_schema`, `participants`, `prompt_template_hash`, and the optional
+`entropy_budget_bits`, `timing_class`, `metadata`, `model_profile_id`,
+`model_profile_hash`, `enforcement_policy_hash`, `output_schema_hash`,
+`model_constraints`, `max_completion_tokens`, `session_ttl_secs`,
+`invite_ttl_secs`, `entropy_enforcement`, `relay_verifying_key_hex`). Any other
+member, including a `contract_hash` member, makes the contract invalid; it is
+not stripped. Optional members that are absent or `null` are omitted; nothing is
+added. Numbers must be within ±(2^53−1) and integer members are plain integers.
+
+Hash the contract JSON you sent or received, never a re-serialised typed struct.
+If you store a contract together with its hash, remove the hash member before
+hashing. The relay accepts only contract hash v2: `contract_hash` in
+`POST /sessions`, `POST /invites` and invite responses, and
+`expected_contract_hash` in submissions, are contract hash v2 values.
+
+### Contract check
+
+A participant that holds the contract should check:
+
+1. `commitments.contract_hash == contract_hash_v2(contract)`;
+2. `commitments.schema_hash == contract.output_schema_hash` if the contract has
+   one, otherwise `== SHA-256(JCS(contract.output_schema))`;
+3. the `participant_id`s of `commitments.input_commitments`, in order, equal
+   `contract.participants`;
+4. `commitments.prompt_template_hash`, if present, equals
+   `contract.prompt_template_hash`;
+5. `claims.entropy_budget_bits` equals `contract.entropy_budget_bits` when both
+   are present.
+
+---
+
+## 4. Legacy Verification — v1 and v2
+
+Relays no longer issue v1 or v2 receipts. Verifiers keep these paths so that
+receipts issued earlier stay verifiable. v1 and v2 input commitments are
+unsalted hashes of the inputs.
+
+### v1 step-by-step
 
 ```
 1. Parse the receipt JSON into a document object.
@@ -139,7 +371,7 @@ both schemas.
 8. Verify Ed25519(digest, signature_bytes, public_key_bytes).
 ```
 
-### TypeScript example
+### v1 TypeScript example
 
 Uses `@noble/curves`, `@noble/hashes`, and `json-canonicalize`.
 
@@ -174,7 +406,7 @@ function verifyReceiptV1(
 }
 ```
 
-### Python example
+### v1 Python example
 
 Uses `PyNaCl` and `jcs` (RFC 8785 canonicalization).
 
@@ -210,11 +442,7 @@ def verify_receipt_v1(receipt: dict, public_key_hex: str) -> bool:
         return False
 ```
 
----
-
-## 4. Verification Algorithm — v2
-
-### Step-by-step
+### v2 step-by-step
 
 ```
 1. Parse the receipt JSON.
@@ -232,9 +460,9 @@ def verify_receipt_v1(receipt: dict, public_key_hex: str) -> bool:
 ```
 
 After signature verification, you may optionally verify commitments if you hold
-the original artefacts — see [Commitment Verification](#commitment-verification) below.
+the original artefacts — see [v2 commitment verification](#v2-commitment-verification) below.
 
-### TypeScript example
+### v2 TypeScript example
 
 ```typescript
 import { ed25519 } from '@noble/curves/ed25519';
@@ -294,7 +522,7 @@ function verifyReceiptV2(
 }
 ```
 
-### Python example
+### v2 Python example
 
 ```python
 import hashlib
@@ -350,10 +578,10 @@ def verify_receipt_v2(receipt: dict, public_key_hex: str) -> bool:
         return False
 ```
 
-### Commitment verification
+### v2 commitment verification
 
-After verifying the signature, you can optionally verify individual commitments
-if you hold the original artefacts. Commitment verification is independent of
+After verifying the signature of a v2 receipt, you can optionally verify individual
+commitments if you hold the original artefacts. Commitment verification is independent of
 signature verification — it checks that the hashes in the receipt match the
 source documents.
 
@@ -408,15 +636,15 @@ function verifyInputCommitment(
 
 ## 5. Receipt Field Reference
 
-### v2 top-level fields
+### v3 top-level fields
 
 | Field | Type | Description |
 |---|---|---|
-| `receipt_schema_version` | string | Always `"2.1.0"` for v2 receipts |
-| `receipt_canonicalization` | string | Always `"JCS_V1"` |
+| `receipt_schema_version` | string | Exactly `"3.0.0"` |
+| `receipt_canonicalization` | string | Exactly `"JCS_RFC8785"` |
 | `receipt_id` | string (UUID) | Unique receipt identifier |
-| `session_id` | string (UUID) | Session this receipt covers |
-| `issued_at` | string (ISO 8601) | Timestamp the relay signed the receipt |
+| `session_id` | string | Session this receipt covers |
+| `issued_at` | string | UTC, exactly `YYYY-MM-DDTHH:MM:SSZ` |
 | `assurance_level` | string | See [Assurance Levels](#assurance-levels) |
 | `operator` | object | Relay operator identity |
 | `commitments` | object | Independently verifiable hashes |
@@ -427,23 +655,27 @@ function verifyInputCommitment(
 
 ### Commitments section
 
-All fields in `commitments` are independently verifiable — a third party with
-access to the original inputs can recompute them.
+Fields in `commitments` can be recomputed by whoever holds the corresponding
+artefact. `JCS` below is RFC 8785 with the v3 number limit. Receipt v3 has no
+`assembled_prompt_hash` or `rejected_output_hash` (both were v2 fields), and a
+verifier rejects a v3 receipt that carries either.
 
 | Field | How to verify |
 |---|---|
-| `contract_hash` | Recompute SHA-256(JCS(contract_document)) |
-| `schema_hash` | Recompute SHA-256(JCS(output_schema)) |
-| `output_hash` | Recompute SHA-256(JCS(output)) |
-| `input_commitments[]` | Each participant recomputes SHA-256(JCS(own_input)) |
-| `assembled_prompt_hash` | Recompute SHA-256(assembled_prompt_bytes) — requires the relay's prompt assembly implementation |
-| `prompt_template_hash` | Recompute SHA-256(prompt_template_bytes) |
-| `effective_config_hash` | Recompute SHA-256(JCS(preflight_bundle)) |
+| `contract_hash` | Contract hash v2 of the contract (see [Contract hash v2](#contract-hash-v2)) |
+| `contract_hash_alg` | Exactly `"SHA256_JCS_V2"` |
+| `schema_hash` | SHA-256(JCS(output_schema)) of the schema the relay enforced |
+| `output_hash` | SHA-256(JCS(output)); SHA-256 of zero bytes on failure receipts |
+| `input_commitments[]` | Each participant recomputes its own entry with its nonce (see [Own-input check](#own-input-check)); entries are in `contract.participants` order |
+| `prompt_template_hash` | Equals `contract.prompt_template_hash` |
+| `effective_config_hash` | SHA-256(JCS(preflight_bundle)) |
 | `preflight_bundle.*` | Hash each constituent artefact independently |
 
 The `output` field inside `commitments` is an inline convenience copy of the
 session output. When present, verifiers must check that
 SHA-256(JCS(commitments.output)) matches `commitments.output_hash`.
+
+Receipts never contain the commitment nonces.
 
 ### Claims section
 
@@ -469,7 +701,7 @@ attestation infrastructure.
 | `channel_capacity_measurement_version` | Algorithm version for capacity computation (e.g., `"enum_cardinality_v1"`) |
 | `entropy_budget_bits` | Budget declared in the contract |
 | `schema_entropy_ceiling_bits` | Schema-level entropy ceiling |
-| `budget_usage` | `{pair_id, bits_used_before, bits_used_after, budget_limit, enforcement_tier}` |
+| `budget_usage` | `{scope, bits_used_before, bits_used_after, budget_limit}`. `scope` is `"SESSION"`: the figures cover this session only, so `bits_used_before` is `0`. They do not describe a cross-session ledger. |
 
 ### TEE attestation fields
 
@@ -497,7 +729,7 @@ invalid.
 
 ### Assurance levels
 
-The `assurance_level` field is required in v2 receipts and describes the strength
+The `assurance_level` field is required in v2 and v3 receipts and describes the strength
 of external evidence backing the receipt.
 
 | Value | Meaning |
@@ -525,10 +757,11 @@ Never display "receipt verified" without also showing the assurance level — a
 ```
 
 `operator_key_fingerprint` is the SHA-256 hex digest of the raw 32-byte public key.
+In v3 verifiers must check it against the pinned key.
 `operator_key_discovery` is an optional URI where the operator publishes their
 canonical key for pinning — not present in self-asserted deployments.
 
-### Signature object (v2)
+### Signature object (v2, v3)
 
 ```json
 {
@@ -540,7 +773,8 @@ canonical key for pinning — not present in self-asserted deployments.
 
 `signed_fields: "ALL_EXCEPT_SIGNATURE"` indicates that every field in the receipt
 except the `signature` object itself is covered by the signature. This is the only
-value currently issued.
+value defined. In v3, `value` is exactly 86 base64url characters without padding,
+and decoders must reject padding and non-zero trailing bits.
 
 ---
 
@@ -581,10 +815,9 @@ For production use, consider:
    — a compromised relay could swap keys mid-session.
 2. **Record the key alongside the receipt.** Store `verifying_key_hex` at session
    time so you can verify the receipt offline later.
-3. **Use `operator_key_fingerprint` (v2) as a consistency check.** After fetching
-   the key, compute SHA-256 of the 32-byte key and compare to
-   `receipt.operator.operator_key_fingerprint`. A mismatch means the key you
-   fetched does not match the key embedded in the receipt.
+3. **Check `operator_key_fingerprint`.** Compute SHA-256 of the 32-byte pinned
+   key and compare it to `receipt.operator.operator_key_fingerprint`. v3
+   verifiers must reject a mismatch.
 
 ```typescript
 import { sha256 } from '@noble/hashes/sha256';
@@ -635,16 +868,17 @@ not from the receipt or the counterparty.
 ```typescript
 {
   "valid": true,
-  "schema_version": "2.1.0",
-  "assurance_level": "SELF_ASSERTED",    // v2 only
-  "operator_id": "relay.selkey.dev", // v2 only
+  "schema_version": "3.0.0",
+  "assurance_level": "SELF_ASSERTED",    // v2 and v3
+  "operator_id": "relay.selkey.dev", // v2 and v3
   "errors": [],
   "warnings": []
 }
 ```
 
-`valid: true` means the Ed25519 signature verified. It does not mean commitments
-were verified — that requires the caller to hold the original artefacts.
+`valid: true` means the receipt passed the signature and format rules for its
+version. It does not mean the participant checks ran — those require the
+caller's own input and nonce, the received output, or the contract.
 
 ### Example MCP invocation
 
@@ -653,8 +887,8 @@ were verified — that requires the caller to hold the original artefacts.
   "tool": "selkey.verify_receipt",
   "arguments": {
     "receipt": {
-      "receipt_schema_version": "2.1.0",
-      "receipt_canonicalization": "JCS_V1",
+      "receipt_schema_version": "3.0.0",
+      "receipt_canonicalization": "JCS_RFC8785",
       "receipt_id": "a1b2c3d4-...",
       "session_id": "e5f6a7b8-...",
       "issued_at": "2026-03-04T12:00:00Z",
@@ -665,10 +899,13 @@ were verified — that requires the caller to hold the original artefacts.
       },
       "commitments": {
         "contract_hash": "...",
+        "contract_hash_alg": "SHA256_JCS_V2",
         "schema_hash": "...",
         "output_hash": "...",
-        "input_commitments": [],
-        "assembled_prompt_hash": "...",
+        "input_commitments": [
+          { "participant_id": "alice", "input_commitment": "...", "scheme": "SHA256_N32_JCS_V3" },
+          { "participant_id": "bob", "input_commitment": "...", "scheme": "SHA256_N32_JCS_V3" }
+        ],
         "prompt_assembly_version": "1.0.0"
       },
       "claims": {},
@@ -693,17 +930,29 @@ The verification algorithm requires JCS canonicalization. Standard JSON serializ
 do not sort object keys deterministically. Using `JSON.stringify` or pretty-print
 JSON will produce a different byte sequence and signature verification will fail.
 
-Correct libraries:
-- TypeScript / JavaScript: `json-canonicalize` (npm)
-- Python: `jcs` (pip), or `canonicaljson`
+Libraries for v3 (`JCS_RFC8785`):
+- TypeScript / JavaScript: `canonicalize` 5.x (npm), plus a strict parser that
+  rejects duplicate member names, lone surrogates and numbers beyond ±(2^53−1)
+- Python: `jcs` (pip)
 - Go: `github.com/cyberphone/json-canonicalization`
-- Rust: canonicalization wrapper over `serde_json` with deterministic key ordering
-  (as in `receipt-core::canonicalize`)
+- Rust: `serde_json_canonicalizer` 0.4.1 (as in `receipt_core::jcs`)
+
+v1 and v2 receipts use the frozen legacy canonicaliser (`JCS_V1`,
+`receipt_core::canonicalize`). It differs from RFC 8785 for some inputs (DEL and
+C1 characters, exponents, very large integers, key order outside the BMP), so do
+not use it for v3.
+
+### Parse strictly before verifying (v3)
+
+`JSON.parse` keeps the last of two repeated member names silently. Two verifiers
+could then see different receipts in the same bytes. Reject duplicates, lone
+surrogates and out-of-range numbers when parsing, and verify the parsed, validated
+receipt rather than the raw text.
 
 ### Strip the correct field before canonicalization
 
 For v1, strip the `signature` string field.
-For v2, strip the entire `signature` object — including `alg`, `value`, and
+For v2 and v3, strip the entire `signature` object — including `alg`, `value`, and
 `signed_fields`. Leaving any part of the signature object in the document will
 produce a different canonical form and verification will fail.
 
@@ -711,8 +960,8 @@ produce a different canonical form and verification will fail.
 // v1 — strip the string field
 const { signature: _removed, ...unsigned } = receiptV1;
 
-// v2 — strip the entire object
-const { signature: _removed, ...unsigned } = receiptV2;
+// v2 and v3 — strip the entire object
+const { signature: _removed, ...unsigned } = receiptV3;
 ```
 
 ### Domain separator must be exact (including the colon)
@@ -723,6 +972,7 @@ null byte, no length prefix, no newline. The colon is part of the separator.
 ```
 v1: "VCAV-RECEIPT-V1:" + canonical_json_string
 v2: "VCAV-RECEIPT-V2:" + canonical_json_string
+v3: "VCAV-RECEIPT-V3:" + canonical_json_string
 ```
 
 A missing colon or trailing whitespace will produce a different digest.
@@ -735,26 +985,33 @@ the hash, not the raw message.
 
 ```typescript
 // Correct — verify over the SHA-256 digest
-const message = 'VCAV-RECEIPT-V1:' + canonical;
+const message = 'VCAV-RECEIPT-V3:' + canonical;
 const digest = sha256(utf8ToBytes(message));
-ed25519.verify(sigBytes, digest, pubKeyBytes);
+verifyStrictEd25519(sigBytes, digest, pubKeyBytes);
 
 // Wrong — will always fail; do not pass raw message bytes
-ed25519.verify(sigBytes, utf8ToBytes(message), pubKeyBytes);
+verifyStrictEd25519(sigBytes, utf8ToBytes(message), pubKeyBytes);
 ```
 
 ### Version dispatch is required
 
-Never assume a receipt version. Always read `receipt_schema_version` (v2) or
-`schema_version` (v1) and dispatch to the correct verification path. Applying v1
-verification to a v2 receipt will fail because v2's `signature` field is an
-object, not a string, and the domain separator is different.
+Never assume a receipt version. Always read `receipt_schema_version` (v2, v3) or
+`schema_version` (v1) and dispatch to the correct verification path. Applying one
+version's rules to another version's receipt fails: the domain separators,
+canonicalisation and signature encodings differ.
 
-Verifiers must reject receipts with unknown versions (fail-closed).
+Verifiers must reject receipts with unknown versions (fail-closed). A v3 verifier
+accepts only `3.0.0` and rejects other `3.x` values.
 
-### v2: base64url encoding, not standard base64
+### Don't reuse a commitment nonce
 
-`signature.value` in v2 receipts is base64url-encoded (URL-safe alphabet, no
+Generate a fresh 32-byte nonce with a CSPRNG for every submission. Never log it,
+never send it to the counterparty and never put it in shared state; keep it
+locally next to your input so you can run the own-input check.
+
+### v2 and v3: base64url encoding, not standard base64
+
+`signature.value` in v2 and v3 receipts is base64url-encoded (URL-safe alphabet, no
 padding). Standard base64 decoders may fail on the `-` and `_` characters.
 Use a base64url decoder, or replace `-` with `+` and `_` with `/` before
 passing to a standard base64 decoder, then add the correct padding.

@@ -417,8 +417,9 @@ alice_context="$(cat "${SCENARIO_DIR}/alice_relay_input.json")"
 bob_context="$(cat "${SCENARIO_DIR}/bob_relay_input_s1.json")"
 
 # Alice submits input using initiator tokens from invite detail
-alice_input_body="$(jq -n --argjson ctx "${alice_context}" \
-  '{role: "alice", context: $ctx}')"
+# Each submission carries a fresh client nonce that salts its input commitment.
+alice_input_body="$(jq -n --argjson ctx "${alice_context}" --arg nonce "$(openssl rand -hex 32)" \
+  '{role: "alice", context: $ctx, commitment_nonce: $nonce}')"
 
 alice_input_resp="$(relay_curl -X POST "${RELAY_URL}/sessions/${session_id}/input" \
   -H "Content-Type: application/json" \
@@ -428,7 +429,8 @@ log_info "Alice input submitted: $(echo "${alice_input_resp}" | jq -r '.state')"
 
 # Bob submits input using responder tokens from accept response
 bob_input_body="$(jq -n --argjson ctx "${bob_context}" --arg hash "${CONTRACT_HASH}" \
-  '{role: "bob", context: $ctx, expected_contract_hash: $hash}')"
+  --arg nonce "$(openssl rand -hex 32)" \
+  '{role: "bob", context: $ctx, expected_contract_hash: $hash, commitment_nonce: $nonce}')"
 
 bob_input_resp="$(relay_curl -X POST "${RELAY_URL}/sessions/${session_id}/input" \
   -H "Content-Type: application/json" \
@@ -486,8 +488,8 @@ cp "${run_dir}/alice_output.json" "${run_dir}/bob_output.json"
 has_receipt="$(echo "${output_resp}" | jq 'has("receipt")')"
 assert_eq "output has receipt" "${has_receipt}" "true"
 
-has_signature="$(echo "${output_resp}" | jq 'has("receipt_signature")')"
-assert_eq "output has receipt_signature" "${has_signature}" "true"
+receipt_version="$(echo "${output_resp}" | jq -r '.receipt.receipt_schema_version // empty')"
+assert_eq "receipt is v3" "${receipt_version}" "3.0.0"
 
 # Run verify.sh for standard privacy/structural checks
 log_info "Running verify.sh..."

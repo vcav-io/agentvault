@@ -29,6 +29,9 @@ use selkey_relay::{
     AppState,
 };
 
+/// Well-formed client commitment nonce (64 lowercase hex characters).
+const TEST_NONCE: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+
 /// Build a minimal enforcement policy for tests.
 fn test_enforcement_policy() -> RelayEnforcementPolicy {
     RelayEnforcementPolicy {
@@ -566,7 +569,7 @@ async fn start_mock_anthropic(output: serde_json::Value) -> String {
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let base_url = format!("http://127.0.0.1:{}", addr.port());
+    let base_url = format!("http://127.0.0.1:{port}", port = addr.port());
 
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
@@ -605,11 +608,11 @@ async fn test_relay_endpoint_end_to_end() {
         },
         "input_a": {
             "role": "alice",
-            "context": { "preference": "morning meetings" }
+            "context": { "preference": "morning meetings" }, "commitment_nonce": TEST_NONCE
         },
         "input_b": {
             "role": "bob",
-            "context": { "preference": "afternoon meetings" }
+            "context": { "preference": "afternoon meetings" }, "commitment_nonce": TEST_NONCE
         },
         "provider": "anthropic"
     });
@@ -638,27 +641,34 @@ async fn test_relay_endpoint_end_to_end() {
     // 6. Verify output matches expected
     assert_eq!(json["output"], mock_output);
 
-    // 7. Verify receipt fields
+    // 7. Verify v3 receipt fields
     let receipt = &json["receipt"];
-    assert_eq!(receipt["execution_lane"], "API_MEDIATED");
-    assert_eq!(receipt["purpose_code"], "MEDIATION");
-    assert_eq!(receipt["status"], "COMPLETED");
-    assert!(receipt["contract_hash"].as_str().unwrap().len() == 64);
-    assert_eq!(receipt["prompt_template_hash"], prompt_hash);
-    assert!(receipt["output_entropy_bits"].as_u64().unwrap() > 0);
-    assert_eq!(receipt["signal_class"], "SESSION_COMPLETED");
+    assert_eq!(receipt["receipt_schema_version"], "3.0.0");
+    assert_eq!(receipt["claims"]["execution_lane"], "standard");
+    assert_eq!(receipt["claims"]["status"], "success");
+    assert_eq!(receipt["claims"]["signal_class"], "SESSION_COMPLETED");
+    assert_eq!(
+        receipt["commitments"]["contract_hash"],
+        receipt_core::compute_contract_hash_v2(&relay_request["contract"]).unwrap()
+    );
+    assert_eq!(receipt["commitments"]["prompt_template_hash"], prompt_hash);
+    assert!(
+        receipt["claims"]["channel_capacity_bits_upper_bound"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
 
-    // 8. Verify receipt_signature is present and non-empty
-    let receipt_sig = json["receipt_signature"].as_str().unwrap();
-    assert_eq!(receipt_sig.len(), 128); // 64-byte Ed25519 sig = 128 hex chars
+    // 8. Only the v3 receipt is returned
+    assert!(json.get("receipt_signature").is_none());
+    assert!(json.get("receipt_v2").is_none());
 
     // 9. Verify budget_limit uses contract value (not hardcoded 128)
-    assert_eq!(receipt["budget_usage"]["budget_limit"], 64);
+    assert_eq!(receipt["claims"]["budget_usage"]["budget_limit"], 64);
+    assert_eq!(receipt["claims"]["budget_usage"]["scope"], "SESSION");
 
-    // 10. Verify receipt signature using verifier
-    //     Deserialize as UnsignedReceipt (ignores the signature field)
-    let unsigned: receipt_core::UnsignedReceipt = serde_json::from_value(receipt.clone()).unwrap();
-    receipt_core::verify_receipt(&unsigned, receipt_sig, &verifying_key)
+    // 10. Verify the receipt against the relay key
+    receipt_core::verify_receipt_v3_json(&receipt.to_string(), &verifying_key)
         .expect("receipt signature must verify");
 
     // Clean up
@@ -680,8 +690,8 @@ async fn test_relay_endpoint_rejects_invalid_provider() {
             "participants": ["alice", "bob"],
             "prompt_template_hash": prompt_hash
         },
-        "input_a": { "role": "alice", "context": {} },
-        "input_b": { "role": "bob", "context": {} },
+        "input_a": { "role": "alice", "context": {}, "commitment_nonce": TEST_NONCE },
+        "input_b": { "role": "bob", "context": {}, "commitment_nonce": TEST_NONCE },
         "provider": "openai"
     });
 
@@ -728,8 +738,8 @@ async fn test_relay_rejects_missing_model_profile_when_allowlist_set() {
             "participants": ["alice", "bob"],
             "prompt_template_hash": prompt_hash
         },
-        "input_a": { "role": "alice", "context": {} },
-        "input_b": { "role": "bob", "context": {} },
+        "input_a": { "role": "alice", "context": {}, "commitment_nonce": TEST_NONCE },
+        "input_b": { "role": "bob", "context": {}, "commitment_nonce": TEST_NONCE },
         "provider": "anthropic"
     });
 
@@ -801,8 +811,8 @@ async fn test_relay_rejects_wrong_model_profile() {
             "model_profile_id": "api-gpt4o-v1",
             "model_profile_hash": wrong_profile_hash
         },
-        "input_a": { "role": "alice", "context": {} },
-        "input_b": { "role": "bob", "context": {} },
+        "input_a": { "role": "alice", "context": {}, "commitment_nonce": TEST_NONCE },
+        "input_b": { "role": "bob", "context": {}, "commitment_nonce": TEST_NONCE },
         "provider": "anthropic"
     });
 
@@ -1016,7 +1026,7 @@ async fn test_submit_input_transitions_to_partial() {
 
     let input_request = serde_json::json!({
         "role": "alice",
-        "context": { "preference": "morning" }
+        "context": { "preference": "morning" }, "commitment_nonce": TEST_NONCE
     });
 
     let response = app
@@ -1072,7 +1082,7 @@ async fn test_submit_token_is_one_time_use() {
 
     let input_request = serde_json::json!({
         "role": "alice",
-        "context": {}
+        "context": {}, "commitment_nonce": TEST_NONCE
     });
 
     // First submit succeeds
@@ -1086,6 +1096,8 @@ async fn test_submit_token_is_one_time_use() {
             session.initiator_input = Some(selkey_relay::types::RelayInput {
                 role: "alice".to_string(),
                 context: serde_json::json!({}),
+                commitment_nonce: selkey_relay::types::CommitmentNonce::parse(&"11".repeat(32))
+                    .unwrap(),
             });
             session.initiator_submitted = true;
             session.state = selkey_relay::session::SessionState::Partial;
@@ -1276,7 +1288,7 @@ async fn test_bilateral_session_e2e_with_mock() {
                 "entropy_budget_bits": 32
             }))
             .unwrap(),
-            "will-be-recomputed".to_string(),
+            "0".repeat(64),
             "anthropic".to_string(),
         )
         .await;
@@ -1322,7 +1334,7 @@ async fn test_bilateral_session_e2e_with_mock() {
                 .body(Body::from(
                     serde_json::to_vec(&serde_json::json!({
                         "role": "alice",
-                        "context": { "preference": "morning" }
+                        "context": { "preference": "morning" }, "commitment_nonce": TEST_NONCE
                     }))
                     .unwrap(),
                 ))
@@ -1379,7 +1391,7 @@ async fn test_bilateral_session_e2e_with_mock() {
                 .body(Body::from(
                     serde_json::to_vec(&serde_json::json!({
                         "role": "bob",
-                        "context": { "preference": "afternoon" }
+                        "context": { "preference": "afternoon" }, "commitment_nonce": TEST_NONCE
                     }))
                     .unwrap(),
                 ))
@@ -1405,8 +1417,7 @@ async fn test_bilateral_session_e2e_with_mock() {
     assert_eq!(
         final_state,
         selkey_relay::session::SessionState::Completed,
-        "session should be completed, abort_reason: {:?}",
-        abort_reason
+        "session should be completed, abort_reason: {abort_reason:?}"
     );
 
     // 5. Retrieve output with read token
@@ -1458,18 +1469,14 @@ async fn test_bilateral_session_e2e_with_mock() {
     assert_eq!(json["state"], "COMPLETED");
     assert_eq!(json["output"], mock_output);
     assert!(json["receipt"].is_object());
-    assert!(json["receipt_signature"].is_string());
+    assert!(json.get("receipt_signature").is_none());
 
     // 6. Verify receipt
     let receipt = &json["receipt"];
-    assert_eq!(receipt["execution_lane"], "API_MEDIATED");
-    assert_eq!(receipt["status"], "COMPLETED");
+    assert_eq!(receipt["receipt_schema_version"], "3.0.0");
+    assert_eq!(receipt["claims"]["status"], "success");
 
-    let receipt_sig = json["receipt_signature"].as_str().unwrap();
-    assert_eq!(receipt_sig.len(), 128);
-
-    let unsigned: receipt_core::UnsignedReceipt = serde_json::from_value(receipt.clone()).unwrap();
-    receipt_core::verify_receipt(&unsigned, receipt_sig, &verifying_key)
+    receipt_core::verify_receipt_v3_json(&receipt.to_string(), &verifying_key)
         .expect("bilateral session receipt must verify");
 
     std::fs::remove_dir_all(&prompt_dir).ok();
@@ -1529,7 +1536,7 @@ async fn test_submit_with_correct_contract_hash_succeeds() {
 
     let input_request = serde_json::json!({
         "role": "alice",
-        "context": { "preference": "morning" },
+        "context": { "preference": "morning" }, "commitment_nonce": TEST_NONCE,
         "expected_contract_hash": real_hash
     });
 
@@ -1601,7 +1608,7 @@ async fn test_submit_with_wrong_contract_hash_rejected() {
 
     let input_request = serde_json::json!({
         "role": "bob",
-        "context": { "preference": "evening" },
+        "context": { "preference": "evening" }, "commitment_nonce": TEST_NONCE,
         "expected_contract_hash": "wrong_hash_xyz"
     });
 
@@ -1675,7 +1682,7 @@ async fn test_submit_without_contract_hash_still_works() {
     // No expected_contract_hash field — backward compat
     let input_request = serde_json::json!({
         "role": "alice",
-        "context": {}
+        "context": {}, "commitment_nonce": TEST_NONCE
     });
 
     let response = app
@@ -1898,7 +1905,7 @@ async fn test_inbox_cross_agent_isolation() {
     // Create an invite to Bob via the store directly
     let create_req = selkey_relay::inbox_types::CreateInviteRequest {
         to_agent_id: "bob".to_string(),
-        contract: selkey_relay::types::Contract {
+        contract: serde_json::to_value(selkey_relay::types::Contract {
             purpose_code: vault_family_types::Purpose::Compatibility,
             output_schema_id: "test".to_string(),
             output_schema: serde_json::json!({"type": "object"}),
@@ -1917,7 +1924,8 @@ async fn test_inbox_cross_agent_isolation() {
             invite_ttl_secs: None,
             entropy_enforcement: None,
             relay_verifying_key_hex: None,
-        },
+        })
+        .unwrap(),
         provider: "anthropic".to_string(),
         purpose_code: "COMPATIBILITY".to_string(),
         from_agent_pubkey: None,
@@ -1960,7 +1968,7 @@ async fn test_inbox_accept_creates_session() {
     // Create invite via store
     let create_req = selkey_relay::inbox_types::CreateInviteRequest {
         to_agent_id: "bob".to_string(),
-        contract: selkey_relay::types::Contract {
+        contract: serde_json::to_value(selkey_relay::types::Contract {
             purpose_code: vault_family_types::Purpose::Compatibility,
             output_schema_id: "test".to_string(),
             output_schema: serde_json::json!({"type": "object"}),
@@ -1979,7 +1987,8 @@ async fn test_inbox_accept_creates_session() {
             invite_ttl_secs: None,
             entropy_enforcement: None,
             relay_verifying_key_hex: None,
-        },
+        })
+        .unwrap(),
         provider: "anthropic".to_string(),
         purpose_code: "COMPATIBILITY".to_string(),
         from_agent_pubkey: None,
@@ -2021,7 +2030,7 @@ async fn test_inbox_accept_creates_session() {
 async fn create_test_invite(state: &AppState) -> String {
     let create_req = selkey_relay::inbox_types::CreateInviteRequest {
         to_agent_id: "bob".to_string(),
-        contract: selkey_relay::types::Contract {
+        contract: serde_json::to_value(selkey_relay::types::Contract {
             purpose_code: vault_family_types::Purpose::Compatibility,
             output_schema_id: "test".to_string(),
             output_schema: serde_json::json!({"type": "object"}),
@@ -2040,7 +2049,8 @@ async fn create_test_invite(state: &AppState) -> String {
             invite_ttl_secs: None,
             entropy_enforcement: None,
             relay_verifying_key_hex: None,
-        },
+        })
+        .unwrap(),
         provider: "anthropic".to_string(),
         purpose_code: "COMPATIBILITY".to_string(),
         from_agent_pubkey: None,
@@ -2494,8 +2504,8 @@ async fn test_contract_enforcement_policy_hash_mismatch_rejected() {
             "prompt_template_hash": prompt_hash,
             "enforcement_policy_hash": "wrong_hash_value"
         },
-        "input_a": { "role": "alice", "context": {} },
-        "input_b": { "role": "bob", "context": {} },
+        "input_a": { "role": "alice", "context": {}, "commitment_nonce": TEST_NONCE },
+        "input_b": { "role": "bob", "context": {}, "commitment_nonce": TEST_NONCE },
         "provider": "anthropic"
     });
 
@@ -2545,8 +2555,8 @@ async fn test_contract_model_constraints_provider_rejected() {
                 "allowed_models": []
             }
         },
-        "input_a": { "role": "alice", "context": {} },
-        "input_b": { "role": "bob", "context": {} },
+        "input_a": { "role": "alice", "context": {}, "commitment_nonce": TEST_NONCE },
+        "input_b": { "role": "bob", "context": {}, "commitment_nonce": TEST_NONCE },
         "provider": "anthropic"
     });
 
@@ -2596,8 +2606,8 @@ async fn test_contract_model_constraints_model_rejected() {
                 "allowed_models": ["gpt-4o*"]
             }
         },
-        "input_a": { "role": "alice", "context": {} },
-        "input_b": { "role": "bob", "context": {} },
+        "input_a": { "role": "alice", "context": {}, "commitment_nonce": TEST_NONCE },
+        "input_b": { "role": "bob", "context": {}, "commitment_nonce": TEST_NONCE },
         "provider": "anthropic"
     });
 
@@ -2644,8 +2654,8 @@ async fn test_contract_session_ttl_exceeds_relay_max_rejected() {
             "prompt_template_hash": prompt_hash,
             "session_ttl_secs": 99999
         },
-        "input_a": { "role": "alice", "context": {} },
-        "input_b": { "role": "bob", "context": {} },
+        "input_a": { "role": "alice", "context": {}, "commitment_nonce": TEST_NONCE },
+        "input_b": { "role": "bob", "context": {}, "commitment_nonce": TEST_NONCE },
         "provider": "anthropic"
     });
 
@@ -2693,8 +2703,8 @@ async fn test_contract_schema_hash_mismatch_rejected() {
             "prompt_template_hash": prompt_hash,
             "output_schema_hash": "deadbeef".repeat(8)
         },
-        "input_a": { "role": "alice", "context": {} },
-        "input_b": { "role": "bob", "context": {} },
+        "input_a": { "role": "alice", "context": {}, "commitment_nonce": TEST_NONCE },
+        "input_b": { "role": "bob", "context": {}, "commitment_nonce": TEST_NONCE },
         "provider": "anthropic"
     });
 
@@ -2742,8 +2752,8 @@ async fn test_contract_schema_hash_not_in_registry_rejected() {
             "prompt_template_hash": prompt_hash,
             "output_schema_hash": "abc123"
         },
-        "input_a": { "role": "alice", "context": {} },
-        "input_b": { "role": "bob", "context": {} },
+        "input_a": { "role": "alice", "context": {}, "commitment_nonce": TEST_NONCE },
+        "input_b": { "role": "bob", "context": {}, "commitment_nonce": TEST_NONCE },
         "provider": "anthropic"
     });
 
@@ -2903,8 +2913,8 @@ async fn test_contract_relay_key_pinning_wrong_key_rejected() {
             "prompt_template_hash": prompt_hash,
             "relay_verifying_key_hex": "ff".repeat(32)
         },
-        "input_a": { "role": "alice", "context": {} },
-        "input_b": { "role": "bob", "context": {} },
+        "input_a": { "role": "alice", "context": {}, "commitment_nonce": TEST_NONCE },
+        "input_b": { "role": "bob", "context": {}, "commitment_nonce": TEST_NONCE },
         "provider": "anthropic"
     });
 
@@ -2952,8 +2962,8 @@ async fn test_contract_relay_key_pinning_correct_key_accepted() {
             "prompt_template_hash": prompt_hash,
             "relay_verifying_key_hex": correct_key
         },
-        "input_a": { "role": "alice", "context": {} },
-        "input_b": { "role": "bob", "context": {} },
+        "input_a": { "role": "alice", "context": {}, "commitment_nonce": TEST_NONCE },
+        "input_b": { "role": "bob", "context": {}, "commitment_nonce": TEST_NONCE },
         "provider": "anthropic"
     });
 
@@ -3014,7 +3024,7 @@ async fn test_submit_with_wrong_role_uses_contract_role() {
     // Submit as initiator but with a WRONG role string
     let input_request = serde_json::json!({
         "role": "EVIL_IMPERSONATOR",
-        "context": { "preference": "morning" }
+        "context": { "preference": "morning" }, "commitment_nonce": TEST_NONCE
     });
 
     let response = app
@@ -3070,7 +3080,7 @@ async fn start_mock_anthropic_error() -> String {
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let base_url = format!("http://127.0.0.1:{}", addr.port());
+    let base_url = format!("http://127.0.0.1:{port}", port = addr.port());
 
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
@@ -3138,7 +3148,7 @@ async fn test_failure_receipt_uses_resolved_schema_hash() {
                 "entropy_budget_bits": 64
             }))
             .unwrap(),
-            "will-be-recomputed".to_string(),
+            "0".repeat(64),
             "anthropic".to_string(),
         )
         .await;
@@ -3158,7 +3168,7 @@ async fn test_failure_receipt_uses_resolved_schema_hash() {
                 .body(Body::from(
                     serde_json::to_vec(&serde_json::json!({
                         "role": "alice",
-                        "context": { "preference": "morning" }
+                        "context": { "preference": "morning" }, "commitment_nonce": TEST_NONCE
                     }))
                     .unwrap(),
                 ))
@@ -3182,7 +3192,7 @@ async fn test_failure_receipt_uses_resolved_schema_hash() {
                 .body(Body::from(
                     serde_json::to_vec(&serde_json::json!({
                         "role": "bob",
-                        "context": { "preference": "afternoon" }
+                        "context": { "preference": "afternoon" }, "commitment_nonce": TEST_NONCE
                     }))
                     .unwrap(),
                 ))
@@ -3209,14 +3219,14 @@ async fn test_failure_receipt_uses_resolved_schema_hash() {
     );
 
     // 8. Retrieve the failure receipt and verify output_schema_hash
-    let receipt_v2 = state
+    let receipt = state
         .session_store
-        .with_session(&session_id, |session| session.receipt_v2.clone())
+        .with_session(&session_id, |session| session.receipt.clone())
         .await
         .expect("session should exist")
         .expect("failure receipt should be present");
 
-    let receipt_json = serde_json::to_value(&receipt_v2).unwrap();
+    let receipt_json = serde_json::to_value(&receipt).unwrap();
     let commitments = &receipt_json["commitments"];
     let receipt_schema_hash = commitments["schema_hash"]
         .as_str()
@@ -3310,9 +3320,6 @@ async fn test_invite_detail_includes_contract_json() {
 
 #[tokio::test]
 async fn test_invite_detail_contract_json_hash_matches() {
-    use selkey_relay::relay::compute_contract_hash;
-    use vault_family_types::Contract;
-
     let state = Arc::new(inbox_test_app_state());
 
     // Create invite
@@ -3357,9 +3364,8 @@ async fn test_invite_detail_contract_json_hash_matches() {
     )
     .unwrap();
 
-    // Parse contract_json back to Contract and compute its hash
-    let contract: Contract = serde_json::from_value(detail["contract_json"].clone()).unwrap();
-    let computed_hash = compute_contract_hash(&contract).unwrap();
+    // Contract hash v2 of contract_json, as a responder computes it
+    let computed_hash = receipt_core::compute_contract_hash_v2(&detail["contract_json"]).unwrap();
 
     // Must match the advertised contract_hash
     assert_eq!(
@@ -3402,8 +3408,8 @@ async fn test_relay_rejects_malformed_relay_verifying_key() {
                 "prompt_template_hash": prompt_hash,
                 "relay_verifying_key_hex": key
             },
-            "input_a": { "role": "alice", "context": {} },
-            "input_b": { "role": "bob", "context": {} },
+            "input_a": { "role": "alice", "context": {}, "commitment_nonce": TEST_NONCE },
+            "input_b": { "role": "bob", "context": {}, "commitment_nonce": TEST_NONCE },
             "provider": "anthropic"
         });
         let response = build_router(state.clone())
@@ -3449,8 +3455,8 @@ async fn test_relay_key_pinning_accepts_uppercase_hex() {
             "prompt_template_hash": prompt_hash,
             "relay_verifying_key_hex": key
         },
-        "input_a": { "role": "alice", "context": {} },
-        "input_b": { "role": "bob", "context": {} },
+        "input_a": { "role": "alice", "context": {}, "commitment_nonce": TEST_NONCE },
+        "input_b": { "role": "bob", "context": {}, "commitment_nonce": TEST_NONCE },
         "provider": "anthropic"
     });
     let response = build_router(state)
@@ -3549,7 +3555,7 @@ async fn test_session_with_malformed_relay_key_reaches_terminal_state() {
                     .body(Body::from(
                         serde_json::to_vec(&serde_json::json!({
                             "role": role,
-                            "context": { "preference": "private value" }
+                            "context": { "preference": "private value" }, "commitment_nonce": TEST_NONCE
                         }))
                         .unwrap(),
                     ))
@@ -3631,8 +3637,8 @@ async fn test_relay_schema_error_response_omits_output_values() {
             "participants": ["alice", "bob"],
             "prompt_template_hash": prompt_hash
         },
-        "input_a": { "role": "alice", "context": {} },
-        "input_b": { "role": "bob", "context": {} },
+        "input_a": { "role": "alice", "context": {}, "commitment_nonce": TEST_NONCE },
+        "input_b": { "role": "bob", "context": {}, "commitment_nonce": TEST_NONCE },
         "provider": "anthropic"
     });
     let response = build_router(state)
@@ -3692,8 +3698,8 @@ fn relay_request_with_schema(prompt_hash: &str, schema: serde_json::Value) -> se
             "participants": ["alice", "bob"],
             "prompt_template_hash": prompt_hash
         },
-        "input_a": { "role": "alice", "context": { "note": "private" } },
-        "input_b": { "role": "bob", "context": { "note": "private" } },
+        "input_a": { "role": "alice", "context": { "note": "private" }, "commitment_nonce": TEST_NONCE },
+        "input_b": { "role": "bob", "context": { "note": "private" }, "commitment_nonce": TEST_NONCE },
         "provider": "anthropic"
     })
 }
@@ -3792,8 +3798,11 @@ async fn test_relay_accepts_registry_schema_by_hash() {
     let (status, json) = post_relay(state, request).await;
     assert_eq!(status, StatusCode::OK, "{json}");
     assert_eq!(json["output"], mock_output);
-    assert_eq!(json["receipt"]["output_schema_hash"], hash);
-    assert_eq!(json["receipt"]["output_entropy_bits"], 6);
+    assert_eq!(json["receipt"]["commitments"]["schema_hash"], hash);
+    assert_eq!(
+        json["receipt"]["claims"]["channel_capacity_bits_upper_bound"],
+        6
+    );
 
     std::fs::remove_dir_all(&prompt_dir).ok();
 }
@@ -3853,7 +3862,10 @@ async fn test_relay_ignores_schema_declared_bound_for_inline_schema() {
     .await;
     assert_eq!(status, StatusCode::OK, "{json}");
     // 10 characters * 21 bits + 4 length bits, computed by the relay.
-    assert_eq!(json["receipt"]["output_entropy_bits"], 214);
+    assert_eq!(
+        json["receipt"]["claims"]["channel_capacity_bits_upper_bound"],
+        214
+    );
 
     std::fs::remove_dir_all(&prompt_dir).ok();
 }

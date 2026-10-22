@@ -66,9 +66,8 @@ pub struct Session {
     pub initiator_input: Option<RelayInput>,
     pub responder_input: Option<RelayInput>,
     pub output: Option<serde_json::Value>,
-    pub receipt: Option<receipt_core::Receipt>,
-    pub receipt_signature: Option<String>,
-    pub receipt_v2: Option<receipt_core::ReceiptV2>,
+    /// Signed v3 receipt (success or failure).
+    pub receipt: Option<receipt_core::ReceiptV3>,
     pub tokens: SessionTokens,
     pub initiator_submitted: bool,
     pub responder_submitted: bool,
@@ -148,8 +147,6 @@ impl SessionStore {
             responder_input: None,
             output: None,
             receipt: None,
-            receipt_signature: None,
-            receipt_v2: None,
             tokens: tokens.clone(),
             initiator_submitted: false,
             responder_submitted: false,
@@ -372,10 +369,12 @@ mod tests {
                 session.initiator_input = Some(RelayInput {
                     role: "alice".to_string(),
                     context: serde_json::json!({"text": "initiator input"}),
+                    commitment_nonce: crate::types::test_nonce(),
                 });
                 session.responder_input = Some(RelayInput {
                     role: "bob".to_string(),
                     context: serde_json::json!({"text": "responder input"}),
+                    commitment_nonce: crate::types::test_nonce(),
                 });
                 session.state = SessionState::Processing;
             })
@@ -442,10 +441,12 @@ mod tests {
                 session.initiator_input = Some(RelayInput {
                     role: "initiator".to_string(),
                     context: serde_json::json!({"text": "secret initiator input"}),
+                    commitment_nonce: crate::types::test_nonce(),
                 });
                 session.responder_input = Some(RelayInput {
                     role: "responder".to_string(),
                     context: serde_json::json!({"text": "secret responder input"}),
+                    commitment_nonce: crate::types::test_nonce(),
                 });
                 session.state = SessionState::Processing;
             })
@@ -502,10 +503,12 @@ mod tests {
                 session.initiator_input = Some(RelayInput {
                     role: "initiator".to_string(),
                     context: serde_json::json!({"text": "secret initiator input"}),
+                    commitment_nonce: crate::types::test_nonce(),
                 });
                 session.responder_input = Some(RelayInput {
                     role: "responder".to_string(),
                     context: serde_json::json!({"text": "secret responder input"}),
+                    commitment_nonce: crate::types::test_nonce(),
                 });
                 session.state = SessionState::Processing;
             })

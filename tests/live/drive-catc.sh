@@ -132,7 +132,8 @@ run_catc_session() {
 
   # Submit Alice
   local alice_body
-  alice_body="$(jq -n --argjson ctx "${alice_input}" '{role: "alice", context: $ctx}')"
+  alice_body="$(jq -n --argjson ctx "${alice_input}" --arg nonce "$(openssl rand -hex 32)" \
+    '{role: "alice", context: $ctx, commitment_nonce: $nonce}')"
   local alice_http_code
   alice_http_code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "${RELAY_URL}/sessions/${session_id}/input" \
     -H "Content-Type: application/json" \
@@ -147,7 +148,8 @@ run_catc_session() {
   # Submit Bob
   local bob_body
   bob_body="$(jq -n --argjson ctx "${bob_input}" --arg hash "${observed_hash}" \
-    '{role: "bob", context: $ctx, expected_contract_hash: $hash}')"
+    --arg nonce "$(openssl rand -hex 32)" \
+    '{role: "bob", context: $ctx, expected_contract_hash: $hash, commitment_nonce: $nonce}')"
   local bob_http_code
   bob_http_code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "${RELAY_URL}/sessions/${session_id}/input" \
     -H "Content-Type: application/json" \
