@@ -7,8 +7,8 @@ use std::io::Read;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-const STRONG_TOKEN_A: &str = "6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f";
-const STRONG_TOKEN_B: &str = "c4e8b2a6f0d93715e2b8a4c6d0f19e37c4e8b2a6f0d93715e2b8a4c6d0f19e37";
+const STRONG_TOKEN_A: &str = "6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f91c5e07b3d8a26f4e1b0c79d5a3f8e62";
+const STRONG_TOKEN_B: &str = "c4e8b2a6f0d93715e2b8a4c6d0f19e375a0d1c8e93b7f264a1e0d8c5b39f7a26";
 const SIGNING_KEY_HEX: &str = "4242424242424242424242424242424242424242424242424242424242424242";
 
 /// Outcome of starting the relay.

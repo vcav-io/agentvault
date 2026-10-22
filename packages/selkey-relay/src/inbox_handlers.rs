@@ -118,6 +118,21 @@ pub async fn accept_invite_handler(
     InboxAgent(agent_id): InboxAgent,
     Json(request): Json<AcceptInviteRequest>,
 ) -> Result<Json<AcceptInviteResponse>, RelayError> {
+    // Invites stored by an earlier relay version (persistence) may carry a
+    // sender key that was not checked against the registry: check it again.
+    let detail = state.inbox_store.get_invite(&invite_id, &agent_id).await?;
+    if let Some(ref stored) = detail.from_agent_pubkey {
+        let registered = state
+            .agent_registry
+            .get_agent(&detail.from_agent_id)
+            .and_then(|a| a.public_key_hex.as_deref());
+        if !registered.is_some_and(|reg| reg.eq_ignore_ascii_case(stored)) {
+            return Err(RelayError::ContractValidation(
+                "invite from_agent_pubkey does not match the sender's key in the agent registry"
+                    .to_string(),
+            ));
+        }
+    }
     let response = state
         .inbox_store
         .accept_invite_checked(
