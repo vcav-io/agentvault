@@ -21,6 +21,7 @@ import { canonicalize } from 'json-canonicalize';
 import { createAndSubmit, joinAndWait } from 'selkey';
 import { computeInputCommitmentV3, generateCommitmentNonce } from 'selkey/commitment';
 import { hashV3 } from 'selkey/jcs';
+import { computeCommitmentHash } from 'selkey/verify';
 import { signingDigestV3, type ReceiptV3 } from 'selkey/receipt-v3';
 import { ed25519 } from '@noble/curves/ed25519';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
@@ -673,25 +674,72 @@ describe('receipt verification against the pinned relay key', () => {
 
   it('does not accept a v2 receipt on a live session', async () => {
     process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'] = keyOf(RELAY_SEED);
-    const data = await runToCompletion(() => ({
-      state: 'COMPLETED',
-      output: OUTPUT,
-      receipt_v2: signedReceiptV2(RELAY_SEED),
-    }));
+    // A v2 receipt signed by the pinned key that commits to this agent's
+    // input and to the received output: it would pass every other check.
+    const data = await runToCompletion(() => {
+      const sent = submitted();
+      return {
+        state: 'COMPLETED',
+        output: OUTPUT,
+        receipt_v2: signedReceiptV2(RELAY_SEED, {
+          commitments: {
+            output_hash: computeCommitmentHash(OUTPUT),
+            input_commitments: [
+              {
+                participant_id: RESPONDER,
+                input_hash: computeCommitmentHash(sent.context),
+                hash_alg: 'SHA-256',
+                canonicalization: 'CANONICAL_JSON_V1',
+              },
+            ],
+          },
+        }),
+      };
+    });
     expect(data.phase).toBe('FAILED');
     expect(data.error_code).toBe('RECEIPT_VERIFICATION_FAILED');
   });
 
-  it('uses a fresh nonce when a submission is retried', async () => {
+  it('reuses the nonce when the same submission to the same session is retried', async () => {
     vi.mocked(submitInput).mockRejectedValueOnce(new Error('Relay HTTP 503: unavailable'));
     const transport = mockTransport([legacyInvite(computeRelayContractHash(localContract()))]);
     const first = await respond(transport);
     const token = first.resume_token ?? '';
-    // First submission fails (transient), the resumed call submits again.
     await handleRelaySignal({ resume_token: token }, transport).catch(() => undefined);
     await handleRelaySignal({ resume_token: token }, transport).catch(() => undefined);
-    const nonces = vi.mocked(submitInput).mock.calls.map((c) => c[5]);
-    expect(nonces.length).toBeGreaterThanOrEqual(2);
-    expect(new Set(nonces).size).toBe(nonces.length);
+    const calls = vi.mocked(submitInput).mock.calls;
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(calls.map((c) => c[5])).size).toBe(1);
+    expect(calls[0][5]).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('completes after an ambiguous submit failure when the relay kept the first attempt', async () => {
+    process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'] = keyOf(RELAY_SEED);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ verifying_key_hex: keyOf(RELAY_SEED) }),
+      }),
+    );
+    // The first attempt reaches the relay but the client sees an error; the
+    // retry goes through and the relay's receipt commits under the first
+    // attempt's nonce.
+    vi.mocked(submitInput).mockRejectedValueOnce(new Error('fetch failed'));
+    vi.mocked(getStatus).mockResolvedValueOnce({ state: 'COMPLETED' } as never);
+    vi.mocked(getOutput).mockImplementationOnce(async () => {
+      const firstCall = vi.mocked(submitInput).mock.calls[0];
+      return {
+        state: 'COMPLETED',
+        output: OUTPUT,
+        receipt: signedReceiptV3({ sent: { context: firstCall[4], nonce: firstCall[5] as string } }),
+      } as never;
+    });
+    const transport = mockTransport([legacyInvite(computeRelayContractHash(localContract()))]);
+    const first = await respond(transport);
+    const token = first.resume_token ?? '';
+    await handleRelaySignal({ resume_token: token }, transport).catch(() => undefined);
+    const done = await handleRelaySignal({ resume_token: token }, transport);
+    expect((done.data as RelaySignalOutput).phase).toBe('COMPLETED');
   });
 });

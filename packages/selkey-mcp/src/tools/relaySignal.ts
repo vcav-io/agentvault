@@ -1040,11 +1040,23 @@ function awaitingResponse(
 }
 
 /**
- * A fresh commitment nonce for one submission. Every submission, including a
- * retry, gets its own nonce; the handle keeps the nonce and context of the
- * latest submission so the receipt can be checked against them.
+ * Commitment nonce for one submission.
+ *
+ * A retry of the same submission (same session and exactly the same
+ * context) reuses its nonce: after an ambiguous failure the first attempt
+ * may already have reached the relay, which accepts one submission per
+ * party, so the receipt commits under that nonce. Any other submission gets a
+ * fresh nonce, stored with the matching context.
  */
 function submissionNonce(handle: RelayHandle, sessionId: string, context: unknown): string {
+  const prior = handle.inputCommitment;
+  if (
+    prior &&
+    prior.sessionId === sessionId &&
+    JSON.stringify(prior.context) === JSON.stringify(context)
+  ) {
+    return prior.nonce;
+  }
   const nonce = generateCommitmentNonce();
   handle.inputCommitment = { sessionId, context, nonce };
   return nonce;
