@@ -524,6 +524,15 @@ impl InboxStore {
                 )));
             }
 
+            // Re-run the create-time binding checks: invites stored by an
+            // earlier relay version (persistence) may predate them.
+            Self::validate_invite_contract_binding(
+                &invite.from_agent_id,
+                &invite.to_agent_id,
+                &invite.purpose_code,
+                &invite.contract,
+            )?;
+
             // Verify contract hash if provided
             if let Some(expected) = expected_contract_hash {
                 if invite.contract_hash != expected {
@@ -2129,5 +2138,32 @@ mod tests {
         }
         assert_eq!(created, 5);
         assert_eq!(store.len().await, 5);
+    }
+
+    #[tokio::test]
+    async fn test_accept_rechecks_stored_participant_order() {
+        let store = InboxStore::new(Duration::from_secs(600));
+        let sessions = SessionStore::new(Duration::from_secs(600));
+        let created = store
+            .create_invite("alice", &test_create_request(), None)
+            .await
+            .unwrap();
+        // As stored by an earlier version: participants in reversed order.
+        store
+            .inner
+            .write()
+            .await
+            .invites
+            .get_mut(&created.invite_id)
+            .unwrap()
+            .contract
+            .participants
+            .reverse();
+        let err = store
+            .accept_invite(&created.invite_id, "bob", None, &sessions)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RelayError::ContractValidation(_)));
+        assert!(sessions.is_empty().await);
     }
 }

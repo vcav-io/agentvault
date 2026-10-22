@@ -728,7 +728,8 @@ pub fn preflight_contract(
 /// Who supplied the two inputs of a run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputOrigin {
-    /// Each participant submitted its own input with its own submit token.
+    /// The inputs arrived through the session's two role-scoped submit
+    /// tokens. Who held the tokens is not known to the relay.
     Bilateral,
     /// One caller supplied both inputs (POST /relay).
     SingleCaller,
@@ -737,9 +738,11 @@ pub enum InputOrigin {
 impl InputOrigin {
     /// The receipt `signal_class` for a successful run.
     ///
-    /// Receipt v3 keys input commitments by contract participant either way;
-    /// `SINGLE_CALLER_COMPLETED` states that one caller supplied both inputs,
-    /// so the receipt does not attest that each participant submitted.
+    /// Receipt v3 keys input commitments by contract participant either way.
+    /// `SESSION_COMPLETED` means the inputs came through the two submit
+    /// tokens; it does not attest that two different parties held them
+    /// (POST /sessions returns all four tokens to the creator).
+    /// `SINGLE_CALLER_COMPLETED` states that one request supplied both inputs.
     pub fn success_signal_class(self) -> &'static str {
         match self {
             InputOrigin::Bilateral => "SESSION_COMPLETED",

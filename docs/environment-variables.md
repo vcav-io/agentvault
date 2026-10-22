@@ -71,6 +71,11 @@ free-text field of more than a few characters needs the operator to raise it.
 Before release, integral numbers in the model output are rewritten as JSON integers (`2.0`,
 `2e0` → `2`), so a value has one representation.
 
+Enforcement policy rules also apply to inline schemas. Under the default policy
+(`compatibility_safe_v1`), the digit rule (`Nd`) checks JSON numbers by their text, so it
+rejects **every** numeric output value: `integer` and `number` fields are not usable with that
+policy. Use string enums, or a policy without the digit rule.
+
 ### Lockfile overrides (development only)
 
 These require `SELKEY_ENV=dev` to have any effect. Production deployments must always use lockfiles.

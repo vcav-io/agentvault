@@ -107,10 +107,15 @@ the same rules as `POST /sessions`.
 
 `input_a` and `input_b` are labelled with `contract.participants[0]` and `[1]`;
 the `role` fields are ignored. Because one caller supplied both inputs, the
-receipt's `claims.signal_class` is `SINGLE_CALLER_COMPLETED` (bilateral
-sessions use `SESSION_COMPLETED`). Its input commitments are still keyed by
-contract participant, but they do not show that each participant submitted
-its own input.
+receipt's `claims.signal_class` is `SINGLE_CALLER_COMPLETED`. Its input
+commitments are still keyed by contract participant.
+
+Sessions use `SESSION_COMPLETED`, which means the two inputs arrived through the
+session's two role-scoped submit tokens. It does not attest who held them:
+`POST /sessions` returns all four tokens to the creator, so one caller can
+produce a `SESSION_COMPLETED` receipt. Only the inbox lane binds the tokens to
+registry-authenticated agents (the sender gets the initiator tokens, the
+recipient the responder tokens).
 
 **Response** `200 OK`
 ```json
