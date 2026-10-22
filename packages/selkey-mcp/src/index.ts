@@ -29,6 +29,8 @@
  * Manage them with `selkey-mcp pins list|add|remove|confirm|rotate`.
  *   SELKEY_AFAL_ALLOWED_PURPOSES   — comma-separated: "MEDIATION,COMPATIBILITY"
  *   SELKEY_AFAL_PEER_DESCRIPTOR_URL — peer descriptor URL (INITIATE mode)
+ *   SELKEY_AFAL_PEER_ENDPOINT_ORIGINS — comma-separated origins, besides the peer descriptor
+ *                                    URL's own, that peer-advertised endpoints may use
  *   SELKEY_AFAL_ADVERTISE_AFAL_ENDPOINT — set to "false" to publish an A2A-only Agent Card
  *
  * Transport injection:

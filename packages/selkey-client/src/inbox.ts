@@ -21,6 +21,7 @@ import {
   validateInviteDetail,
   validateAcceptResponse,
 } from './validation/inbox-validators.js';
+import { boundedFetch } from './bounded-fetch.js';
 
 class RelayHttpError extends Error {
   constructor(
@@ -47,11 +48,12 @@ async function relayFetch(
   options: RequestInit,
 ): Promise<Response> {
   const url = `${config.relay_url.replace(/\/$/, '')}${path}`;
-  const controller = new AbortController();
   const timeoutMs = config.timeout_ms ?? 30_000;
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { ...options, signal: controller.signal });
+    const res = await boundedFetch(url, options, {
+      timeoutMs,
+      maxBytes: config.max_response_bytes,
+    });
     if (!res.ok) {
       const body = await res.text();
       throw new RelayHttpError(res.status, body);
@@ -59,13 +61,11 @@ async function relayFetch(
     return res;
   } catch (err) {
     if (err instanceof RelayHttpError) throw err;
-    // AbortController fires on timeout — wrap with a descriptive error
+    // The request (including its body) ran past the time limit
     if (err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
       throw new RelayTimeoutError(timeoutMs);
     }
     throw err;
-  } finally {
-    clearTimeout(timer);
   }
 }
 

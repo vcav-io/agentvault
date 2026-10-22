@@ -17,11 +17,7 @@ const PINNED = relayFixture.relay_verifying_key_hex as string;
 const OTHER = 'd75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a';
 
 function mockHealth(body: unknown, status = 200) {
-  const fetchMock = vi.fn().mockResolvedValue({
-    ok: status >= 200 && status < 300,
-    status,
-    json: async () => body,
-  });
+  const fetchMock = vi.fn(async () => new Response(JSON.stringify(body), { status }));
   vi.stubGlobal('fetch', fetchMock);
   return fetchMock;
 }

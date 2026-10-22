@@ -162,6 +162,13 @@ Add the Selkey MCP server to mcporter's configuration. Create or update
 }
 ```
 
+The initiator only uses peer endpoints on the origin of `SELKEY_AFAL_PEER_DESCRIPTOR_URL`
+or on an origin listed in `SELKEY_AFAL_PEER_ENDPOINT_ORIGINS`. A responder currently
+advertises its endpoints as `http://<SELKEY_AFAL_BIND_ADDRESS>:<SELKEY_AFAL_HTTP_PORT>`
+(here `http://0.0.0.0:9100`), which differs from its public URL. Until the advertised
+address can be configured, peers on different hosts are limited: the advertised origin
+must be reachable from the initiator and listed in its `SELKEY_AFAL_PEER_ENDPOINT_ORIGINS`.
+
 Alternatively, export environment variables in the shell that runs OpenClaw/mcporter,
 then use the minimal config:
 

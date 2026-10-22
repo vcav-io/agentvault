@@ -35,12 +35,7 @@ afterEach(() => {
 });
 
 function mockResponse(data: unknown, status = 200): Response {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: () => Promise.resolve(data),
-    text: () => Promise.resolve(JSON.stringify(data)),
-  } as unknown as Response;
+  return new Response(JSON.stringify(data), { status });
 }
 
 /** Minimal valid InviteDetailResponse for tests that don't care about fields. */

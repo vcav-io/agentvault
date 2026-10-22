@@ -240,7 +240,7 @@ describe('initiator use of a peer card', () => {
       agentId: 'alice',
       seedHex: '04'.repeat(32),
       localDescriptor: descriptor('alice'),
-      peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
+      peerDescriptorUrl: 'http://127.0.0.1:9/afal/descriptor',
       pinStore: PinStore.inMemory([{ agentId: 'bob', publicKeyHex: PUB }]),
     });
     expect(await transport.discoverPeerAgentCard('bob')).not.toBeNull();

@@ -53,7 +53,8 @@ import {
 } from './pin-store.js';
 import { findHeldReceipt } from './held-receipts.js';
 import { peerText } from './direct-afal-transport.js';
-import { peerTimeoutSignal } from './transport-errors.js';
+import { PEER_FETCH_TIMEOUT_MS, PEER_MAX_RESPONSE_BYTES } from './transport-errors.js';
+import { boundedFetch } from 'selkey/fetch';
 import { appendPrivateLine, readPrivateJson, selkeyStateDir, writePrivateJson } from './secure-fs.js';
 
 export type IfcMessageClass = 'LOGISTICS' | 'CONSENT' | 'REFERENCE' | 'ARTIFACT_TRANSFER';
@@ -632,18 +633,21 @@ export class IfcService {
       return { delivered: false, error: 'audience has no a2a_send_message_url; pass the grant to it out of band' };
     }
     try {
-      const response = await fetch(peer.a2a_send_message_url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: peerTimeoutSignal(),
-        body: JSON.stringify(
-          buildA2ASendMessageRequest({
-            mediaType: SELKEY_IFC_GRANT_MEDIA_TYPE,
-            data: { grant },
-            acceptedOutputModes: [SELKEY_IFC_RESULT_MEDIA_TYPE],
-          }),
-        ),
-      });
+      const response = await boundedFetch(
+        peer.a2a_send_message_url,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(
+            buildA2ASendMessageRequest({
+              mediaType: SELKEY_IFC_GRANT_MEDIA_TYPE,
+              data: { grant },
+              acceptedOutputModes: [SELKEY_IFC_RESULT_MEDIA_TYPE],
+            }),
+          ),
+        },
+        { timeoutMs: PEER_FETCH_TIMEOUT_MS, maxBytes: PEER_MAX_RESPONSE_BYTES },
+      );
       const parsed = parseA2ATaskPart(await response.json(), [SELKEY_IFC_RESULT_MEDIA_TYPE]);
       const data = parsed?.data as { accepted?: boolean; error?: string } | undefined;
       return data?.accepted === true
@@ -806,18 +810,21 @@ export class IfcService {
       this.seedHex,
     ) as unknown as IfcEnvelope;
 
-    const response = await fetch(peer.a2a_send_message_url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal: peerTimeoutSignal(),
-      body: JSON.stringify(
-        buildA2ASendMessageRequest({
-          mediaType: SELKEY_IFC_ENVELOPE_MEDIA_TYPE,
-          data: { envelope },
-          acceptedOutputModes: [SELKEY_IFC_RESULT_MEDIA_TYPE],
-        }),
-      ),
-    });
+    const response = await boundedFetch(
+      peer.a2a_send_message_url,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          buildA2ASendMessageRequest({
+            mediaType: SELKEY_IFC_ENVELOPE_MEDIA_TYPE,
+            data: { envelope },
+            acceptedOutputModes: [SELKEY_IFC_RESULT_MEDIA_TYPE],
+          }),
+        ),
+      },
+      { timeoutMs: PEER_FETCH_TIMEOUT_MS, maxBytes: PEER_MAX_RESPONSE_BYTES },
+    );
     const payload = await response.json();
     const parsed = parseA2ATaskPart(payload, [SELKEY_IFC_RESULT_MEDIA_TYPE]);
     if (!parsed) {

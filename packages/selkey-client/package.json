@@ -22,6 +22,10 @@
       "import": "./dist/http.js",
       "types": "./dist/http.d.ts"
     },
+    "./fetch": {
+      "import": "./dist/bounded-fetch.js",
+      "types": "./dist/bounded-fetch.d.ts"
+    },
     "./inbox": {
       "import": "./dist/inbox.js",
       "types": "./dist/inbox.d.ts"

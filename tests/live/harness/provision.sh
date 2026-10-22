@@ -116,7 +116,7 @@ JSON
         "SELKEY_RELAY_URL": "${relay_url}",
         "SELKEY_AGENT_ID": "alice",
         "SELKEY_AFAL_SEED_HEX": "${alice_seed}",
-        "SELKEY_AFAL_PEER_DESCRIPTOR_URL": "http://localhost:3201/afal/descriptor",
+        "SELKEY_AFAL_PEER_DESCRIPTOR_URL": "http://127.0.0.1:3201/afal/descriptor",
         "SELKEY_KNOWN_AGENTS": "${alice_known_agents}",
         "SELKEY_RESUME_TOKEN_SECRET": "${alice_resume_secret}",
         "SELKEY_WORKDIR": "${alice_dir}"

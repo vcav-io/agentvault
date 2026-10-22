@@ -16,6 +16,7 @@
  */
 
 import { verifyEd25519Strict } from './ed25519-strict.js';
+import { boundedFetch } from './bounded-fetch.js';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex, hexToBytes, utf8ToBytes } from '@noble/hashes/utils';
 import { canonicalize } from 'json-canonicalize';
@@ -644,6 +645,9 @@ export function relayKeyId(publicKeyHex: string): string {
 /** Default time limit for the /health request in fetchRelayPublicKey. */
 export const RELAY_HEALTH_TIMEOUT_MS = 10_000;
 
+/** Largest /health response body accepted by fetchRelayPublicKey. */
+const RELAY_HEALTH_MAX_BYTES = 64 * 1024;
+
 /**
  * Read the relay's verifying key from its /health endpoint and check it
  * against a key the caller already trusts.
@@ -670,9 +674,11 @@ export async function fetchRelayPublicKey(
     );
   }
   const healthUrl = relayUrl.replace(/\/$/, '') + '/health';
-  const resp = await fetch(healthUrl, {
-    signal: AbortSignal.timeout(opts.timeoutMs ?? RELAY_HEALTH_TIMEOUT_MS),
-  });
+  const resp = await boundedFetch(
+    healthUrl,
+    {},
+    { timeoutMs: opts.timeoutMs ?? RELAY_HEALTH_TIMEOUT_MS, maxBytes: RELAY_HEALTH_MAX_BYTES },
+  );
   if (!resp.ok) {
     throw new Error(`Relay /health returned ${resp.status}`);
   }

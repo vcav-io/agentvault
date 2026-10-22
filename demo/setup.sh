@@ -244,7 +244,7 @@ cat >"${DEMO_DIR}/alice/.mcp.json" <<JSON
         "SELKEY_RELAY_URL": "${RELAY_URL}",
         "SELKEY_AGENT_ID": "alice",
         "SELKEY_AFAL_SEED_HEX": "${ALICE_SEED}",
-        "SELKEY_AFAL_PEER_DESCRIPTOR_URL": "http://localhost:3201/afal/descriptor",
+        "SELKEY_AFAL_PEER_DESCRIPTOR_URL": "http://127.0.0.1:3201/afal/descriptor",
         "SELKEY_KNOWN_AGENTS": "[{\"agent_id\":\"bob\",\"aliases\":[\"Bob\"],\"public_key_hex\":\"${BOB_PUB}\"}]",
         "SELKEY_RESUME_TOKEN_SECRET": "${ALICE_RESUME}",
         "SELKEY_WORKDIR": "${DEMO_DIR}/alice",

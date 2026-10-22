@@ -6,6 +6,8 @@
  * bodies chosen by a peer or relay.
  */
 
+import { boundedFetch, ResponseTooLargeError, UnexpectedRedirectError } from 'selkey/fetch';
+
 /** A request to a peer did not get an HTTP response (network failure or timeout). */
 export class TransportUnreachableError extends Error {
   constructor(target: string, cause: unknown) {
@@ -17,16 +19,16 @@ export class TransportUnreachableError extends Error {
 /** Default limit for one request to a peer, including reading its body. */
 export const PEER_FETCH_TIMEOUT_MS = 10_000;
 
-/** A signal that aborts after `timeoutMs`, or when `signal` does. */
-export function peerTimeoutSignal(timeoutMs: number = PEER_FETCH_TIMEOUT_MS, signal?: AbortSignal | null): AbortSignal {
-  const timeout = AbortSignal.timeout(timeoutMs);
-  return signal ? AbortSignal.any([signal, timeout]) : timeout;
-}
+/** Largest response body accepted from a peer (1 MiB). */
+export const PEER_MAX_RESPONSE_BYTES = 1024 * 1024;
 
 /**
- * fetch() wrapper: a rejected fetch (no HTTP response) becomes
- * TransportUnreachableError; HTTP responses are returned as-is. The request,
- * including reading the response body, is aborted after `timeoutMs`.
+ * fetch() wrapper for requests to peers. The request, including reading the
+ * response body, is aborted after `timeoutMs`; redirects are never followed
+ * (UnexpectedRedirectError) and a body over PEER_MAX_RESPONSE_BYTES is
+ * refused (ResponseTooLargeError). Neither of those is retryable. Any other
+ * failure to get a complete response becomes TransportUnreachableError.
+ * HTTP error statuses are returned as-is.
  */
 export async function fetchPeer(
   url: string,
@@ -34,8 +36,9 @@ export async function fetchPeer(
   timeoutMs: number = PEER_FETCH_TIMEOUT_MS,
 ): Promise<Response> {
   try {
-    return await fetch(url, { ...init, signal: peerTimeoutSignal(timeoutMs, init?.signal) });
+    return await boundedFetch(url, init, { timeoutMs, maxBytes: PEER_MAX_RESPONSE_BYTES });
   } catch (err) {
+    if (err instanceof UnexpectedRedirectError || err instanceof ResponseTooLargeError) throw err;
     throw new TransportUnreachableError(safeOrigin(url), err);
   }
 }

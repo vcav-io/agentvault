@@ -23,6 +23,7 @@ import { AfalResponder } from './afal-responder.js';
 import type { AdmissionPolicy, AdmittedProposal } from './afal-responder.js';
 import { AfalHttpServer } from './afal-http-server.js';
 import { fetchPeer } from './transport-errors.js';
+import { PeerEndpointError, assertPeerEndpointAllowed } from './peer-endpoints.js';
 import { SELKEY_A2A_EXTENSION_URI, agentCardValidityError, verifyAgentCardSignature } from './a2a-agent-card.js';
 import type { SelkeyA2AExtensionParams } from './a2a-agent-card.js';
 import type { ModelProfileRef } from './model-profiles.js';
@@ -140,6 +141,11 @@ export interface DirectAfalTransportConfig {
   localDescriptor: AgentDescriptor;
   relayUrl?: string;
   peerDescriptorUrl?: string;
+  /**
+   * Origins, besides that of peerDescriptorUrl, that peer-supplied endpoints
+   * may use. Defaults to SELKEY_AFAL_PEER_ENDPOINT_ORIGINS.
+   */
+  peerEndpointOrigins?: string[];
   /** @deprecated Unsigned agent cards are never used; this option has no effect. */
   requireSignedCards?: boolean;
   /**
@@ -720,7 +726,7 @@ export class DirectAfalTransport implements AfalTransport {
           }
         : null;
     } catch (err) {
-      if (err instanceof PinError) throw err;
+      if (err instanceof PinError || err instanceof PeerEndpointError) throw err;
       return null;
     }
   }
@@ -969,6 +975,10 @@ export class DirectAfalTransport implements AfalTransport {
       params['supports_precontract_negotiation'] === true && supportedContractOffers !== null;
     const supportsBespokeContractNegotiation =
       params['supports_bespoke_contract_negotiation'] === true;
+
+    for (const endpoint of [afalEndpoint, a2aSendMessageUrl]) {
+      if (endpoint) this.assertPeerEndpoint(endpoint, peerUrl);
+    }
 
     const agentId = typeof card.name === 'string' ? card.name : expectedPeerAgentId;
     if (!agentId) return null;
@@ -1240,7 +1250,20 @@ export class DirectAfalTransport implements AfalTransport {
       throw new Error(`Fetched peer descriptor expired or invalid expires_at: "${descriptor.expires_at}"`);
     }
 
+    const { propose, commit, negotiate, message } = descriptor.endpoints;
+    for (const endpoint of [propose, commit, negotiate, message]) {
+      if (typeof endpoint === 'string' && endpoint) this.assertPeerEndpoint(endpoint, descriptorUrl);
+    }
+
     return descriptor;
+  }
+
+  /** A peer-supplied endpoint must be on the configured peer origin or an allowed one. */
+  private assertPeerEndpoint(endpoint: string, configuredPeerUrl: string): void {
+    assertPeerEndpointAllowed(endpoint, {
+      anchorUrl: configuredPeerUrl,
+      allowedOrigins: this.config.peerEndpointOrigins,
+    });
   }
 
   // ── Test helpers ──────────────────────────────────────────────────────────

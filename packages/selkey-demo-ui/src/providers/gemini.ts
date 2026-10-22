@@ -14,8 +14,11 @@ import type {
   ToolUseContent,
   ToolResultContent,
 } from './types.js';
+import { boundedFetch } from 'selkey/fetch';
 
 const DEFAULT_BASE_URL = 'https://generativelanguage.googleapis.com';
+/** Time limit for one generateContent request, including its body. */
+const DEFAULT_TIMEOUT_MS = 120_000;
 
 // Gemini tool names must match ^[a-zA-Z0-9_]+$ — no dots or hyphens.
 // Returns the sanitized name and records the mapping in the provided map for round-trip fidelity.
@@ -53,15 +56,22 @@ export class GeminiProvider implements LLMProvider {
   private apiKey: string;
   private model: string;
   private baseUrl: string;
+  private timeoutMs: number;
   /** Bijective map: sanitized Gemini name → original MCP tool name. */
   private readonly nameMap = new Map<string, string>();
 
   readonly name = 'gemini';
 
-  constructor(apiKey: string, model = 'gemini-3-flash-preview', baseUrl?: string) {
+  constructor(
+    apiKey: string,
+    model = 'gemini-3-flash-preview',
+    baseUrl?: string,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+  ) {
     this.apiKey = apiKey;
     this.model = model;
     this.baseUrl = baseUrl ?? DEFAULT_BASE_URL;
+    this.timeoutMs = timeoutMs;
   }
 
   async chat(params: {
@@ -94,14 +104,19 @@ export class GeminiProvider implements LLMProvider {
     }
 
     const url = `${this.baseUrl}/v1beta/models/${this.model}:generateContent`;
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-goog-api-key': this.apiKey,
+    // Redirects are not followed, so the API key only goes to baseUrl.
+    const response = await boundedFetch(
+      url,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-goog-api-key': this.apiKey,
+        },
+        body: JSON.stringify(body),
       },
-      body: JSON.stringify(body),
-    });
+      { timeoutMs: this.timeoutMs },
+    );
 
     if (!response.ok) {
       const errorText = await response.text();
