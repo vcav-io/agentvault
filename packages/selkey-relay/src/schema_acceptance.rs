@@ -161,6 +161,12 @@ const ALLOWED_KEYWORDS: &[&str] = &[
     "maximum",
 ];
 
+/// Keywords allowed only on `type: "object"` nodes without `enum`/`const`.
+const OBJECT_KEYWORDS: &[&str] = &["properties", "required", "additionalProperties"];
+
+/// Keywords allowed only on `type: "array"` nodes without `enum`/`const`.
+const ARRAY_KEYWORDS: &[&str] = &["items", "minItems", "maxItems", "uniqueItems"];
+
 /// Check that an inline schema is strict and compute its entropy upper bound.
 ///
 /// A strict schema:
@@ -212,24 +218,19 @@ fn node_bound(node: &Value, path: &str, depth: usize) -> Result<u64, String> {
         }
     }
 
-    if obj.contains_key("enum") || obj.contains_key("const") {
-        // The bound below returns without visiting subschemas, so a value
-        // constrained by enum or const may not carry any (their keywords would
-        // otherwise go unchecked).
-        for key in ["properties", "items"] {
-            if obj.contains_key(key) {
+    // The bound below visits only the subschemas of the node's own type and
+    // none at enum/const nodes, so object and array keywords are accepted
+    // only where they are bounded; elsewhere their subschemas would go
+    // unchecked.
+    let value_constrained = obj.contains_key("enum") || obj.contains_key("const");
+    let declared_type = obj.get("type").and_then(Value::as_str);
+    for (keywords, ty) in [(OBJECT_KEYWORDS, "object"), (ARRAY_KEYWORDS, "array")] {
+        for key in keywords {
+            if obj.contains_key(*key) && (value_constrained || declared_type != Some(ty)) {
                 return Err(format!(
-                    "{path}: '{key}' is not allowed alongside enum or const"
+                    "{path}: '{key}' is only allowed on a type '{ty}' node without enum or const"
                 ));
             }
-        }
-        if obj
-            .get("additionalProperties")
-            .is_some_and(|v| !v.is_boolean())
-        {
-            return Err(format!(
-                "{path}: 'additionalProperties' must be a boolean alongside enum or const"
-            ));
         }
     }
 
@@ -640,9 +641,79 @@ mod tests {
                 "schema {schema} should be rejected"
             );
         }
-        // Plain enum/const nodes, with a boolean additionalProperties, stay accepted.
-        let ok = wrap(json!({"const": {"b": "OK"}, "additionalProperties": false}));
+        // Plain enum/const nodes stay accepted.
+        let ok = wrap(json!({"const": {"b": "OK"}}));
         assert_eq!(strict_schema_upper_bound(&ok).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_container_keywords_on_other_types_rejected() {
+        let wrap = |prop: Value| {
+            json!({
+                "type": "object",
+                "properties": { "a": prop },
+                "required": ["a"],
+                "additionalProperties": false
+            })
+        };
+        let draft_04 = "http://json-schema.org/draft-04/schema#";
+        let hidden_ref = json!({"$ref": "#/properties/a"});
+        let hidden_draft = json!({"$schema": draft_04, "const": "OK"});
+        let mut schemas = Vec::new();
+        for base in [
+            json!({"type": "string", "maxLength": 5}),
+            json!({"type": "integer", "minimum": 0, "maximum": 3}),
+            json!({"type": "boolean"}),
+        ] {
+            for hidden in [&hidden_ref, &hidden_draft] {
+                let mut with_properties = base.clone();
+                with_properties["properties"] = json!({ "x": hidden });
+                schemas.push(wrap(with_properties));
+                let mut with_items = base.clone();
+                with_items["items"] = hidden.clone();
+                schemas.push(wrap(with_items));
+                let mut with_additional = base.clone();
+                with_additional["additionalProperties"] = hidden.clone();
+                schemas.push(wrap(with_additional));
+            }
+        }
+        // Array keywords on an object node, object keywords on an array node.
+        schemas.push(json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false,
+            "items": hidden_ref.clone()
+        }));
+        schemas.push(wrap(json!({
+            "type": "array",
+            "maxItems": 1,
+            "items": { "type": "boolean" },
+            "properties": { "x": hidden_draft.clone() }
+        })));
+        schemas.push(wrap(
+            json!({"type": "string", "maxLength": 5, "maxItems": 1}),
+        ));
+        schemas.push(wrap(json!({"type": "boolean", "required": ["x"]})));
+        for schema in schemas {
+            let contract = contract_with(schema.clone(), None);
+            let err = resolve_output_schema(&contract, &SchemaRegistry::empty(), true)
+                .expect_err(&format!("schema {schema} should be rejected"));
+            assert!(
+                err.to_string().contains("is only allowed on a type"),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_shipped_registry_schemas_are_strict() {
+        // The shipped registry schemas also satisfy the strict inline rules.
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/output");
+        let registry = SchemaRegistry::load_from_dir(&dir).unwrap();
+        for hash in registry.hashes() {
+            strict_schema_upper_bound(registry.get(hash).unwrap())
+                .unwrap_or_else(|e| panic!("registry schema {hash}: {e}"));
+        }
     }
 
     #[test]

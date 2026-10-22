@@ -64,7 +64,9 @@ strict ones: `additionalProperties: false` and every property `required` on ever
 string bounded by `enum` or `maxLength`; every array bounded by `maxItems`; integers bounded by
 `minimum`/`maximum`; `number` (non-integer) values only through `enum`; `const` allowed (0 bits);
 no `true`/`{}` subschemas, composition (`anyOf`, `oneOf`, ...), `$ref`, `patternProperties` or
-`$schema`. For
+`$schema`. Object keywords (`properties`, `required`, `additionalProperties`) are allowed only on
+`type: "object"` nodes, and array keywords (`items`, `minItems`, `maxItems`, `uniqueItems`) only
+on `type: "array"` nodes, in both cases without `enum`/`const`. For
 these schemas the relay computes the entropy bound from the structure and ignores any
 `x-vcav-entropy-bits-upper-bound` annotations. The per-session cap
 (`SELKEY_MAX_ENTROPY_BITS_PER_SESSION`, default 64 bits) applies to inline schemas too, so a
