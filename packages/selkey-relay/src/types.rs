@@ -202,6 +202,8 @@ pub struct HealthResponse {
     pub provider: String,
     pub model_id: String,
     pub verifying_key_hex: String,
+    /// Key id of the signing key: `ed25519:` + hex(SHA-256(raw public key)).
+    pub verifying_key_id: String,
     /// Summary of the **default** enforcement policy (for backward compat).
     pub policy_summary: PolicySummary,
     /// All loaded policy hashes (operator-facing, monitoring).

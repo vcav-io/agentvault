@@ -1708,18 +1708,21 @@ async fn test_submit_without_contract_hash_still_works() {
 // Inbox endpoint integration tests
 // ============================================================================
 
+const ALICE_INBOX_TOKEN: &str = "6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f";
+const BOB_INBOX_TOKEN: &str = "c4e8b2a6f0d93715e2b8a4c6d0f19e37c4e8b2a6f0d93715e2b8a4c6d0f19e37";
+
 /// Build an AppState with agent registry populated for inbox testing.
 fn inbox_test_app_state() -> AppState {
     let (prompt_dir, _) = setup_prompt_program("inbox_test");
     let registry = AgentRegistry::from_agents(vec![
         RegisteredAgent {
             agent_id: "alice".to_string(),
-            inbox_token: "alice_token_123".to_string(),
-            public_key_hex: None,
+            inbox_token: ALICE_INBOX_TOKEN.to_string(),
+            public_key_hex: Some("aa".repeat(32)),
         },
         RegisteredAgent {
             agent_id: "bob".to_string(),
-            inbox_token: "bob_token_456".to_string(),
+            inbox_token: BOB_INBOX_TOKEN.to_string(),
             public_key_hex: None,
         },
     ])
@@ -1780,7 +1783,10 @@ async fn test_inbox_create_invite_happy_path() {
                 .method("POST")
                 .uri("/invites")
                 .header("content-type", "application/json")
-                .header("authorization", "Bearer alice_token_123")
+                .header(
+                    "authorization",
+                    "Bearer 6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f",
+                )
                 .body(Body::from(inbox_create_body()))
                 .unwrap(),
         )
@@ -1850,7 +1856,10 @@ async fn test_inbox_invite_not_found_returns_401_constant_shape() {
             Request::builder()
                 .method("GET")
                 .uri("/invites/inv_nonexistent")
-                .header("authorization", "Bearer alice_token_123")
+                .header(
+                    "authorization",
+                    "Bearer 6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f",
+                )
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1879,7 +1888,10 @@ async fn test_inbox_list_inbox_returns_ok() {
             Request::builder()
                 .method("GET")
                 .uri("/inbox")
-                .header("authorization", "Bearer bob_token_456")
+                .header(
+                    "authorization",
+                    "Bearer c4e8b2a6f0d93715e2b8a4c6d0f19e37c4e8b2a6f0d93715e2b8a4c6d0f19e37",
+                )
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1944,7 +1956,10 @@ async fn test_inbox_cross_agent_isolation() {
             Request::builder()
                 .method("GET")
                 .uri("/inbox")
-                .header("authorization", "Bearer alice_token_123")
+                .header(
+                    "authorization",
+                    "Bearer 6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f",
+                )
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -2007,7 +2022,10 @@ async fn test_inbox_accept_creates_session() {
                 .method("POST")
                 .uri(format!("/invites/{}/accept", inv.invite_id))
                 .header("content-type", "application/json")
-                .header("authorization", "Bearer bob_token_456")
+                .header(
+                    "authorization",
+                    "Bearer c4e8b2a6f0d93715e2b8a4c6d0f19e37c4e8b2a6f0d93715e2b8a4c6d0f19e37",
+                )
                 .body(Body::from("{}"))
                 .unwrap(),
         )
@@ -2075,7 +2093,10 @@ async fn test_inbox_decline_returns_ok() {
                 .method("POST")
                 .uri(format!("/invites/{invite_id}/decline"))
                 .header("content-type", "application/json")
-                .header("authorization", "Bearer bob_token_456")
+                .header(
+                    "authorization",
+                    "Bearer c4e8b2a6f0d93715e2b8a4c6d0f19e37c4e8b2a6f0d93715e2b8a4c6d0f19e37",
+                )
                 .body(Body::from(r#"{"reason_code": "BUSY"}"#))
                 .unwrap(),
         )
@@ -2103,7 +2124,10 @@ async fn test_inbox_cancel_returns_ok() {
             Request::builder()
                 .method("POST")
                 .uri(format!("/invites/{invite_id}/cancel"))
-                .header("authorization", "Bearer alice_token_123")
+                .header(
+                    "authorization",
+                    "Bearer 6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f",
+                )
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -2140,7 +2164,10 @@ async fn test_inbox_accept_canceled_returns_409() {
                 .method("POST")
                 .uri(format!("/invites/{invite_id}/accept"))
                 .header("content-type", "application/json")
-                .header("authorization", "Bearer bob_token_456")
+                .header(
+                    "authorization",
+                    "Bearer c4e8b2a6f0d93715e2b8a4c6d0f19e37c4e8b2a6f0d93715e2b8a4c6d0f19e37",
+                )
                 .body(Body::from("{}"))
                 .unwrap(),
         )
@@ -2169,7 +2196,10 @@ async fn test_inbox_cancel_accepted_returns_409() {
             Request::builder()
                 .method("POST")
                 .uri(format!("/invites/{invite_id}/cancel"))
-                .header("authorization", "Bearer alice_token_123")
+                .header(
+                    "authorization",
+                    "Bearer 6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f",
+                )
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -3266,7 +3296,10 @@ async fn test_invite_detail_includes_contract_json() {
                 .method("POST")
                 .uri("/invites")
                 .header("content-type", "application/json")
-                .header("authorization", "Bearer alice_token_123")
+                .header(
+                    "authorization",
+                    "Bearer 6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f",
+                )
                 .body(Body::from(inbox_create_body()))
                 .unwrap(),
         )
@@ -3289,7 +3322,10 @@ async fn test_invite_detail_includes_contract_json() {
             Request::builder()
                 .method("GET")
                 .uri(format!("/invites/{invite_id}"))
-                .header("authorization", "Bearer bob_token_456")
+                .header(
+                    "authorization",
+                    "Bearer c4e8b2a6f0d93715e2b8a4c6d0f19e37c4e8b2a6f0d93715e2b8a4c6d0f19e37",
+                )
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -3330,7 +3366,10 @@ async fn test_invite_detail_contract_json_hash_matches() {
                 .method("POST")
                 .uri("/invites")
                 .header("content-type", "application/json")
-                .header("authorization", "Bearer alice_token_123")
+                .header(
+                    "authorization",
+                    "Bearer 6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f",
+                )
                 .body(Body::from(inbox_create_body()))
                 .unwrap(),
         )
@@ -3351,7 +3390,10 @@ async fn test_invite_detail_contract_json_hash_matches() {
             Request::builder()
                 .method("GET")
                 .uri(format!("/invites/{invite_id}"))
-                .header("authorization", "Bearer bob_token_456")
+                .header(
+                    "authorization",
+                    "Bearer c4e8b2a6f0d93715e2b8a4c6d0f19e37c4e8b2a6f0d93715e2b8a4c6d0f19e37",
+                )
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -4033,4 +4075,169 @@ async fn test_create_session_open_without_operator_token() {
         post_json(Arc::new(state), "/sessions", None, create_session_body()).await,
         StatusCode::OK
     );
+}
+
+// ============================================================================
+// Authentication, key id and sender keys
+// ============================================================================
+
+async fn status_and_json(response: axum::response::Response) -> (StatusCode, serde_json::Value) {
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (
+        status,
+        serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null),
+    )
+}
+
+#[tokio::test]
+async fn test_unauthenticated_requests_rejected_before_body_is_parsed() {
+    let mut state = inbox_test_app_state();
+    state.operator_token = Some(TEST_OPERATOR_TOKEN.to_string());
+    let state = Arc::new(state);
+    let (session_id, _) = state
+        .session_store
+        .create(
+            serde_json::from_value(serde_json::json!({
+                "purpose_code": "MEDIATION",
+                "output_schema_id": "test",
+                "output_schema": {},
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": "a".repeat(64)
+            }))
+            .unwrap(),
+            "hash".to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+    let app = build_router(state);
+
+    // A body that fails JSON parsing: if it were read first, the response
+    // would be 400 instead of 401.
+    let malformed = "{\"contract\": ";
+    for (uri, auth) in [
+        ("/sessions".to_string(), Some("Bearer wrong-operator-token")),
+        ("/sessions".to_string(), None),
+        ("/relay".to_string(), Some("Bearer wrong-operator-token")),
+        (
+            format!("/sessions/{session_id}/input"),
+            Some("Bearer wrong-session-token"),
+        ),
+        (format!("/sessions/{session_id}/input"), None),
+        ("/invites".to_string(), Some("Bearer wrong-inbox-token")),
+        ("/invites".to_string(), None),
+    ] {
+        let mut builder = Request::builder()
+            .method("POST")
+            .uri(&uri)
+            .header("content-type", "application/json");
+        if let Some(auth) = auth {
+            builder = builder.header("authorization", auth);
+        }
+        let response = app
+            .clone()
+            .oneshot(builder.body(Body::from(malformed)).unwrap())
+            .await
+            .unwrap();
+        let (status, json) = status_and_json(response).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{uri} auth={auth:?}");
+        assert_eq!(json["error"], "UNAUTHORIZED", "{uri} auth={auth:?}");
+    }
+}
+
+#[tokio::test]
+async fn test_health_reports_signing_key_id() {
+    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+    let verifying_key = state.signing_key.verifying_key();
+    let app = build_router(state);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = status_and_json(response).await;
+    assert_eq!(status, StatusCode::OK);
+    let fingerprint = receipt_core::receipt_v3::operator_key_fingerprint(&verifying_key);
+    assert_eq!(json["verifying_key_id"], format!("ed25519:{fingerprint}"));
+    assert_eq!(
+        json["verifying_key_hex"],
+        receipt_core::public_key_to_hex(&verifying_key)
+    );
+}
+
+fn invite_body_with_sender_key(key: Option<&str>) -> String {
+    let mut body: serde_json::Value = serde_json::from_str(&inbox_create_body()).unwrap();
+    if let Some(key) = key {
+        body["from_agent_pubkey"] = serde_json::json!(key);
+    }
+    body.to_string()
+}
+
+async fn create_invite_with_sender_key(
+    app: &axum::Router,
+    key: Option<&str>,
+) -> (StatusCode, serde_json::Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/invites")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {ALICE_INBOX_TOKEN}"))
+                .body(Body::from(invite_body_with_sender_key(key)))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    status_and_json(response).await
+}
+
+async fn invite_sender_key_seen_by_recipient(
+    app: &axum::Router,
+    invite_id: &str,
+) -> serde_json::Value {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/invites/{invite_id}"))
+                .header("authorization", format!("Bearer {BOB_INBOX_TOKEN}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = status_and_json(response).await;
+    assert_eq!(status, StatusCode::OK);
+    json["from_agent_pubkey"].clone()
+}
+
+#[tokio::test]
+async fn test_invite_sender_key_cannot_differ_from_registry_key() {
+    let app = build_router(Arc::new(inbox_test_app_state()));
+    let registered = "aa".repeat(32);
+
+    // A different key in the request is rejected.
+    let (status, json) = create_invite_with_sender_key(&app, Some(&"bb".repeat(32))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{json}");
+
+    // Without a request key, the registered key is attached.
+    let (status, json) = create_invite_with_sender_key(&app, None).await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+    let invite_id = json["invite_id"].as_str().unwrap().to_string();
+    assert_eq!(
+        invite_sender_key_seen_by_recipient(&app, &invite_id).await,
+        serde_json::json!(registered)
+    );
+
+    // The registered key itself is accepted.
+    let (status, json) = create_invite_with_sender_key(&app, Some(&registered)).await;
+    assert_eq!(status, StatusCode::OK, "{json}");
 }

@@ -79,18 +79,24 @@ pub struct Session {
 
 impl Session {
     /// Validate a token against this session. Returns the role if valid.
+    ///
+    /// The presented token is compared with all four session tokens in
+    /// constant time, so timing reveals neither how much of a token matched
+    /// nor which role it belongs to.
     pub fn validate_token(&self, token: &str) -> Option<TokenRole> {
-        if token == self.tokens.initiator_submit {
-            Some(TokenRole::InitiatorSubmit)
-        } else if token == self.tokens.initiator_read {
-            Some(TokenRole::InitiatorRead)
-        } else if token == self.tokens.responder_submit {
-            Some(TokenRole::ResponderSubmit)
-        } else if token == self.tokens.responder_read {
-            Some(TokenRole::ResponderRead)
-        } else {
-            None
+        let candidates = [
+            (&self.tokens.initiator_submit, TokenRole::InitiatorSubmit),
+            (&self.tokens.initiator_read, TokenRole::InitiatorRead),
+            (&self.tokens.responder_submit, TokenRole::ResponderSubmit),
+            (&self.tokens.responder_read, TokenRole::ResponderRead),
+        ];
+        let mut matched = None;
+        for (expected, role) in candidates {
+            if crate::auth::tokens_equal(token, expected) {
+                matched = Some(role);
+            }
         }
+        matched
     }
 }
 

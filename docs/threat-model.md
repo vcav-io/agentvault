@@ -375,6 +375,16 @@ profile) is content-addressed by SHA-256 over its JCS canonical form. The receip
 binds the hash of each artefact. A party who later obtains the artefacts can confirm
 the hashes match. Retroactive substitution of artefacts is detectable.
 
+**Relay authentication**
+
+Operator, session and inbox bearer tokens are compared in constant time.
+Authentication runs before a request body is read or parsed. Operator-configured
+tokens (`SELKEY_OPERATOR_TOKEN`, agent registry `inbox_token`s) must be at least 32
+characters and not repetitive, or the relay refuses to start. Outside development
+mode the relay refuses to start without a configured signing key, so receipts are
+always signed by a stable key that verifiers can pin. An invite carries the sender
+key from the agent registry, never a key supplied by the sender in the request.
+
 **Constant-shape error responses**
 
 Policy gate rejections return a fixed-body 422 with no detail. Auth failures return

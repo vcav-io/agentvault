@@ -397,7 +397,7 @@ Pre-accept: all token and session ID fields are null for all callers.
 | `invite_id` | string | Format: `inv_` + 16 hex characters. |
 | `from_agent_id` | string | Sender's agent identifier. |
 | `to_agent_id` | string | Recipient's agent identifier. |
-| `from_agent_pubkey` | string (64 hex) or null | Sender's Ed25519 public key for out-of-band verification. Not used by the relay. |
+| `from_agent_pubkey` | string (64 hex) or null | The sender's Ed25519 public key from the relay's agent registry (never a request-supplied value). A hint only: recipients compare it with their own pin for the sender. |
 | `status` | string enum | One of: `PENDING`, `ACCEPTED`, `DECLINED`, `CANCELED`, `EXPIRED`. |
 | `purpose_code` | string | From the contract. |
 | `contract_hash` | string (64 hex) | SHA-256 of the canonical contract. |
@@ -516,8 +516,12 @@ The relay holds an Ed25519 signing key (RFC 8032). The key seed is 32 bytes
 (64 hex characters). The corresponding verifying key (public key) MUST be distributed
 out-of-band to parties who want to verify receipts.
 
-If no key is configured, the relay generates an ephemeral key per startup. Receipts
-signed by ephemeral keys cannot be verified after a restart.
+Outside development mode the relay refuses to start without a configured key. In
+development mode (`SELKEY_ENV=dev`) an unset key is replaced by an ephemeral key per
+startup; receipts signed by ephemeral keys cannot be verified after a restart.
+
+The key id of a signing key is `ed25519:` + hex(SHA-256(32-byte public key)). The hex
+part is the receipt's `operator.operator_key_fingerprint`.
 
 ### 7.2 Signing Procedure
 

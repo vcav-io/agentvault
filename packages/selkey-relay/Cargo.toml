@@ -26,6 +26,7 @@ sha2.workspace = true
 rand.workspace = true
 hex.workspace = true
 zeroize = "1"
+subtle = "2"
 chrono.workspace = true
 thiserror.workspace = true
 uuid.workspace = true

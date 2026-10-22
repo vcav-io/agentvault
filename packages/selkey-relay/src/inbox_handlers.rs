@@ -3,39 +3,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::{Path, Query, State};
-use axum::http::HeaderMap;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::Json;
 use futures_util::stream::Stream;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 
-use crate::agent_registry::AgentRegistry;
+use crate::auth::InboxAgent;
 use crate::error::RelayError;
 use crate::inbox_types::*;
 use crate::resolve_provider;
 use crate::AppState;
-
-// ============================================================================
-// Auth helper
-// ============================================================================
-
-/// Extract agent_id from inbox bearer token.
-fn extract_inbox_agent<'a>(
-    headers: &HeaderMap,
-    registry: &'a AgentRegistry,
-) -> Result<&'a str, RelayError> {
-    let token = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .ok_or(RelayError::Unauthorized)?;
-
-    registry
-        .validate_token(token)
-        .map(|agent| agent.agent_id.as_str())
-        .ok_or(RelayError::Unauthorized)
-}
 
 // ============================================================================
 // POST /invites — create a new invite
@@ -43,30 +21,47 @@ fn extract_inbox_agent<'a>(
 
 pub async fn create_invite_handler(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    // Authentication runs before the body is read.
+    InboxAgent(agent_id): InboxAgent,
     crate::strict_json::StrictJson(mut request): crate::strict_json::StrictJson<
         CreateInviteRequest,
     >,
 ) -> Result<Json<CreateInviteResponse>, RelayError> {
-    let agent_id = extract_inbox_agent(&headers, &state.agent_registry)?;
-
     // Resolve provider (empty string → auto-select first configured)
     request.provider = resolve_provider(&request.provider, &state)?;
 
-    // Resolve from_agent_pubkey: request override > registry default
-    let pubkey = request.from_agent_pubkey.clone().or_else(|| {
+    let pubkey = resolve_sender_pubkey(
+        request.from_agent_pubkey.as_deref(),
         state
             .agent_registry
-            .get_agent(agent_id)
-            .and_then(|a| a.public_key_hex.clone())
-    });
+            .get_agent(&agent_id)
+            .and_then(|a| a.public_key_hex.as_deref()),
+    )?;
 
     let response = state
         .inbox_store
-        .create_invite(agent_id, &request, pubkey)
+        .create_invite(&agent_id, &request, pubkey)
         .await?;
 
     Ok(Json(response))
+}
+
+/// The sender key attached to an invite.
+///
+/// The key always comes from the agent registry entry of the authenticated
+/// sender. A `from_agent_pubkey` in the request is accepted only if it equals
+/// that registered key (hex, any case); otherwise the request is rejected.
+pub(crate) fn resolve_sender_pubkey(
+    requested: Option<&str>,
+    registered: Option<&str>,
+) -> Result<Option<String>, RelayError> {
+    match (requested, registered) {
+        (None, registered) => Ok(registered.map(str::to_string)),
+        (Some(req), Some(reg)) if req.eq_ignore_ascii_case(reg) => Ok(Some(reg.to_string())),
+        (Some(_), _) => Err(RelayError::ContractValidation(
+            "from_agent_pubkey must match the sender's key in the agent registry".to_string(),
+        )),
+    }
 }
 
 // ============================================================================
@@ -75,11 +70,10 @@ pub async fn create_invite_handler(
 
 pub async fn list_inbox_handler(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    InboxAgent(agent_id): InboxAgent,
     Query(query): Query<InboxQuery>,
 ) -> Result<Json<InboxResponse>, RelayError> {
-    let agent_id = extract_inbox_agent(&headers, &state.agent_registry)?;
-    let response = state.inbox_store.list_inbox(agent_id, &query).await;
+    let response = state.inbox_store.list_inbox(&agent_id, &query).await;
     Ok(Json(response))
 }
 
@@ -90,10 +84,9 @@ pub async fn list_inbox_handler(
 pub async fn get_invite_handler(
     State(state): State<Arc<AppState>>,
     Path(invite_id): Path<String>,
-    headers: HeaderMap,
+    InboxAgent(agent_id): InboxAgent,
 ) -> Result<Json<InviteDetailResponse>, RelayError> {
-    let agent_id = extract_inbox_agent(&headers, &state.agent_registry)?;
-    let response = state.inbox_store.get_invite(&invite_id, agent_id).await?;
+    let response = state.inbox_store.get_invite(&invite_id, &agent_id).await?;
     Ok(Json(response))
 }
 
@@ -104,15 +97,14 @@ pub async fn get_invite_handler(
 pub async fn accept_invite_handler(
     State(state): State<Arc<AppState>>,
     Path(invite_id): Path<String>,
-    headers: HeaderMap,
+    InboxAgent(agent_id): InboxAgent,
     Json(request): Json<AcceptInviteRequest>,
 ) -> Result<Json<AcceptInviteResponse>, RelayError> {
-    let agent_id = extract_inbox_agent(&headers, &state.agent_registry)?;
     let response = state
         .inbox_store
         .accept_invite(
             &invite_id,
-            agent_id,
+            &agent_id,
             request.expected_contract_hash.as_deref(),
             &state.session_store,
         )
@@ -127,13 +119,12 @@ pub async fn accept_invite_handler(
 pub async fn decline_invite_handler(
     State(state): State<Arc<AppState>>,
     Path(invite_id): Path<String>,
-    headers: HeaderMap,
+    InboxAgent(agent_id): InboxAgent,
     Json(request): Json<DeclineInviteRequest>,
 ) -> Result<Json<InviteDetailResponse>, RelayError> {
-    let agent_id = extract_inbox_agent(&headers, &state.agent_registry)?;
     let response = state
         .inbox_store
-        .decline_invite(&invite_id, agent_id, request.reason_code)
+        .decline_invite(&invite_id, &agent_id, request.reason_code)
         .await?;
     Ok(Json(response))
 }
@@ -145,12 +136,11 @@ pub async fn decline_invite_handler(
 pub async fn cancel_invite_handler(
     State(state): State<Arc<AppState>>,
     Path(invite_id): Path<String>,
-    headers: HeaderMap,
+    InboxAgent(agent_id): InboxAgent,
 ) -> Result<Json<InviteDetailResponse>, RelayError> {
-    let agent_id = extract_inbox_agent(&headers, &state.agent_registry)?;
     let response = state
         .inbox_store
-        .cancel_invite(&invite_id, agent_id)
+        .cancel_invite(&invite_id, &agent_id)
         .await?;
     Ok(Json(response))
 }
@@ -161,10 +151,9 @@ pub async fn cancel_invite_handler(
 
 pub async fn inbox_events_handler(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    InboxAgent(agent_id): InboxAgent,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, RelayError> {
-    let agent_id = extract_inbox_agent(&headers, &state.agent_registry)?;
-    let rx = state.inbox_store.subscribe(agent_id).await;
+    let rx = state.inbox_store.subscribe(&agent_id).await;
 
     let stream = BroadcastStream::new(rx).filter_map(|result| match result {
         Ok(event) => {
@@ -194,4 +183,29 @@ pub async fn inbox_events_handler(
             .interval(Duration::from_secs(15))
             .text("ping"),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sender_pubkey_comes_from_registry() {
+        let registered = "aa".repeat(32);
+        // No request value: the registered key (or none) is used.
+        assert_eq!(
+            resolve_sender_pubkey(None, Some(&registered)).unwrap(),
+            Some(registered.clone())
+        );
+        assert_eq!(resolve_sender_pubkey(None, None).unwrap(), None);
+        // A request value equal to the registered key is accepted.
+        assert_eq!(
+            resolve_sender_pubkey(Some(&registered.to_uppercase()), Some(&registered)).unwrap(),
+            Some(registered.clone())
+        );
+        // Any other request value is rejected, including when no key is registered.
+        let other = "bb".repeat(32);
+        assert!(resolve_sender_pubkey(Some(&other), Some(&registered)).is_err());
+        assert!(resolve_sender_pubkey(Some(&other), None).is_err());
+    }
 }

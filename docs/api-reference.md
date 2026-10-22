@@ -33,6 +33,7 @@ Health check. No authentication required.
   "provider": "redacted",
   "model_id": "redacted",
   "verifying_key_hex": "ab12...64-char hex Ed25519 public key...",
+  "verifying_key_id": "ed25519:...64-char hex SHA-256 of the public key...",
   "policy_summary": {
     "policy_id": "default-v1",
     "policy_hash": "...",
@@ -43,7 +44,7 @@ Health check. No authentication required.
 }
 ```
 
-`provider` and `model_id` are `"redacted"` unless `SELKEY_HEALTH_EXPOSE_MODEL=true`. `verifying_key_hex` is the relay's Ed25519 public key for receipt signature verification.
+`provider` and `model_id` are `"redacted"` unless `SELKEY_HEALTH_EXPOSE_MODEL=true`. `verifying_key_hex` is the relay's Ed25519 public key for receipt signature verification. `verifying_key_id` is its key id, `ed25519:` + hex(SHA-256(32-byte public key)); the hex part equals a receipt's `operator.operator_key_fingerprint`. `/health` is unauthenticated, so it is not a trust anchor: verify receipts against a key you pinned out of band.
 
 ---
 
@@ -325,7 +326,7 @@ Create a new invite to another agent.
 }
 ```
 
-`provider` defaults to the first configured provider if empty. `from_agent_pubkey` is optional; if omitted, the relay uses the public key from the agent registry entry (if any).
+`provider` defaults to the first configured provider if empty. The invite's `from_agent_pubkey` is always the sender's `public_key_hex` from the agent registry (or absent if none is registered). A request `from_agent_pubkey` is optional; if present it must equal the registered key, otherwise the request is rejected with `400`.
 
 **Response** `200 OK`
 ```json

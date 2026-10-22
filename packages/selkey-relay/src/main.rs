@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use ed25519_dalek::SigningKey;
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
 
@@ -26,26 +25,34 @@ async fn main() {
         .and_then(|p| p.parse().ok())
         .unwrap_or(3100);
 
-    let signing_key = match std::env::var("SELKEY_SIGNING_KEY_HEX") {
-        Ok(hex_str) => {
-            let bytes = hex::decode(&hex_str).expect("SELKEY_SIGNING_KEY_HEX must be valid hex");
-            let bytes: [u8; 32] = bytes
-                .try_into()
-                .expect("SELKEY_SIGNING_KEY_HEX must be exactly 64 hex characters (32 bytes)");
-            let key = SigningKey::from_bytes(&bytes);
-            tracing::info!(
-                verifying_key_hex = %receipt_core::public_key_to_hex(&key.verifying_key()),
-                "Loaded relay signing key from SELKEY_SIGNING_KEY_HEX"
-            );
+    let is_dev = std::env::var("SELKEY_ENV")
+        .map(|v| v == "dev")
+        .unwrap_or(false);
+
+    let signing_key = match selkey_relay::load_signing_key(
+        std::env::var("SELKEY_SIGNING_KEY_HEX").ok().as_deref(),
+        is_dev,
+    ) {
+        Ok((key, ephemeral)) => {
+            let verifying_key = key.verifying_key();
+            if ephemeral {
+                tracing::warn!(
+                    verifying_key_hex = %receipt_core::public_key_to_hex(&verifying_key),
+                    key_id = %selkey_relay::relay_key_id(&verifying_key),
+                    "SELKEY_ENV=dev without SELKEY_SIGNING_KEY_HEX — generated ephemeral signing key (receipts will not verify across restarts)"
+                );
+            } else {
+                tracing::info!(
+                    verifying_key_hex = %receipt_core::public_key_to_hex(&verifying_key),
+                    key_id = %selkey_relay::relay_key_id(&verifying_key),
+                    "Loaded relay signing key from SELKEY_SIGNING_KEY_HEX"
+                );
+            }
             key
         }
-        Err(_) => {
-            let key = SigningKey::generate(&mut rand::thread_rng());
-            tracing::warn!(
-                verifying_key_hex = %receipt_core::public_key_to_hex(&key.verifying_key()),
-                "No SELKEY_SIGNING_KEY_HEX set — generated ephemeral signing key (receipts will not verify across restarts)"
-            );
-            key
+        Err(msg) => {
+            tracing::error!("{msg}");
+            std::process::exit(1);
         }
     };
 
@@ -255,9 +262,6 @@ async fn main() {
     let inbox_auth_off = std::env::var("SELKEY_INBOX_AUTH")
         .map(|v| v == "off")
         .unwrap_or(false);
-    let is_dev = std::env::var("SELKEY_ENV")
-        .map(|v| v == "dev")
-        .unwrap_or(false);
     if inbox_auth_off && !is_dev {
         tracing::error!(
             "SELKEY_INBOX_AUTH=off requires SELKEY_ENV=dev — refusing to start. \
@@ -437,6 +441,12 @@ async fn main() {
     let operator_token = std::env::var("SELKEY_OPERATOR_TOKEN")
         .ok()
         .filter(|t| !t.is_empty());
+    if let Some(ref token) = operator_token {
+        if let Err(reason) = selkey_relay::auth::check_token_strength(token) {
+            tracing::error!("SELKEY_OPERATOR_TOKEN rejected: {reason} — refusing to start");
+            std::process::exit(1);
+        }
+    }
     let bind_addr =
         selkey_relay::resolve_bind_addr(std::env::var("SELKEY_BIND_ADDR").ok().as_deref());
     match (&operator_token, is_dev) {
