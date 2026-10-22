@@ -2,7 +2,7 @@
 
 > **Issue:** #156 (explicit confidentiality model)
 > **Protocol version:** 0.1.0
-> **Receipt schema:** v2.1
+> **Receipt schema:** v3 (`3.0.0`); v1 and v2 receipts remain verifiable
 
 ---
 
@@ -65,9 +65,15 @@ initiator. The roles differ only in how inputs and tokens are routed.
                            + bounded output) + bounded output)
 ```
 
-TLS encrypts all transport paths. The relay operates inside the relay operator's
-trust boundary — the operator has administrative access to the relay process, its
-keys, and its runtime state.
+The relay itself serves plain HTTP and listens on loopback by default. TLS between
+participants and the relay is the deployment's job: put a TLS-terminating reverse proxy
+in front of any relay reachable beyond localhost. The MCP client refuses plain `http://`
+relay URLs except on loopback or hosts listed in `SELKEY_RELAY_INSECURE_HTTP_HOSTS`.
+Provider API calls use HTTPS to the providers' default endpoints; a base URL override
+(`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `GEMINI_BASE_URL`) can point elsewhere.
+
+The relay operates inside the relay operator's trust boundary — the operator has
+administrative access to the relay process, its keys, and its runtime state.
 
 ### 2.3 What Each Party Observes
 
@@ -163,9 +169,9 @@ logging policies are outside the scope of this protocol.
 
 **End-to-end encryption of inputs**
 
-Inputs travel over TLS between participants and the relay. TLS protects against
-network observers but not against the relay itself. The relay has plaintext access
-to all inputs. There is no cryptographic mechanism in the current implementation
+Inputs travel to the relay over TLS when the deployment provides it (see Section 2.2).
+TLS protects against network observers but not against the relay itself. The relay
+has plaintext access to all inputs. There is no cryptographic mechanism in the current implementation
 that would prevent a relay from reading or logging inputs.
 
 The README notes that encrypted inputs (cryptographic binding of inputs to admitted
@@ -187,11 +193,12 @@ reduces to trust in the relay operator.
 
 **Model identity verification**
 
-`model_identity` in v1 receipts and `claims.model_identity_asserted` in v2 receipts
+`model_identity` in v1 receipts and `claims.model_identity_asserted` in v2 and v3 receipts
 are operator assertions, not cryptographic commitments. The relay reports what the
 provider API response indicates. The provider endpoint and model ID are operator
-configuration, in both the software lane and the selkey-tee lane, and aren't bound into
-any attestation. A relay operator could configure a relay to claim a different model than
+configuration in both lanes. The selkey-tee lane binds them into the attested transcript
+through `relay_config_hash`, but only as the relay's own statement, because the launch
+measurement doesn't cover the relay code. A relay operator could configure a relay to claim a different model than
 the one actually called. A provider attestation (
 `PROVIDER_ATTESTED` assurance tier) would address this, but is not yet implemented.
 
@@ -204,7 +211,7 @@ the one actually called. A provider attestation (
 | Curious counterparty | Sees bounded output only | Raw input disclosure | Inference from output structure, field presence, or value patterns |
 | Curious relay operator | Full access to inputs, prompts, and outputs | Nothing — relay is a trusted party in the API-mediated tier | N/A |
 | Malicious relay operator | Could fabricate output; could log inputs; could modify artefact hashes before signing | Tamper with a signed receipt after issuance; forge a receipt without the signing key | Undetectable fabrication of plausible output; input logging |
-| Network observer | Sees encrypted TLS traffic | Content (via TLS) | Traffic analysis; session timing; request/response size patterns |
+| Network observer | Sees encrypted TLS traffic (where the deployment terminates TLS) | Content (via TLS) | Traffic analysis; session timing; request/response size patterns |
 | Curious LLM provider | Sees assembled prompt | Nothing — provider is trusted for inference | N/A |
 | Malicious LLM provider | Could return fabricated output | Nothing at SELF_ASSERTED level | Receipt claims model identity; provider could supply different output |
 
@@ -249,7 +256,7 @@ deployments.
 
 ## 5. Assurance Tiers
 
-The `assurance_level` field in receipt v2 indicates what external attestation, if
+The `assurance_level` field in v2 and v3 receipts indicates what external attestation, if
 any, supplements the relay's self-report. "Receipt verified" must always be
 presented together with the assurance level.
 
@@ -264,7 +271,7 @@ All current Selkey deployments operate at `SELF_ASSERTED`. The operator-audited
 tier is the near-term upgrade path. TEE attestation is the intended end state for
 deployments where relay confidentiality is a hard requirement.
 
-Receipt v2.1 includes attestation slots (`provider_attestation`, `tee_attestation`).
+Receipts (v2 and v3) include attestation slots (`provider_attestation`, `tee_attestation`).
 The `tee_attestation` slot is populated by the selkey-tee relay when running in a
 TEE environment, binding `attestation_hash`, `receipt_signing_pubkey_hex`, and
 `transcript_hash_hex` into the receipt. The Selkey relay does not yet populate
@@ -286,8 +293,9 @@ Even a fully enum-bounded output carries information:
 - **Array contents** — which combination of allowed values appears in an array field
 - **Array length** — number of items selected (if the schema allows variable-length arrays)
 
-The entropy budget in the receipt (`output_entropy_bits`) provides a structural upper
-bound on the total information content. A 25-bit bounded output carries at most 25 bits
+The schema's entropy upper bound, recorded in the receipt as
+`claims.channel_capacity_bits_upper_bound`, provides a structural upper bound on the
+total information content. A 25-bit bounded output carries at most 25 bits
 of information about the combined input context. This is a meaningful constraint
 compared to unbounded free text (which carries hundreds of bits for a short paragraph).
 
@@ -480,8 +488,11 @@ fabricating outputs without breaking the attestation. The selkey-tee prototype h
 produced real SEV-SNP attestation reports, sealed key material, and transcript-bound
 receipts on GCP N2D (AMD SEV-SNP). It is not yet secure: the shipped image runs a
 simulated runtime, the launch measurement doesn't yet cover the relay binary (no
-measured boot), and model identity is provider-reported. Integration into the Selkey
-relay is also pending.
+measured boot), and model identity is provider-reported. It also implements only part
+of the protocol: no invites, no schema registry (strict inline schemas only), no
+guardian policy and only a per-session entropy budget; contracts that set fields it
+doesn't enforce are rejected (see the protocol specification, Section 11.5).
+Integration into the Selkey relay is also pending.
 
 ### 7.3 Planned (Not Yet Implemented)
 
@@ -516,7 +527,8 @@ A receipt that passes signature verification against a trusted public key proves
    hashes in the receipt match the artefacts the verifier holds.
 5. The bounded output hash in the receipt matches the output the verifier received.
 6. The input commitments match the inputs each participant submitted. Each commitment
-   is salted with a secret nonce chosen by that participant's client, so each
+   is salted with a secret nonce chosen by that participant's client and sent only to
+   the relay (with the input), so each
    participant can verify its own commitment, and the counterparty can neither verify
    it nor test guesses of the input against it. Inputs appear in a receipt only
    through these salted commitments: no receipt field holds an unsalted hash of an
@@ -576,7 +588,7 @@ This document does not cover:
   (agents publishing signed descriptors declaring identity and keys) is planned
   but not yet implemented.
 - **Key distribution** — how relying parties obtain and pin relay public keys. The
-  `operator_key_discovery` URI field in the v2 receipt provides a hook, but the
+  `operator_key_discovery` URI field in v2 and v3 receipts provides a hook, but the
   key distribution protocol is not yet defined.
 - **Fair exchange** — whether both parties receive the output simultaneously or can
   use the output symmetrically. The protocol does not address this.

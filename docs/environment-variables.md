@@ -8,26 +8,36 @@ Complete reference for all environment variables used by the Selkey relay and MC
 
 | Variable | Description |
 |----------|-------------|
-| `ANTHROPIC_API_KEY` | Anthropic API key for the default provider |
+| `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` or `GEMINI_API_KEY` | At least one provider API key. Each one that is set enables that provider; the relay refuses to start with none |
+| `SELKEY_SIGNING_KEY_HEX` | 64-char hex Ed25519 signing key for receipt signing (e.g. `openssl rand -hex 32`). Outside `SELKEY_ENV=dev` the relay refuses to start without it. In dev, if unset, a random key is generated on each start and receipts won't verify across restarts. The key id logged at startup and reported by `/health` is `ed25519:` + hex(SHA-256(public key)) |
 
 ### Optional
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `SELKEY_ENV` | unset | Set to `dev` for development mode: an ephemeral signing key if none is set, strict inline output schemas accepted, `POST /relay` open (unauthenticated) when no `SELKEY_OPERATOR_TOKEN` is set, `GET /sessions/:id/metadata` (input sizes and timings, which the relay records only in dev), and the development overrides below |
 | `SELKEY_PORT` | `3100` | Port the relay listens on |
 | `SELKEY_ALLOWED_HOSTS` | unset | Comma-separated extra hostnames accepted in the `Host` header (e.g. a compose service name). When the relay listens on loopback, or when this is set, requests whose `Host` is not `localhost`, `127.0.0.1`, `[::1]` or a listed name get `403`. This blocks DNS-rebinding requests from browser pages to a local relay |
 | `SELKEY_ALLOW_UNAUTHENTICATED` | unset | Set to `1` to let the relay (dev or not) start on a non-loopback address without `SELKEY_OPERATOR_TOKEN` (only when access is controlled elsewhere, e.g. a container port published on loopback) |
 | `SELKEY_BIND_ADDR` | `127.0.0.1` | IP address the relay listens on. Loopback by default; set `0.0.0.0` (or a specific interface) to accept remote connections, e.g. inside a container |
 | `SELKEY_OPERATOR_TOKEN` | — | Operator bearer token. When set, `POST /relay` and `POST /sessions` require `Authorization: Bearer <token>`. Use at least 32 characters from a random generator (e.g. `openssl rand -hex 32`). The relay refuses to start with a token that is shorter, has few distinct characters or repeats a shorter sequence; these checks catch obvious mistakes, not weak generators |
 | `SELKEY_MODEL_ID` | `claude-sonnet-4-6` | Anthropic model ID |
-| `SELKEY_SIGNING_KEY_HEX` | required outside dev | 64-char hex Ed25519 signing key for receipt signing (e.g. `openssl rand -hex 32`). Outside `SELKEY_ENV=dev` the relay refuses to start without it. In dev, if unset, a random key is generated on each start and receipts won't verify across restarts. The key id logged at startup and reported by `/health` is `ed25519:` + hex(SHA-256(public key)) |
+| `SELKEY_OPERATOR_ID` | `selkey-relay-dev` | `operator.operator_id` in receipts |
+| `SELKEY_MAX_COMPLETION_TOKENS` | `4096` | Relay ceiling on completion tokens. A contract's `max_completion_tokens` can lower it for that session. An invalid value logs a warning and uses the default |
+| `SELKEY_HEALTH_EXPOSE_MODEL` | `false` | `true`, `1` or `yes` makes `GET /health` report the provider and model ID instead of `"redacted"` |
+| `SELKEY_DEFAULT_POLICY_HASH` | unset | Enforcement policy used when a contract has no `enforcement_policy_hash`. Must name a loaded, lockfile-verified policy. Required when more than one policy is loaded. Ignored when `SELKEY_REGISTRY_PATH` is set: the default then comes from `policies.default` in the admission config |
 | `SELKEY_PROMPT_PROGRAM_DIR` | `prompt_programs` | Directory containing prompt programs, model profile lockfile, and enforcement policy lockfile |
 | `SELKEY_SCHEMA_DIR` | `<prompt dir>/../schemas/output` | Directory of content-addressed output schemas (the schema registry). Set it to the repo's `schemas/output` when running from a checkout; the Docker image sets it. The relay refuses to start if the directory cannot be read or a schema in it declares a JSON Schema draft other than draft 7 (see [Output schema acceptance](#output-schema-acceptance)) |
 | `SELKEY_SESSION_TTL_SECS` | `600` | Maximum session lifetime in seconds. A contract's `session_ttl_secs` can shorten it for that session. Background reaper cleans up expired sessions. A session still processing one TTL after inference started is aborted with `TIMEOUT` |
 | `OPENAI_API_KEY` | — | Enables the OpenAI provider when set |
 | `SELKEY_OPENAI_MODEL_ID` | `gpt-4o` | OpenAI model ID (only used if `OPENAI_API_KEY` is set) |
+| `GEMINI_API_KEY` | — | Enables the Gemini provider when set |
+| `SELKEY_GEMINI_MODEL_ID` | `gemini-3-flash-preview` | Gemini model ID (only used if `GEMINI_API_KEY` is set) |
 | `ANTHROPIC_BASE_URL` | — | Override Anthropic API base URL (for proxies or mock servers) |
 | `OPENAI_BASE_URL` | — | Override OpenAI API base URL |
+| `GEMINI_BASE_URL` | — | Override Gemini API base URL |
+| `SELKEY_REGISTRY_PATH` | unset | Path to a local artefact registry checkout. When set, the relay loads schemas, policies, model profiles and prompt programs through registry admission (digests checked at startup; any mismatch stops startup) instead of the lockfiles |
+| `SELKEY_ADMISSION_CONFIG` | `relay-admission.toml` | Admission config file used with `SELKEY_REGISTRY_PATH`. A relative path is resolved against the working directory |
 | `RUST_LOG` | — | Standard `tracing` log filter (e.g. `info`, `selkey_relay=debug`) |
 
 ### Network binding and operator access
@@ -95,9 +105,9 @@ These require `SELKEY_ENV=dev` to have any effect. Production deployments must a
 
 | Variable | Description |
 |----------|-------------|
-| `SELKEY_ENV` | Set to `dev` to enable development overrides |
-| `SELKEY_MODEL_LOCKFILE_SKIP` | Set to `1` (with `SELKEY_ENV=dev`) to skip model profile lockfile validation |
-| `SELKEY_ENFORCEMENT_LOCKFILE_SKIP` | Set to `1` (with `SELKEY_ENV=dev`) to skip enforcement policy lockfile validation |
+| `SELKEY_ENFORCEMENT_LOCKFILE_SKIP` | Set to `1` (with `SELKEY_ENV=dev`) to start without `relay_policies.lock` (enforcement policy lockfile validation is skipped) |
+
+There is no override for model profile lockfile validation.
 
 ### Inbox Persistence (feature-gated)
 
@@ -110,6 +120,7 @@ cargo build --features persistence
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SELKEY_INBOX_DB_PATH` | — | Path to the SQLite database file for inbox persistence. Required when running with `--features persistence`. If unset, the relay falls back to in-memory storage |
+| `SELKEY_INVITE_TTL_SECS` | `604800` | Invite lifetime in seconds (7 days). A value that isn't a whole number is ignored and the default used. Applies with or without persistence |
 
 ### Limits
 
@@ -147,6 +158,10 @@ Contracts have fixed size limits, checked before a session or invite is created 
 | `SELKEY_RELAY_INSECURE_HTTP_HOSTS` | No | — | Comma-separated host names on which plain `http://` relays are allowed besides loopback (`localhost`, `127.0.0.0/8`, `[::1]`), for example `relay` on a private compose network in the local demo |
 | `SELKEY_AGENT_ID` | No | — | This agent's ID, used for contract building |
 | `SELKEY_RESUME_TOKEN_SECRET` | No | — | Secret for HMAC-signing resume tokens. Recommended for production |
+| `SELKEY_WORKDIR` | No | current directory | Directory under which the server keeps its state in `.selkey/` (pins, entropy ledger, IFC grants, held receipts) |
+| `SELKEY_INBOX_TRANSPORT` | No | — | Set to `relay` to send and receive invites through the relay inbox. Then `SELKEY_INBOX_TOKEN`, `SELKEY_AGENT_ID` and `SELKEY_RELAY_URL` are required, and the server refuses to start without them |
+| `SELKEY_INBOX_TOKEN` | With `SELKEY_INBOX_TRANSPORT=relay` | — | This agent's `inbox_token` from the relay's agent registry |
+| `SELKEY_REGISTRY_PATH` | No | `selkey-registry` next to the selkey checkout | Artefact registry used for bespoke contract negotiation. Negotiation is unavailable if the directory has no `registry.json` |
 | `SELKEY_ENV` | No | — | `dev` lets the agent run relay sessions without `SELKEY_RELAY_VERIFYING_KEY_HEX` (local development only) |
 | `SELKEY_OPERATOR_TOKEN` | When the relay has one | — | The operator token of the relay at `SELKEY_RELAY_URL` (the relay's `SELKEY_OPERATOR_TOKEN`). Sent as `Authorization: Bearer <token>` when this agent creates a session on that relay, and never sent to other relays or logged |
 | `SELKEY_RELAY_VERIFYING_KEY_HEX` | Yes, outside `SELKEY_ENV=dev` | — | Pinned relay Ed25519 verifying key (64 hex chars), obtained from the relay operator. Contracts this agent builds carry it as `relay_verifying_key_hex`, so a relay with a different key refuses the session before input is submitted. A responder accepts only contracts that carry the same value, so both parties must pin the same key. Outside `SELKEY_ENV=dev`, `relay_signal` refuses INITIATE, CREATE, RESPOND and JOIN without it. Outside development, a responder given `expected_contract_hash` also requires that hash to be a contract it builds itself with the pinned key. In development an unpinned agent still works and a pinned responder also accepts contracts without the key field, but pinning is recommended there too. Session receipts must verify against it. `selkey.verify_receipt` uses it when no `public_key_hex` argument is given, and rejects an argument that differs from it. Without this or an argument, the tool returns an error |
@@ -174,7 +189,9 @@ These enable the AFAL direct transport for INITIATE and RESPOND session modes (a
 | `SELKEY_AFAL_TRUSTED_AGENTS` | No | — | JSON array of trusted agents: `[{"agentId":"...","publicKeyHex":"..."}]`. Seeds the agent pin store (see below) |
 | `SELKEY_AFAL_ALLOWED_PURPOSES` | No | `MEDIATION` | Comma-separated list of allowed purpose codes (e.g. `MEDIATION,COMPATIBILITY`). Also the purposes RESPOND accepts when `expected_purpose` is omitted |
 | `SELKEY_AFAL_PEER_DESCRIPTOR_URL` | For INITIATE | — | URL of the peer agent's descriptor (used in INITIATE mode) |
+| `SELKEY_AFAL_ADVERTISE_AFAL_ENDPOINT` | No | `true` | Set to `false` to publish an A2A-only Agent Card (no AFAL endpoint) |
 | `SELKEY_AFAL_REQUIRE_SIGNED_CARDS` | No | — | No longer has an effect. An A2A agent card is used only if its `card_signature` verifies under the peer's pinned key; endpoints and relay hints are never taken from an unsigned card (discovery falls back to the signed AFAL descriptor) |
+| `SELKEY_AGENT_PIN_RESEED` | No | — | Lets configured keys replace stored pins that differ from them; see [Agent identity pins](#agent-identity-pins) |
 | `SELKEY_AGENT_PIN_MODE` | No | `preshared` | `preshared`: peers must be pinned in advance. `tofu`: on first contact the peer's key is recorded as pending and the call fails with `NEEDS_CONFIRMATION` until a person runs `selkey-mcp pins confirm <agent_id>` in a terminal |
 
 ### Known Agents

@@ -70,7 +70,7 @@ agents → contract → relay enforcement → bounded signal → receipt
 
 | | Software lane | TEE lane (prototype, not yet secure) |
 |---|---|---|
-| **Counterparty disclosure** | Bounded by schema | Bounded by schema |
+| **Counterparty disclosure** | Bounded by schema (registry schemas; strict inline schemas in dev only; per-session entropy cap) | Bounded by a strict inline schema (per-session entropy budget, when the contract sets one); contracts with fields the TEE lane doesn't enforce are rejected |
 | **Relay operator** | Trusted (sees plaintext) | Trusted for now (goal: excluded by hardware encryption and attestation) |
 | **Model provider** | Trusted (sees prompt) | Trusted (sees prompt) |
 | **Model identity** | Provider-reported | Provider-reported |
@@ -100,7 +100,7 @@ After the run completes, click **Verify Signature** on any result card.
 - The receipt was signed by the relay key given to the verifier (the verifier never trusts a key embedded in the receipt). The demo uses `SELKEY_RELAY_VERIFYING_KEY_HEX` if set. Without it, the demo pins the key its local relay serves on `/health` at the first start, uses it for both agents and the verifier, and labels the result "relay key pinned from the local relay at demo start". Outside the local demo, obtain the key from the relay operator and set `SELKEY_RELAY_VERIFYING_KEY_HEX`: agents refuse relay sessions without it unless `SELKEY_ENV=dev`
 - The output in the receipt has not been modified since signing
 - The contract, schema, prompt template, and guardian policy hashes are internally consistent
-- Your client can check that your input commitment (salted with a nonce only your client knows) matches the input it sent
+- Your client can check that your input commitment matches the input it sent. The commitment is salted with a nonce your client generates and sends to the relay with your input; the counterparty never receives it, so it can't test guesses of your input against the commitment
 
 ### What it does not prove
 
