@@ -2029,6 +2029,204 @@ mod tests {
         );
     }
 
+    /// Process raw model text the way `relay_core` does before release:
+    /// parse, normalise numbers, validate against the schema, and hash for
+    /// the receipt. Returns the released JSON text and its v3 output hash.
+    fn release_text(schema: &serde_json::Value, text: &str) -> Result<(String, String), String> {
+        let output: serde_json::Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
+        let output = normalize_integral_numbers(output);
+        validate_output_schema(&output, schema).map_err(|e| e.to_string())?;
+        let hash = hash_json_v3(&output).map_err(|e| e.to_string())?;
+        Ok((output.to_string(), hash))
+    }
+
+    /// Every spelling must be accepted and released exactly as `canonical`.
+    fn assert_spellings_release_as(
+        schema: &serde_json::Value,
+        canonical: &str,
+        spellings: &[&str],
+    ) {
+        let expected = release_text(schema, canonical)
+            .unwrap_or_else(|e| panic!("{canonical} must be accepted: {e}"));
+        assert_eq!(expected.0, canonical);
+        assert_eq!(
+            expected.1,
+            receipt_core::jcs::sha256_hex(canonical.as_bytes()),
+            "released text must be the canonical form that is hashed"
+        );
+        for spelling in spellings {
+            let released = release_text(schema, spelling)
+                .unwrap_or_else(|e| panic!("{spelling} must be accepted: {e}"));
+            assert_eq!(released, expected, "{spelling} must release as {canonical}");
+        }
+    }
+
+    #[test]
+    fn test_integer_array_spellings_release_identically() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "v": {
+                    "type": "array",
+                    "maxItems": 4,
+                    "items": {"type": "integer", "minimum": 0, "maximum": 0}
+                }
+            },
+            "required": ["v"],
+            "additionalProperties": false
+        });
+        assert_spellings_release_as(
+            &schema,
+            r#"{"v":[0,0,0,0]}"#,
+            &[
+                r#"{"v":[0,0.0,-0.0,0e5]}"#,
+                r#"{"v":[-0,0E0,0.0e-3,-0e0]}"#,
+                r#"{ "v" : [ 0.00 , 0e+5 , -0.0E-0 , 0 ] }"#,
+            ],
+        );
+    }
+
+    #[test]
+    fn test_integer_enum_spellings_release_identically() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"n": {"type": "integer", "enum": [1]}},
+            "required": ["n"],
+            "additionalProperties": false
+        });
+        assert_spellings_release_as(
+            &schema,
+            r#"{"n":1}"#,
+            &[
+                r#"{"n":1.0}"#,
+                r#"{"n":1e0}"#,
+                r#"{"n":1E0}"#,
+                r#"{"n":10e-1}"#,
+                r#"{"n":0.1e1}"#,
+                r#"{"n":1.000}"#,
+            ],
+        );
+    }
+
+    #[test]
+    fn test_const_zero_spellings_release_identically() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"z": {"const": 0}},
+            "required": ["z"],
+            "additionalProperties": false
+        });
+        assert_spellings_release_as(
+            &schema,
+            r#"{"z":0}"#,
+            &[
+                r#"{"z":-0.0}"#,
+                r#"{"z":-0}"#,
+                r#"{"z":0.0}"#,
+                r#"{"z":0e5}"#,
+            ],
+        );
+    }
+
+    #[test]
+    fn test_bounded_integer_spellings_release_identically() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"i": {"type": "integer", "minimum": 0, "maximum": 7}},
+            "required": ["i"],
+            "additionalProperties": false
+        });
+        assert_spellings_release_as(
+            &schema,
+            r#"{"i":5}"#,
+            &[
+                r#"{"i":5.0E0}"#,
+                r#"{"i":5.0}"#,
+                r#"{"i":0.5e1}"#,
+                r#"{"i":50e-1}"#,
+            ],
+        );
+        // Below f64 precision this literal is the double 1.0, so it is
+        // released as the integer 1 like every other spelling of 1.
+        assert_spellings_release_as(&schema, r#"{"i":1}"#, &[r#"{"i":1.0000000000000000001}"#]);
+        // A genuinely fractional value is not an integer.
+        assert!(release_text(&schema, r#"{"i":1.5}"#).is_err());
+    }
+
+    #[test]
+    fn test_large_integer_spellings_release_identically_or_are_rejected() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "i": {"type": "integer", "minimum": -1_152_921_504_606_846_976i64, "maximum": 1_152_921_504_606_846_976i64}
+            },
+            "required": ["i"],
+            "additionalProperties": false
+        });
+        assert_spellings_release_as(
+            &schema,
+            r#"{"i":9007199254740991}"#,
+            &[
+                r#"{"i":9007199254740991.0}"#,
+                r#"{"i":9.007199254740991e15}"#,
+                r#"{"i":90071992547409910e-1}"#,
+            ],
+        );
+        assert_spellings_release_as(
+            &schema,
+            r#"{"i":-9007199254740991}"#,
+            &[
+                r#"{"i":-9007199254740991.0}"#,
+                r#"{"i":-9.007199254740991E15}"#,
+            ],
+        );
+        // Beyond 2^53 - 1 integers lose their unique spelling, so no output
+        // containing one can be committed to and released.
+        for text in [
+            r#"{"i":9007199254740992}"#,
+            r#"{"i":9007199254740992.0}"#,
+            r#"{"i":9.007199254740992e15}"#,
+            r#"{"i":9007199254740993}"#,
+            r#"{"i":-9007199254740992}"#,
+            r#"{"i":-9007199254740992.0}"#,
+            r#"{"i":1152921504606846976}"#,
+            r#"{"i":1.152921504606846976e18}"#,
+        ] {
+            let err = release_text(&schema, text).expect_err(text);
+            assert!(
+                err.contains("out of range") || err.contains("range"),
+                "{text}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_number_enum_spellings_release_identically() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"x": {"type": "number", "enum": [0.5, 1, 2.0]}},
+            "required": ["x"],
+            "additionalProperties": false
+        });
+        assert_spellings_release_as(
+            &schema,
+            r#"{"x":0.5}"#,
+            &[
+                r#"{"x":0.50}"#,
+                r#"{"x":5e-1}"#,
+                r#"{"x":5.0E-1}"#,
+                r#"{"x":0.5000000000000000001}"#,
+            ],
+        );
+        assert_spellings_release_as(&schema, r#"{"x":1}"#, &[r#"{"x":1.0}"#, r#"{"x":1e0}"#]);
+        assert_spellings_release_as(
+            &schema,
+            r#"{"x":2}"#,
+            &[r#"{"x":2.0}"#, r#"{"x":2}"#, r#"{"x":0.2e1}"#],
+        );
+        assert!(release_text(&schema, r#"{"x":0.25}"#).is_err());
+    }
+
     // ========================================================================
     // Schema hash tests (content-addressing and cross-language parity)
     // ========================================================================
