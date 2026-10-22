@@ -7,10 +7,10 @@ license.workspace = true
 
 [dependencies]
 # TODO: replace git rev pins with tagged releases once vault-family-core stabilises
-afal-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "3061b55", package = "afal-core" }
-entropy-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "3061b55", package = "entropy-core" }
-receipt-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "3061b55", package = "receipt-core" }
-vault-family-types = { git = "https://github.com/vcav-io/vault-family-core", rev = "3061b55", package = "vault-family-types" }
+afal-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "8db99ef8a3de1ca7d72182b9bf833bab480324e9", package = "afal-core" }
+entropy-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "8db99ef8a3de1ca7d72182b9bf833bab480324e9", package = "entropy-core" }
+receipt-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "8db99ef8a3de1ca7d72182b9bf833bab480324e9", package = "receipt-core" }
+vault-family-types = { git = "https://github.com/vcav-io/vault-family-core", rev = "8db99ef8a3de1ca7d72182b9bf833bab480324e9", package = "vault-family-types" }
 
 serde.workspace = true
 serde_json.workspace = true
@@ -25,6 +25,7 @@ ed25519-dalek.workspace = true
 sha2.workspace = true
 rand.workspace = true
 hex.workspace = true
+zeroize = "1"
 chrono.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
@@ -37,6 +38,6 @@ rusqlite = { version = "0.32", features = ["bundled"], optional = true }
 persistence = ["rusqlite"]
 
 [dev-dependencies]
-verifier-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "3061b55", package = "verifier-core" }
+verifier-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "8db99ef8a3de1ca7d72182b9bf833bab480324e9", package = "verifier-core" }
 tokio = { version = "1.0", features = ["full", "test-util"] }
 tower.workspace = true

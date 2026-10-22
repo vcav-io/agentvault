@@ -7,8 +7,6 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use sha2::{Digest, Sha256};
-
 use crate::error::RelayError;
 
 /// In-memory registry of output schemas, indexed by content hash.
@@ -93,17 +91,15 @@ fn load_and_hash_schema(path: &Path) -> Result<(String, serde_json::Value), Rela
         .map_err(|e| RelayError::Internal(format!("failed to read {}: {e}", path.display())))?;
     let schema: serde_json::Value = serde_json::from_str(&content)
         .map_err(|e| RelayError::Internal(format!("failed to parse {}: {e}", path.display())))?;
-    let canonical = receipt_core::canonicalize_serializable(&schema)
+    let hash = crate::relay::hash_json_v3(&schema)
         .map_err(|e| RelayError::Internal(format!("schema canonicalization: {e}")))?;
-    let mut hasher = Sha256::new();
-    hasher.update(canonical.as_bytes());
-    let hash = hex::encode(hasher.finalize());
     Ok((hash, schema))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
     use std::fs;
 
     #[test]
@@ -137,10 +133,8 @@ mod tests {
         assert_eq!(reg.len(), 1);
 
         // Compute expected hash
-        let canonical = receipt_core::canonicalize_serializable(&schema).unwrap();
-        let mut hasher = Sha256::new();
-        hasher.update(canonical.as_bytes());
-        let expected_hash = hex::encode(hasher.finalize());
+        let canonical = receipt_core::canonicalize_v3(&schema).unwrap();
+        let expected_hash = hex::encode(Sha256::digest(canonical.as_bytes()));
 
         assert!(reg.get(&expected_hash).is_some());
         assert_eq!(reg.get(&expected_hash).unwrap(), &schema);

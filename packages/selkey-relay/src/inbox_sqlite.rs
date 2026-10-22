@@ -15,7 +15,6 @@ use rusqlite::{params, Connection};
 
 use crate::inbox_types::{DeclineReasonCode, Invite, InviteStatus};
 use crate::session::SessionTokens;
-use crate::types::Contract;
 
 /// Return type of `SqliteDb::load_all`.
 pub type LoadAllResult = (
@@ -57,7 +56,7 @@ impl SqliteDb {
                 invite.from_agent_id,
                 invite.to_agent_id,
                 status_to_str(invite.status),
-                serde_json::to_string(&invite.contract).unwrap_or_default(),
+                serde_json::to_string(&invite.contract_json).unwrap_or_default(),
                 invite.contract_hash,
                 invite.provider,
                 invite.purpose_code,
@@ -175,11 +174,20 @@ impl SqliteDb {
                 let session_tokens_json: Option<String> = row.get(12)?;
                 let decline_str: Option<String> = row.get(13)?;
 
-                let contract: Contract = serde_json::from_str(&contract_json).map_err(|e| {
+                let contract_value: serde_json::Value = serde_json::from_str(&contract_json)
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            4,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?;
+                // Re-validate and re-hash with contract hash v2 on load.
+                let accepted = crate::relay::accept_contract(&contract_value).map_err(|e| {
                     rusqlite::Error::FromSqlConversionFailure(
                         4,
                         rusqlite::types::Type::Text,
-                        Box::new(e),
+                        Box::new(std::io::Error::other(e.to_string())),
                     )
                 })?;
 
@@ -234,8 +242,9 @@ impl SqliteDb {
                     from_agent_id: row.get(1)?,
                     to_agent_id: row.get(2)?,
                     status,
-                    contract,
-                    contract_hash: row.get(5)?,
+                    contract: accepted.contract,
+                    contract_json: accepted.contract_json,
+                    contract_hash: accepted.contract_hash,
                     provider: row.get(6)?,
                     purpose_code: row.get(7)?,
                     created_at,
@@ -375,7 +384,6 @@ impl std::error::Error for StringConvertError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::relay::compute_contract_hash;
     use crate::types::Contract;
 
     fn test_contract() -> Contract {
@@ -402,8 +410,8 @@ mod tests {
     }
 
     fn test_invite() -> Invite {
-        let contract = test_contract();
-        let contract_hash = compute_contract_hash(&contract).unwrap();
+        let accepted =
+            crate::relay::accept_contract(&serde_json::to_value(test_contract()).unwrap()).unwrap();
         let now = Utc::now();
         Invite {
             version: "1".to_string(),
@@ -411,8 +419,9 @@ mod tests {
             from_agent_id: "alice".to_string(),
             to_agent_id: "bob".to_string(),
             from_agent_pubkey: None,
-            contract,
-            contract_hash,
+            contract: accepted.contract,
+            contract_json: accepted.contract_json,
+            contract_hash: accepted.contract_hash,
             provider: "anthropic".to_string(),
             purpose_code: "COMPATIBILITY".to_string(),
             status: InviteStatus::Pending,
