@@ -61,8 +61,15 @@ pub struct InboxStore {
     inner: Arc<RwLock<InboxStoreInner>>,
     channels: Arc<Mutex<ChannelMap>>,
     invite_ttl: Duration,
-    /// Grace period after EXPIRED before garbage collection.
+    /// Grace period after an invite reaches a terminal state (expired,
+    /// accepted, declined, canceled) before garbage collection.
     gc_grace: Duration,
+    /// Maximum number of invites held at once.
+    max_invites: usize,
+    /// Maximum pending invites per sending agent.
+    max_pending_per_agent: usize,
+    /// Maximum invites (any state) held per sending agent.
+    max_held_per_agent: usize,
     #[cfg(feature = "persistence")]
     db: Option<Arc<SqliteDb>>,
 }
@@ -77,10 +84,26 @@ impl InboxStore {
             })),
             channels: Arc::new(Mutex::new(HashMap::new())),
             invite_ttl,
-            gc_grace: Duration::from_secs(86400), // 24h grace after EXPIRED
+            gc_grace: Duration::from_secs(3600), // 1h grace after a terminal state
+            max_invites: crate::limits::DEFAULT_MAX_INVITES,
+            max_pending_per_agent: crate::limits::DEFAULT_MAX_PENDING_INVITES_PER_AGENT,
+            max_held_per_agent: crate::limits::DEFAULT_MAX_INVITES_PER_AGENT,
             #[cfg(feature = "persistence")]
             db: None,
         }
+    }
+
+    /// Set the invite capacity and the per-sender pending invite limit.
+    pub fn with_limits(mut self, max_invites: usize, max_pending_per_agent: usize) -> Self {
+        self.max_invites = max_invites;
+        self.max_pending_per_agent = max_pending_per_agent;
+        self
+    }
+
+    /// Set the maximum number of invites (any state) held per sending agent.
+    pub fn with_max_held_per_agent(mut self, max_held_per_agent: usize) -> Self {
+        self.max_held_per_agent = max_held_per_agent;
+        self
     }
 
     #[cfg(feature = "persistence")]
@@ -116,7 +139,10 @@ impl InboxStore {
             })),
             channels: Arc::new(Mutex::new(HashMap::new())),
             invite_ttl,
-            gc_grace: Duration::from_secs(86400),
+            gc_grace: Duration::from_secs(3600),
+            max_invites: crate::limits::DEFAULT_MAX_INVITES,
+            max_pending_per_agent: crate::limits::DEFAULT_MAX_PENDING_INVITES_PER_AGENT,
+            max_held_per_agent: crate::limits::DEFAULT_MAX_INVITES_PER_AGENT,
             db: Some(db),
         })
     }
@@ -147,6 +173,14 @@ impl InboxStore {
         if !contract.participants.iter().any(|p| p == to_agent_id) {
             return Err(RelayError::ContractValidation(
                 "contract participants must include to_agent_id".to_string(),
+            ));
+        }
+        // The sender receives the initiator tokens, whose input is committed
+        // under participants[0]; the recipient's under participants[1].
+        if contract.participants[0] != from_agent_id || contract.participants[1] != to_agent_id {
+            return Err(RelayError::ContractValidation(
+                "contract participants must be [from_agent_id, to_agent_id] in that order"
+                    .to_string(),
             ));
         }
         crate::relay::validate_contract_key_fields(contract)?;
@@ -186,7 +220,13 @@ impl InboxStore {
         let purpose_code = accepted.contract.purpose_code.to_string();
 
         let now = Utc::now();
-        let invite_ttl_chrono = chrono::Duration::from_std(self.invite_ttl).unwrap_or_else(|e| {
+        // The contract's invite_ttl_secs shortens the relay TTL, never extends it.
+        let invite_ttl = accepted
+            .contract
+            .invite_ttl_secs
+            .map(|secs| Duration::from_secs(u64::from(secs)).min(self.invite_ttl))
+            .unwrap_or(self.invite_ttl);
+        let invite_ttl_chrono = chrono::Duration::from_std(invite_ttl).unwrap_or_else(|e| {
             tracing::warn!(error = %e, "invite TTL conversion overflow, falling back to 7 days");
             chrono::Duration::days(7)
         });
@@ -213,9 +253,60 @@ impl InboxStore {
             decline_reason_code: None,
         };
 
-        // SQLite write FIRST (before memory update)
+        // Capacity checks and the insert happen under one write lock, so
+        // concurrent creates cannot overshoot the limits.
+        let mut store = self.inner.write().await;
+        let mut evicted = Vec::new();
+
+        // Per sender: pending invites, and all invites held.
+        let (pending_from_sender, held_by_sender) =
+            store
+                .invites
+                .values()
+                .fold((0usize, 0usize), |(pending, held), inv| {
+                    if inv.from_agent_id == from_agent_id {
+                        (
+                            pending + usize::from(inv.status == InviteStatus::Pending),
+                            held + 1,
+                        )
+                    } else {
+                        (pending, held)
+                    }
+                });
+        if pending_from_sender >= self.max_pending_per_agent {
+            return Err(RelayError::RateLimited);
+        }
+        if held_by_sender >= self.max_held_per_agent {
+            // Make room from this sender's own finished invites first.
+            match Self::evict_oldest_terminal(&mut store, |inv| inv.from_agent_id == from_agent_id)
+            {
+                Some(id) => evicted.push(id),
+                None => return Err(RelayError::RateLimited),
+            }
+        }
+        // Whole store: finished invites give way to new ones.
+        if store.invites.len() >= self.max_invites {
+            match Self::evict_oldest_terminal(&mut store, |_| true) {
+                Some(id) => evicted.push(id),
+                None => {
+                    tracing::warn!(max_invites = self.max_invites, "invite store at capacity");
+                    return Err(RelayError::ServiceUnavailable(
+                        "invite capacity reached".to_string(),
+                    ));
+                }
+            }
+        }
+
+        // SQLite write before the memory update (under the same lock).
         #[cfg(feature = "persistence")]
         if let Some(ref db) = self.db {
+            if !evicted.is_empty() {
+                let db = db.clone();
+                let ids = evicted.clone();
+                tokio::spawn(async move {
+                    let _ = tokio::task::spawn_blocking(move || db.batch_delete(&ids)).await;
+                });
+            }
             let db = db.clone();
             let invite_for_db = invite.clone();
             tokio::task::spawn_blocking(move || db.insert_invite(&invite_for_db))
@@ -223,8 +314,12 @@ impl InboxStore {
                 .map_err(|e| RelayError::ServiceUnavailable(format!("db thread: {e}")))?
                 .map_err(|e| RelayError::Internal(format!("sqlite: {e}")))?;
         }
-
-        let mut store = self.inner.write().await;
+        if !evicted.is_empty() {
+            tracing::info!(
+                count = evicted.len(),
+                "evicted finished invites to make room"
+            );
+        }
 
         // Add to recipient's inbox index
         store
@@ -275,6 +370,27 @@ impl InboxStore {
             status: InviteStatus::Pending,
             expires_at,
         })
+    }
+
+    /// Remove the oldest finished invite matching `filter`, preferring
+    /// declined, canceled and expired invites over accepted ones (an accepted
+    /// invite still serves the sender's session tokens). Returns its id.
+    fn evict_oldest_terminal(
+        store: &mut InboxStoreInner,
+        filter: impl Fn(&Invite) -> bool,
+    ) -> Option<String> {
+        let victim = store
+            .invites
+            .values()
+            .filter(|inv| inv.status != InviteStatus::Pending && filter(inv))
+            .min_by_key(|inv| (inv.status == InviteStatus::Accepted, inv.updated_at))
+            .map(|inv| inv.invite_id.clone())?;
+        store.invites.remove(&victim);
+        for index in store.inbox_index.values_mut() {
+            index.retain(|id| *id != victim);
+        }
+        store.inbox_index.retain(|_, ids| !ids.is_empty());
+        Some(victim)
     }
 
     /// List inbox for an agent with optional filters.
@@ -349,6 +465,27 @@ impl InboxStore {
         expected_contract_hash: Option<&str>,
         session_store: &SessionStore,
     ) -> Result<AcceptInviteResponse, RelayError> {
+        self.accept_invite_checked(
+            invite_id,
+            caller_agent_id,
+            expected_contract_hash,
+            session_store,
+            |_, _| Ok(()),
+        )
+        .await
+    }
+
+    /// As [`Self::accept_invite`], running `preflight(contract, provider)`
+    /// before the session is created. A failing check leaves the invite
+    /// pending and creates no session.
+    pub async fn accept_invite_checked(
+        &self,
+        invite_id: &str,
+        caller_agent_id: &str,
+        expected_contract_hash: Option<&str>,
+        session_store: &SessionStore,
+        preflight: impl FnOnce(&Contract, &str) -> Result<(), RelayError>,
+    ) -> Result<AcceptInviteResponse, RelayError> {
         // ── Phase 1: read lock ──────────────────────────────────────────
         let (contract, contract_hash, provider, from_agent_id) = {
             let store = self.inner.read().await;
@@ -387,6 +524,15 @@ impl InboxStore {
                 )));
             }
 
+            // Re-run the create-time binding checks: invites stored by an
+            // earlier relay version (persistence) may predate them.
+            Self::validate_invite_contract_binding(
+                &invite.from_agent_id,
+                &invite.to_agent_id,
+                &invite.purpose_code,
+                &invite.contract,
+            )?;
+
             // Verify contract hash if provided
             if let Some(expected) = expected_contract_hash {
                 if invite.contract_hash != expected {
@@ -405,10 +551,11 @@ impl InboxStore {
             // read lock released here
         };
 
-        // ── Phase 2: no lock — create session ──────────────────────────
+        // ── Phase 2: no lock — check the contract, create session ──────
+        preflight(&contract, &provider)?;
         let (session_id, tokens) = session_store
-            .create(contract, contract_hash.clone(), provider)
-            .await;
+            .try_create(contract, contract_hash.clone(), provider)
+            .await?;
 
         // ── Phase 3: write lock — re-validate and commit ────────────────
         let mut store = self.inner.write().await;
@@ -731,7 +878,7 @@ impl InboxStore {
 
     /// Reap expired invites. Two-phase:
     /// 1. PENDING → EXPIRED (emits INVITE_EXPIRED event, keeps invite visible)
-    /// 2. EXPIRED for > gc_grace → deleted
+    /// 2. terminal (EXPIRED, ACCEPTED, DECLINED, CANCELED) for > gc_grace → deleted
     pub async fn reap_expired(&self) -> usize {
         let now = Utc::now();
         let gc_grace_chrono = chrono::Duration::from_std(self.gc_grace).unwrap_or_else(|e| {
@@ -759,8 +906,15 @@ impl InboxStore {
                 ));
             }
 
-            // Phase 2: garbage-collect invites that have been EXPIRED for > gc_grace
-            if invite.status == InviteStatus::Expired {
+            // Phase 2: garbage-collect invites that have been in a terminal
+            // state (expired, accepted, declined, canceled) for > gc_grace
+            if matches!(
+                invite.status,
+                InviteStatus::Expired
+                    | InviteStatus::Accepted
+                    | InviteStatus::Declined
+                    | InviteStatus::Canceled
+            ) {
                 let expired_duration = now.signed_duration_since(invite.updated_at);
                 if expired_duration > gc_grace_chrono {
                     gc_ids.push(id.clone());
@@ -823,17 +977,31 @@ impl InboxStore {
     }
 
     /// Start the background reaper task.
+    /// Start the background reaper, restarted by a supervisor if it exits.
     pub fn start_reaper(self) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(60));
-            loop {
-                interval.tick().await;
-                let reaped = self.reap_expired().await;
-                if reaped > 0 {
-                    tracing::info!(reaped, "inbox reaper: expired/gc'd invites processed");
+        crate::supervise("inbox reaper", move || {
+            let store = self.clone();
+            async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(60));
+                loop {
+                    interval.tick().await;
+                    let reaped = store.reap_expired().await;
+                    if reaped > 0 {
+                        tracing::info!(reaped, "inbox reaper: expired/gc'd invites processed");
+                    }
                 }
             }
         })
+    }
+
+    /// Number of invites currently held.
+    pub async fn len(&self) -> usize {
+        self.inner.read().await.invites.len()
+    }
+
+    /// Whether the store holds no invites.
+    pub async fn is_empty(&self) -> bool {
+        self.inner.read().await.invites.is_empty()
     }
 
     // ── Internal helpers ──────────────────────────────────────────────────
@@ -1755,15 +1923,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_invite_participants_reversed_order() {
+    async fn test_create_invite_rejects_reversed_participant_order() {
         let store = InboxStore::new(Duration::from_secs(604800));
         let mut request = test_create_request();
         // Reverse the order: ["bob", "alice"] instead of ["alice", "bob"]
         request.contract["participants"] = serde_json::json!(["bob", "alice"]);
 
-        // Should succeed — order doesn't matter, just membership
+        // The sender must be participants[0] (initiator), the recipient [1].
         let result = store.create_invite("alice", &request, None).await;
-        assert!(result.is_ok());
+        assert!(
+            matches!(result, Err(RelayError::ContractValidation(ref msg)) if msg.contains("in that order"))
+        );
+        assert!(store.is_empty().await);
     }
 
     // ── Purpose code consistency (#257) ─────────────────────────────────
@@ -1780,5 +1951,219 @@ mod tests {
         assert!(
             matches!(result, Err(RelayError::ContractValidation(ref msg)) if msg.contains("purpose_code must match"))
         );
+    }
+
+    // ── Bounded state and contract TTL ──────────────────────────────────
+
+    #[tokio::test]
+    async fn test_terminal_invites_are_garbage_collected() {
+        let store = InboxStore::new(Duration::from_secs(600));
+        let sessions = SessionStore::new(Duration::from_secs(600));
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            let created = store
+                .create_invite("alice", &test_create_request(), None)
+                .await
+                .unwrap();
+            ids.push(created.invite_id);
+        }
+        store
+            .accept_invite(&ids[0], "bob", None, &sessions)
+            .await
+            .unwrap();
+        store.decline_invite(&ids[1], "bob", None).await.unwrap();
+        store.cancel_invite(&ids[2], "alice").await.unwrap();
+
+        // Age every invite past the GC grace period.
+        {
+            let mut inner = store.inner.write().await;
+            for invite in inner.invites.values_mut() {
+                invite.updated_at -= chrono::Duration::days(2);
+            }
+        }
+        assert_eq!(store.reap_expired().await, 3);
+        assert!(store.is_empty().await);
+        let index_entries: usize = store
+            .inner
+            .read()
+            .await
+            .inbox_index
+            .values()
+            .map(Vec::len)
+            .sum();
+        assert_eq!(index_entries, 0);
+    }
+
+    #[tokio::test]
+    async fn test_invite_expiry_honours_contract_invite_ttl() {
+        let store = InboxStore::new(Duration::from_secs(604800));
+        let mut request = test_create_request();
+        request.contract["invite_ttl_secs"] = serde_json::json!(60);
+        let created = store.create_invite("alice", &request, None).await.unwrap();
+        let ttl = created.expires_at - Utc::now();
+        assert!(ttl <= chrono::Duration::seconds(60), "{ttl}");
+        assert!(ttl > chrono::Duration::seconds(50), "{ttl}");
+    }
+
+    #[tokio::test]
+    async fn test_invite_capacity_enforced() {
+        let store = InboxStore::new(Duration::from_secs(600)).with_limits(1, 10);
+        store
+            .create_invite("alice", &test_create_request(), None)
+            .await
+            .unwrap();
+        let err = store
+            .create_invite("alice", &test_create_request(), None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RelayError::ServiceUnavailable(_)));
+        assert_eq!(store.len().await, 1);
+    }
+
+    #[tokio::test]
+    async fn test_pending_invites_per_sender_capped() {
+        let store = InboxStore::new(Duration::from_secs(600)).with_limits(100, 2);
+        for _ in 0..2 {
+            store
+                .create_invite("alice", &test_create_request(), None)
+                .await
+                .unwrap();
+        }
+        let err = store
+            .create_invite("alice", &test_create_request(), None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RelayError::RateLimited));
+    }
+
+    #[tokio::test]
+    async fn test_accept_with_failing_check_creates_no_session() {
+        let store = InboxStore::new(Duration::from_secs(600));
+        let sessions = SessionStore::new(Duration::from_secs(600));
+        let created = store
+            .create_invite("alice", &test_create_request(), None)
+            .await
+            .unwrap();
+        let err = store
+            .accept_invite_checked(&created.invite_id, "bob", None, &sessions, |_, _| {
+                Err(RelayError::ContractValidation("check failed".to_string()))
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RelayError::ContractValidation(_)));
+        assert!(sessions.is_empty().await);
+        let detail = store.get_invite(&created.invite_id, "bob").await.unwrap();
+        assert_eq!(detail.status, InviteStatus::Pending);
+    }
+
+    fn request_from_bob() -> CreateInviteRequest {
+        let mut request = test_create_request();
+        request.to_agent_id = "alice".to_string();
+        request.contract["participants"] = serde_json::json!(["bob", "alice"]);
+        request
+    }
+
+    #[tokio::test]
+    async fn test_finished_invites_from_one_sender_do_not_block_others() {
+        let store = InboxStore::new(Duration::from_secs(600)).with_limits(5, 3);
+        // One sender cycles create + cancel well past the store capacity.
+        for _ in 0..20 {
+            let created = store
+                .create_invite("alice", &test_create_request(), None)
+                .await
+                .unwrap();
+            store
+                .cancel_invite(&created.invite_id, "alice")
+                .await
+                .unwrap();
+        }
+        // Another sender can still create invites.
+        for _ in 0..3 {
+            store
+                .create_invite("bob", &request_from_bob(), None)
+                .await
+                .unwrap();
+        }
+        assert!(store.len().await <= 5);
+    }
+
+    #[tokio::test]
+    async fn test_invites_held_per_sender_capped() {
+        let store = InboxStore::new(Duration::from_secs(600))
+            .with_limits(100, 10)
+            .with_max_held_per_agent(3);
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            ids.push(
+                store
+                    .create_invite("alice", &test_create_request(), None)
+                    .await
+                    .unwrap()
+                    .invite_id,
+            );
+        }
+        // All three pending: the sender is at its cap.
+        let err = store
+            .create_invite("alice", &test_create_request(), None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RelayError::RateLimited));
+        // Finishing one frees a slot: its oldest finished invite is evicted.
+        store.cancel_invite(&ids[0], "alice").await.unwrap();
+        store
+            .create_invite("alice", &test_create_request(), None)
+            .await
+            .unwrap();
+        assert_eq!(store.len().await, 3);
+        assert!(store.get_invite(&ids[0], "alice").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_creates_respect_capacity() {
+        let store = InboxStore::new(Duration::from_secs(600)).with_limits(5, 100);
+        let mut tasks = Vec::new();
+        for _ in 0..20 {
+            let store = store.clone();
+            tasks.push(tokio::spawn(async move {
+                store
+                    .create_invite("alice", &test_create_request(), None)
+                    .await
+            }));
+        }
+        let mut created = 0;
+        for task in tasks {
+            if task.await.unwrap().is_ok() {
+                created += 1;
+            }
+        }
+        assert_eq!(created, 5);
+        assert_eq!(store.len().await, 5);
+    }
+
+    #[tokio::test]
+    async fn test_accept_rechecks_stored_participant_order() {
+        let store = InboxStore::new(Duration::from_secs(600));
+        let sessions = SessionStore::new(Duration::from_secs(600));
+        let created = store
+            .create_invite("alice", &test_create_request(), None)
+            .await
+            .unwrap();
+        // As stored by an earlier version: participants in reversed order.
+        store
+            .inner
+            .write()
+            .await
+            .invites
+            .get_mut(&created.invite_id)
+            .unwrap()
+            .contract
+            .participants
+            .reverse();
+        let err = store
+            .accept_invite(&created.invite_id, "bob", None, &sessions)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RelayError::ContractValidation(_)));
+        assert!(sessions.is_empty().await);
     }
 }

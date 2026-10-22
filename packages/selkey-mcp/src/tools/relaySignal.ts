@@ -64,6 +64,9 @@ import {
   withPinnedRelayKey,
 } from '../relay-trust.js';
 import { buildExpectedContractHashes, localAllowedPurposes } from '../responder-contracts.js';
+import { appendPrivateLine, ensurePrivateDir, selkeyStateDir, writePrivateJson } from '../secure-fs.js';
+import { PinError, normalizeAgentId, resolveAgentHint } from '../pin-store.js';
+import { recordHeldReceipt } from '../held-receipts.js';
 import {
   encodeRelayToken,
   decodeRelayToken,
@@ -672,6 +675,15 @@ function responderAcceptablePurposes(handle: RelayHandle, transport: AfalTranspo
 }
 
 function mapRelayError(error: unknown): { code: ErrorCode; detail: string } {
+  if (error instanceof PinError) {
+    const code: ErrorCode =
+      error.code === 'NEEDS_CONFIRMATION'
+        ? 'NEEDS_CONFIRMATION'
+        : error.code === 'AMBIGUOUS_ALIAS'
+          ? 'INVALID_INPUT'
+          : 'PEER_IDENTITY_MISMATCH';
+    return { code, detail: error.message };
+  }
   if (error instanceof RelayTrustError) {
     return {
       code: error.message.startsWith('relay_url') ? 'INVALID_INPUT' : 'PRECONDITION_FAILED',
@@ -728,11 +740,7 @@ function writeLastSessionFile(
   relayUrl: string,
 ): void {
   try {
-    const workdir = process.env['SELKEY_WORKDIR'] ?? process.cwd();
-    const dir = path.join(workdir, '.selkey');
-    fs.mkdirSync(dir, { recursive: true });
-    const finalPath = path.join(dir, 'last_session.json');
-    const tmpPath = `${finalPath}.tmp`;
+    const finalPath = path.join(selkeyStateDir(), 'last_session.json');
     const record = {
       session_id: sessionId,
       role,
@@ -740,11 +748,7 @@ function writeLastSessionFile(
       relay_url: relayUrl,
       timestamp: new Date().toISOString(),
     };
-    fs.writeFileSync(tmpPath, JSON.stringify(record, null, 2) + '\n', {
-      encoding: 'utf8',
-      mode: 0o600,
-    });
-    fs.renameSync(tmpPath, finalPath);
+    writePrivateJson(finalPath, record);
   } catch (err) {
     // Non-fatal — log but do not fail the relay operation
     console.error(
@@ -753,14 +757,18 @@ function writeLastSessionFile(
   }
 }
 
-function resolveAgentAlias(hint: string, knownAgents: NormalizedKnownAgent[]): string {
-  const hintLower = hint.toLowerCase();
-  const match = knownAgents.find(
-    (entry) =>
-      entry.agent_id.toLowerCase() === hintLower ||
-      entry.aliases.some((alias) => alias.toLowerCase() === hintLower),
-  );
-  return match ? match.agent_id : hint;
+/**
+ * Resolve an agent_id or alias to an agent_id (exact NFC match, no case
+ * folding). Aliases come from known agents and from the transport's pin
+ * store. An alias naming more than one agent throws AMBIGUOUS_ALIAS.
+ */
+function resolveAgentAlias(
+  hint: string,
+  knownAgents: NormalizedKnownAgent[],
+  transport?: AfalTransport,
+): string {
+  const pinned = transport instanceof DirectAfalTransport ? transport.pinStore.listPins() : [];
+  return resolveAgentHint(hint, [...knownAgents, ...pinned]) ?? normalizeAgentId(hint);
 }
 
 function hashInput(input: string): string {
@@ -826,14 +834,8 @@ interface SessionStateFile {
 }
 
 function atomicWriteJson(filePath: string, data: unknown): void {
-  const dir = path.dirname(filePath);
-  fs.mkdirSync(dir, { recursive: true });
-  const tmpPath = `${filePath}.tmp`;
-  fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2) + '\n', {
-    encoding: 'utf8',
-    mode: 0o600,
-  });
-  fs.renameSync(tmpPath, filePath);
+  // Parent directory 0700; file 0600 via an O_EXCL temp file + rename.
+  writePrivateJson(filePath, data);
 }
 
 function rebuildSessionIndex(sessionsDir: string, indexPath: string): void {
@@ -908,6 +910,7 @@ function writeSessionStateFile(
     const workdir = resolveWorkdir();
     const sessionsDir = path.join(workdir, '.selkey', 'sessions');
     const indexPath = path.join(workdir, '.selkey', 'active_sessions.json');
+    ensurePrivateDir(path.join(workdir, '.selkey'));
 
     const now = new Date();
     const dueAt = new Date(now.getTime() + nextUpdateSeconds * 1000);
@@ -1077,6 +1080,40 @@ function localSessionData(handle: RelayHandle): LocalSessionData {
   };
 }
 
+/**
+ * Remember the receipt of a session this agent completed, with the
+ * counterparty from the local handle. IFC grants can only be issued for a
+ * held receipt.
+ */
+function recordCompletedReceipt(
+  handle: RelayHandle,
+  localSessionId: string | undefined,
+  output: SessionOutputResponse,
+  verified: boolean,
+): void {
+  // Only the v3 receipt the session check covered; the session id comes from
+  // this agent's own handle, never from the receipt.
+  const receipt = output.receipt as Record<string, unknown> | null | undefined;
+  if (!receipt || typeof receipt !== 'object' || typeof receipt['receipt_id'] !== 'string' || !localSessionId) {
+    return;
+  }
+  try {
+    recordHeldReceipt({
+      agent_id: handle.agentId,
+      receipt_id: receipt['receipt_id'],
+      session_id: localSessionId,
+      counterparty: handle.counterparty,
+      role: handle.role,
+      receipt_verified: verified,
+      recorded_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error(
+      `recordCompletedReceipt: failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 function completedResponse(
   handle: RelayHandle,
   output: SessionOutputResponse,
@@ -1087,11 +1124,13 @@ function completedResponse(
     return failedResponse(handle, 'RECEIPT_VERIFICATION_FAILED', receiptCheck.detail);
   }
   handle.phase = 'COMPLETED';
+  const localSessionId = handle.sessionId;
   const effectiveSessionId = getEffectiveCompletedSessionId(handle, output);
   if (effectiveSessionId) {
     handle.sessionId = effectiveSessionId;
   }
   removeSessionStateFile(handle);
+  recordCompletedReceipt(handle, localSessionId, output, receiptCheck.status === 'VERIFIED');
   return buildSuccess('COMPLETE', {
     mode: handle.role === 'INITIATOR' ? 'INITIATE' : 'RESPOND',
     state: 'COMPLETED',
@@ -1263,7 +1302,7 @@ async function phaseInvite(
   knownAgents: NormalizedKnownAgent[],
   relayProfileId?: string,
 ): Promise<ToolResponse<RelaySignalOutput>> {
-  const counterparty = resolveAgentAlias(handle.counterparty, knownAgents);
+  const counterparty = resolveAgentAlias(handle.counterparty, knownAgents, transport);
   const acceptablePurposes = parseAcceptablePurposes(args.acceptable_purposes);
   if (args.purpose && acceptablePurposes.length) {
     return buildError(
@@ -2733,7 +2772,7 @@ export async function handleRelaySignal(
           return buildError('INVALID_INPUT', 'counterparty is required for INITIATE mode');
         }
 
-        const counterparty = resolveAgentAlias(args.counterparty, knownAgents);
+        const counterparty = resolveAgentAlias(args.counterparty, knownAgents, transport);
         const agentId = transport.agentId ?? process.env['SELKEY_AGENT_ID'] ?? '';
 
         // Compute contract hash early — needed for both collision path and idempotency key
@@ -2839,7 +2878,7 @@ export async function handleRelaySignal(
           );
         }
 
-        const from = resolveAgentAlias(args.from, knownAgents);
+        const from = resolveAgentAlias(args.from, knownAgents, transport);
         const agentId = transport.agentId ?? process.env['SELKEY_AGENT_ID'] ?? '';
 
         // Compute idempotency key
@@ -2915,11 +2954,8 @@ export async function handleRelaySignal(
     const { code, detail } = mapRelayError(error);
     // Diagnostic file log for debugging live test failures
     try {
-      const workdir = process.env['SELKEY_WORKDIR'] ?? process.cwd();
-      const debugDir = path.join(workdir, '.selkey');
-      fs.mkdirSync(debugDir, { recursive: true });
       const entry = `[${new Date().toISOString()}] error_code=${code} detail=${detail} raw=${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`;
-      fs.appendFileSync(path.join(debugDir, 'relay-debug.log'), entry, 'utf8');
+      appendPrivateLine(path.join(selkeyStateDir(), 'relay-debug.log'), entry);
     } catch (logErr) {
       console.error(
         `handleRelaySignal: failed to write diagnostic log: ${logErr instanceof Error ? logErr.message : String(logErr)}`,

@@ -93,6 +93,11 @@ pub fn load_admission(
     let schemas = load_kind::<serde_json::Value>(&registry_root, "schemas", &config.schemas)?;
     let policies =
         load_kind::<RelayEnforcementPolicy>(&registry_root, "policies", &config.policies)?;
+    for (hash, policy) in &policies {
+        crate::enforcement_policy::validate_policy(policy).map_err(|e| {
+            RelayError::Internal(format!("admitted policy sha256:{hash} rejected: {e}"))
+        })?;
+    }
     let profiles =
         load_kind::<crate::types::ModelProfile>(&registry_root, "profiles", &config.profiles)?;
     let programs = load_kind::<PromptProgram>(&registry_root, "programs", &config.programs)?;
@@ -646,5 +651,37 @@ path = "{}"
         assert!(artefacts.programs.is_empty());
 
         fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn test_admitted_policies_are_validated() {
+        let bad_policies = [
+            // Unsupported unicode category.
+            serde_json::json!({
+                "policy_version": "1", "policy_id": "bad-category", "policy_scope": "RELAY_GLOBAL",
+                "rules": [{
+                    "rule_id": "r", "type": "unicode_category_reject", "value": "Lu",
+                    "scope": { "kind": "all_string_values" }, "classification": "GATE"
+                }]
+            }),
+            // Unsupported scope.
+            serde_json::json!({
+                "policy_version": "1", "policy_id": "bad-scope", "policy_scope": "PER_SCHEMA",
+                "rules": []
+            }),
+        ];
+        for bad in bad_policies {
+            let tmp = test_tmp("bad-policy");
+            let (config_path, _, policy_digest, _, _) = setup_admission(&tmp);
+            let registry = tmp.join("registry");
+            let bad_digest = write_artefact(&registry, "policies", &bad);
+            let config = fs::read_to_string(&config_path)
+                .unwrap()
+                .replace(&policy_digest, &bad_digest);
+            fs::write(&config_path, config).unwrap();
+            let err = load_admission(&config_path, None).unwrap_err().to_string();
+            assert!(err.contains("rejected"), "{err}");
+            fs::remove_dir_all(&tmp).ok();
+        }
     }
 }

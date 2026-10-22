@@ -10,8 +10,8 @@ pub struct RegisteredAgent {
     pub agent_id: String,
     /// Bearer token for inbox operations.
     pub inbox_token: String,
-    /// Ed25519 public key (hex). Optional — used as default for from_agent_pubkey
-    /// when creating invites.
+    /// Ed25519 public key (hex). Optional. When set, it is the
+    /// `from_agent_pubkey` attached to this agent's invites.
     #[serde(default)]
     pub public_key_hex: Option<String>,
 }
@@ -25,13 +25,15 @@ struct RegistryConfig {
 /// Registry of agents authorized for inbox operations.
 ///
 /// Loaded from a JSON config file at startup. Fail-closed: missing file = startup
-/// failure unless `SELKEY_INBOX_AUTH=off` is explicitly set.
+/// failure unless `SELKEY_INBOX_AUTH=off` is explicitly set. Every
+/// `inbox_token` must pass [`crate::auth::check_token_strength`].
 #[derive(Clone)]
 pub struct AgentRegistry {
-    /// token -> RegisteredAgent (for constant-time-ish lookup by token)
-    by_token: HashMap<String, RegisteredAgent>,
-    /// agent_id -> RegisteredAgent (for lookup by agent_id)
-    by_agent_id: HashMap<String, RegisteredAgent>,
+    /// Registered agents, in load order. Token lookup compares the presented
+    /// token with every entry in constant time.
+    agents: Vec<RegisteredAgent>,
+    /// agent_id -> index into `agents`
+    by_agent_id: HashMap<String, usize>,
 }
 
 impl AgentRegistry {
@@ -56,16 +58,22 @@ impl AgentRegistry {
 
     /// Build from a list of agents.
     pub fn from_agents(agents: Vec<RegisteredAgent>) -> Result<Self, RelayError> {
-        let mut by_token = HashMap::new();
+        let mut tokens = std::collections::HashSet::new();
         let mut by_agent_id = HashMap::new();
-        for agent in agents {
+        for (index, agent) in agents.iter().enumerate() {
             if agent.inbox_token.is_empty() {
                 return Err(RelayError::Internal(format!(
                     "agent '{}' has an empty inbox_token",
                     agent.agent_id
                 )));
             }
-            if by_token.contains_key(&agent.inbox_token) {
+            crate::auth::check_token_strength(&agent.inbox_token).map_err(|reason| {
+                RelayError::Internal(format!(
+                    "agent '{}' has a weak inbox_token: {reason}",
+                    agent.agent_id
+                ))
+            })?;
+            if !tokens.insert(agent.inbox_token.as_str()) {
                 return Err(RelayError::Internal(format!(
                     "duplicate inbox_token for agent '{}'",
                     agent.agent_id
@@ -77,11 +85,10 @@ impl AgentRegistry {
                     agent.agent_id
                 )));
             }
-            by_token.insert(agent.inbox_token.clone(), agent.clone());
-            by_agent_id.insert(agent.agent_id.clone(), agent);
+            by_agent_id.insert(agent.agent_id.clone(), index);
         }
         Ok(Self {
-            by_token,
+            agents,
             by_agent_id,
         })
     }
@@ -89,19 +96,27 @@ impl AgentRegistry {
     /// Create an empty registry (for dev mode with SELKEY_INBOX_AUTH=off).
     pub fn empty() -> Self {
         Self {
-            by_token: HashMap::new(),
+            agents: Vec::new(),
             by_agent_id: HashMap::new(),
         }
     }
 
     /// Validate an inbox bearer token. Returns the registered agent if valid.
+    ///
+    /// The token is compared with every registered token in constant time.
     pub fn validate_token(&self, token: &str) -> Option<&RegisteredAgent> {
-        self.by_token.get(token)
+        let mut matched = None;
+        for agent in &self.agents {
+            if crate::auth::tokens_equal(token, &agent.inbox_token) {
+                matched = Some(agent);
+            }
+        }
+        matched
     }
 
     /// Look up an agent by agent_id.
     pub fn get_agent(&self, agent_id: &str) -> Option<&RegisteredAgent> {
-        self.by_agent_id.get(agent_id)
+        self.by_agent_id.get(agent_id).map(|&i| &self.agents[i])
     }
 
     /// Check if the registry has any agents registered.
@@ -119,16 +134,19 @@ impl AgentRegistry {
 mod tests {
     use super::*;
 
+    const ALICE_TOKEN: &str = "6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f";
+    const BOB_TOKEN: &str = "c4e8b2a6f0d93715e2b8a4c6d0f19e37";
+
     fn test_agents() -> Vec<RegisteredAgent> {
         vec![
             RegisteredAgent {
                 agent_id: "alice".to_string(),
-                inbox_token: "alice_token_123".to_string(),
+                inbox_token: ALICE_TOKEN.to_string(),
                 public_key_hex: Some("aa".repeat(32)),
             },
             RegisteredAgent {
                 agent_id: "bob".to_string(),
-                inbox_token: "bob_token_456".to_string(),
+                inbox_token: BOB_TOKEN.to_string(),
                 public_key_hex: None,
             },
         ]
@@ -145,12 +163,12 @@ mod tests {
     fn test_validate_token() {
         let registry = AgentRegistry::from_agents(test_agents()).unwrap();
 
-        let agent = registry.validate_token("alice_token_123").unwrap();
+        let agent = registry.validate_token(ALICE_TOKEN).unwrap();
         assert_eq!(agent.agent_id, "alice");
         let expected_key = "aa".repeat(32);
         assert_eq!(agent.public_key_hex.as_deref(), Some(expected_key.as_str()));
 
-        let agent = registry.validate_token("bob_token_456").unwrap();
+        let agent = registry.validate_token(BOB_TOKEN).unwrap();
         assert_eq!(agent.agent_id, "bob");
         assert!(agent.public_key_hex.is_none());
 
@@ -179,12 +197,12 @@ mod tests {
         let agents = vec![
             RegisteredAgent {
                 agent_id: "alice".to_string(),
-                inbox_token: "same_token".to_string(),
+                inbox_token: ALICE_TOKEN.to_string(),
                 public_key_hex: None,
             },
             RegisteredAgent {
                 agent_id: "bob".to_string(),
-                inbox_token: "same_token".to_string(),
+                inbox_token: ALICE_TOKEN.to_string(),
                 public_key_hex: None,
             },
         ];
@@ -197,12 +215,12 @@ mod tests {
         let agents = vec![
             RegisteredAgent {
                 agent_id: "alice".to_string(),
-                inbox_token: "token_1".to_string(),
+                inbox_token: ALICE_TOKEN.to_string(),
                 public_key_hex: None,
             },
             RegisteredAgent {
                 agent_id: "alice".to_string(),
-                inbox_token: "token_2".to_string(),
+                inbox_token: BOB_TOKEN.to_string(),
                 public_key_hex: None,
             },
         ];
@@ -225,8 +243,8 @@ mod tests {
     fn test_load_from_json() {
         let json = r#"{
             "agents": [
-                { "agent_id": "alice", "inbox_token": "tok_a", "public_key_hex": "aabbcc" },
-                { "agent_id": "bob", "inbox_token": "tok_b" }
+                { "agent_id": "alice", "inbox_token": "6a1f0c3e9b7d24a58e0f1b6c3d9a7e2f", "public_key_hex": "aabbcc" },
+                { "agent_id": "bob", "inbox_token": "c4e8b2a6f0d93715e2b8a4c6d0f19e37" }
             ]
         }"#;
         let tmpdir = std::env::temp_dir().join("selkey_test_registry");
@@ -236,9 +254,49 @@ mod tests {
 
         let registry = AgentRegistry::load_from_file(path.to_str().unwrap()).unwrap();
         assert_eq!(registry.len(), 2);
-        assert!(registry.validate_token("tok_a").is_some());
-        assert!(registry.validate_token("tok_b").is_some());
+        assert!(registry.validate_token(ALICE_TOKEN).is_some());
+        assert!(registry.validate_token(BOB_TOKEN).is_some());
 
         std::fs::remove_dir_all(&tmpdir).ok();
+    }
+
+    #[test]
+    fn test_weak_inbox_tokens_rejected_at_load() {
+        for weak in [
+            "alice_token_123".to_string(),
+            "test_alice_inbox_token_7f3a9b2e".to_string(),
+            "a".repeat(64),
+            "ab".repeat(32),
+        ] {
+            let agents = vec![RegisteredAgent {
+                agent_id: "alice".to_string(),
+                inbox_token: weak.clone(),
+                public_key_hex: None,
+            }];
+            let err = match AgentRegistry::from_agents(agents) {
+                Ok(_) => panic!("weak token accepted: {weak:?}"),
+                Err(e) => e.to_string(),
+            };
+            assert!(err.contains("weak inbox_token"), "{err}");
+            assert!(
+                !err.contains(&weak),
+                "error must not contain the token: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_token_rejects_prefix_and_extension() {
+        let registry = AgentRegistry::from_agents(test_agents()).unwrap();
+        assert!(registry.validate_token(&ALICE_TOKEN[..31]).is_none());
+        assert!(registry
+            .validate_token(&format!("{ALICE_TOKEN}0"))
+            .is_none());
+        assert_eq!(
+            registry
+                .validate_token(ALICE_TOKEN)
+                .map(|a| a.agent_id.as_str()),
+            Some("alice")
+        );
     }
 }

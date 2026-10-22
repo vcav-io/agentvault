@@ -41,17 +41,28 @@ Verifies a receipt's Ed25519 signature against the relay verifying key. Receipt 
 | `SELKEY_RELAY_URL` | Yes | Relay base URL, e.g. `http://localhost:8080`. The only relay used unless `SELKEY_RELAY_ALLOWLIST` adds others; peer-advertised relays are never used as a fallback. Plain `http://` is accepted only for loopback hosts and host names listed in `SELKEY_RELAY_INSECURE_HTTP_HOSTS`. If `SELKEY_RELAY_VERIFYING_KEY_HEX` is set, the relay's `/health` key must match it before input is submitted |
 | `SELKEY_AGENT_ID` | Recommended | This agent's ID, used for contract building and idempotency |
 | `SELKEY_RESUME_TOKEN_SECRET` | Recommended | HMAC secret for signing resume tokens |
-| `SELKEY_KNOWN_AGENTS` | Optional | JSON array of `{agent_id, aliases}` for alias resolution |
+| `SELKEY_KNOWN_AGENTS` | Optional | JSON array of `{agent_id, aliases, public_key_hex?, a2a_send_message_url?}`. Aliases match exactly; an ambiguous alias is an error. `public_key_hex` seeds the agent pin store |
 | `SELKEY_RELAY_VERIFYING_KEY_HEX` | Optional | Pinned relay Ed25519 verifying key (64 hex chars), obtained from the relay operator. Added to every contract this agent builds as `relay_verifying_key_hex` (the relay refuses the session if its key differs), and used by `selkey.verify_receipt` and session receipt checks. As a responder it still accepts the same contract without the key field (an unpinned initiator); the pin is then enforced through the `/health` check and receipt verification only |
 | `SELKEY_AFAL_SEED_HEX` | Optional | Ed25519 seed (32-byte hex) — enables AFAL direct mode (INITIATE/RESPOND) |
 | `SELKEY_AFAL_HTTP_PORT` | Optional | Port for the AFAL HTTP listener (enables RESPOND mode) |
 | `SELKEY_AFAL_BIND_ADDRESS` | Optional | AFAL bind address (default: `127.0.0.1`) |
-| `SELKEY_AFAL_TRUSTED_AGENTS` | Optional | JSON array of `{agentId, publicKeyHex}` for AFAL admission |
+| `SELKEY_AFAL_TRUSTED_AGENTS` | Optional | JSON array of `{agentId, publicKeyHex}`; seeds the agent pin store |
+| `SELKEY_AGENT_PIN_MODE` | Optional | `preshared` (default) or `tofu` (first contact needs `selkey-mcp pins confirm` by a person) |
 | `SELKEY_AFAL_ALLOWED_PURPOSES` | Optional | Comma-separated purposes for AFAL RESPOND (default: `MEDIATION`). Also used by RESPOND when `expected_purpose` is omitted |
 | `SELKEY_RELAY_ALLOWLIST` | Optional | Comma-separated additional relay URLs this agent will use. Peer-supplied relay URLs are only used if they match `SELKEY_RELAY_URL` or this list |
 | `SELKEY_AFAL_PEER_DESCRIPTOR_URL` | Optional | Peer descriptor URL for AFAL INITIATE mode |
 
 Without `SELKEY_AFAL_SEED_HEX`, only `CREATE` and `JOIN` (legacy token exchange) modes are available.
+
+## IFC follow-up messages
+
+Post-session IFC messages use recipient-issued grants (`VCAV-IFC-GRANT-V2`). The agent that will *receive* follow-up calls `selkey.create_ifc_grant` for a receipt it holds from a session with the audience; the grant is delivered to the audience, which sends with `selkey.send_ifc_message` and the `grant_id`. The recipient enforces expiry, use count, `message_id` de-duplication and revocation from its own store (`.selkey/ifc-grants.json`) and appends every decision to `.selkey/ifc-audit.jsonl`. `selkey.revoke_ifc_grant` and `selkey.list_ifc_grants` manage grants. V1 grants are rejected.
+
+## Agent identity pins
+
+Peers are identified by pinned Ed25519 keys stored in `$SELKEY_WORKDIR/.selkey/pins.json` (`0700` directory, `0600` file, refused if group- or world-writable). Every PROPOSE, ADMIT, DENY, COMMIT, `/afal/negotiate` request and IFC signature is verified against `pins[agent_id]`; keys in agent cards, descriptors or messages are only compared with the pin. By default a peer must be pinned in advance (`SELKEY_AFAL_TRUSTED_AGENTS`, `SELKEY_KNOWN_AGENTS` with `public_key_hex`, or `selkey-mcp pins add`). With `SELKEY_AGENT_PIN_MODE=tofu`, first contact returns `NEEDS_CONFIRMATION` with the key fingerprint, and a person confirms it in a terminal with `selkey-mcp pins confirm <agent_id>`; no MCP tool can confirm a pin. A key that differs from the pin fails with both fingerprints until the operator re-pins it or applies a rotation statement signed by the pinned key (`selkey-mcp pins rotate`).
+
+An ADMIT must echo the PROPOSE's `proposal_id`, expire within 10 minutes, and select a model profile the PROPOSE offered. Negotiation selections must name an offered contract, model profile or topic code. Negotiation requests are signed by the sender and accepted only from pinned agents.
 
 ## Responder checks
 

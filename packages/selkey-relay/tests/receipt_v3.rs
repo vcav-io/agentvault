@@ -92,6 +92,7 @@ fn app_state(mock_base_url: &str, prompt_dir: &str) -> Arc<AppState> {
         admitted_programs: None,
         admitted_profiles: None,
         operator_token: Some(OPERATOR_TOKEN.to_string()),
+        limits: Default::default(),
     })
 }
 

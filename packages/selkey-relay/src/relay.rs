@@ -183,18 +183,35 @@ use crate::enforcement_policy::{EnforcementClass, EnforcementRule, RuleScopeKind
 /// `additionalProperties: false`. This guard fires only if the schema is misconfigured,
 /// weakened, or a provider structured-output bug bypasses enum constraints.
 ///
-/// **Scope**: Relay-global — rules apply to ALL output schemas, not just COMPAT v2.
-/// Scans JSON string values only. JSON number literals (e.g. `{"confidence": 3}`)
-/// are NOT checked — schema validation runs first and rejects non-string types where
-/// string enums are expected.
+/// **Scope**: Relay-global — rules apply to ALL output schemas. For
+/// `all_string_values` rules the guard checks:
+/// - every string value;
+/// - every JSON number, by its JSON text (so a digit rule rejects numbers);
+/// - every object key that the output schema does not declare as a property
+///   (declared names are fixed by the schema, not chosen by the model).
+///
+/// A top-level key listed in the rule's `skip_keys` is exempt only when the
+/// schema pins that property to a single value (`const`, or an `enum` with one
+/// member); otherwise it is checked like any other key.
+///
+/// An unsupported category fails closed (policies are validated at load, so
+/// this is unreachable in a running relay).
 fn validate_output_enforcement_rules(
     output: &serde_json::Value,
     rules: &[EnforcementRule],
+    schema: &serde_json::Value,
 ) -> Result<(), RelayError> {
+    let declared = declared_property_names(schema);
     for rule in rules {
         match rule.rule_type {
             RuleType::UnicodeCategoryReject => {
-                if json_strings_contain_category(output, &rule.value, &rule.scope) {
+                if !crate::enforcement_policy::is_supported_category(&rule.value) {
+                    return Err(RelayError::EnforcementPolicy(format!(
+                        "rule '{}' references an unsupported unicode category",
+                        rule.rule_id
+                    )));
+                }
+                if output_contains_category(output, &rule.value, &rule.scope, schema, &declared) {
                     match rule.classification {
                         EnforcementClass::Gate => {
                             tracing::warn!(rule_id = %rule.rule_id, "GATE rule violated");
@@ -215,44 +232,121 @@ fn validate_output_enforcement_rules(
     Ok(())
 }
 
-/// Check if top-level value contains forbidden characters per scope rules.
-///
-/// For `AllStringValues` scope: applies skip_keys at the top-level object only.
-/// If the top-level value is an Array, applies skip_keys to nothing (arrays have
-/// no keys) — the array elements are checked recursively via `json_value_contains_category`.
-fn json_strings_contain_category(
+/// Every property name declared anywhere in a schema (`properties` maps at
+/// any depth).
+fn declared_property_names(schema: &serde_json::Value) -> std::collections::HashSet<String> {
+    fn walk(node: &serde_json::Value, out: &mut std::collections::HashSet<String>) {
+        match node {
+            serde_json::Value::Object(map) => {
+                if let Some(serde_json::Value::Object(props)) = map.get("properties") {
+                    out.extend(props.keys().cloned());
+                }
+                for value in map.values() {
+                    walk(value, out);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    walk(item, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = std::collections::HashSet::new();
+    walk(schema, &mut out);
+    out
+}
+
+/// Whether the schema pins top-level property `key` to a single value.
+fn schema_pins_property(schema: &serde_json::Value, key: &str) -> bool {
+    let Some(property) = schema.get("properties").and_then(|p| p.get(key)) else {
+        return false;
+    };
+    property.get("const").is_some()
+        || property
+            .get("enum")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|values| values.len() == 1)
+}
+
+/// Check output per scope rules (see [`validate_output_enforcement_rules`]).
+fn output_contains_category(
     value: &serde_json::Value,
     category: &str,
     scope: &crate::enforcement_policy::RuleScope,
+    schema: &serde_json::Value,
+    declared: &std::collections::HashSet<String>,
 ) -> bool {
     match &scope.kind {
         RuleScopeKind::AllStringValues => match value {
             serde_json::Value::Object(map) => map.iter().any(|(key, val)| {
-                if scope.skip_keys.contains(key) {
+                if scope.skip_keys.contains(key) && schema_pins_property(schema, key) {
                     return false;
                 }
-                json_value_contains_category(val, category)
+                key_contains_category(key, category, declared)
+                    || json_value_contains_category(val, category, declared)
             }),
-            serde_json::Value::Array(arr) => arr
-                .iter()
-                .any(|v| json_value_contains_category(v, category)),
-            _ => json_value_contains_category(value, category),
+            _ => json_value_contains_category(value, category, declared),
         },
     }
 }
 
-/// Recursively check if any string value in the JSON contains a character
-/// matching the given unicode category.
-fn json_value_contains_category(value: &serde_json::Value, category: &str) -> bool {
+fn key_contains_category(
+    key: &str,
+    category: &str,
+    declared: &std::collections::HashSet<String>,
+) -> bool {
+    !declared.contains(key) && key.chars().any(|c| unicode_category_contains(c, category))
+}
+
+/// Recursively check string values, number literals and undeclared keys for
+/// a character in the given unicode category.
+fn json_value_contains_category(
+    value: &serde_json::Value,
+    category: &str,
+    declared: &std::collections::HashSet<String>,
+) -> bool {
     match value {
         serde_json::Value::String(s) => s.chars().any(|c| unicode_category_contains(c, category)),
+        serde_json::Value::Number(n) => n
+            .to_string()
+            .chars()
+            .any(|c| unicode_category_contains(c, category)),
         serde_json::Value::Array(arr) => arr
             .iter()
-            .any(|v| json_value_contains_category(v, category)),
-        serde_json::Value::Object(map) => map
-            .values()
-            .any(|v| json_value_contains_category(v, category)),
+            .any(|v| json_value_contains_category(v, category, declared)),
+        serde_json::Value::Object(map) => map.iter().any(|(key, v)| {
+            key_contains_category(key, category, declared)
+                || json_value_contains_category(v, category, declared)
+        }),
         _ => false,
+    }
+}
+
+/// Largest integer magnitude released as a JSON integer (receipt v3 limit).
+const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+
+/// Rewrite every integral floating-point number (`1.0`, `1e0`, `-0.0`) as a
+/// JSON integer, so the released output has one representation per value.
+/// Non-integral numbers are already re-serialised canonically by serde_json.
+pub fn normalize_integral_numbers(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Number(n) if !n.is_i64() && !n.is_u64() => match n.as_f64() {
+            Some(f) if f.fract() == 0.0 && f.abs() <= MAX_SAFE_INTEGER => {
+                serde_json::Value::from(f as i64)
+            }
+            _ => serde_json::Value::Number(n),
+        },
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.into_iter().map(normalize_integral_numbers).collect())
+        }
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.into_iter()
+                .map(|(k, v)| (k, normalize_integral_numbers(v)))
+                .collect(),
+        ),
+        other => other,
     }
 }
 
@@ -268,12 +362,9 @@ fn unicode_category_contains(c: char, category: &str) -> bool {
     match category {
         "Nd" => c.is_numeric(),
         "Sc" => is_currency_symbol(c),
-        _ => {
-            // Startup validation (`validate_rule_categories`) ensures this is unreachable.
-            // debug_assert catches regressions in tests without adding a runtime error path.
-            debug_assert!(false, "unsupported unicode category: {category}");
-            false
-        }
+        // Unsupported categories are rejected at policy load and, at run
+        // time, by `validate_output_enforcement_rules` before this is called.
+        _ => false,
     }
 }
 
@@ -319,18 +410,57 @@ fn allowlist_matches_profile(entry: &str, profile_id: &str, profile_hash: &str) 
         || entry.strip_prefix("sha256:") == Some(profile_hash)
 }
 
-/// Core relay logic: validate → assemble → call → check → sign → return.
+/// Everything the relay resolves from a contract before any input is taken.
 ///
-/// Extracted from the single-shot `relay()` function so it can be reused by
-/// bilateral session processing.
-pub async fn relay_core(
+/// Produced by [`preflight_contract`], which runs every contract check the
+/// relay makes: participants, policy, model profile and allowlist, relay key
+/// pin, model constraints, TTLs, output schema acceptance, entropy limits,
+/// prompt program and provider availability. Session creation, invite
+/// creation and acceptance, and inference all run it, so a contract that
+/// would fail at inference is rejected before any party submits input.
+#[derive(Debug, Clone)]
+pub struct ContractPreflight {
+    /// Hash of the resolved enforcement policy.
+    pub policy_hash: String,
+    /// The resolved enforcement policy.
+    pub policy: crate::enforcement_policy::RelayEnforcementPolicy,
+    /// Provider that will run inference.
+    pub effective_provider: String,
+    /// Model that will run inference.
+    pub effective_model_id: String,
+    /// Content hash of the resolved model profile, if the contract binds one.
+    pub model_profile_hash: Option<String>,
+    /// Effective `max_completion_tokens`.
+    pub effective_max_tokens: u32,
+    /// The accepted output schema and its entropy upper bound.
+    pub schema: crate::schema_acceptance::ResolvedOutputSchema,
+    /// Entropy enforcement mode (contract value, `Gate` when absent).
+    pub entropy_mode: vault_family_types::EntropyEnforcementMode,
+    /// Per-session bit limit: the contract budget, capped by the operator limit.
+    pub budget_limit_bits: u32,
+    /// The prompt program and its content hash.
+    pub program: crate::prompt_program::PromptProgram,
+    pub prompt_template_hash: String,
+}
+
+fn provider_configured(state: &AppState, provider: &str) -> bool {
+    match provider {
+        "anthropic" => state.anthropic_api_key.is_some(),
+        "openai" => state.openai_api_key.is_some(),
+        "gemini" => state.gemini_api_key.is_some(),
+        _ => false,
+    }
+}
+
+/// Run every contract check that does not need the participants' inputs.
+///
+/// `provider_name` is the provider resolved from the request (see
+/// [`crate::resolve_provider`]); a model profile in the contract overrides it.
+pub fn preflight_contract(
     contract: &Contract,
-    contract_hash: &str,
-    input_a: &RelayInput,
-    input_b: &RelayInput,
     provider_name: &str,
     state: &AppState,
-) -> Result<(RelayResult, InferenceTiming), RelayError> {
+) -> Result<ContractPreflight, RelayError> {
     // 1. Validate contract has exactly 2 participants
     if contract.participants.len() != 2 {
         return Err(RelayError::ContractValidation(
@@ -343,7 +473,7 @@ pub async fn relay_core(
         .policy_registry
         .resolve(contract.enforcement_policy_hash.as_deref())?;
     let resolved_hash = resolved.hash.to_string();
-    let resolved_policy = resolved.policy;
+    let resolved_policy = resolved.policy.clone();
 
     // Warn if contract omits policy hash on a multi-policy relay
     if contract.enforcement_policy_hash.is_none() && state.policy_registry.len() > 1 {
@@ -384,30 +514,35 @@ pub async fn relay_core(
     }
 
     let (effective_provider, effective_model_id, model_profile_hash) = match &resolved_profile {
-        Some(rt) => {
-            tracing::info!(
-                profile_id = %rt.profile.profile_id,
-                provider = %rt.provider,
-                model_id = %rt.model_id,
-                "profile-driven dispatch"
-            );
-            (
-                rt.provider.as_str(),
-                rt.model_id.clone(),
-                Some(rt.profile_hash.clone()),
-            )
-        }
+        Some(rt) => (
+            rt.provider.clone(),
+            rt.model_id.clone(),
+            Some(rt.profile_hash.clone()),
+        ),
         None => {
-            tracing::warn!("session running in legacy unbound mode (no model_profile_id)");
             let model = match provider_name {
                 "anthropic" => state.anthropic_model_id.clone(),
                 "openai" => state.openai_model_id.clone(),
                 "gemini" => state.gemini_model_id.clone(),
                 _ => String::new(),
             };
-            (provider_name, model, None)
+            (provider_name.to_string(), model, None)
         }
     };
+    if !provider_configured(state, &effective_provider) {
+        return Err(RelayError::ContractValidation(format!(
+            "provider '{effective_provider}' is not configured on this relay"
+        )));
+    }
+    if !resolved_policy.provider_allowlist.is_empty()
+        && !resolved_policy
+            .provider_allowlist
+            .contains(&effective_provider)
+    {
+        return Err(RelayError::ContractValidation(format!(
+            "provider '{effective_provider}' not in enforcement policy provider_allowlist"
+        )));
+    }
 
     // 2b2. Validate relay verifying key pinning (#184)
     validate_contract_key_fields(contract)?;
@@ -426,9 +561,7 @@ pub async fn relay_core(
     // 2c. Validate provider against contract allowed_providers (#151 gap 3, #261)
     if let Some(ref constraints) = contract.model_constraints {
         if !constraints.allowed_providers.is_empty()
-            && !constraints
-                .allowed_providers
-                .contains(&effective_provider.to_string())
+            && !constraints.allowed_providers.contains(&effective_provider)
         {
             return Err(RelayError::ContractValidation(format!(
                 "provider '{}' not in contract model_constraints.allowed_providers {:?}",
@@ -476,30 +609,37 @@ pub async fn relay_core(
 
     // 2g. Resolve effective max_completion_tokens (#149 + contract override)
     // Contract can request lower but not higher than relay ceiling.
-    let effective_max_tokens = match contract.max_completion_tokens {
+    // The policy's max_output_tokens is a further ceiling.
+    let mut effective_max_tokens = match contract.max_completion_tokens {
         Some(contract_max) => std::cmp::min(contract_max, state.max_completion_tokens),
         None => state.max_completion_tokens,
     };
+    if let Some(policy_max) = resolved_policy.max_output_tokens {
+        effective_max_tokens = effective_max_tokens.min(policy_max);
+    }
 
-    // 3. Contract hash v2 was computed from the contract JSON as received.
-
-    // 3b. Resolve and accept the output schema (registry schemas; strict inline
-    //     schemas in dev only) and compute its entropy upper bound. Any failure
-    //     rejects the contract before the provider is called.
-    let resolved_schema = crate::schema_acceptance::resolve_output_schema(
+    // 3. Resolve and accept the output schema (registry schemas; strict inline
+    //    schemas in dev only) and compute its entropy upper bound.
+    let schema = crate::schema_acceptance::resolve_output_schema(
         contract,
         &state.schema_registry,
         state.is_dev,
     )?;
-    let effective_schema = resolved_schema.schema;
-    let output_schema_hash = resolved_schema.hash;
-    let entropy_bits = resolved_schema.entropy_bits;
+    let entropy_bits = schema.entropy_bits;
 
-    // 3c. Enforce the contract entropy budget per contract mode (#151 gap 6)
+    // 3a. The operator's per-session cap applies to every contract,
+    //     whatever its budget or enforcement mode.
+    let operator_cap = state.limits.config.max_entropy_bits_per_session;
+    if entropy_bits > operator_cap {
+        return Err(RelayError::ContractValidation(format!(
+            "schema entropy upper bound ({entropy_bits} bits) exceeds this relay's per-session maximum ({operator_cap} bits)"
+        )));
+    }
+
+    // 3b. Enforce the contract entropy budget. Gate is the default mode.
     let entropy_mode = contract
         .entropy_enforcement
-        .unwrap_or(vault_family_types::EntropyEnforcementMode::Advisory);
-
+        .unwrap_or(vault_family_types::EntropyEnforcementMode::Gate);
     if let Some(budget) = contract.entropy_budget_bits {
         if entropy_bits > budget {
             match entropy_mode {
@@ -519,6 +659,41 @@ pub async fn relay_core(
             }
         }
     }
+    // 3c. The policy's entropy constraints.
+    let mut policy_gate_budget = None;
+    if let Some(ref constraints) = resolved_policy.entropy_constraints {
+        let budget = constraints.budget_bits;
+        if entropy_bits > budget {
+            match constraints.classification {
+                EnforcementClass::Gate => {
+                    return Err(RelayError::ContractValidation(format!(
+                        "schema entropy ({entropy_bits} bits) exceeds the enforcement policy budget ({budget} bits)"
+                    )));
+                }
+                EnforcementClass::Advisory => tracing::warn!(
+                    entropy_bits,
+                    budget,
+                    "schema entropy exceeds enforcement policy budget (advisory only)"
+                ),
+            }
+        } else if let Some(pct) = constraints.review_trigger_pct {
+            if u64::from(entropy_bits) * 100 >= u64::from(budget) * u64::from(pct) {
+                tracing::warn!(
+                    entropy_bits,
+                    budget,
+                    review_trigger_pct = pct,
+                    "schema entropy reaches the enforcement policy review threshold"
+                );
+            }
+        }
+        if constraints.classification == EnforcementClass::Gate {
+            policy_gate_budget = Some(budget);
+        }
+    }
+    let budget_limit_bits = [contract.entropy_budget_bits, policy_gate_budget]
+        .into_iter()
+        .flatten()
+        .fold(operator_cap, u32::min);
 
     // 4. Load and validate prompt program
     let program = match &state.admitted_programs {
@@ -533,6 +708,75 @@ pub async fn relay_core(
             })?,
         None => load_prompt_program(&state.prompt_program_dir, &contract.prompt_template_hash)?,
     };
+    let prompt_template_hash = program.content_hash()?;
+
+    Ok(ContractPreflight {
+        policy_hash: resolved_hash,
+        policy: resolved_policy,
+        effective_provider,
+        effective_model_id,
+        model_profile_hash,
+        effective_max_tokens,
+        schema,
+        entropy_mode,
+        budget_limit_bits,
+        program,
+        prompt_template_hash,
+    })
+}
+
+/// Who supplied the two inputs of a run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputOrigin {
+    /// The inputs arrived through the session's two role-scoped submit
+    /// tokens. Who held the tokens is not known to the relay.
+    Bilateral,
+    /// One caller supplied both inputs (POST /relay).
+    SingleCaller,
+}
+
+impl InputOrigin {
+    /// The receipt `signal_class` for a successful run.
+    ///
+    /// Receipt v3 keys input commitments by contract participant either way.
+    /// `SESSION_COMPLETED` means the inputs came through the two submit
+    /// tokens; it does not attest that two different parties held them
+    /// (POST /sessions returns all four tokens to the creator).
+    /// `SINGLE_CALLER_COMPLETED` states that one request supplied both inputs.
+    pub fn success_signal_class(self) -> &'static str {
+        match self {
+            InputOrigin::Bilateral => "SESSION_COMPLETED",
+            InputOrigin::SingleCaller => "SINGLE_CALLER_COMPLETED",
+        }
+    }
+}
+
+/// Core relay logic: validate → assemble → call → check → sign → return.
+///
+/// Extracted from the single-shot `relay()` function so it can be reused by
+/// bilateral session processing.
+pub async fn relay_core(
+    contract: &Contract,
+    contract_hash: &str,
+    input_a: &RelayInput,
+    input_b: &RelayInput,
+    provider_name: &str,
+    origin: InputOrigin,
+    state: &AppState,
+) -> Result<(RelayResult, InferenceTiming), RelayError> {
+    // 1-4. The same contract checks as at session and invite creation.
+    let preflight = preflight_contract(contract, provider_name, state)?;
+    let effective_provider = preflight.effective_provider.as_str();
+    let effective_model_id = preflight.effective_model_id.clone();
+    let effective_max_tokens = preflight.effective_max_tokens;
+    let effective_schema = preflight.schema.schema.clone();
+    let output_schema_hash = preflight.schema.hash.clone();
+    let entropy_bits = preflight.schema.entropy_bits;
+    let entropy_mode = preflight.entropy_mode;
+    let program = &preflight.program;
+    if preflight.model_profile_hash.is_none() {
+        tracing::warn!("session running in legacy unbound mode (no model_profile_id)");
+    }
 
     // 5. Assemble provider request
     let assembled = program.assemble(contract, input_a, input_b)?;
@@ -592,21 +836,22 @@ pub async fn relay_core(
     };
     let inference_end = Utc::now();
 
-    // 7. Parse output
+    // 7. Parse output, with one representation per numeric value.
     let output: serde_json::Value = serde_json::from_str(&provider_response.text)
         .map_err(|e| RelayError::OutputValidation(format!("output is not valid JSON: {e}")))?;
+    let output = normalize_integral_numbers(output);
 
     // 8. Validate output against schema
     validate_output_schema(&output, &effective_schema)?;
 
     // 8b. Enforcement rules: reject forbidden characters in string values
-    validate_output_enforcement_rules(&output, &resolved_policy.rules)?;
+    validate_output_enforcement_rules(&output, &preflight.policy.rules, &effective_schema)?;
 
     // 10. Generate session ID
     let session_id = hex::encode(Sha256::digest(uuid::Uuid::new_v4().as_bytes()));
 
     // 11. Build and sign the v3 receipt
-    let prompt_template_hash = program.content_hash()?;
+    let prompt_template_hash = preflight.prompt_template_hash.as_str();
     // runtime_hash: real git SHA embedded at build time by build.rs
     let runtime_hash = hex::encode(Sha256::digest(GIT_SHA.as_bytes()));
 
@@ -621,12 +866,12 @@ pub async fn relay_core(
         &output_schema_hash,
         &output,
         input_commitments,
-        &prompt_template_hash,
-        model_profile_hash.as_deref(),
+        prompt_template_hash,
+        preflight.model_profile_hash.as_deref(),
         &effective_model_id,
         effective_provider,
         &runtime_hash,
-        &resolved_hash,
+        &preflight.policy_hash,
         state,
         inference_start,
         inference_end,
@@ -634,6 +879,8 @@ pub async fn relay_core(
         effective_max_tokens,
         entropy_bits,
         contract.entropy_budget_bits,
+        preflight.budget_limit_bits,
+        origin.success_signal_class(),
     )?;
 
     let timing = InferenceTiming {
@@ -704,6 +951,8 @@ fn build_receipt_v3(
     effective_max_tokens: u32,
     entropy_bits: u32,
     entropy_budget_bits: Option<u32>,
+    budget_limit_bits: u32,
+    signal_class: &str,
 ) -> Result<ReceiptV3, RelayError> {
     let output_hash = hash_json_v3(output)
         .map_err(|e| RelayError::ReceiptSigning(format!("output canonicalization: {e}")))?;
@@ -757,7 +1006,7 @@ fn build_receipt_v3(
             token_usage: None,
             relay_software_version: Some(env!("CARGO_PKG_VERSION").to_string()),
             status: Some(SessionStatus::Success),
-            signal_class: Some("SESSION_COMPLETED".to_string()),
+            signal_class: Some(signal_class.to_string()),
             execution_lane: Some(ExecutionLaneV2::Standard),
             channel_capacity_bits_upper_bound: Some(entropy_bits),
             channel_capacity_measurement_version: Some(
@@ -770,7 +1019,7 @@ fn build_receipt_v3(
                 scope: BudgetScope::Session,
                 bits_used_before: 0,
                 bits_used_after: entropy_bits,
-                budget_limit: entropy_budget_bits.unwrap_or(128),
+                budget_limit: budget_limit_bits,
             }),
         },
         provider_attestation: None,
@@ -826,6 +1075,7 @@ pub fn build_failure_receipt_v3(
     effective_max_tokens: u32,
     entropy_bits: u32,
     entropy_budget_bits: Option<u32>,
+    budget_limit_bits: u32,
 ) -> Result<ReceiptV3, RelayError> {
     let (status, signal_class) = abort_reason_to_receipt_status(abort_reason);
 
@@ -895,7 +1145,7 @@ pub fn build_failure_receipt_v3(
                 scope: BudgetScope::Session,
                 bits_used_before: 0,
                 bits_used_after: 0, // no capacity consumed on failure
-                budget_limit: entropy_budget_bits.unwrap_or(128),
+                budget_limit: budget_limit_bits,
             }),
         },
         provider_attestation: None,
@@ -911,14 +1161,26 @@ pub fn build_failure_receipt_v3(
 pub async fn relay(request: RelayRequest, state: &AppState) -> Result<RelayResponse, RelayError> {
     let provider = crate::resolve_provider(&request.provider, state)?;
     let accepted = accept_contract(&request.contract)?;
+    if accepted.contract.participants.len() != 2 {
+        return Err(RelayError::ContractValidation(
+            "contract must have exactly 2 participants".to_string(),
+        ));
+    }
     validate_input_context(&request.input_a.context)?;
     validate_input_context(&request.input_b.context)?;
+    // Inputs are labelled with the contract participants, as in sessions;
+    // a caller-supplied `role` is ignored.
+    let mut input_a = request.input_a;
+    let mut input_b = request.input_b;
+    input_a.role = accepted.contract.participants[0].clone();
+    input_b.role = accepted.contract.participants[1].clone();
     let (result, _timing) = relay_core(
         &accepted.contract,
         &accepted.contract_hash,
-        &request.input_a,
-        &request.input_b,
+        &input_a,
+        &input_b,
         &provider,
+        InputOrigin::SingleCaller,
         state,
     )
     .await?;
@@ -1046,6 +1308,7 @@ mod tests {
             admitted_programs: None,
             admitted_profiles: None,
             operator_token: None,
+            limits: Default::default(),
         }
     }
 
@@ -1115,6 +1378,7 @@ mod tests {
             4096,
             6,
             Some(128),
+            64,
         )
         .expect("failure receipt should build");
 
@@ -1159,6 +1423,7 @@ mod tests {
             4096,
             10,
             None,
+            64,
         )
         .expect("failure receipt should build");
 
@@ -1347,6 +1612,32 @@ mod tests {
         EnforcementClass, EnforcementRule, RuleScope, RuleScopeKind, RuleType,
     };
 
+    /// A schema that declares every key in `output` and pins a top-level
+    /// `schema_version` to its value (as the registry schemas do).
+    fn schema_for(output: &serde_json::Value) -> serde_json::Value {
+        fn collect(v: &serde_json::Value, props: &mut serde_json::Map<String, serde_json::Value>) {
+            match v {
+                serde_json::Value::Object(map) => {
+                    for (k, val) in map {
+                        props.entry(k.clone()).or_insert(serde_json::json!({}));
+                        collect(val, props);
+                    }
+                }
+                serde_json::Value::Array(items) => items.iter().for_each(|i| collect(i, props)),
+                _ => {}
+            }
+        }
+        let mut props = serde_json::Map::new();
+        collect(output, &mut props);
+        if let Some(version) = output.get("schema_version") {
+            props.insert(
+                "schema_version".to_string(),
+                serde_json::json!({ "enum": [version] }),
+            );
+        }
+        serde_json::json!({ "properties": props })
+    }
+
     fn nd_gate_rule() -> EnforcementRule {
         EnforcementRule {
             rule_id: "no_digits".to_string(),
@@ -1392,7 +1683,8 @@ mod tests {
             "compatibility_signal": "STRONG_MATCH_42"
         });
         let rules = vec![nd_gate_rule()];
-        let err = validate_output_enforcement_rules(&output, &rules).unwrap_err();
+        let err =
+            validate_output_enforcement_rules(&output, &rules, &schema_for(&output)).unwrap_err();
         assert!(matches!(err, RelayError::PolicyGate(_)));
     }
 
@@ -1403,7 +1695,8 @@ mod tests {
             "compatibility_signal": "MATCH\u{FF10}"
         });
         let rules = vec![nd_gate_rule()];
-        let err = validate_output_enforcement_rules(&output, &rules).unwrap_err();
+        let err =
+            validate_output_enforcement_rules(&output, &rules, &schema_for(&output)).unwrap_err();
         assert!(matches!(err, RelayError::PolicyGate(_)));
     }
 
@@ -1414,7 +1707,8 @@ mod tests {
             let output = serde_json::json!({
                 "compatibility_signal": format!("MATCH{symbol}")
             });
-            let err = validate_output_enforcement_rules(&output, &rules).unwrap_err();
+            let err = validate_output_enforcement_rules(&output, &rules, &schema_for(&output))
+                .unwrap_err();
             assert!(
                 matches!(err, RelayError::PolicyGate(_)),
                 "should reject currency symbol: {symbol}"
@@ -1429,7 +1723,8 @@ mod tests {
             "primary_reasons": ["SECTOR_MATCH", "SIZE_7K"]
         });
         let rules = vec![nd_gate_rule()];
-        let err = validate_output_enforcement_rules(&output, &rules).unwrap_err();
+        let err =
+            validate_output_enforcement_rules(&output, &rules, &schema_for(&output)).unwrap_err();
         assert!(matches!(err, RelayError::PolicyGate(_)));
     }
 
@@ -1447,7 +1742,7 @@ mod tests {
             "next_step": "PROCEED"
         });
         let rules = vec![nd_gate_rule(), sc_gate_rule()];
-        assert!(validate_output_enforcement_rules(&output, &rules).is_ok());
+        assert!(validate_output_enforcement_rules(&output, &rules, &schema_for(&output)).is_ok());
     }
 
     #[test]
@@ -1457,7 +1752,7 @@ mod tests {
         });
         let rules = vec![nd_advisory_rule()];
         assert!(
-            validate_output_enforcement_rules(&output, &rules).is_ok(),
+            validate_output_enforcement_rules(&output, &rules, &schema_for(&output)).is_ok(),
             "ADVISORY rule should log but not block"
         );
     }
@@ -1468,7 +1763,7 @@ mod tests {
             "anything": "goes_42_$$$"
         });
         let rules: Vec<EnforcementRule> = vec![];
-        assert!(validate_output_enforcement_rules(&output, &rules).is_ok());
+        assert!(validate_output_enforcement_rules(&output, &rules, &schema_for(&output)).is_ok());
     }
 
     #[test]
@@ -1479,7 +1774,7 @@ mod tests {
         });
         let rules = vec![nd_gate_rule()];
         assert!(
-            validate_output_enforcement_rules(&output, &rules).is_ok(),
+            validate_output_enforcement_rules(&output, &rules, &schema_for(&output)).is_ok(),
             "skip_keys should exclude schema_version containing '2'"
         );
     }
@@ -1491,7 +1786,8 @@ mod tests {
             "field": "has_digit_7"
         });
         let rules = vec![nd_gate_rule(), nd_advisory_rule()];
-        let err = validate_output_enforcement_rules(&output, &rules).unwrap_err();
+        let err =
+            validate_output_enforcement_rules(&output, &rules, &schema_for(&output)).unwrap_err();
         assert!(
             matches!(err, RelayError::PolicyGate(_)),
             "GATE rule should fire even when ADVISORY violations exist"
@@ -1507,7 +1803,7 @@ mod tests {
             "summary": "Both parties agree to proceed"
         });
         let rules = vec![nd_gate_rule(), sc_gate_rule()];
-        assert!(validate_output_enforcement_rules(&output, &rules).is_ok());
+        assert!(validate_output_enforcement_rules(&output, &rules, &schema_for(&output)).is_ok());
     }
 
     #[test]
@@ -1518,7 +1814,8 @@ mod tests {
             "terms": ["SPLIT_50_50"]
         });
         let rules = vec![nd_gate_rule()];
-        let err = validate_output_enforcement_rules(&output, &rules).unwrap_err();
+        let err =
+            validate_output_enforcement_rules(&output, &rules, &schema_for(&output)).unwrap_err();
         assert!(matches!(err, RelayError::PolicyGate(_)));
     }
 
@@ -1527,7 +1824,8 @@ mod tests {
         // Top-level array should be recursed without skip_keys.
         let output = serde_json::json!(["CLEAN", "HAS_DIGIT_7"]);
         let rules = vec![nd_gate_rule()];
-        let err = validate_output_enforcement_rules(&output, &rules).unwrap_err();
+        let err =
+            validate_output_enforcement_rules(&output, &rules, &schema_for(&output)).unwrap_err();
         assert!(matches!(err, RelayError::PolicyGate(_)));
     }
 
@@ -1541,7 +1839,8 @@ mod tests {
             }
         });
         let rules = vec![nd_gate_rule()];
-        let err = validate_output_enforcement_rules(&output, &rules).unwrap_err();
+        let err =
+            validate_output_enforcement_rules(&output, &rules, &schema_for(&output)).unwrap_err();
         assert!(
             matches!(err, RelayError::PolicyGate(_)),
             "nested 'schema_version' key should not be skipped"
@@ -1557,10 +1856,112 @@ mod tests {
             "field": "VALUE_\u{2163}"
         });
         let rules = vec![nd_gate_rule()];
-        let err = validate_output_enforcement_rules(&output, &rules).unwrap_err();
+        let err =
+            validate_output_enforcement_rules(&output, &rules, &schema_for(&output)).unwrap_err();
         assert!(
             matches!(err, RelayError::PolicyGate(_)),
             "Nl character should be caught by conservative Nd superset"
+        );
+    }
+
+    #[test]
+    fn test_policy_gate_checks_undeclared_keys() {
+        let rules = vec![nd_gate_rule()];
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": { "signal": { "enum": ["A"] }, "reason_2": { "enum": ["B"] } }
+        });
+        // A key the schema does not declare is model-chosen and is checked.
+        let output = serde_json::json!({ "signal": "A", "extra_42": "CLEAN" });
+        assert!(matches!(
+            validate_output_enforcement_rules(&output, &rules, &schema),
+            Err(RelayError::PolicyGate(_))
+        ));
+        let nested = serde_json::json!({ "signal": { "k7": "CLEAN" } });
+        assert!(matches!(
+            validate_output_enforcement_rules(&nested, &rules, &schema),
+            Err(RelayError::PolicyGate(_))
+        ));
+        // Declared property names are fixed by the schema and are not checked.
+        let output = serde_json::json!({ "signal": "A", "reason_2": "B" });
+        assert!(validate_output_enforcement_rules(&output, &rules, &schema).is_ok());
+    }
+
+    #[test]
+    fn test_policy_gate_checks_json_numbers() {
+        let rules = vec![nd_gate_rule()];
+        for output in [
+            serde_json::json!({ "confidence": 3 }),
+            serde_json::json!({ "items": [1.5] }),
+            serde_json::json!({ "nested": { "n": -7 } }),
+            serde_json::json!(42),
+        ] {
+            let schema = schema_for(&output);
+            assert!(
+                matches!(
+                    validate_output_enforcement_rules(&output, &rules, &schema),
+                    Err(RelayError::PolicyGate(_))
+                ),
+                "number not checked: {output}"
+            );
+        }
+        // Currency rules are unaffected by numbers.
+        let output = serde_json::json!({ "confidence": 3 });
+        assert!(validate_output_enforcement_rules(
+            &output,
+            &[sc_gate_rule()],
+            &schema_for(&output)
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn test_skip_keys_apply_only_to_pinned_properties() {
+        let rules = vec![nd_gate_rule()];
+        let output = serde_json::json!({ "schema_version": "12345", "signal": "CLEAN" });
+        // Not pinned by the schema: the value is checked.
+        let open = serde_json::json!({
+            "properties": {
+                "schema_version": { "type": "string", "maxLength": 5 },
+                "signal": { "type": "string" }
+            }
+        });
+        assert!(matches!(
+            validate_output_enforcement_rules(&output, &rules, &open),
+            Err(RelayError::PolicyGate(_))
+        ));
+        // Pinned by const or a one-value enum: skipped.
+        for pinned in [
+            serde_json::json!({ "const": "12345" }),
+            serde_json::json!({ "enum": ["12345"] }),
+        ] {
+            let schema = serde_json::json!({
+                "properties": { "schema_version": pinned, "signal": { "type": "string" } }
+            });
+            assert!(validate_output_enforcement_rules(&output, &rules, &schema).is_ok());
+        }
+    }
+
+    #[test]
+    fn test_unsupported_category_fails_closed() {
+        let mut rule = nd_gate_rule();
+        rule.value = "Lu".to_string();
+        let output = serde_json::json!({ "signal": "CLEAN" });
+        assert!(matches!(
+            validate_output_enforcement_rules(&output, &[rule], &schema_for(&output)),
+            Err(RelayError::EnforcementPolicy(_))
+        ));
+    }
+
+    #[test]
+    fn test_normalize_integral_numbers() {
+        let input: serde_json::Value =
+            serde_json::from_str(r#"{"a": 1.0, "b": [2e0, -0.0, 1.5], "c": {"d": 3}, "e": 1e300}"#)
+                .unwrap();
+        let normalized = normalize_integral_numbers(input);
+        assert_eq!(
+            normalized.to_string(),
+            r#"{"a":1,"b":[2,0,1.5],"c":{"d":3},"e":1e+300}"#
         );
     }
 
@@ -1943,6 +2344,7 @@ mod tests {
             4096,
             10,
             None,
+            64,
         )
         .expect("failure receipt should build");
 

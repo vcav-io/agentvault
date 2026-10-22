@@ -13,7 +13,14 @@
  *   SELKEY_AFAL_SEED_HEX          — Ed25519 seed (required for AFAL direct mode)
  *   SELKEY_AFAL_HTTP_PORT          — port for AFAL HTTP server (enables RESPOND mode)
  *   SELKEY_AFAL_BIND_ADDRESS       — bind address (default: 127.0.0.1)
- *   SELKEY_AFAL_TRUSTED_AGENTS     — JSON: [{"agentId":"...","publicKeyHex":"..."}]
+ *   SELKEY_AFAL_TRUSTED_AGENTS     — JSON: [{"agentId":"...","publicKeyHex":"..."}] (pin seeds)
+ *   SELKEY_AGENT_PIN_RESEED        — "true" lets configured keys replace differing stored pins
+ *   SELKEY_AGENT_PIN_MODE          — "preshared" (default) or "tofu" (first contact needs
+ *                                    human confirmation via `selkey-mcp pins confirm`)
+ *
+ * Agent identity pins live in $SELKEY_WORKDIR/.selkey/pins.json (see pin-store.ts),
+ * seeded from SELKEY_AFAL_TRUSTED_AGENTS and SELKEY_KNOWN_AGENTS public keys.
+ * Manage them with `selkey-mcp pins list|add|remove|confirm|rotate`.
  *   SELKEY_AFAL_ALLOWED_PURPOSES   — comma-separated: "MEDIATION,COMPATIBILITY"
  *   SELKEY_AFAL_PEER_DESCRIPTOR_URL — peer descriptor URL (INITIATE mode)
  *   SELKEY_AFAL_ADVERTISE_AFAL_ENDPOINT — set to "false" to publish an A2A-only Agent Card
@@ -49,6 +56,8 @@ import { listSupportedContractOffers } from './contract-offers.js';
 import { supportsBespokePrecontractNegotiation } from './bespoke-contracts.js';
 import { listSupportedTopicCodes, supportsTopicAlignment } from './topic-codes.js';
 import { IfcService, type IfcKnownAgent } from './ifc.js';
+import { PinStore, parsePinMode, type PinResolver, type PinSeed } from './pin-store.js';
+import { processPinsCliIo, runPinsCli } from './pin-cli.js';
 import { ed25519 } from '@noble/curves/ed25519';
 import { hexToBytes, bytesToHex } from '@noble/hashes/utils';
 
@@ -66,6 +75,7 @@ export function createSelkeyServer(
   inviteTransport?: InviteTransport,
   knownAgents: NormalizedKnownAgent[] = [],
   directTransport?: AfalTransport,
+  pins?: PinResolver,
 ): Server {
   const afalTransport: AfalTransport | undefined =
     directTransport ??
@@ -82,6 +92,7 @@ export function createSelkeyServer(
           seedHex: ifcSeedHex,
           knownAgents: knownAgents as IfcKnownAgent[],
           verifyingKeyHex: bytesToHex(ed25519.getPublicKey(hexToBytes(ifcSeedHex))),
+          pins: directTransport instanceof DirectAfalTransport ? directTransport.pinStore : pins,
         })
       : undefined;
   if (directTransport instanceof DirectAfalTransport && ifcService) {
@@ -138,7 +149,7 @@ export function createSelkeyServer(
  * Build a DirectAfalTransport from SELKEY_AFAL_* environment variables.
  * Returns null if SELKEY_AFAL_SEED_HEX is not set.
  */
-function buildDirectTransportFromEnv(): DirectAfalTransport | null {
+function buildDirectTransportFromEnv(pinStore: PinStore): DirectAfalTransport | null {
   const seedHex = process.env['SELKEY_AFAL_SEED_HEX'];
   if (!seedHex) return null;
 
@@ -203,6 +214,7 @@ function buildDirectTransportFromEnv(): DirectAfalTransport | null {
     relayUrl: process.env['SELKEY_RELAY_URL'],
     peerDescriptorUrl,
     requireSignedCards,
+    pinStore,
   };
 
   // RESPOND mode if HTTP port is configured
@@ -254,6 +266,42 @@ function buildDirectTransportFromEnv(): DirectAfalTransport | null {
   }
 
   return new DirectAfalTransport(config);
+}
+
+/**
+ * Pin seeds from SELKEY_AFAL_TRUSTED_AGENTS and SELKEY_KNOWN_AGENTS.
+ * Malformed entries are fatal: a pin store must not start from a partial config.
+ */
+function pinSeedsFromEnv(knownAgents: NormalizedKnownAgent[]): PinSeed[] {
+  const seeds: PinSeed[] = [];
+  const trustedJson = process.env['SELKEY_AFAL_TRUSTED_AGENTS'];
+  if (trustedJson) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trustedJson);
+    } catch {
+      throw new Error('SELKEY_AFAL_TRUSTED_AGENTS is not valid JSON');
+    }
+    if (!Array.isArray(parsed)) throw new Error('SELKEY_AFAL_TRUSTED_AGENTS must be a JSON array');
+    for (const entry of parsed) {
+      if (typeof entry?.agentId !== 'string' || typeof entry?.publicKeyHex !== 'string') {
+        throw new Error('SELKEY_AFAL_TRUSTED_AGENTS entries must have string agentId and publicKeyHex');
+      }
+      seeds.push({ agentId: entry.agentId, publicKeyHex: entry.publicKeyHex });
+    }
+  }
+  for (const agent of knownAgents) {
+    seeds.push({ agentId: agent.agent_id, publicKeyHex: agent.public_key_hex, aliases: agent.aliases });
+  }
+  return seeds;
+}
+
+function openPinStoreFromEnv(knownAgents: NormalizedKnownAgent[]): PinStore {
+  return PinStore.open({
+    seeds: pinSeedsFromEnv(knownAgents),
+    mode: parsePinMode(process.env['SELKEY_AGENT_PIN_MODE']),
+    reseed: process.env['SELKEY_AGENT_PIN_RESEED'] === 'true',
+  });
 }
 
 /**
@@ -328,16 +376,18 @@ export function buildRelayInboxTransportFromEnv(): RelayInboxTransport | null {
 // If SELKEY_AFAL_SEED_HEX is set, also starts DirectAfalTransport.
 // If SELKEY_INBOX_TRANSPORT=relay, uses RelayInboxTransport.
 async function main() {
-  const directTransport = buildDirectTransportFromEnv();
-  const relayInboxTransport = buildRelayInboxTransportFromEnv();
   const knownAgents = parseKnownAgentsFromEnv();
+  // Fails closed if pins.json is group/world-writable or malformed.
+  const pinStore = openPinStoreFromEnv(knownAgents);
+  const directTransport = buildDirectTransportFromEnv(pinStore);
+  const relayInboxTransport = buildRelayInboxTransportFromEnv();
 
   // Priority: relay inbox > direct AFAL > none
   const chosenTransport = relayInboxTransport ?? directTransport ?? undefined;
 
   const server = chosenTransport
-    ? createSelkeyServer(undefined, knownAgents, chosenTransport)
-    : createSelkeyServer(undefined, knownAgents);
+    ? createSelkeyServer(undefined, knownAgents, chosenTransport, pinStore)
+    : createSelkeyServer(undefined, knownAgents, undefined, pinStore);
 
   if (directTransport && !relayInboxTransport) {
     await directTransport.start();
@@ -382,6 +432,18 @@ async function main() {
 const currentFile = fileURLToPath(import.meta.url);
 const isDirectExecution = process.argv[1] && realpathSync(process.argv[1]) === currentFile;
 if (isDirectExecution) {
+  if (process.argv[2] === 'pins') {
+    let exitCode = 1;
+    try {
+      // The CLI works on the stored pins only; configuration seeds are
+      // applied when the server starts.
+      const store = PinStore.open({ mode: parsePinMode(process.env['SELKEY_AGENT_PIN_MODE']) });
+      exitCode = await runPinsCli(process.argv.slice(3), store, processPinsCliIo());
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+    }
+    process.exit(exitCode);
+  }
   if (process.argv.includes('--print-config')) {
     const config = {
       mcpServers: {
@@ -419,6 +481,8 @@ export { AfalResponder } from './afal-responder.js';
 export type { AdmissionPolicy, TrustedAgent, DenyCode } from './afal-responder.js';
 export { AfalHttpServer } from './afal-http-server.js';
 export { signMessage, DOMAIN_PREFIXES } from './afal-signing.js';
+export { PinStore, PinError, keyFingerprint, resolveAgentHint } from './pin-store.js';
+export type { AgentPin, PinMode, PinResolver, PinSeed, KeyRotationStatement } from './pin-store.js';
 export { isAgentDescriptor } from './direct-afal-transport.js';
 export { listKnownModelProfiles, resolveModelProfileRefs } from './model-profiles.js';
 export type { ModelProfileRef } from './model-profiles.js';

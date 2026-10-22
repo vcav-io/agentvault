@@ -20,6 +20,7 @@ export const SELKEY_IFC_ENVELOPE_MEDIA_TYPE =
   'application/vnd.selkey.ifc-envelope+json';
 export const SELKEY_IFC_RESULT_MEDIA_TYPE =
   'application/vnd.selkey.ifc-result+json';
+export const SELKEY_IFC_GRANT_MEDIA_TYPE = 'application/vnd.selkey.ifc-grant+json';
 
 interface A2AMessagePart {
   data: unknown;

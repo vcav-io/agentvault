@@ -216,7 +216,7 @@ released; `output_hash` covers only released output. v3 therefore has no
 | `token_usage` | object or null | `{prompt_tokens, completion_tokens, total_tokens}`. |
 | `relay_software_version` | string or null | Relay software version string. |
 | `status` | string or null | Session outcome status. |
-| `signal_class` | string or null | Classification of the signal produced. |
+| `signal_class` | string or null | Classification of the signal produced. `SINGLE_CALLER_COMPLETED` when one request supplied both inputs (`POST /relay`). `SESSION_COMPLETED` means the two inputs arrived through the session's two role-scoped submit tokens. The relay does not attest who held those tokens: `POST /sessions` returns all four tokens to the creator, so one caller can produce it. Only the inbox lane binds tokens to registry-authenticated agents. |
 | `execution_lane` | string enum or null | `standard` (software relay) or `tee` (TEE execution). |
 | `channel_capacity_bits_upper_bound` | integer or null | Computed upper bound on the output schema's information capacity (bits). |
 | `channel_capacity_measurement_version` | string or null | Algorithm version used to compute the channel capacity bound (e.g., `"enum_cardinality_v1"`). |
@@ -397,7 +397,7 @@ Pre-accept: all token and session ID fields are null for all callers.
 | `invite_id` | string | Format: `inv_` + 16 hex characters. |
 | `from_agent_id` | string | Sender's agent identifier. |
 | `to_agent_id` | string | Recipient's agent identifier. |
-| `from_agent_pubkey` | string (64 hex) or null | Sender's Ed25519 public key for out-of-band verification. Not used by the relay. |
+| `from_agent_pubkey` | string (64 hex) or null | The sender's Ed25519 public key from the relay's agent registry (never a request-supplied value). A hint only: recipients compare it with their own pin for the sender. |
 | `status` | string enum | One of: `PENDING`, `ACCEPTED`, `DECLINED`, `CANCELED`, `EXPIRED`. |
 | `purpose_code` | string | From the contract. |
 | `contract_hash` | string (64 hex) | SHA-256 of the canonical contract. |
@@ -516,8 +516,12 @@ The relay holds an Ed25519 signing key (RFC 8032). The key seed is 32 bytes
 (64 hex characters). The corresponding verifying key (public key) MUST be distributed
 out-of-band to parties who want to verify receipts.
 
-If no key is configured, the relay generates an ephemeral key per startup. Receipts
-signed by ephemeral keys cannot be verified after a restart.
+Outside development mode the relay refuses to start without a configured key. In
+development mode (`SELKEY_ENV=dev`) an unset key is replaced by an ephemeral key per
+startup; receipts signed by ephemeral keys cannot be verified after a restart.
+
+The key id of a signing key is `ed25519:` + hex(SHA-256(32-byte public key)). The hex
+part is the receipt's `operator.operator_key_fingerprint`.
 
 ### 7.2 Signing Procedure
 
@@ -748,11 +752,20 @@ The result is a conservative upper-bound estimate recorded in the receipt as
 ### 10.3 Contract Budget
 
 If `contract.entropy_budget_bits` is set, the relay compares the computed bound against
-it. In the current protocol version, this comparison is **advisory only** — a budget
-overrun is logged but does not abort the session.
+it when the session or invite is created, before any input is submitted. With
+`entropy_enforcement` `Gate` (the default when the field is absent) or `Strict`, a bound
+above the budget rejects the contract. With `Advisory`, an overrun is logged only.
 
-The `GET /capabilities` endpoint declares the enforcement level in
-`entropy_enforcement`: either `"ADVISORY"` or `"GATE"`.
+Independently of the contract, the relay rejects any schema whose bound exceeds its
+per-session cap (`SELKEY_MAX_ENTROPY_BITS_PER_SESSION`, default 64 bits). The contract
+cannot raise this cap. `budget_usage.budget_limit` in the receipt is the contract budget
+capped by the operator limit, or the operator limit when the contract has no budget.
+
+The `GET /capabilities` endpoint declares the default enforcement level in
+`entropy_enforcement` (`"GATE"`).
+
+These limits apply per session only; see the threat model's section on probing across
+sessions.
 
 ### 10.4 Budget Usage Record
 
