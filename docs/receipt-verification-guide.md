@@ -198,7 +198,8 @@ Apply these rules in order and reject the receipt at the first failure
 
 ```
 1. Dispatch: read receipt_schema_version from the strictly parsed document.
-   "3.0.0" -> v3. Any other "3.x" -> reject. "2.x" -> v2 rules. "1.0.0" -> v1.
+   "3.0.0" -> v3. Any other "3.x" -> reject. "2.x" -> v2 rules. No
+   receipt_schema_version and schema_version "1.0.0" -> legacy v1 rules.
    Anything else -> reject.
 2. Parse and shape:
    - parse the JSON text strictly: reject repeated member names at any depth,
@@ -357,13 +358,19 @@ Relays no longer issue v1 or v2 receipts. Verifiers keep these paths so that
 receipts issued earlier stay verifiable. v1 and v2 input commitments are
 unsalted hashes of the inputs.
 
+v1 and v2 receipts are canonicalised with the frozen legacy canonicaliser, identified
+as `JCS_V1` (`receipt_core::canonicalize`). Despite the name, it is not RFC 8785: the
+two agree on typical receipts but differ for some inputs (see
+[Common Pitfalls](#8-common-pitfalls)). The RFC 8785 libraries in the examples
+below should verify typical legacy receipts; `receipt_core::canonicalize` is the reference.
+
 ### v1 step-by-step
 
 ```
 1. Parse the receipt JSON into a document object.
 2. Extract the `signature` field (hex string). If absent, reject.
 3. Remove the `signature` field from the document.
-4. JCS-canonicalize the remaining document (RFC 8785).
+4. Canonicalize the remaining document with the legacy canonicaliser (JCS_V1).
 5. Build the signing message:
       message = "VCAV-RECEIPT-V1:" + canonical_json_string
 6. Compute: digest = SHA-256(message)
@@ -450,7 +457,7 @@ def verify_receipt_v1(receipt: dict, public_key_hex: str) -> bool:
 3. Extract the `signature` object. If absent or not an object, reject.
 4. Read signature.alg. Currently only "Ed25519" is supported.
 5. Remove the entire `signature` object from the document.
-6. JCS-canonicalize the remaining document (RFC 8785).
+6. Canonicalize the remaining document with the legacy canonicaliser (JCS_V1).
 7. Build the signing message:
       message = "VCAV-RECEIPT-V2:" + canonical_json_string
 8. Compute: digest = SHA-256(message)
@@ -710,14 +717,14 @@ object is a top-level receipt field alongside `commitments` and `claims`.
 
 | Field | Meaning |
 |---|---|
-| `tee_type` | `Simulated` (testing) or `SevSnp` (AMD SEV-SNP hardware) |
+| `tee_type` | `Simulated` (testing) or `SEV-SNP` (AMD SEV-SNP hardware) |
 | `attestation_hash` | SHA-256 of the platform attestation report |
 | `receipt_signing_pubkey_hex` | Ed25519 public key bound into the TEE attestation |
 | `transcript_hash_hex` | SHA-512 of the canonical session transcript (embedded in SEV-SNP `user_data`) |
 
 TEE commitments add `initiator_submission_hash` and `responder_submission_hash` to
-the `commitments` object, binding each participant's raw submission into the
-attestation chain.
+the `commitments` object: the SHA-256 of each participant's encrypted submission
+(ciphertext), bound into the attestation chain.
 
 `receipt_signing_pubkey_hex` is part of the receipt, so it is only meaningful once
 the quote itself has been verified (platform signature, measurement against an
@@ -726,6 +733,13 @@ verify quotes, so it never uses this field as the verification key. A TEE receip
 is verified against the caller-supplied relay key like any other receipt, and if
 `receipt_signing_pubkey_hex` is present and differs from that key, the receipt is
 invalid.
+
+To check the attestation itself, use the selkey-tee `tee-verifier` crate (Rust) with a
+pinned relay key (`verify_tee_receipt_pinned`); without one it reports the signature as
+`ValidUnpinned`, which it doesn't count as valid. Current TEE relays bind the transcript
+as `av-tee-transcript-v3`, which includes `relay_config_hash`, so the verifier also needs
+the relay configuration (published at the relay's `GET /tee/info`). That configuration is
+the relay's own statement: the launch measurement doesn't yet cover the relay code.
 
 ### Assurance levels
 
@@ -743,8 +757,9 @@ The software relay operates at `SELF_ASSERTED`. The TEE relay (`selkey-tee`) is 
 prototype, not yet secure: its shipped image runs a simulated runtime and issues
 `SELF_ASSERTED` receipts, and on real AMD SEV-SNP hardware it issues `TEE_ATTESTED`
 receipts whose measurement doesn't yet cover the relay binary.
-Never display "receipt verified" without also showing the assurance level — a
-`SELF_ASSERTED` receipt is much weaker than a `TEE_ATTESTED` one.
+Never display "receipt verified" without also showing the assurance level.
+`TEE_ATTESTED` is intended to be stronger than `SELF_ASSERTED`; while the TEE lane
+is a prototype, treat a `TEE_ATTESTED` receipt as no stronger than `SELF_ASSERTED`.
 
 ### Operator identity
 
@@ -807,6 +822,20 @@ relayKeyId(pinnedKeyHex); // "ed25519:<64 hex>"
 
 v3 verifiers must reject a receipt whose `operator_key_fingerprint` does not equal
 `hex(SHA-256(pinned key bytes))`. `verifyReceipt` does this.
+
+#### Legacy key labels
+
+Two older identifiers hash the hex text of a key rather than its raw bytes:
+
+- `receipt_key_id` in v1 receipts: `"kid-"` + hex(SHA-256(UTF-8 bytes of the verifying
+  key hex));
+- `operator_key_id` in `VCAV-MANIFEST-V1` publication manifests: `"opkey-"` +
+  hex(SHA-256(UTF-8 bytes of `operator_public_key_hex`)).
+
+They are kept so existing receipts, manifests and test vectors stay reproducible. Treat
+them as legacy lookup labels only, never as trust anchors: they depend on the case of
+the hex text, differ from the `ed25519:` key id, and don't supply or authenticate a key.
+Identify keys by the `ed25519:` key id and verify against a key you pinned.
 
 ### Checking a relay's served key
 
