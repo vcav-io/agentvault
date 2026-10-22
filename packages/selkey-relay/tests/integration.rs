@@ -3546,3 +3546,71 @@ async fn test_session_with_malformed_relay_key_reaches_terminal_state() {
 
     std::fs::remove_dir_all(&prompt_dir).ok();
 }
+
+// ============================================================================
+// Schema validation errors: location and keyword only
+// ============================================================================
+
+fn nonconforming_output() -> serde_json::Value {
+    serde_json::json!({
+        "decision": "PRIVATE_VALUE_ALPHA",
+        "confidence_bucket": "HIGH",
+        "reason_code": "ALIGNED",
+        "private_key_bravo": "PRIVATE_VALUE_CHARLIE"
+    })
+}
+
+fn assert_redacted_schema_error(text: &str) {
+    assert!(text.contains("/decision"), "missing instance path: {text}");
+    assert!(text.contains("enum"), "missing keyword: {text}");
+    assert!(
+        text.contains("additionalProperties"),
+        "missing keyword: {text}"
+    );
+    assert!(
+        !text.contains("PRIVATE_VALUE"),
+        "instance value present: {text}"
+    );
+    assert!(
+        !text.contains("private_key_bravo"),
+        "instance key present: {text}"
+    );
+}
+
+#[tokio::test]
+async fn test_relay_schema_error_response_omits_output_values() {
+    let (prompt_dir, prompt_hash) = setup_prompt_program("schema-error-redaction-relay");
+    let mock_base_url = start_mock_anthropic(nonconforming_output()).await;
+    let state = Arc::new(test_app_state(&mock_base_url, &prompt_dir));
+
+    let relay_request = serde_json::json!({
+        "contract": {
+            "purpose_code": "MEDIATION",
+            "output_schema_id": "vault_result_mediation",
+            "output_schema": mediation_schema(),
+            "participants": ["alice", "bob"],
+            "prompt_template_hash": prompt_hash
+        },
+        "input_a": { "role": "alice", "context": {} },
+        "input_b": { "role": "bob", "context": {} },
+        "provider": "anthropic"
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/relay")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&relay_request).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    assert_redacted_schema_error(&String::from_utf8_lossy(&body));
+
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}

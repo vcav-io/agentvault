@@ -53,10 +53,28 @@ fn validate_output_schema(
 
     let result = compiled.validate(output);
     if let Err(errors) = result {
-        let msgs: Vec<String> = errors.map(|e| e.to_string()).collect();
+        let msgs: Vec<String> = errors.map(|e| describe_validation_error(&e)).collect();
         return Err(RelayError::OutputValidation(msgs.join("; ")));
     }
     Ok(())
+}
+
+/// Describe a schema validation error by location and keyword only.
+///
+/// The default `Display` of a jsonschema error embeds the offending instance
+/// value. Output that fails validation must not be released, so neither the
+/// error response nor the logs may contain it: only the instance path and the
+/// failing schema keyword are reported.
+fn describe_validation_error(error: &jsonschema::ValidationError<'_>) -> String {
+    let instance_path = error.instance_path.to_string();
+    let schema_path = error.schema_path.to_string();
+    let keyword = schema_path.rsplit('/').next().unwrap_or("");
+    let location = if instance_path.is_empty() {
+        "/"
+    } else {
+        instance_path.as_str()
+    };
+    format!("instance at '{location}' failed '{keyword}'")
 }
 
 /// Returns true if the character is a Unicode currency symbol (general category Sc).
@@ -1408,7 +1426,46 @@ mod tests {
             "overlap_summary": long_summary
         });
         let err = validate_output_schema(&output, &schema).unwrap_err();
-        assert!(err.to_string().contains("longer than 100 characters"));
+        let msg = err.to_string();
+        assert!(msg.contains("/overlap_summary"), "{msg}");
+        assert!(msg.contains("maxLength"), "{msg}");
+    }
+
+    #[test]
+    fn test_validate_output_schema_error_omits_instance_values() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "decision": { "type": "string", "enum": ["PROCEED", "DECLINE"] },
+                "note": { "type": "string", "maxLength": 4 },
+                "items": { "type": "array", "maxItems": 1, "items": { "type": "string", "enum": ["A"] } }
+            },
+            "required": ["decision"],
+            "additionalProperties": false
+        });
+        let output = serde_json::json!({
+            "decision": "PRIVATE_VALUE_ALPHA",
+            "note": "PRIVATE_VALUE_BRAVO",
+            "items": ["PRIVATE_VALUE_CHARLIE", "A"],
+            "private_key_delta": "PRIVATE_VALUE_ECHO"
+        });
+        let msg = validate_output_schema(&output, &schema)
+            .unwrap_err()
+            .to_string();
+        for keyword in ["enum", "maxLength", "maxItems", "additionalProperties"] {
+            assert!(msg.contains(keyword), "missing keyword {keyword}: {msg}");
+        }
+        for path in ["/decision", "/note", "/items"] {
+            assert!(msg.contains(path), "missing path {path}: {msg}");
+        }
+        assert!(
+            !msg.contains("PRIVATE_VALUE"),
+            "instance value in error: {msg}"
+        );
+        assert!(
+            !msg.contains("private_key_delta"),
+            "instance key in error: {msg}"
+        );
     }
 
     #[test]
