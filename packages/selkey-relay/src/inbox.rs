@@ -924,6 +924,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_create_invite_rejects_repeated_or_empty_participants() {
+        let store = InboxStore::new(Duration::from_secs(604800));
+        for participants in [
+            serde_json::json!(["alice", "alice"]),
+            serde_json::json!(["alice", ""]),
+        ] {
+            let mut request = test_create_request();
+            request.contract["participants"] = participants.clone();
+            let err = store
+                .create_invite("alice", &request, None)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err, RelayError::ContractValidation(_)),
+                "participants {participants} must be rejected, got {err:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn test_list_inbox_empty() {
         let store = InboxStore::new(Duration::from_secs(604800));
         let query = InboxQuery {

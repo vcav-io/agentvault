@@ -59,6 +59,16 @@ pub fn accept_contract(contract_json: &serde_json::Value) -> Result<AcceptedCont
         .map_err(|e| RelayError::ContractValidation(format!("contract: {e}")))?;
     let contract: Contract = serde_json::from_value(normalized.clone())
         .map_err(|e| RelayError::ContractValidation(format!("contract: {e}")))?;
+    // Receipts need one input commitment per participant, keyed by a unique,
+    // non-empty participant id; reject anything else before inputs are taken.
+    let mut seen = std::collections::BTreeSet::new();
+    for participant in &contract.participants {
+        if participant.is_empty() || !seen.insert(participant.as_str()) {
+            return Err(RelayError::ContractValidation(
+                "contract participants must be distinct and non-empty".to_string(),
+            ));
+        }
+    }
     Ok(AcceptedContract {
         contract,
         contract_json: normalized,

@@ -591,7 +591,7 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
         let input_commitments =
             relay::compute_input_commitments(&contract, &input_a, &input_b).ok()?;
 
-        // Prompt template + assembled prompt hashes
+        // Prompt template hash
         let prompt_program = match &state.admitted_programs {
             Some(programs) => programs.get(&contract.prompt_template_hash).cloned()?,
             None => crate::prompt_program::load_prompt_program(

@@ -2,8 +2,10 @@
 //!
 //! Contracts and input contexts are hashed (contract hash v2, input
 //! commitments), so their JSON must have a single meaning: a body that
-//! repeats a member name, contains a lone surrogate or a number outside
-//! +/-(2^53-1) is rejected instead of being resolved by "last value wins".
+//! repeats a member name or contains a lone surrogate is rejected instead of
+//! being resolved by "last value wins". The +/-(2^53-1) number limit is
+//! enforced where values are canonicalised (contract hash v2, input
+//! commitments), not here.
 
 use axum::async_trait;
 use axum::body::Bytes;

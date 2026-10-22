@@ -1153,3 +1153,48 @@ async fn test_privacy_scan_detects_a_planted_input_derived_hash() {
         );
     }
 }
+
+// ============================================================================
+// Contract participants must be distinct and non-empty
+// ============================================================================
+
+#[tokio::test]
+async fn test_contract_participants_must_be_distinct_and_non_empty() {
+    let (prompt_dir, prompt_hash) = setup_prompt_program("participants-distinct");
+    let mock = start_mock_provider().await;
+    let state = app_state(&mock, &prompt_dir);
+    for participants in [
+        serde_json::json!(["alice", "alice"]),
+        serde_json::json!(["alice", ""]),
+    ] {
+        let mut c = contract(&prompt_hash);
+        c["participants"] = participants.clone();
+
+        let (status, resp) = create_session(&state, c.clone()).await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "session with participants {participants}: {resp}"
+        );
+
+        let (status, resp) = send(
+            &state,
+            "POST",
+            "/relay",
+            Some(OPERATOR_TOKEN),
+            Some(serde_json::json!({
+                "contract": c,
+                "input_a": {"role": "alice", "context": {"p": 1}, "commitment_nonce": NONCE_A},
+                "input_b": {"role": "bob", "context": {"p": 2}, "commitment_nonce": NONCE_B},
+                "provider": "anthropic"
+            })),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "/relay with participants {participants}: {resp}"
+        );
+    }
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}
