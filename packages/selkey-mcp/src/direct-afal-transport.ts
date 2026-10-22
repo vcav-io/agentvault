@@ -23,7 +23,7 @@ import { AfalResponder } from './afal-responder.js';
 import type { AdmissionPolicy, AdmittedProposal } from './afal-responder.js';
 import { AfalHttpServer } from './afal-http-server.js';
 import { fetchPeer } from './transport-errors.js';
-import { SELKEY_A2A_EXTENSION_URI, verifyAgentCardSignature } from './a2a-agent-card.js';
+import { SELKEY_A2A_EXTENSION_URI, agentCardValidityError, verifyAgentCardSignature } from './a2a-agent-card.js';
 import type { SelkeyA2AExtensionParams } from './a2a-agent-card.js';
 import type { ModelProfileRef } from './model-profiles.js';
 import type { IfcService } from './ifc.js';
@@ -154,6 +154,35 @@ export interface DirectAfalTransportConfig {
     policy: AdmissionPolicy;
     advertiseAfalEndpoint?: boolean;
   };
+}
+
+/**
+ * A COMMIT the responder answered with an HTTP error. `code` is the
+ * responder's structured error code (e.g. UNKNOWN_ADMIT_TOKEN), if it sent
+ * one; it is read from a JSON field, never from message text.
+ */
+export class CommitRejectedError extends Error {
+  readonly status: number;
+  readonly code: string | undefined;
+
+  constructor(status: number, code: string | undefined, message: string) {
+    super(message);
+    this.name = 'CommitRejectedError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
+function commitErrorCode(body: string, a2a: boolean): string | undefined {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  const data = a2a ? parseA2ATaskPart(payload, [SELKEY_SESSION_TOKENS_MEDIA_TYPE])?.data : payload;
+  const code = data && typeof data === 'object' ? (data as Record<string, unknown>)['code'] : undefined;
+  return typeof code === 'string' && /^[A-Z_]{1,64}$/.test(code) ? code : undefined;
 }
 
 export class DirectAfalTransport implements AfalTransport {
@@ -611,7 +640,11 @@ export class DirectAfalTransport implements AfalTransport {
 
     if (!response.ok) {
       const body = await response.text();
-      throw new Error(`COMMIT rejected: ${response.status} ${clipUntrustedText(body)}`);
+      throw new CommitRejectedError(
+        response.status,
+        commitErrorCode(body, transportTarget.useA2ANative),
+        `COMMIT rejected: ${response.status} ${clipUntrustedText(body)}`,
+      );
     }
 
     if (transportTarget.useA2ANative) {
@@ -884,6 +917,8 @@ export class DirectAfalTransport implements AfalTransport {
       if (params['supports_bespoke_contract_negotiation'] === true) {
         verifyParams.supports_bespoke_contract_negotiation = true;
       }
+      if (typeof params['issued_at'] === 'string') verifyParams.issued_at = params['issued_at'];
+      if (typeof params['expires_at'] === 'string') verifyParams.expires_at = params['expires_at'];
 
       // Use the agent_id from the signed payload reconstruction (card.name)
       const cardAgentId = typeof card.name === 'string' ? card.name : undefined;
@@ -902,7 +937,9 @@ export class DirectAfalTransport implements AfalTransport {
       if (!valid) {
         // Invalid signature — fall back to AFAL descriptor resolution rather
         // than making a dual-stack peer unreachable due to a stale card.
-        console.warn('Agent card signature verification failed — falling back to descriptor resolution');
+        console.warn(
+          `Agent card not accepted (${agentCardValidityError(verifyParams) ?? 'signature verification failed'}) — falling back to descriptor resolution`,
+        );
         return null;
       }
 
@@ -949,7 +986,10 @@ export class DirectAfalTransport implements AfalTransport {
         descriptor_version: '1',
         agent_id: agentId,
         issued_at: new Date().toISOString(),
-        expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+        // Cached at most 5 minutes, and never past the card's own expiry.
+        expires_at: new Date(
+          Math.min(Date.now() + 5 * 60 * 1000, Date.parse(String(params['expires_at']))),
+        ).toISOString(),
         identity_key: {
           algorithm: 'ed25519',
           public_key_hex: publicKeyHex,

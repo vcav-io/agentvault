@@ -53,6 +53,10 @@
     "./jcs": {
       "import": "./dist/jcs-v3.js",
       "types": "./dist/jcs-v3.d.ts"
+    },
+    "./ed25519": {
+      "import": "./dist/ed25519-strict.js",
+      "types": "./dist/ed25519-strict.d.ts"
     }
   },
   "bin": {

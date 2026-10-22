@@ -27,15 +27,31 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { ed25519 } from '@noble/curves/ed25519';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
+import { isPrimeOrderKey } from 'selkey/ed25519';
 
 import { DOMAIN_PREFIXES, verifyMessage } from './afal-signing.js';
-import { ensurePrivateDir, readPrivateJson, selkeyStateDir, writePrivateJson } from './secure-fs.js';
+import { acquireFileLock, readPrivateJson, selkeyStateDir, writePrivateJson } from './secure-fs.js';
 
 export type PinMode = 'preshared' | 'tofu';
 export type PinSource = 'config' | 'cli' | 'tofu-confirmed' | 'rotation';
+/**
+ * Which stored pins configuration seeds may replace: `false` none, `true`
+ * only pins that came from configuration, or an explicit list of agent_ids
+ * (any source).
+ */
+export type PinReseed = boolean | string[];
+
+/** Parse SELKEY_AGENT_PIN_RESEED: "" / "false", "true", or a comma-separated agent_id list. */
+export function parsePinReseed(value: string | undefined): PinReseed {
+  const v = (value ?? '').trim();
+  if (v === '' || v === 'false') return false;
+  if (v === 'true') return true;
+  const ids = v.split(',').map((x) => x.trim()).filter((x) => x.length > 0);
+  if (ids.length === 0) return false;
+  return ids;
+}
 
 export type PinErrorCode =
   | 'UNPINNED'
@@ -128,17 +144,17 @@ export function normalizeAgentId(agentId: string): string {
 
 /**
  * Validate and normalise an Ed25519 public key: 64 hex chars (case is
- * normalised to lowercase) that decode to a valid curve point.
+ * normalised to lowercase) that are the canonical encoding of a point of
+ * prime order (not small order, torsion free), as vault-family-core
+ * `is_prime_order_key` requires.
  */
 export function normalizePublicKeyHex(keyHex: string): string {
   const lower = typeof keyHex === 'string' ? keyHex.toLowerCase() : '';
   if (!KEY_HEX_RE.test(lower)) {
     throw new PinError('INVALID_KEY', 'public key must be 64 hex characters');
   }
-  try {
-    ed25519.ExtendedPoint.fromHex(lower);
-  } catch {
-    throw new PinError('INVALID_KEY', 'public key is not a valid Ed25519 point');
+  if (!isPrimeOrderKey(hexToBytes(lower))) {
+    throw new PinError('INVALID_KEY', 'public key is not a canonical Ed25519 point of prime order');
   }
   return lower;
 }
@@ -201,7 +217,7 @@ export class PinStore implements PinResolver {
   /** An in-memory store (nothing is written to disk). */
   static inMemory(seeds: PinSeed[] = [], mode: PinMode = 'preshared'): PinStore {
     const store = new PinStore(mode, undefined);
-    store.applySeeds(seeds, true);
+    store.applySeeds(seeds, 'all');
     return store;
   }
 
@@ -209,23 +225,25 @@ export class PinStore implements PinResolver {
    * Open the persistent store at `filePath` and merge `seeds`.
    *
    * Stored pins take precedence: a seed whose key differs from a stored pin
-   * fails with KEY_CHANGED (both fingerprints), unless `reseed` is set, in
-   * which case the configured key replaces the stored pin. Throws if the
-   * file is insecure or malformed.
+   * fails with KEY_CHANGED (both fingerprints). `reseed` relaxes this:
+   * `true` lets a configured key replace a stored pin that itself came from
+   * configuration; a list of agent_ids lets the configured key replace those
+   * agents' pins whatever their source (CLI re-pin, rotation, TOFU
+   * confirmation). Throws if the file is insecure or malformed.
    *
    * The running process re-reads the file whenever it changes, so CLI edits
    * take effect without a restart; every write re-reads, applies one change
    * and writes under a lock file.
    */
   static open(
-    params: { filePath?: string; seeds?: PinSeed[]; mode?: PinMode; reseed?: boolean } = {},
+    params: { filePath?: string; seeds?: PinSeed[]; mode?: PinMode; reseed?: PinReseed } = {},
   ): PinStore {
     const filePath = params.filePath ?? defaultPinFilePath();
     const store = new PinStore(params.mode ?? 'preshared', filePath);
     store.refresh();
     const seeds = params.seeds ?? [];
     if (seeds.length > 0) {
-      store.mutate(() => store.applySeeds(seeds, params.reseed === true));
+      store.mutate(() => store.applySeeds(seeds, params.reseed ?? false));
     }
     return store;
   }
@@ -328,9 +346,9 @@ export class PinStore implements PinResolver {
   /**
    * Apply configuration seeds. A seed adds a missing pin and aliases. A seed
    * whose key differs from a stored pin is refused (KEY_CHANGED) unless
-   * `replace` is set.
+   * `replace` allows it for that pin (see `open`).
    */
-  private applySeeds(seeds: PinSeed[], replace: boolean): void {
+  private applySeeds(seeds: PinSeed[], replace: PinReseed | 'all'): void {
     for (const seed of seeds) {
       const agentId = normalizeAgentId(seed.agentId);
       const aliases = (seed.aliases ?? []).map(normalizeAgentId);
@@ -345,12 +363,22 @@ export class PinStore implements PinResolver {
         existing.aliases = [...new Set([...existing.aliases, ...aliases])];
         continue;
       }
-      if (existing && !replace) {
+      const replaceable =
+        replace === 'all' ||
+        (Array.isArray(replace) && replace.map(normalizeAgentId).includes(agentId)) ||
+        (replace === true && existing?.source === 'config');
+      if (existing && !replaceable) {
+        const explicit = existing.source !== 'config';
         throw new PinError(
           'KEY_CHANGED',
           `Configured key for "${agentId}" (${keyFingerprint(key)}) differs from the stored pin ` +
-            `(${existing.fingerprint}, source ${existing.source}). Fix the configuration, re-pin with ` +
-            '`selkey-mcp pins add`, or set SELKEY_AGENT_PIN_RESEED=true to replace stored pins with configured keys.',
+            `(${existing.fingerprint}, source ${existing.source}). ` +
+            (explicit
+              ? `The stored pin was set by ${existing.source === 'rotation' ? 'a signed key rotation' : existing.source === 'cli' ? 'a CLI re-pin' : 'a confirmed first contact'}: ` +
+                'update the configured key to the stored one if that change is expected. Only if the configured ' +
+                `key is known to be correct, set SELKEY_AGENT_PIN_RESEED=${agentId} to replace this pin, and unset it afterwards.`
+              : 'Update the configuration first if the stored pin is correct; otherwise re-pin with ' +
+                '`selkey-mcp pins add`, or set SELKEY_AGENT_PIN_RESEED=true to replace configuration-sourced pins with configured keys.'),
           { agentId, pinnedFingerprint: existing.fingerprint, presentedFingerprint: keyFingerprint(key) },
         );
       }
@@ -608,44 +636,11 @@ export class PinStore implements PinResolver {
   }
 }
 
-/**
- * Take an exclusive lock file (O_EXCL). A lock older than 10 s is treated as
- * stale and removed. Returns the release function.
- */
 function acquireLock(lockPath: string): () => void {
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
-  ensurePrivateDir(path.dirname(lockPath));
-  for (;;) {
-    try {
-      const fd = fs.openSync(
-        lockPath,
-        fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL,
-        0o600,
-      );
-      fs.writeSync(fd, String(process.pid));
-      fs.closeSync(fd);
-      return () => {
-        try {
-          fs.unlinkSync(lockPath);
-        } catch {
-          // already gone
-        }
-      };
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-      try {
-        if (Date.now() - fs.statSync(lockPath).mtimeMs > LOCK_STALE_MS) {
-          fs.unlinkSync(lockPath);
-          continue;
-        }
-      } catch {
-        continue;
-      }
-      if (Date.now() > deadline) throw new Error(`timed out waiting for ${lockPath}`);
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
-    }
-  }
+  return acquireFileLock(lockPath, { staleMs: LOCK_STALE_MS, timeoutMs: LOCK_TIMEOUT_MS });
 }
+
+const KEY_FPR_RE = /^ed25519:[0-9a-f]{64}$/;
 
 function verifyRotationShape(statement: KeyRotationStatement): void {
   const s = statement as unknown as Record<string, unknown>;
@@ -657,5 +652,11 @@ function verifyRotationShape(statement: KeyRotationStatement): void {
     if (typeof s[field] !== 'string' || !s[field]) {
       throw new PinError('INVALID_ROTATION', `rotation statement is missing ${field}`);
     }
+  }
+  if (!KEY_FPR_RE.test(s['old_fpr'] as string) || !KEY_FPR_RE.test(s['new_fpr'] as string)) {
+    throw new PinError('INVALID_ROTATION', 'rotation fingerprints must be "ed25519:" + 64 lowercase hex characters');
+  }
+  if (s['old_fpr'] === s['new_fpr']) {
+    throw new PinError('INVALID_ROTATION', 'rotation old_fpr and new_fpr must differ');
   }
 }

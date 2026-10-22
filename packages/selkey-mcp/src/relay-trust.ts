@@ -7,11 +7,16 @@
  * (Agent Card, invite payload, COMMIT) are only used when they match one of
  * these.
  *
- * If SELKEY_RELAY_VERIFYING_KEY_HEX is set:
+ * SELKEY_RELAY_VERIFYING_KEY_HEX pins the relay's signing key:
  * - contracts this agent builds carry it as `relay_verifying_key_hex`, so a
  *   relay with a different key rejects the session before inputs are accepted;
+ * - as a responder, this agent accepts only contracts that carry it;
  * - the relay's /health verifying_key_hex must match it before any input is
  *   submitted.
+ * Outside development (SELKEY_ENV=dev) the pin is required: without it this
+ * agent neither starts nor responds to relay sessions. In development an
+ * unpinned agent still works, and a pinned responder also accepts contracts
+ * without a relay key.
  *
  * Plain http:// relays are accepted only on loopback hosts (localhost,
  * 127.0.0.0/8, [::1]) and on host names listed in
@@ -21,11 +26,14 @@
 
 import { fetchRelayPublicKey, relayKeyId, verifyReceipt } from 'selkey/verify';
 import type { OwnInputArtefact, VerifyArtefacts } from 'selkey/verify';
+import type { RelayClientConfig } from 'selkey/types';
 
 export const RELAY_URL_ENV = 'SELKEY_RELAY_URL';
 export const RELAY_ALLOWLIST_ENV = 'SELKEY_RELAY_ALLOWLIST';
 export const RELAY_VERIFYING_KEY_ENV = 'SELKEY_RELAY_VERIFYING_KEY_HEX';
 export const RELAY_INSECURE_HTTP_HOSTS_ENV = 'SELKEY_RELAY_INSECURE_HTTP_HOSTS';
+export const SELKEY_ENV = 'SELKEY_ENV';
+export const OPERATOR_TOKEN_ENV = 'SELKEY_OPERATOR_TOKEN';
 
 const KEY_HEX_RE = /^[0-9a-fA-F]{64}$/;
 
@@ -156,14 +164,34 @@ export function configuredRelayKeyHex(): string | undefined {
   return pinned.toLowerCase();
 }
 
+/** True when SELKEY_ENV is "dev" (local development and demos). */
+export function isDevEnvironment(): boolean {
+  return process.env[SELKEY_ENV]?.trim() === 'dev';
+}
+
+/**
+ * The configured relay key. Outside development a missing key is an error:
+ * `action` says what this agent refuses to do without it.
+ */
+export function requireRelayKeyPin(action: string): string | undefined {
+  const pinned = configuredRelayKeyHex();
+  if (pinned || isDevEnvironment()) return pinned;
+  throw new RelayTrustError(
+    `${RELAY_VERIFYING_KEY_ENV} is not set, so this agent will not ${action}. ` +
+      `Set ${RELAY_VERIFYING_KEY_ENV} to the relay's verifying key (64 hex characters), obtained from the ` +
+      `relay operator out of band. Only local development (${SELKEY_ENV}=dev) runs without a pinned relay key.`,
+  );
+}
+
 /**
  * Bind a contract to the configured relay key: when a key is pinned, the
  * contract gets `relay_verifying_key_hex`, which the relay checks against its
  * own signing key when the session is created. A contract that already names
- * a different key is refused. Without a pin the contract is unchanged.
+ * a different key is refused. Without a pin (development only) the contract
+ * is unchanged.
  */
 export function withPinnedRelayKey<T extends object>(contract: T): T {
-  const pinned = configuredRelayKeyHex();
+  const pinned = requireRelayKeyPin('start a relay session');
   if (!pinned) return contract;
   const existing = (contract as Record<string, unknown>)['relay_verifying_key_hex'];
   if (existing !== undefined && existing !== null) {
@@ -178,12 +206,33 @@ export function withPinnedRelayKey<T extends object>(contract: T): T {
 }
 
 /**
- * Relay-key variants a responder accepts in an expected contract: the plain
- * contract (no relay key), plus the contract bound to the configured key.
+ * Relay-key variants a responder accepts in an expected contract. Outside
+ * development: only the contract bound to the configured key (a missing key
+ * is an error). In development: the plain contract, plus the bound one when a
+ * key is configured.
  */
 export function expectedRelayKeyVariants(): Array<string | undefined> {
-  const pinned = configuredRelayKeyHex();
-  return pinned ? [undefined, pinned] : [undefined];
+  const pinned = requireRelayKeyPin('respond to a relay session');
+  if (!pinned) return [undefined];
+  return isDevEnvironment() ? [undefined, pinned] : [pinned];
+}
+
+/**
+ * A contract a responder joins with explicit session tokens (legacy JOIN)
+ * must carry the configured relay key outside development.
+ */
+export function assertContractCarriesRelayPin(contract: unknown): void {
+  const pinned = requireRelayKeyPin('join a relay session');
+  if (!pinned || isDevEnvironment()) return;
+  const key =
+    contract && typeof contract === 'object'
+      ? (contract as Record<string, unknown>)['relay_verifying_key_hex']
+      : undefined;
+  if (typeof key !== 'string' || key.toLowerCase() !== pinned) {
+    throw new RelayTrustError(
+      `The contract must carry relay_verifying_key_hex equal to ${RELAY_VERIFYING_KEY_ENV}; input was not submitted`,
+    );
+  }
 }
 
 /** Throws unless the relay URL is allowlisted and (if pinned) serves the pinned verifying key. */
@@ -319,4 +368,20 @@ export function checkReceiptAgainstPinnedKey(
     };
   }
   return { status: 'VERIFIED' };
+}
+
+/**
+ * Relay client config for `relayUrl`. SELKEY_OPERATOR_TOKEN is the operator
+ * token of the relay at SELKEY_RELAY_URL, so it is attached only for that
+ * relay (never for other allowlisted relays). The client sends it only on
+ * session creation.
+ */
+export function relayClientConfig(relayUrl: string): RelayClientConfig {
+  const token = process.env[OPERATOR_TOKEN_ENV]?.trim();
+  const configured = process.env[RELAY_URL_ENV];
+  const sameRelay =
+    configured !== undefined &&
+    normalizeRelayUrl(configured) !== null &&
+    normalizeRelayUrl(configured) === normalizeRelayUrl(relayUrl);
+  return token && sameRelay ? { relay_url: relayUrl, operator_token: token } : { relay_url: relayUrl };
 }

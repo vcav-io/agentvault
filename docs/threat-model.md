@@ -196,8 +196,9 @@ reduces to trust in the relay operator.
 `model_identity` in v1 receipts and `claims.model_identity_asserted` in v2 and v3 receipts
 are operator assertions, not cryptographic commitments. The relay reports what the
 provider API response indicates. The provider endpoint and model ID are operator
-configuration, in both the software lane and the selkey-tee lane, and aren't bound into
-any attestation. A relay operator could configure a relay to claim a different model than
+configuration in both lanes. The selkey-tee lane binds them into the attested transcript
+through `relay_config_hash`, but only as the relay's own statement, because the launch
+measurement doesn't cover the relay code. A relay operator could configure a relay to claim a different model than
 the one actually called. A provider attestation (
 `PROVIDER_ATTESTED` assurance tier) would address this, but is not yet implemented.
 
@@ -488,8 +489,9 @@ produced real SEV-SNP attestation reports, sealed key material, and transcript-b
 receipts on GCP N2D (AMD SEV-SNP). It is not yet secure: the shipped image runs a
 simulated runtime, the launch measurement doesn't yet cover the relay binary (no
 measured boot), and model identity is provider-reported. It also implements only part
-of the protocol: it applies no guardian policy, accepts any inline output schema and
-doesn't enforce entropy limits (see the protocol specification, Section 11.5).
+of the protocol: no invites, no schema registry (strict inline schemas only), no
+guardian policy and only a per-session entropy budget; contracts that set fields it
+doesn't enforce are rejected (see the protocol specification, Section 11.5).
 Integration into the Selkey relay is also pending.
 
 ### 7.3 Planned (Not Yet Implemented)

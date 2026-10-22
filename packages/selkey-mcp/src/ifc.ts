@@ -19,7 +19,7 @@
  *   version                "VCAV-IFC-GRANT-V2"
  *   grant_id               64 hex
  *   issuer                 recipient agent_id
- *   issuer_public_key_hex  recipient key (informational; verifiers use pins)
+ *   issuer_public_key_hex  recipient key (must equal the pinned key it verifies under)
  *   audience               sender agent_id
  *   audience_key_fpr       "ed25519:" + hex(SHA-256(audience pinned key))
  *   label_ceiling          "POST_SESSION_BOUND"
@@ -53,6 +53,7 @@ import {
 } from './pin-store.js';
 import { findHeldReceipt } from './held-receipts.js';
 import { peerText } from './direct-afal-transport.js';
+import { peerTimeoutSignal } from './transport-errors.js';
 import { appendPrivateLine, readPrivateJson, selkeyStateDir, writePrivateJson } from './secure-fs.js';
 
 export type IfcMessageClass = 'LOGISTICS' | 'CONSENT' | 'REFERENCE' | 'ARTIFACT_TRANSFER';
@@ -297,28 +298,111 @@ function maxGrantTtlSeconds(): number {
     : DEFAULT_MAX_GRANT_TTL_SECONDS;
 }
 
-/** Structural check of a V2 grant and its grant_id; throws on anything else (incl. V1). */
+const IFC_MESSAGE_CLASSES: readonly string[] = ['LOGISTICS', 'CONSENT', 'REFERENCE', 'ARTIFACT_TRANSFER'];
+const GRANT_FIELDS = [
+  'version',
+  'grant_id',
+  'issuer',
+  'issuer_public_key_hex',
+  'audience',
+  'audience_key_fpr',
+  'label_ceiling',
+  'scope',
+  'permissions',
+  'provenance',
+  'issued_at',
+  'expires_at',
+  'signature',
+];
+const KEY_FPR_RE = /^ed25519:[0-9a-f]{64}$/;
+const KEY_HEX_RE = /^[0-9a-f]{64}$/;
+/** RFC 3339 date-time (upper-case T and Z, optional fraction, Z or ±hh:mm). */
+const RFC3339_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
+
+function plainObject(value: unknown, what: string, fields: readonly string[]): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${what} must be an object`);
+  const obj = value as Record<string, unknown>;
+  for (const key of Object.keys(obj)) {
+    if (!fields.includes(key)) throw new Error(`${what} has an unexpected field: ${clip(key)}`);
+  }
+  for (const key of fields) {
+    if (!Object.hasOwn(obj, key)) throw new Error(`${what} is missing ${key}`);
+  }
+  return obj;
+}
+
+function parseRfc3339(value: unknown, field: string): number {
+  const ms = typeof value === 'string' && RFC3339_RE.test(value) ? Date.parse(value) : NaN;
+  if (Number.isNaN(ms)) throw new Error(`grant ${field} must be an RFC 3339 timestamp`);
+  return ms;
+}
+
+/**
+ * Structural check of a V2 grant and its grant_id; throws on anything else
+ * (incl. V1). Mirrors vault-family-core `validate_unsigned_grant_v2`: no
+ * unknown fields, a known label ceiling and session relation, a non-empty set
+ * of known message classes, an integer max_uses of at least 1, lowercase
+ * session references and key fingerprint, and expires_at after issued_at.
+ */
 function assertGrantShape(grant: unknown): asserts grant is IfcGrant {
   if (!grant || typeof grant !== 'object') throw new Error('grant must be an object');
-  const g = grant as Record<string, unknown>;
-  if (g['version'] !== IFC_GRANT_VERSION) {
-    throw new Error(`unsupported grant version: ${String(g['version'])} (expected ${IFC_GRANT_VERSION})`);
+  if ((grant as Record<string, unknown>)['version'] !== IFC_GRANT_VERSION) {
+    const version = (grant as Record<string, unknown>)['version'];
+    throw new Error(`unsupported grant version: ${clip(String(version))} (expected ${IFC_GRANT_VERSION})`);
   }
+  const g = plainObject(grant, 'grant', GRANT_FIELDS);
   for (const field of ['grant_id', 'issuer', 'issuer_public_key_hex', 'audience', 'audience_key_fpr', 'issued_at', 'expires_at', 'signature']) {
     if (typeof g[field] !== 'string' || !g[field]) throw new Error(`grant is missing ${field}`);
   }
-  const scope = g['scope'] as Record<string, unknown> | undefined;
-  if (!scope || !Array.isArray(scope['message_classes']) || scope['session_relation'] !== 'POST_SESSION') {
-    throw new Error('grant scope is malformed');
+  if (!KEY_HEX_RE.test(g['issuer_public_key_hex'] as string)) {
+    throw new Error('grant issuer_public_key_hex must be 64 lowercase hex characters');
   }
-  const permissions = g['permissions'] as Record<string, unknown> | undefined;
-  if (!permissions || typeof permissions['max_uses'] !== 'number') throw new Error('grant permissions are malformed');
-  const provenance = g['provenance'] as Record<string, unknown> | undefined;
-  if (!provenance) throw new Error('grant provenance is missing');
+  if (!KEY_FPR_RE.test(g['audience_key_fpr'] as string)) {
+    throw new Error('grant audience_key_fpr must be "ed25519:" + 64 lowercase hex characters');
+  }
+  if (g['label_ceiling'] !== 'POST_SESSION_BOUND') throw new Error('grant label_ceiling must be POST_SESSION_BOUND');
+  const scope = plainObject(g['scope'], 'grant scope', ['message_classes', 'session_relation']);
+  if (scope['session_relation'] !== 'POST_SESSION') throw new Error('grant scope session_relation must be POST_SESSION');
+  const classes = scope['message_classes'];
+  if (!Array.isArray(classes) || classes.length === 0) throw new Error('grant scope message_classes must be non-empty');
+  for (const c of classes) {
+    if (typeof c !== 'string' || !IFC_MESSAGE_CLASSES.includes(c)) {
+      throw new Error(`grant scope has an unsupported message class: ${clip(String(c))}`);
+    }
+  }
+  if (new Set(classes).size !== classes.length) throw new Error('grant scope repeats a message class');
+  const permissions = plainObject(g['permissions'], 'grant permissions', ['max_uses']);
+  const maxUses = permissions['max_uses'];
+  if (typeof maxUses !== 'number' || !Number.isInteger(maxUses) || maxUses < 1 || maxUses > 0xffffffff) {
+    throw new Error('grant permissions.max_uses must be an integer of at least 1');
+  }
+  const provenance = plainObject(g['provenance'], 'grant provenance', ['receipt_id', 'session_id']);
   assertSessionRef(provenance['receipt_id'], 'receipt_id');
   assertSessionRef(provenance['session_id'], 'session_id');
+  if (parseRfc3339(g['expires_at'], 'expires_at') <= parseRfc3339(g['issued_at'], 'issued_at')) {
+    throw new Error('grant expires_at must be after issued_at');
+  }
   const { signature: _sig, grant_id, ...unsigned } = g;
-  if (contentHash(unsigned) !== grant_id) throw new Error('grant_id mismatch');
+  if (typeof grant_id !== 'string' || !HEX64_RE.test(grant_id) || contentHash(unsigned) !== grant_id) {
+    throw new Error('grant_id mismatch');
+  }
+}
+
+/**
+ * Verify a V2 grant under the issuer key the caller trusts (a pin, or this
+ * agent's own key). Checks the shape and grant_id, that the grant names that
+ * key as issuer_public_key_hex, and the signature (strict Ed25519, lowercase
+ * hex). Throws on failure. Expiry and audience are left to the caller.
+ */
+export function verifyGrantV2(grant: unknown, issuerKeyHex: string): IfcGrant {
+  assertGrantShape(grant);
+  if (grant.issuer_public_key_hex !== issuerKeyHex.toLowerCase()) {
+    throw new Error('grant issuer_public_key_hex does not match the expected issuer key');
+  }
+  if (!verifyMessage(DOMAIN_PREFIXES.IFC_GRANT, grant as unknown as Record<string, unknown>, issuerKeyHex)) {
+    throw new Error('grant signature does not verify under the issuer key');
+  }
+  return grant;
 }
 
 export class IfcService {
@@ -551,6 +635,7 @@ export class IfcService {
       const response = await fetch(peer.a2a_send_message_url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: peerTimeoutSignal(),
         body: JSON.stringify(
           buildA2ASendMessageRequest({
             mediaType: SELKEY_IFC_GRANT_MEDIA_TYPE,
@@ -631,8 +716,10 @@ export class IfcService {
     assertGrantShape(grant);
     if (normalizeAgentId(grant.audience) !== this.agentId) throw new Error('grant audience is not this agent');
     const issuerKey = this.requirePin(grant.issuer, 'grant issuer');
-    if (!verifyMessage(DOMAIN_PREFIXES.IFC_GRANT, grant as unknown as Record<string, unknown>, issuerKey)) {
-      throw new Error('grant signature does not verify under the issuer pin');
+    try {
+      verifyGrantV2(grant, issuerKey);
+    } catch (err) {
+      throw new Error(`grant does not verify under the issuer pin: ${err instanceof Error ? err.message : String(err)}`);
     }
     if (Date.parse(grant.expires_at) <= nowMs) throw new Error('grant expired');
     return grant;
@@ -722,6 +809,7 @@ export class IfcService {
     const response = await fetch(peer.a2a_send_message_url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: peerTimeoutSignal(),
       body: JSON.stringify(
         buildA2ASendMessageRequest({
           mediaType: SELKEY_IFC_ENVELOPE_MEDIA_TYPE,
@@ -804,7 +892,9 @@ export class IfcService {
       // Enforce from the signed grant, which must still verify under this
       // agent's key; the unsigned copies in the record must agree with it.
       const grant = record.grant;
-      if (!verifyMessage(DOMAIN_PREFIXES.IFC_GRANT, grant as unknown as Record<string, unknown>, this.verifyingKeyHex)) {
+      try {
+        verifyGrantV2(grant, this.verifyingKeyHex);
+      } catch {
         saveExpiries();
         return refused('stored grant does not verify under this agent key');
       }

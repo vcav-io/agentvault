@@ -14,13 +14,27 @@ export class TransportUnreachableError extends Error {
   }
 }
 
+/** Default limit for one request to a peer, including reading its body. */
+export const PEER_FETCH_TIMEOUT_MS = 10_000;
+
+/** A signal that aborts after `timeoutMs`, or when `signal` does. */
+export function peerTimeoutSignal(timeoutMs: number = PEER_FETCH_TIMEOUT_MS, signal?: AbortSignal | null): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
 /**
  * fetch() wrapper: a rejected fetch (no HTTP response) becomes
- * TransportUnreachableError; HTTP responses are returned as-is.
+ * TransportUnreachableError; HTTP responses are returned as-is. The request,
+ * including reading the response body, is aborted after `timeoutMs`.
  */
-export async function fetchPeer(url: string, init?: RequestInit): Promise<Response> {
+export async function fetchPeer(
+  url: string,
+  init?: RequestInit,
+  timeoutMs: number = PEER_FETCH_TIMEOUT_MS,
+): Promise<Response> {
   try {
-    return await fetch(url, init);
+    return await fetch(url, { ...init, signal: peerTimeoutSignal(timeoutMs, init?.signal) });
   } catch (err) {
     throw new TransportUnreachableError(safeOrigin(url), err);
   }

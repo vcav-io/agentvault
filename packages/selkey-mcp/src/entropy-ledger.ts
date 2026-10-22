@@ -23,7 +23,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { buildRelayContract, computeOutputSchemaHash, listRelayPurposes } from 'selkey/contracts';
 import { resolveNegotiationRegistryPath } from './bespoke-contracts.js';
-import { ensurePrivateDir, readPrivateJson, selkeyStateDir, writePrivateJson } from './secure-fs.js';
+import { acquireFileLock, readPrivateJson, selkeyStateDir, writePrivateJson } from './secure-fs.js';
 
 export const DEFAULT_PER_COUNTERPARTY_BITS = 128;
 export const DEFAULT_GLOBAL_BITS = 512;
@@ -397,34 +397,7 @@ const LOCK_STALE_MS = 10_000;
 const LOCK_TIMEOUT_MS = 5_000;
 
 function acquireLedgerLock(lockPath: string): () => void {
-  ensurePrivateDir(path.dirname(lockPath));
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
-  for (;;) {
-    try {
-      const fd = fs.openSync(lockPath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o600);
-      fs.writeSync(fd, String(process.pid));
-      fs.closeSync(fd);
-      return () => {
-        try {
-          fs.unlinkSync(lockPath);
-        } catch {
-          // already removed
-        }
-      };
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-      try {
-        if (Date.now() - fs.statSync(lockPath).mtimeMs > LOCK_STALE_MS) {
-          fs.unlinkSync(lockPath);
-          continue;
-        }
-      } catch {
-        continue;
-      }
-      if (Date.now() > deadline) throw new Error(`timed out waiting for ${lockPath}`);
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
-    }
-  }
+  return acquireFileLock(lockPath, { staleMs: LOCK_STALE_MS, timeoutMs: LOCK_TIMEOUT_MS });
 }
 
 function chargeLedgerLocked(

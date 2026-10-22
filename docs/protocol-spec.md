@@ -238,7 +238,7 @@ Claims are optional and omitted when they have no value.
 | `measurement` | string (hex) | Launch measurement from the attestation report. |
 | `quote` | string (base64) | The raw attestation report. |
 | `attestation_hash` | string (64 hex) | SHA-256 of the raw attestation report bytes. |
-| `receipt_signing_pubkey_hex` | string (64 hex) | Ed25519 public key used to sign the receipt, bound into the TEE attestation. Verifiers MUST NOT use it as the verification key; if present it must equal the pinned key (Section 7.4). The selkey-tee `tee-verifier` currently does use it (see 11.5). |
+| `receipt_signing_pubkey_hex` | string (64 hex) | Ed25519 public key used to sign the receipt, bound into the TEE attestation. Verifiers MUST NOT use it as the verification key; if present it must equal the pinned key (Section 7.4). The selkey-tee `tee-verifier` checks it against the caller's pinned key (see 11.3). |
 | `transcript_hash_hex` | string (128 hex) | SHA-512 hash of the canonical session transcript. For SEV-SNP, this is embedded in the attestation report's `REPORT_DATA` field. |
 | `user_data_hex` | string (128 hex) | The report's `REPORT_DATA` (user data) field. |
 | `snp_vcek_cert` | string (base64) | DER VCEK certificate, when the relay obtained it, for checking the report against AMD's certificate chain. |
@@ -833,9 +833,11 @@ When running in the TEE lane, the relay:
    simulated runtime also accepts a key from `SELKEY_SIGNING_KEY_HEX`; on SEV-SNP the
    relay refuses one.)
 2. Builds a canonical transcript of the session (versioned; currently
-   `av-tee-transcript-v2`) that commits to the contract hash, the prompt template hash,
-   the hashes of both encrypted submissions, the output hash, the receipt signing key and
-   the provider-reported model identity.
+   `av-tee-transcript-v3`, a length-prefixed encoding) that commits to the contract hash,
+   the prompt template hash, the hashes of both encrypted submissions, the output hash,
+   the receipt signing key, the provider-reported model identity and `relay_config_hash`:
+   the SHA-256 of the relay's stated configuration (provider, provider base URL, requested
+   model, source revision and mode flags such as `simulated`).
 3. Computes SHA-512 of the transcript (64 bytes) and embeds it in the SEV-SNP
    attestation report's `REPORT_DATA` field.
 4. Signs the receipt with that key.
@@ -844,12 +846,19 @@ When running in the TEE lane, the relay:
    `transcript_hash_hex`, `user_data_hex` and, when available, the VCEK certificate.
 
 The raw attestation report travels in the receipt; the relay has no separate attestation
-endpoint (`GET /tee/info` returns the TEE type, measurement, platform version and receipt
-signing key). A verifier checks the AMD signature chain on the report, compares the
-measurement with an allowlist, recomputes the transcript hash and confirms that it
-matches `REPORT_DATA`, and verifies the receipt signature against a relay key it pinned
-(Section 7.4). This shows the report was requested by code in a CVM with that launch
-measurement (see 11.4).
+endpoint (`GET /tee/info` returns the TEE type, measurement, platform version, receipt
+signing key, `transcript_version` and the plaintext `relay_config` with its
+`relay_config_hash`). A verifier checks the AMD signature chain and report fields against
+its TCB policy, compares the measurement with an allowlist, recomputes the transcript hash
+from the receipt and the relay configuration and confirms that it matches `REPORT_DATA`,
+and verifies the receipt signature against a relay key it pinned (Section 7.4). Verifiers
+MUST NOT use the key embedded in `tee_attestation` as the verification key: `tee-verifier`
+checks the signature against the caller's pinned key (`verify_tee_receipt_pinned`), requires
+the embedded key to equal it, and reports a receipt checked only against its embedded key
+as `ValidUnpinned`, which it doesn't count as valid. A match shows the report was requested
+by code in a CVM with that launch measurement (see 11.4). The relay configuration is
+operator-asserted: the measurement doesn't cover the relay code, so the hash shows which
+configuration the relay states it used, not which it ran.
 
 ### 11.4 Trust Properties
 
@@ -874,12 +883,13 @@ This section describes the `selkey-tee` prototype as it is today. Check the
 
 **Runtime and attestation**
 
-- The default container image is built without SEV-SNP support and runs the simulated
-  runtime: no hardware isolation, `SELF_ASSERTED` receipts. A build with the `snp`
-  feature uses SEV-SNP when `/dev/sev-guest` is available and otherwise falls back to the
-  simulated runtime with a warning. Check `tee_type` (from `GET /tee/info` and in the
-  receipt) and `assurance_level`.
-- The launch measurement doesn't cover the relay code (Section 11.4).
+- The default container image is built without SEV-SNP support and runs only the
+  simulated runtime (no hardware isolation, `SELF_ASSERTED` receipts), and only when
+  `SELKEY_ALLOW_SIMULATED=1` is set. A build with the `snp` feature refuses to start if
+  SEV-SNP initialisation fails, unless that variable is set. Check `tee_type` (from
+  `GET /tee/info` and in the receipt) and `assurance_level`.
+- The launch measurement doesn't cover the relay code (Section 11.4), so the relay
+  configuration bound into the transcript is operator-asserted.
 - Clients don't yet verify attestation before sending inputs. The Selkey client and MCP
   server don't implement the TEE lane's input API.
 
@@ -890,39 +900,40 @@ This section describes the `selkey-tee` prototype as it is today. Check the
   submits ciphertext. The relay decrypts the inputs inside the CVM.
 - Only the bilateral session flow is available: there is no `POST /relay`, no invites or
   inbox, and no operator token. `POST /sessions` is unauthenticated and has none of the
-  software relay's rate or memory limits.
+  software relay's rate or session-count limits.
 
 **Contract handling and enforcement**
 
-- Only the relay's built-in prompt template is supported (no prompt programs). Contracts
-  naming a model profile or model constraints are rejected.
-- There is no schema registry. Any inline JSON Schema is accepted and the output is
-  validated against it; the software relay's strict-schema rules and per-session
-  entropy cap are not applied.
-- `entropy_budget_bits`, `entropy_enforcement`, `enforcement_policy_hash`, `timing_class`,
-  `session_ttl_secs` and `invite_ttl_secs` are accepted but not enforced. The session
-  lifetime comes from the relay's configuration.
-- Contract support is checked when inference starts, after both inputs are submitted,
-  rather than when the session is created.
-- No guardian enforcement policy is applied: schema validation is the only output check.
+- The contract is checked at `POST /sessions`, before any input is submitted; a contract
+  the relay can't run as specified is rejected with no session created.
+- Only the relay's built-in prompt template is supported (no prompt programs).
+- There is no schema registry. Only strict inline output schemas are accepted (closed
+  objects, bounded strings, arrays and integers; no `$schema`, `$ref` or composition), and
+  the output is validated against them as JSON Schema draft 7.
+- The relay computes the schema's entropy upper bound and, when the contract sets
+  `entropy_budget_bits`, rejects a schema above it (`Gate` by default; `Advisory` only
+  logs). The budget is per session only; nothing accumulates across sessions.
+- Fields tee-relay doesn't enforce are rejected rather than ignored: `timing_class`,
+  `enforcement_policy_hash`, `model_profile_id`, `model_profile_hash`,
+  `model_constraints`, `session_ttl_secs` and `invite_ttl_secs`. No guardian enforcement
+  policy is applied, and the session lifetime comes from the relay's configuration.
 
 **Receipts**
 
-- Receipts carry no `preflight_bundle`, `effective_config_hash`, policy hash, channel
-  capacity, entropy or `budget_usage` claims.
+- Receipts carry no `preflight_bundle`, `effective_config_hash`, channel capacity,
+  entropy or `budget_usage` claims.
 - Input commitments use the same salted scheme (`SHA256_N32_JCS_V3`), and the
   commitments add `initiator_submission_hash` and `responder_submission_hash`
   (SHA-256 of each ciphertext).
-- `tee-verifier` checks the receipt signature against the key named in
-  `tee_attestation.receipt_signing_pubkey_hex`. Also verify the receipt against a relay
-  key you pinned, for example with `verifier-core`, as Section 7.4 requires.
+- Output that the schema rejects gets a failure receipt with status `rejected`.
 
 **Provider and model**
 
 - Anthropic is the only provider. The provider receives the assembled prompt, including
   both inputs, in plaintext, as in the software lane.
-- Model identity is provider-reported. The provider endpoint and model ID are operator
-  configuration and aren't bound into the attestation.
+- Model identity is provider-reported. The provider endpoint, requested model and mode
+  flags are bound into the transcript through `relay_config_hash` (Section 11.3), but
+  only as the relay's own statement.
 
 ---
 

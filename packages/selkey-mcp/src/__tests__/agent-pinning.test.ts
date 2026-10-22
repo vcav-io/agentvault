@@ -26,7 +26,15 @@ import {
   SELKEY_CONTRACT_OFFER_SELECTION_MEDIA_TYPE,
   buildA2ASendMessageRequest,
 } from '../a2a-messages.js';
-import { MAX_PENDING_PINS, PinError, PinStore, keyFingerprint, resolveAgentHint } from '../pin-store.js';
+import {
+  MAX_PENDING_PINS,
+  PinError,
+  PinStore,
+  keyFingerprint,
+  normalizePublicKeyHex,
+  parsePinReseed,
+  resolveAgentHint,
+} from '../pin-store.js';
 import { runPinsCli, type PinsCliIo } from '../pin-cli.js';
 import { signNegotiationRequest } from '../negotiation-auth.js';
 import { IfcService } from '../ifc.js';
@@ -167,6 +175,52 @@ afterEach(() => {
 // ── Pin store ───────────────────────────────────────────────────────────────
 
 describe('pin store', () => {
+  const IDENTITY_HEX = '01' + '00'.repeat(31);
+  const ORDER8_HEX = 'c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a';
+  const MIXED_ORDER_HEX = ed25519.ExtendedPoint.fromHex(BOB_PUB).add(ed25519.ExtendedPoint.fromHex(ORDER8_HEX)).toHex();
+
+  it('accepts only canonical prime-order keys', () => {
+    expect(normalizePublicKeyHex(BOB_PUB.toUpperCase())).toBe(BOB_PUB);
+    for (const bad of [IDENTITY_HEX, ORDER8_HEX, MIXED_ORDER_HEX]) {
+      expect(() => normalizePublicKeyHex(bad)).toThrow(PinError);
+      expect(() => PinStore.inMemory([{ agentId: 'bob-test', publicKeyHex: bad }])).toThrow(/prime order/);
+    }
+    const store = PinStore.inMemory([{ agentId: 'bob-test', publicKeyHex: BOB_PUB }]);
+    expect(() => store.setPin('carol-test', MIXED_ORDER_HEX)).toThrow(/prime order/);
+    expect(() => store.checkPresentedKey('bob-test', IDENTITY_HEX)).toThrow(PinError);
+  });
+
+  it('refuses to rotate to a key that is not of prime order', () => {
+    const store = PinStore.inMemory([{ agentId: 'bob-test', publicKeyHex: BOB_PUB }]);
+    const statement = signMessage(
+      DOMAIN_PREFIXES.KEY_ROTATION,
+      {
+        agent_id: 'bob-test',
+        old_fpr: keyFingerprint(BOB_PUB),
+        new_fpr: keyFingerprint(MIXED_ORDER_HEX),
+        issued_at: new Date().toISOString(),
+      },
+      BOB_SEED,
+    );
+    expect(() => store.applyRotation(statement, MIXED_ORDER_HEX)).toThrow(/prime order/);
+    expect(store.pinnedKeyFor('bob-test')).toBe(BOB_PUB);
+  });
+
+  it('refuses a rotation statement whose old and new fingerprints are equal', () => {
+    const store = PinStore.inMemory([{ agentId: 'bob-test', publicKeyHex: BOB_PUB }]);
+    const statement = signMessage(
+      DOMAIN_PREFIXES.KEY_ROTATION,
+      {
+        agent_id: 'bob-test',
+        old_fpr: keyFingerprint(BOB_PUB),
+        new_fpr: keyFingerprint(BOB_PUB),
+        issued_at: new Date().toISOString(),
+      },
+      BOB_SEED,
+    );
+    expect(() => store.applyRotation(statement, BOB_PUB)).toThrow(/must differ/);
+  });
+
   it('uses "ed25519:" + hex(SHA-256(raw key)) as the key fingerprint', () => {
     expect(keyFingerprint(BOB_PUB)).toBe(`ed25519:${bytesToHex(sha256(hexToBytes(BOB_PUB)))}`);
     expect(keyFingerprint(BOB_PUB.toUpperCase())).toBe(keyFingerprint(BOB_PUB));
@@ -284,9 +338,62 @@ describe('pin store shared with the CLI', () => {
     const reseeded = PinStore.open({
       filePath: file(),
       seeds: [{ agentId: 'bob-test', publicKeyHex: BOB_PUB }],
-      reseed: true,
+      reseed: ['bob-test'],
     });
     expect(reseeded.pinnedKeyFor('bob-test')).toBe(BOB_PUB);
+  });
+
+  it('lets a blanket reseed replace only pins that came from configuration', () => {
+    PinStore.open({ filePath: file(), seeds: [{ agentId: 'bob-test', publicKeyHex: BOB_PUB }] });
+    // The configured key changed: a blanket reseed applies it.
+    const reseeded = PinStore.open({
+      filePath: file(),
+      seeds: [{ agentId: 'bob-test', publicKeyHex: OTHER_PUB }],
+      reseed: true,
+    });
+    expect(reseeded.pinnedKeyFor('bob-test')).toBe(OTHER_PUB);
+    expect(reseeded.getPin('bob-test')?.source).toBe('config');
+  });
+
+  it('does not let a blanket reseed undo a CLI re-pin or a signed rotation', () => {
+    const store = PinStore.open({ filePath: file(), seeds: [{ agentId: 'bob-test', publicKeyHex: BOB_PUB }] });
+    store.setPin('carol-test', ALICE_PUB);
+    const rotation = signMessage(
+      DOMAIN_PREFIXES.KEY_ROTATION,
+      {
+        agent_id: 'bob-test',
+        old_fpr: keyFingerprint(BOB_PUB),
+        new_fpr: keyFingerprint(OTHER_PUB),
+        issued_at: new Date().toISOString(),
+      },
+      BOB_SEED,
+    );
+    store.applyRotation(rotation, OTHER_PUB);
+    for (const [agentId, configured, stored] of [
+      ['bob-test', BOB_PUB, OTHER_PUB],
+      ['carol-test', OTHER_PUB, ALICE_PUB],
+    ] as const) {
+      expect(() =>
+        PinStore.open({ filePath: file(), seeds: [{ agentId, publicKeyHex: configured }], reseed: true }),
+      ).toThrow(/update the configured key to the stored one/);
+      expect(PinStore.open({ filePath: file() }).pinnedKeyFor(agentId)).toBe(stored);
+    }
+    // A per-agent opt-in still replaces it.
+    expect(
+      PinStore.open({
+        filePath: file(),
+        seeds: [{ agentId: 'bob-test', publicKeyHex: BOB_PUB }],
+        reseed: ['bob-test'],
+      }).pinnedKeyFor('bob-test'),
+    ).toBe(BOB_PUB);
+  });
+
+  it('parses SELKEY_AGENT_PIN_RESEED', () => {
+    expect(parsePinReseed(undefined)).toBe(false);
+    expect(parsePinReseed('')).toBe(false);
+    expect(parsePinReseed('false')).toBe(false);
+    expect(parsePinReseed('true')).toBe(true);
+    expect(parsePinReseed('bob-test, carol-test')).toEqual(['bob-test', 'carol-test']);
   });
 
   it('rejects a replayed or older rotation statement, across restarts', () => {

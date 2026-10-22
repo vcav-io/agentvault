@@ -1235,14 +1235,17 @@ describe('INITIATE relay preference ordering', () => {
 
   // Use https relays here so the tests do not depend on whether plain http
   // relay URLs are accepted for non-loopback hosts.
+  let priorRelayUrl: string | undefined;
   beforeEach(() => {
+    priorRelayUrl = process.env['SELKEY_RELAY_URL'];
     process.env['SELKEY_RELAY_URL'] = 'https://relay.test';
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
     delete process.env['SELKEY_RELAY_ALLOWLIST'];
-    process.env['SELKEY_RELAY_URL'] = 'http://relay.test';
+    if (priorRelayUrl === undefined) delete process.env['SELKEY_RELAY_URL'];
+    else process.env['SELKEY_RELAY_URL'] = priorRelayUrl;
   });
 
   it('creates the session on a REQUIRED, locally allowlisted responder relay and commits that same relay', async () => {

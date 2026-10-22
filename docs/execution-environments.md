@@ -55,9 +55,11 @@ Even in confidential mode:
 3. **Metadata is visible.** Session timing, message sizes, and connection
    patterns are observable by the operator even in TEE mode.
 
-4. **The TEE lane implements only part of the protocol.** It applies no guardian
-   policy, accepts any inline output schema, doesn't enforce entropy limits, and has
-   its own input API that the Selkey client and MCP server don't implement. See
+4. **The TEE lane implements only part of the protocol.** It has no invites or
+   `POST /relay`, no operator token, no schema registry (strict inline schemas only),
+   no guardian policy and only a per-session entropy budget, and it rejects contracts
+   that set fields it doesn't enforce. Its input API isn't implemented by the Selkey
+   client or MCP server. See
    [protocol-spec.md, Section 11.5](protocol-spec.md#115-differences-from-the-software-lane).
 
 ## Choosing a Lane
@@ -82,5 +84,6 @@ Both lanes produce signed receipts. TEE lane receipts additionally contain
   `tee_attestation.receipt_signing_pubkey_hex`: TEE receipts are verified
   against the caller-supplied relay key, and a differing embedded key makes
   the receipt invalid.
-  Full cryptographic verification (measurement allowlist, transcript hash
-  recomputation) requires the `tee-verifier` crate (Rust).
+  Full cryptographic verification (SEV-SNP report chain and TCB policy, measurement
+  allowlist, transcript hash recomputation against the relay configuration) requires
+  the `tee-verifier` crate (Rust), which also verifies against a pinned relay key.

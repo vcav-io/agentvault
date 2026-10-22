@@ -25,6 +25,7 @@ not yet published on npm.
 | `selkey/commitment` | `generateCommitmentNonce`, `computeInputCommitmentV3`, `verifyInputCommitmentV3` |
 | `selkey/contract-hash` | Contract hash v2: `computeContractHashV2`, `normalizeContractV2` |
 | `selkey/jcs` | RFC 8785 canonicalisation with the receipt v3 profile, strict JSON parser |
+| `selkey/ed25519` | `verifyEd25519Strict` (`s < L`, canonical prime-order `R` and key, RFC 8032 verification), `isPrimeOrderKey` |
 
 ## Usage
 
@@ -60,6 +61,10 @@ if (result.state === 'COMPLETED' && result.receipt) {
 
 For responder-side usage, use `joinAndWait` with the tokens received from the initiator
 and a fresh nonce of its own.
+
+A relay that runs with `SELKEY_OPERATOR_TOKEN` requires that token to create sessions. Pass it
+as `operator_token` in the config (`{ relay_url, operator_token }`); the client sends it as
+`Authorization: Bearer <token>` on `POST /sessions` only, and never includes it in errors.
 
 ## Receipts and commitments
 

@@ -58,6 +58,8 @@ function makeExtensionParams(overrides?: Partial<SelkeyA2AExtensionParams>): Sel
     relay_url: 'https://relay.example.com',
     a2a_send_message_url: 'http://localhost:3000/a2a/send-message',
     afal_endpoint: 'http://localhost:3000/afal',
+    issued_at: new Date().toISOString(),
+    expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     ...overrides,
   };
 }
@@ -228,6 +230,8 @@ describe('buildAgentCard with seedHex', () => {
       relay_url: ext.params['relay_url'] as string,
       a2a_send_message_url: ext.params['a2a_send_message_url'] as string,
       afal_endpoint: ext.params['afal_endpoint'] as string,
+      issued_at: ext.params['issued_at'] as string,
+      expires_at: ext.params['expires_at'] as string,
     };
 
     const valid = verifyAgentCardSignature(
@@ -411,6 +415,8 @@ describe('tryResolvePeerViaAgentCard card signature verification (transport-leve
       supported_purposes: ['COMPATIBILITY'],
       // NO a2a_send_message_url
       // NO afal_endpoint
+      issued_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
     };
     const cardSig = signAgentCard('peer-agent', customExtParams, PEER_SEED_HEX);
     const customCard = {

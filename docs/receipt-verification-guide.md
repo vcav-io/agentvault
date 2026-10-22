@@ -734,6 +734,13 @@ is verified against the caller-supplied relay key like any other receipt, and if
 `receipt_signing_pubkey_hex` is present and differs from that key, the receipt is
 invalid.
 
+To check the attestation itself, use the selkey-tee `tee-verifier` crate (Rust) with a
+pinned relay key (`verify_tee_receipt_pinned`); without one it reports the signature as
+`ValidUnpinned`, which it doesn't count as valid. Current TEE relays bind the transcript
+as `av-tee-transcript-v3`, which includes `relay_config_hash`, so the verifier also needs
+the relay configuration (published at the relay's `GET /tee/info`). That configuration is
+the relay's own statement: the launch measurement doesn't yet cover the relay code.
+
 ### Assurance levels
 
 The `assurance_level` field is required in v2 and v3 receipts and describes the strength
@@ -850,10 +857,13 @@ is no form that accepts whatever key the relay serves.
 
 A contract may carry `relay_verifying_key_hex`. The relay compares it with its own
 signing key when the session (or inbox invite) is created, and refuses the session
-on a mismatch, before any input is accepted. When `SELKEY_RELAY_VERIFYING_KEY_HEX`
-is set, `selkey-mcp` adds it to every contract it builds, and a responder expects
-the same value in the contract hash. Both parties should therefore pin the same
-key for the relay they share.
+on a mismatch, before any input is accepted. `selkey-mcp` adds
+`SELKEY_RELAY_VERIFYING_KEY_HEX` to every contract it builds, and a responder
+accepts only contracts that carry the same value. Both parties must therefore pin
+the same key for the relay they share. Outside `SELKEY_ENV=dev` the pin is
+required: without it an agent neither starts nor responds to sessions. Development
+setups also work without a pin, but pinning is recommended there too; the local
+demo pins the key of its local relay automatically.
 
 ---
 

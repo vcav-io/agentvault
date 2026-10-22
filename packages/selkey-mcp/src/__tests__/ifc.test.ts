@@ -13,12 +13,11 @@ import { ed25519 } from '@noble/curves/ed25519';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
 
 import { computeDigestHex, contentHash, DOMAIN_PREFIXES, signMessage, verifyMessage } from '../afal-signing.js';
-import { IfcService, type IfcEnvelope, type IfcGrant, type IfcMessageClass } from '../ifc.js';
+import { IfcService, verifyGrantV2, type IfcEnvelope, type IfcGrant, type IfcMessageClass } from '../ifc.js';
 import { recordHeldReceipt } from '../held-receipts.js';
 import { keyFingerprint } from '../pin-store.js';
 import { InsecureStateFileError } from '../secure-fs.js';
 import { SELKEY_IFC_RESULT_MEDIA_TYPE, buildA2ATaskResponse } from '../a2a-messages.js';
-import grantVector from './vectors/ifc-grant-v2.json';
 
 const ALICE_SEED = '01'.repeat(32);
 const ALICE_PUB = bytesToHex(ed25519.getPublicKey(hexToBytes(ALICE_SEED)));
@@ -493,6 +492,13 @@ describe('sending (sender side uses a received grant)', () => {
   });
 });
 
+const grantVector = JSON.parse(
+  fs.readFileSync(
+    path.resolve(__dirname, '../../../selkey-client/test-vectors/vfc/ifc_grant_v2_positive_01.json'),
+    'utf8',
+  ),
+);
+
 describe('VCAV-IFC-GRANT-V2 vector', () => {
   it('matches the published grant_id, signing digest and signature', () => {
     const { unsigned, grant_id, digest_hex, signature, signer_seed_hex, signer_public_key_hex } = grantVector;
@@ -504,5 +510,42 @@ describe('VCAV-IFC-GRANT-V2 vector', () => {
     expect(verifyMessage(DOMAIN_PREFIXES.IFC_GRANT, signed, signer_public_key_hex)).toBe(true);
     // The V1 domain prefix must not verify a V2 grant.
     expect(DOMAIN_PREFIXES.IFC_GRANT).toBe('VCAV-IFC-GRANT-V2:');
+  });
+});
+
+describe('V2 grant checks', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function signedGrant(change: (u: any) => void): Record<string, unknown> {
+    const unsigned = structuredClone(grantVector.unsigned);
+    change(unsigned);
+    const grant_id = contentHash(unsigned);
+    return signMessage(DOMAIN_PREFIXES.IFC_GRANT, { ...unsigned, grant_id }, grantVector.signer_seed_hex);
+  }
+
+  it('accepts the unchanged grant', () => {
+    expect(() => verifyGrantV2(signedGrant(() => {}), grantVector.signer_public_key_hex)).not.toThrow();
+  });
+
+  it.each([
+    ['a repeated message class', (u: any) => (u.scope.message_classes = ['LOGISTICS', 'LOGISTICS'])],
+    ['an empty message class list', (u: any) => (u.scope.message_classes = [])],
+    ['an empty-string message class', (u: any) => (u.scope.message_classes = [''])],
+    ['another label ceiling', (u: any) => (u.label_ceiling = 'SESSION_BOUND')],
+    ['max_uses of zero', (u: any) => (u.permissions.max_uses = 0)],
+    ['a fractional max_uses', (u: any) => (u.permissions.max_uses = 1.5)],
+    ['a bare-hex audience fingerprint', (u: any) => (u.audience_key_fpr = u.audience_key_fpr.slice('ed25519:'.length))],
+    ['an uppercase audience fingerprint', (u: any) => (u.audience_key_fpr = u.audience_key_fpr.toUpperCase())],
+    ['expires_at equal to issued_at', (u: any) => (u.expires_at = u.issued_at)],
+    ['expires_at before issued_at', (u: any) => (u.expires_at = '2026-10-21T12:00:00.000Z')],
+    ['an unknown field', (u: any) => (u.note = 'x')],
+    ['an unknown scope field', (u: any) => (u.scope.extra = true)],
+  ])('rejects a signed grant with %s', (_name, change) => {
+    expect(() => verifyGrantV2(signedGrant(change), grantVector.signer_public_key_hex)).toThrow();
+  });
+
+  it('rejects a grant whose issuer_public_key_hex is not the key it is verified under', () => {
+    // Signed by the expected issuer, but naming another key as issuer.
+    const grant = signedGrant((u) => (u.issuer_public_key_hex = MALLORY_PUB));
+    expect(() => verifyGrantV2(grant, grantVector.signer_public_key_hex)).toThrow(/issuer_public_key_hex/);
   });
 });

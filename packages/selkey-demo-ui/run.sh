@@ -45,7 +45,7 @@ done
 # Preflight
 # ---------------------------------------------------------------------------
 
-for cmd in node cargo; do
+for cmd in node cargo openssl; do
   if ! command -v "$cmd" &>/dev/null; then
     log_error "Required command not found: ${cmd}"
     exit 1
@@ -123,6 +123,13 @@ if [[ "${NO_RELAY}" == "false" ]]; then
     log_success "Relay binary ready"
 
     RELAY_BIN="${REPO_ROOT}/target/release/selkey-relay"
+    # One operator token for the relay and the demo agents (a fresh one per
+    # run unless SELKEY_OPERATOR_TOKEN is set).
+    if [[ -z "${SELKEY_OPERATOR_TOKEN:-}" ]]; then
+      SELKEY_OPERATOR_TOKEN="$(openssl rand -hex 32)"
+    fi
+    export SELKEY_OPERATOR_TOKEN
+    SELKEY_OPERATOR_TOKEN="${SELKEY_OPERATOR_TOKEN}" \
     SELKEY_PORT=3100 \
     SELKEY_PROMPT_PROGRAM_DIR="${REPO_ROOT}/packages/selkey-relay/prompt_programs" \
     SELKEY_SCHEMA_DIR="${REPO_ROOT}/schemas/output" \

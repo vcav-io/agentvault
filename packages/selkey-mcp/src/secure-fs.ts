@@ -153,3 +153,186 @@ export function appendPrivateLine(filePath: string, line: string): void {
     fs.closeSync(fd);
   }
 }
+
+// ── Lock files ────────────────────────────────────────────────────────────
+
+export interface FileLockOptions {
+  /** A lock whose mtime is older than this is treated as abandoned. */
+  staleMs: number;
+  /** Give up after this long. */
+  timeoutMs: number;
+}
+
+/** A removal marker older than this is treated as orphaned (its critical section takes milliseconds). */
+export const MARKER_STALE_MS = 60_000;
+
+/** mtime and contents of a small state file, read from one open file descriptor. */
+function readTokenFile(file: string): { mtimeMs: number; token: string } | undefined {
+  let fd: number;
+  try {
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw err;
+  }
+  try {
+    const { mtimeMs } = fs.fstatSync(fd);
+    return { mtimeMs, token: fs.readFileSync(fd, 'utf8') };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * Remove an orphaned marker that was observed holding `observedToken`. The
+ * marker is renamed to a unique name first (only one of several waiters can
+ * rename the same file), then its token and age are checked again; a marker
+ * that turns out to be another holder's is put back. True if removed.
+ */
+export function removeStaleMarker(marker: string, observedToken: string, staleMs: number = MARKER_STALE_MS): boolean {
+  const aside = `${marker}.${randomBytes(8).toString('hex')}.stale`;
+  try {
+    fs.renameSync(marker, aside);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw err;
+  }
+  const moved = readTokenFile(aside);
+  if (moved && moved.token === observedToken && Date.now() - moved.mtimeMs > staleMs) {
+    fs.rmSync(aside, { force: true });
+    return true;
+  }
+  try {
+    fs.linkSync(aside, marker);
+  } catch {
+    // Another waiter created a marker meanwhile; see the residual note below.
+  }
+  fs.rmSync(aside, { force: true });
+  return false;
+}
+
+/**
+ * Run `fn` while holding `<lockPath>.takeover`, an O_EXCL marker holding a
+ * random token that every removal of `lockPath` (stale takeover and release)
+ * holds. While it is held no other process removes the lock file, so the file
+ * `fn` checks is the file it removes. Returns undefined if the marker could
+ * not be taken in time. On exit the marker is removed only if it still holds
+ * this holder's token.
+ *
+ * A marker older than `markerStaleMs` (default 60 s, far longer than the
+ * critical section) is treated as orphaned and removed by rename-and-recheck,
+ * so two waiters cannot both remove it.
+ *
+ * Residual: these are advisory locks between local processes of the same
+ * user. A holder stalled for longer than the marker staleness (suspended or
+ * swapped out) can still overlap with a new holder, and a fourth contender
+ * arriving within microseconds of an orphaned-marker removal can do the same.
+ * The effect is a lost update to the pin store or ledger file, not a
+ * cross-user compromise.
+ */
+export function withRemovalMarker<T>(
+  lockPath: string,
+  opts: FileLockOptions & { markerStaleMs?: number },
+  fn: () => T,
+): T | undefined {
+  const marker = `${lockPath}.takeover`;
+  const markerStaleMs = opts.markerStaleMs ?? MARKER_STALE_MS;
+  const deadline = Date.now() + opts.timeoutMs;
+  const token = `${process.pid}:${randomBytes(16).toString('hex')}`;
+  for (;;) {
+    let fd: number;
+    try {
+      fd = fs.openSync(marker, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, FILE_MODE);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      const current = readTokenFile(marker);
+      if (current && Date.now() - current.mtimeMs > markerStaleMs) {
+        removeStaleMarker(marker, current.token, markerStaleMs);
+        continue;
+      }
+      if (Date.now() > deadline) return undefined;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+      continue;
+    }
+    try {
+      fs.writeSync(fd, token);
+    } finally {
+      fs.closeSync(fd);
+    }
+    try {
+      return fn();
+    } finally {
+      if (readTokenFile(marker)?.token === token) fs.rmSync(marker, { force: true });
+    }
+  }
+}
+
+/** mtime and contents of the lock file, read from one open file descriptor. */
+function readLock(lockPath: string): { mtimeMs: number; token: string } | undefined {
+  return readTokenFile(lockPath);
+}
+
+/**
+ * Remove `lockPath` if it still holds `expected` (every lock holds a unique
+ * token, so inode reuse cannot make a new lock look like the old one). The
+ * check and the removal happen under the removal marker. True if removed.
+ */
+export function removeLockIfUnchanged(
+  lockPath: string,
+  expected: string,
+  opts: FileLockOptions = { staleMs: 10_000, timeoutMs: 5_000 },
+): boolean {
+  return (
+    withRemovalMarker(lockPath, opts, () => {
+      const current = readLock(lockPath);
+      if (!current || current.token !== expected) return false;
+      fs.unlinkSync(lockPath);
+      return true;
+    }) ?? false
+  );
+}
+
+/**
+ * Take an exclusive lock file (O_EXCL, 0600) holding a unique token.
+ *
+ * A lock whose mtime is older than `staleMs` is taken over under the removal
+ * marker: its mtime and token are read from one file descriptor, and it is
+ * removed only if still stale, so a lock created by a concurrent takeover is
+ * never removed. Release removes the lock only while it still holds this
+ * holder's token (also under the marker). If the marker cannot be taken in
+ * time, release leaves the lock to go stale; that affects liveness only.
+ * Returns the release function.
+ */
+export function acquireFileLock(lockPath: string, opts: FileLockOptions): () => void {
+  const deadline = Date.now() + opts.timeoutMs;
+  ensurePrivateDir(path.dirname(lockPath));
+  const token = `${process.pid}:${randomBytes(16).toString('hex')}`;
+  for (;;) {
+    try {
+      const fd = fs.openSync(lockPath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, FILE_MODE);
+      try {
+        fs.writeSync(fd, token);
+      } finally {
+        fs.closeSync(fd);
+      }
+      return () => {
+        removeLockIfUnchanged(lockPath, token, opts);
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      const remaining = Math.max(0, deadline - Date.now());
+      const tookOver = withRemovalMarker(lockPath, { staleMs: opts.staleMs, timeoutMs: remaining }, () => {
+        const current = readLock(lockPath);
+        if (!current) return true;
+        if (Date.now() - current.mtimeMs <= opts.staleMs) return false;
+        // Re-read through a fresh descriptor right before removing it.
+        if (readLock(lockPath)?.token !== current.token) return false;
+        fs.unlinkSync(lockPath);
+        return true;
+      });
+      if (tookOver) continue;
+      if (Date.now() > deadline) throw new Error(`timed out waiting for ${lockPath}`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    }
+  }
+}

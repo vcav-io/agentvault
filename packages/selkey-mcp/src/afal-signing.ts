@@ -7,12 +7,17 @@
  *   3. prefixed = utf8(D + canonical)            // Domain-separated
  *   4. digest = SHA-256(prefixed)                // 32 bytes
  *   5. signature = Ed25519.sign(digest, seed)    // 64 bytes → 128 hex
+ *
+ * Verification is strict: the signature must be 128 lowercase hex characters,
+ * and Ed25519 is checked with `s < L`, a canonical prime-order `R` and key,
+ * and RFC 8032 (cofactorless) verification, as the Rust verifiers do.
  */
 
 import { ed25519 } from '@noble/curves/ed25519';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex, hexToBytes, utf8ToBytes } from '@noble/hashes/utils';
 import { canonicalize } from 'json-canonicalize';
+import { verifyEd25519Strict } from 'selkey/ed25519';
 
 // ---------------------------------------------------------------------------
 // Domain prefix constants
@@ -26,7 +31,7 @@ export const DOMAIN_PREFIXES = {
   COMMIT: 'VCAV-COMMIT-V1:',
   MESSAGE: 'VCAV-MESSAGE-V1:',
   REQUEST: 'VCAV-REQUEST-V1:',
-  AGENT_CARD: 'VCAV-AGENT-CARD-V1:',
+  AGENT_CARD: 'VCAV-AGENT-CARD-V2:',
   IFC_GRANT: 'VCAV-IFC-GRANT-V2:',
   IFC_ENVELOPE: 'VCAV-IFC-ENVELOPE-V1:',
   KEY_ROTATION: 'VCAV-KEY-ROTATION-V1:',
@@ -71,23 +76,19 @@ export function sign(
   return bytesToHex(sig);
 }
 
+const SIGNATURE_HEX_RE = /^[0-9a-f]{128}$/;
+const PUBLIC_KEY_HEX_RE = /^[0-9a-f]{64}$/i;
+
 export function verify(
   domainPrefix: DomainPrefix,
   unsignedPayload: Record<string, unknown>,
   signatureHex: string,
   publicKeyHex: string,
 ): boolean {
+  if (typeof signatureHex !== 'string' || !SIGNATURE_HEX_RE.test(signatureHex)) return false;
+  if (typeof publicKeyHex !== 'string' || !PUBLIC_KEY_HEX_RE.test(publicKeyHex)) return false;
   const digest = computeDigest(domainPrefix, unsignedPayload);
-  try {
-    return ed25519.verify(hexToBytes(signatureHex), digest, hexToBytes(publicKeyHex));
-  } catch (err) {
-    console.error(
-      `verify: ed25519 verification threw (not just returned false): ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-    return false;
-  }
+  return verifyEd25519Strict(hexToBytes(signatureHex), digest, hexToBytes(publicKeyHex.toLowerCase()));
 }
 
 export function signMessage<T extends Record<string, unknown>>(
