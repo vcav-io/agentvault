@@ -427,9 +427,10 @@ A receipt that passes signature verification against a trusted public key proves
 4. If the verifier holds the artefacts: the contract, schema, policy, and prompt template
    hashes in the receipt match the artefacts the verifier holds.
 5. The bounded output hash in the receipt matches the output the verifier received.
-6. The input commitment hashes match the canonical hashes of the inputs each participant
-   submitted (each participant can verify their own commitment; they cannot verify the
-   counterparty's without the counterparty's input).
+6. The input commitments match the inputs each participant submitted. Each commitment
+   is salted with a secret nonce chosen by that participant's client, so each
+   participant can verify its own commitment, and the counterparty can neither verify
+   it nor test guesses of the input against it.
 
 ### 8.2 What a Verified Receipt Does Not Prove
 

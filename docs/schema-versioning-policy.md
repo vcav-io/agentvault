@@ -21,15 +21,14 @@ Contracts carry their output schema inline as the `output_schema` field. The con
 hash (also JCS + SHA-256) captures the schema content transitively. The relay also
 computes `output_schema_hash` directly from the inline schema at session time.
 
-### 3. Receipts bind `output_schema_hash` for offline verification
+### 3. Receipts bind the schema hash for offline verification
 
 Every receipt includes:
-- `output_schema_id` — human-readable schema identifier (e.g., `vcav_e_mediation_signal_v2`)
-- `output_schema_hash` — SHA-256 of the JCS-canonical schema content
-- `contract_hash` — SHA-256 of the JCS-canonical contract (which includes the schema)
+- `commitments.schema_hash` — SHA-256 of the JCS-canonical schema content the relay enforced
+- `commitments.contract_hash` — contract hash v2 (`SHA256_JCS_V2`) of the contract, which includes the schema or its `output_schema_hash`
 
 A verifier can independently hash the schema, compare against the receipt's
-`output_schema_hash`, and confirm which exact schema governed the session output.
+`commitments.schema_hash`, and confirm which exact schema governed the session output.
 
 ### 4. No in-place migration of existing contracts
 

@@ -169,7 +169,6 @@ retrieve_session "${BOB_SESSION_ID}"   "${BOB_READ_TOKEN}"   "${RUN_DIR}/bob_out
 extract_receipt() {
   local output_file="$1"
   local receipt_file="${RUN_DIR}/receipt.json"
-  local sig_file="${RUN_DIR}/receipt_signature.txt"
 
   if [[ ! -f "${output_file}" ]]; then
     return 0
@@ -182,17 +181,15 @@ const fs = require('fs');
 try {
   const out = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
   if (out.receipt) {
+    // v3 receipt (signature embedded in receipt.signature)
     fs.writeFileSync(process.argv[2], JSON.stringify(out.receipt, null, 2));
-    if (out.receipt_signature) {
-      fs.writeFileSync(process.argv[3], out.receipt_signature + '\n');
-    }
     process.stdout.write('extracted\n');
   }
 } catch (e) {
   process.stderr.write('extract_receipt failed: ' + e.message + '\n');
   process.exit(1);
 }
-" -- "${output_file}" "${receipt_file}" "${sig_file}" 2>"${extract_stderr_log}")" || {
+" -- "${output_file}" "${receipt_file}" 2>"${extract_stderr_log}")" || {
     log_warn "extract_receipt script failed: $(cat "${extract_stderr_log}")"
     return 0
   }
@@ -651,9 +648,16 @@ if [[ -f "${RUN_DIR}/receipt.json" ]]; then
   node -e "
 const fs=require('fs');
 const r=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));
-const fields=['contract_hash','model_profile_hash','output_entropy_bits','prompt_template_hash'];
-for(const f of fields){
-  if(r[f]) console.log(f+'='+r[f]);
+const c=r.commitments||{}, k=r.claims||{};
+const fields={
+  receipt_schema_version: r.receipt_schema_version,
+  contract_hash: c.contract_hash,
+  prompt_template_hash: c.prompt_template_hash,
+  model_profile_hash: k.model_profile_hash_asserted,
+  channel_capacity_bits_upper_bound: k.channel_capacity_bits_upper_bound,
+};
+for(const [f,v] of Object.entries(fields)){
+  if(v!==undefined) console.log(f+'='+v);
 }
 " -- "${RUN_DIR}/receipt.json" 2>/dev/null | while IFS= read -r line; do log_info "  receipt: ${line}"; done || true
 fi

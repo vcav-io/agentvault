@@ -117,7 +117,7 @@ The canary check in the demo UI is a client-side test for the same basic failure
 
 ### Receipt and signature
 
-A **v2.1 receipt** binds the contract hash, guardian policy hash, prompt template hash, model profile hash, relay build hash, channel capacity measurement, and output into a signed envelope.
+A **v3 receipt** binds the contract hash, the enforced output schema, the output, each participant's salted input commitment, the prompt template and policy hashes, the model profile hash, the relay build hash and the channel capacity measurement into a signed envelope. Each participant can check its own input commitment using the nonce its client generated; the counterparty cannot.
 
 The Ed25519 signature proves that the relay attests to this specific combination.
 

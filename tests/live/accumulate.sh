@@ -274,7 +274,7 @@ function getDesiredContract(sessionEntry) {
 function getObservedContract(runDir) {
   const receipt = readJson(path.join(runDir, 'receipt.json'));
   if (!receipt) return null;
-  return receipt.purpose_code ?? receipt.contract_hash ?? null;
+  return receipt.commitments?.contract_hash ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -358,10 +358,10 @@ for (const sessionEntry of sessions) {
 
   const receipt = readJson(path.join(runDir, 'receipt.json'));
   const metadata = {
-    contract_hash:        receipt?.contract_hash        ?? null,
-    output_entropy_bits:  receipt?.output_entropy_bits  ?? null,
-    model_profile_hash:   receipt?.model_profile_hash   ?? null,
-    prompt_template_hash: receipt?.prompt_template_hash ?? null,
+    contract_hash:        receipt?.commitments?.contract_hash                ?? null,
+    output_entropy_bits:  receipt?.claims?.channel_capacity_bits_upper_bound ?? null,
+    model_profile_hash:   receipt?.claims?.model_profile_hash_asserted       ?? null,
+    prompt_template_hash: receipt?.commitments?.prompt_template_hash         ?? null,
   };
 
   const sessionRecord = {

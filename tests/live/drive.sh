@@ -319,7 +319,9 @@ run_session() {
   # --- Submit Alice's input ---
   # Matches SubmitInputRequest (packages/selkey-relay/src/types.rs:97)
   local alice_body
-  alice_body="$(jq -n --argjson ctx "${alice_context}" '{role: "alice", context: $ctx}')"
+  # Each submission carries a fresh client nonce that salts its input commitment.
+  alice_body="$(jq -n --argjson ctx "${alice_context}" --arg nonce "$(openssl rand -hex 32)" \
+    '{role: "alice", context: $ctx, commitment_nonce: $nonce}')"
 
   local alice_resp
   alice_resp="$(curl -s -X POST "${RELAY_URL}/sessions/${session_id}/input" \
@@ -331,7 +333,8 @@ run_session() {
   # --- Submit Bob's input ---
   local bob_body
   bob_body="$(jq -n --argjson ctx "${bob_context}" --arg hash "${observed_hash}" \
-    '{role: "bob", context: $ctx, expected_contract_hash: $hash}')"
+    --arg nonce "$(openssl rand -hex 32)" \
+    '{role: "bob", context: $ctx, expected_contract_hash: $hash, commitment_nonce: $nonce}')"
 
   local bob_resp
   bob_resp="$(curl -s -X POST "${RELAY_URL}/sessions/${session_id}/input" \
@@ -391,8 +394,11 @@ run_session() {
 
   # --- Extract model identity from receipt ---
   local model_provider model_id_actual
-  model_provider="$(jq -r '.receipt.model_identity.provider // empty' "${run_dir}/alice_output.json")"
-  model_id_actual="$(jq -r '.receipt.model_identity.model_id // empty' "${run_dir}/alice_output.json")"
+  # v3 receipts assert the model as "<provider>/<model_id>".
+  local model_asserted
+  model_asserted="$(jq -r '.receipt.claims.model_identity_asserted // empty' "${run_dir}/alice_output.json")"
+  model_provider="${model_asserted%%/*}"
+  model_id_actual="${model_asserted#*/}"
 
   # --- Write run metadata ---
   local transitions_json
