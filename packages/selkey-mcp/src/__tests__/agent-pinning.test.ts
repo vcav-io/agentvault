@@ -587,6 +587,12 @@ describe('negotiation requests at the responder', () => {
     expect(((await res.json()) as Record<string, unknown>)['state']).toBe('AGREED');
   });
 
+  it('answers each signed request once', async () => {
+    const signed = signNegotiationRequest('CONTRACT_OFFER_PROPOSAL', proposal, 'alice-test', ALICE_SEED);
+    expect((await post(signed)).status).toBe(200);
+    expect((await post(signed)).status).toBe(401);
+  });
+
   it('rejects an unsigned request', async () => {
     const res = await post(proposal);
     expect(res.status).toBe(401);

@@ -925,7 +925,7 @@ export class DirectAfalTransport implements AfalTransport {
     if (!agentId) return null;
     if (expectedPeerAgentId !== undefined && agentId !== expectedPeerAgentId) {
       throw new Error(
-        `Peer agent card identity mismatch: expected ${expectedPeerAgentId} but got ${agentId}`,
+        `Peer agent card identity mismatch: expected ${expectedPeerAgentId} but got ${peerText(agentId)}`,
       );
     }
 
@@ -1179,7 +1179,7 @@ export class DirectAfalTransport implements AfalTransport {
     }
     if (expectedPeerAgentId !== undefined && descriptor.agent_id !== expectedPeerAgentId) {
       throw new Error(
-        `Peer descriptor identity mismatch: expected ${expectedPeerAgentId} but got ${descriptor.agent_id}`,
+        `Peer descriptor identity mismatch: expected ${expectedPeerAgentId} but got ${peerText(descriptor.agent_id)}`,
       );
     }
 
@@ -1289,6 +1289,16 @@ function parseDescriptorPeerDiscovery(descriptor: AgentDescriptor): SelkeyPeerDi
       descriptor.capabilities['supports_bespoke_contract_negotiation'] === true,
     ...(supportedContractOffers ? { supportedContractOffers } : {}),
   };
+}
+
+/**
+ * Quote a peer-supplied string for inclusion in an error: JSON-quoted,
+ * truncated, and marked as coming from the peer (not an instruction).
+ */
+export function peerText(value: unknown): string {
+  const text = typeof value === 'string' ? value : String(value);
+  const clipped = text.length > 64 ? `${text.slice(0, 64)}…` : text;
+  return `${JSON.stringify(clipped)} (peer-supplied text)`;
 }
 
 /** An ADMIT may be valid for at most 10 minutes. */

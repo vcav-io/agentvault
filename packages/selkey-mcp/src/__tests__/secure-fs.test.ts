@@ -71,6 +71,24 @@ describe.skipIf(!posix)('secure-fs', () => {
     expect(readPrivateJson(file)).toEqual({ a: 2 });
   });
 
+  it('refuses a symlinked state directory', () => {
+    const real = path.join(tmp, 'real');
+    fs.mkdirSync(real, { mode: 0o700 });
+    const link = path.join(tmp, 'state');
+    fs.symlinkSync(real, link);
+    expect(() => writePrivateJson(path.join(link, 'x.json'), { a: 1 })).toThrow(InsecureStateFileError);
+    expect(() => appendPrivateLine(path.join(link, 'log'), 'x')).toThrow(InsecureStateFileError);
+  });
+
+  it('tightens a pre-existing readable log to 0600 on append', () => {
+    fs.mkdirSync(path.join(tmp, 'state'), { mode: 0o700 });
+    const log = path.join(tmp, 'state', 'audit.jsonl');
+    fs.writeFileSync(log, '', { mode: 0o644 });
+    fs.chmodSync(log, 0o644);
+    appendPrivateLine(log, 'x');
+    expect(mode(log)).toBe(0o600);
+  });
+
   it('appends 0600 lines and refuses a symlinked log', () => {
     const log = path.join(tmp, 'state', 'audit.jsonl');
     appendPrivateLine(log, '{"n":1}');

@@ -18,6 +18,7 @@
 import { createServer } from 'node:http';
 import type { Server, IncomingMessage, ServerResponse } from 'node:http';
 import type { AfalResponder } from './afal-responder.js';
+import { NonceCache } from './afal-responder.js';
 import type { AgentDescriptor } from './direct-afal-transport.js';
 import type { IfcService } from './ifc.js';
 import { buildAgentCard } from './a2a-agent-card.js';
@@ -85,6 +86,7 @@ export class AfalHttpServer {
   private _localDescriptor: AgentDescriptor;
   private readonly _inFlightTasks = new Map<string, InFlightTask>();
   private ifcService?: IfcService;
+  private readonly negotiationNonces = new NonceCache();
 
   constructor(config: AfalHttpServerConfig) {
     this.config = config;
@@ -542,7 +544,13 @@ export class AfalHttpServer {
       this._localDescriptor.agent_id,
       this.config.responder.pins,
     );
-    return result.ok ? { ok: true } : result;
+    if (!result.ok) return result;
+    // Each signed request is answered once.
+    const raw = body as Record<string, unknown>;
+    if (!this.negotiationNonces.check(result.from, String(raw['nonce']), Date.parse(String(raw['timestamp'])))) {
+      return { ok: false, error: 'Negotiation request nonce was already used' };
+    }
+    return { ok: true };
   }
 
   private readBody(
