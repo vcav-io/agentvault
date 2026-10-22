@@ -149,3 +149,16 @@ fn test_relay_refuses_weak_registry_token() {
         "weak inbox_token",
     );
 }
+
+#[test]
+fn test_dev_relay_refuses_public_bind_without_operator_token() {
+    // The check runs before the listener binds, so nothing is exposed.
+    assert_refuses(
+        &[
+            ("SELKEY_ENV", "dev"),
+            ("SELKEY_INBOX_AUTH", "off"),
+            ("SELKEY_BIND_ADDR", "0.0.0.0"),
+        ],
+        "refusing to start: relay is bound to a non-loopback address",
+    );
+}

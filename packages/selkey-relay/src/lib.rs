@@ -68,16 +68,16 @@ pub fn resolve_bind_addr(value: Option<&str>) -> std::net::IpAddr {
 
 /// Decide whether the relay may start with this bind address and auth config.
 ///
-/// Outside dev, a relay reachable beyond loopback must require an operator
-/// token, unless the operator explicitly accepts unauthenticated access
-/// (`SELKEY_ALLOW_UNAUTHENTICATED=1`, e.g. behind an authenticating proxy).
+/// A relay reachable beyond loopback must require an operator token, in dev
+/// as well as outside it, unless the operator explicitly accepts
+/// unauthenticated access (`SELKEY_ALLOW_UNAUTHENTICATED=1`, e.g. behind an
+/// authenticating proxy or on a private container network).
 pub fn check_exposure(
     bind_addr: std::net::IpAddr,
     has_operator_token: bool,
-    is_dev: bool,
     allow_unauthenticated: bool,
 ) -> Result<(), &'static str> {
-    if bind_addr.is_loopback() || has_operator_token || is_dev || allow_unauthenticated {
+    if bind_addr.is_loopback() || has_operator_token || allow_unauthenticated {
         Ok(())
     } else {
         Err(
@@ -1239,14 +1239,17 @@ mod tests {
     }
 
     #[test]
-    fn test_non_dev_relay_refuses_public_bind_without_token() {
+    fn test_relay_refuses_public_bind_without_token() {
         let public: std::net::IpAddr = "0.0.0.0".parse().unwrap();
+        let public_v6: std::net::IpAddr = "::".parse().unwrap();
         let loopback: std::net::IpAddr = "127.0.0.1".parse().unwrap();
-        assert!(check_exposure(public, false, false, false).is_err());
-        assert!(check_exposure(public, true, false, false).is_ok());
-        assert!(check_exposure(public, false, false, true).is_ok());
-        assert!(check_exposure(public, false, true, false).is_ok());
-        assert!(check_exposure(loopback, false, false, false).is_ok());
+        let loopback_v6: std::net::IpAddr = "::1".parse().unwrap();
+        assert!(check_exposure(public, false, false).is_err());
+        assert!(check_exposure(public_v6, false, false).is_err());
+        assert!(check_exposure(public, true, false).is_ok());
+        assert!(check_exposure(public, false, true).is_ok());
+        assert!(check_exposure(loopback, false, false).is_ok());
+        assert!(check_exposure(loopback_v6, false, false).is_ok());
     }
 
     #[test]

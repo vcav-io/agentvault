@@ -482,12 +482,9 @@ async fn main() {
     let allow_unauthenticated = std::env::var("SELKEY_ALLOW_UNAUTHENTICATED")
         .map(|v| v == "1")
         .unwrap_or(false);
-    if let Err(msg) = selkey_relay::check_exposure(
-        bind_addr,
-        operator_token.is_some(),
-        is_dev,
-        allow_unauthenticated,
-    ) {
+    if let Err(msg) =
+        selkey_relay::check_exposure(bind_addr, operator_token.is_some(), allow_unauthenticated)
+    {
         tracing::error!(%bind_addr, "{msg}");
         std::process::exit(1);
     }

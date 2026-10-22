@@ -118,8 +118,13 @@ const MAX_DEPTH: usize = 32;
 
 /// Keywords accepted in strict inline schemas. Keys starting with `x-` are
 /// annotations and are ignored (including `x-vcav-entropy-bits-upper-bound`).
+///
+/// Output is validated as JSON Schema draft 7 (see
+/// [`crate::relay::OUTPUT_SCHEMA_DRAFT`]), and each keyword here has the
+/// meaning the bound below assumes under that draft. `$schema` is not
+/// accepted: a schema must not select a draft in which these keywords mean
+/// something else (for example, `const` is not a draft-04 keyword).
 const ALLOWED_KEYWORDS: &[&str] = &[
-    "$schema",
     "$comment",
     "title",
     "description",
@@ -148,8 +153,8 @@ const ALLOWED_KEYWORDS: &[&str] = &[
 /// A strict schema:
 /// - is a JSON object at every node (no `true`/`false` schemas) and every node
 ///   declares a single `type`, an `enum`, or a `const`;
-/// - uses only [`ALLOWED_KEYWORDS`] (no composition, references, pattern or
-///   dynamic properties);
+/// - uses only [`ALLOWED_KEYWORDS`] (no `$schema`, composition, references,
+///   pattern or dynamic properties);
 /// - sets `additionalProperties: false` on every object and lists every
 ///   property in `required`;
 /// - bounds every string with `enum` or `maxLength`, every array with
@@ -502,6 +507,76 @@ mod tests {
             "additionalProperties": false
         });
         assert_eq!(strict_schema_upper_bound(&schema).unwrap(), 1 + 3);
+    }
+
+    #[test]
+    fn test_inline_schema_declaring_a_draft_rejected_in_dev() {
+        let with_schema_keyword = |schema_uri: &str| {
+            let mut schema = json!({
+                "type": "object",
+                "properties": { "signal": { "const": "OK" } },
+                "required": ["signal"],
+                "additionalProperties": false
+            });
+            schema["$schema"] = json!(schema_uri);
+            schema
+        };
+        let nested = json!({
+            "type": "object",
+            "properties": {
+                "signal": { "$schema": "http://json-schema.org/draft-04/schema#", "const": "OK" }
+            },
+            "required": ["signal"],
+            "additionalProperties": false
+        });
+        for schema in [
+            with_schema_keyword("http://json-schema.org/draft-04/schema#"),
+            with_schema_keyword("http://json-schema.org/draft-06/schema#"),
+            with_schema_keyword("http://json-schema.org/draft-07/schema#"),
+            with_schema_keyword("https://json-schema.org/draft/2020-12/schema"),
+            with_schema_keyword("https://example.com/custom-meta-schema"),
+            nested,
+        ] {
+            let contract = contract_with(schema.clone(), None);
+            let err = resolve_output_schema(&contract, &SchemaRegistry::empty(), true)
+                .expect_err(&format!("schema {schema} should be rejected"));
+            assert!(
+                err.to_string().contains("keyword '$schema' is not allowed"),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_strict_inline_schema_rejects_draft_dependent_keywords() {
+        // Keywords whose meaning differs between drafts are outside the strict
+        // subset, so the bound never depends on which draft a reader assumes.
+        let wrap = |prop: Value| {
+            json!({
+                "type": "object",
+                "properties": { "a": prop },
+                "required": ["a"],
+                "additionalProperties": false
+            })
+        };
+        for schema in [
+            wrap(json!({"type": "array", "maxItems": 2, "items": [{"type": "boolean"}]})),
+            wrap(
+                json!({"type": "array", "maxItems": 2, "prefixItems": [{"type": "boolean"}], "items": {"type": "boolean"}}),
+            ),
+            wrap(json!({"type": "integer", "minimum": 0, "maximum": 3, "exclusiveMinimum": true})),
+            wrap(json!({"type": "integer", "minimum": 0, "maximum": 3, "exclusiveMaximum": 3})),
+            json!({"type": "object", "properties": {}, "additionalProperties": false, "dependencies": {"a": ["b"]}}),
+            wrap(json!({"id": "x", "type": "boolean"})),
+            wrap(json!({"$id": "x", "type": "boolean"})),
+            json!({"type": "object", "properties": {}, "additionalProperties": false, "definitions": {}}),
+            json!({"type": "object", "properties": {}, "additionalProperties": false, "$defs": {}}),
+        ] {
+            assert!(
+                strict_schema_upper_bound(&schema).is_err(),
+                "schema {schema} should be rejected"
+            );
+        }
     }
 
     #[test]
