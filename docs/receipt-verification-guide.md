@@ -487,6 +487,14 @@ TEE commitments add `initiator_submission_hash` and `responder_submission_hash` 
 the `commitments` object, binding each participant's raw submission into the
 attestation chain.
 
+`receipt_signing_pubkey_hex` is part of the receipt, so it is only meaningful once
+the quote itself has been verified (platform signature, measurement against an
+allowlist, and transcript binding). The TypeScript verifier does not parse or
+verify quotes, so it never uses this field as the verification key. A TEE receipt
+is verified against the caller-supplied relay key like any other receipt, and if
+`receipt_signing_pubkey_hex` is present and differs from that key, the receipt is
+invalid.
+
 ### Assurance levels
 
 The `assurance_level` field is required in v2 receipts and describes the strength
@@ -600,15 +608,20 @@ that wraps the verification logic described above.
   "name": "selkey.verify_receipt",
   "arguments": {
     "receipt": { /* receipt JSON object */ },
-    "public_key_hex": "a3f2...optional...",  // omit to fetch from relay
-    "relay_url": "http://localhost:4840"      // default if public_key_hex omitted
+    "public_key_hex": "a3f2...64-hex-chars...9d01"  // optional if SELKEY_RELAY_VERIFYING_KEY_HEX is set
   }
 }
 ```
 
-If `public_key_hex` is omitted, the tool fetches it from `relay_url/health`.
-Pass `public_key_hex` explicitly when verifying offline or when you have pinned
-the key.
+A relay verifying key is required. Pass `public_key_hex`, or pin the key for the
+MCP server with `SELKEY_RELAY_VERIFYING_KEY_HEX`. If both are present they must
+match. With neither, the tool returns an `INVALID_INPUT` error rather than a
+verification result. Keys embedded in the receipt (such as
+`tee_attestation.receipt_signing_pubkey_hex`) are never used as the verification
+key; if one is present and differs from the relay key, `valid` is `false`.
+
+Get the relay key out of band (see [Getting the Verification Key](#6-getting-the-verification-key)),
+not from the receipt or the counterparty.
 
 ### Tool output
 

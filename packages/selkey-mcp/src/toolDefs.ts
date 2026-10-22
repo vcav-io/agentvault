@@ -34,7 +34,11 @@ export const VERIFY_TOOLS = [
       'Verify the cryptographic signature of an Selkey session receipt. ' +
       'Supports v1 receipts (schema_version: "1.0.0") and v2 receipts ' +
       '(receipt_schema_version: "2.1.0"). ' +
-      'Returns valid: true only if the receipt signature is cryptographically valid.',
+      'Returns valid: true only if the receipt signature is valid under the relay verifying key. ' +
+      'A relay key is required: pass public_key_hex, or configure SELKEY_RELAY_VERIFYING_KEY_HEX. ' +
+      'Obtain the key out of band from the relay operator (not from the receipt or the counterparty). ' +
+      'Keys embedded in the receipt (e.g. tee_attestation.receipt_signing_pubkey_hex) are never trusted ' +
+      'on their own; a receipt whose embedded key differs from the relay key is invalid.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -44,10 +48,12 @@ export const VERIFY_TOOLS = [
         },
         public_key_hex: {
           type: 'string',
-          description: 'Ed25519 public key as 64 hex chars.',
+          description:
+            'Relay Ed25519 verifying key as 64 hex chars. Optional if SELKEY_RELAY_VERIFYING_KEY_HEX is set; ' +
+            'must match it when both are present.',
         },
       },
-      required: ['receipt', 'public_key_hex'],
+      required: ['receipt'],
     },
   },
 ];
