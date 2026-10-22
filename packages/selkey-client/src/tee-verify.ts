@@ -1,11 +1,16 @@
 /**
- * TEE receipt verification for TypeScript consumers.
+ * TEE receipt transcript checks for TypeScript consumers.
  *
- * Provides transcript hash recomputation, attestation hash checking,
- * and measurement allowlist verification — matching the Rust
- * `tee-verifier` crate's logic. Quote parsing (the full QuoteVerified
- * path) is out of scope; this module covers transcript + attestation
- * hash + allowlist.
+ * Recomputes the transcript hash (`av-tee-transcript-v1`, `-v2` and `-v3`,
+ * byte-for-byte as the Rust `tee-transcript` crate computes them), checks the
+ * attestation hash and looks the receipt-claimed measurement up in an
+ * allowlist. Transcript version selection follows the Rust `tee-verifier`
+ * crate.
+ *
+ * This module does not parse or verify attestation quotes (no platform
+ * signature, certificate chain or TCB checks), so every result here is
+ * receipt-level introspection. Use the Rust `tee-verifier` crate to verify
+ * the attestation itself.
  */
 
 import { sha256 } from '@noble/hashes/sha256';
@@ -16,7 +21,10 @@ import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 // Transcript hash
 // ---------------------------------------------------------------------------
 
-const TRANSCRIPT_VERSION = 'av-tee-transcript-v1';
+export const TRANSCRIPT_VERSION = 'av-tee-transcript-v1';
+export const TRANSCRIPT_VERSION_V2 = 'av-tee-transcript-v2';
+export const TRANSCRIPT_VERSION_V3 = 'av-tee-transcript-v3';
+export const RELAY_CONFIG_VERSION = 'av-tee-relay-config-v1';
 
 export interface TranscriptInputs {
   contract_hash: string;
@@ -27,29 +35,202 @@ export interface TranscriptInputs {
   receipt_signing_pubkey_hex: string;
 }
 
+/** V2 inputs: v1 plus the provider-reported model identity (`""` if none). */
+export interface TranscriptInputsV2 extends TranscriptInputs {
+  model_identity_asserted: string;
+}
+
+/** V3 inputs: v2 plus `computeRelayConfigHashHex()` of the relay configuration. */
+export interface TranscriptInputsV3 extends TranscriptInputsV2 {
+  relay_config_hash: string;
+}
+
 /**
- * Compute the transcript hash (SHA-512) from canonical JSON with
- * alphabetically sorted keys. Matches the Rust `tee-transcript` crate.
+ * Compute the v1 transcript hash (SHA-512, 64 bytes). Matches Rust
+ * `tee_transcript::compute_transcript_hash`: values are interpolated into a
+ * fixed sorted-key JSON template without escaping.
  */
 export function computeTranscriptHash(inputs: TranscriptInputs): Uint8Array {
-  // Keys must be alphabetically sorted — matches Rust implementation
-  const canonical = JSON.stringify({
-    contract_hash: inputs.contract_hash,
-    initiator_submission_hash: inputs.initiator_submission_hash,
-    output_hash: inputs.output_hash,
-    prompt_template_hash: inputs.prompt_template_hash,
-    receipt_signing_pubkey_hex: inputs.receipt_signing_pubkey_hex,
-    responder_submission_hash: inputs.responder_submission_hash,
-    version: TRANSCRIPT_VERSION,
-  });
+  const canonical =
+    '{' +
+    `"contract_hash":"${inputs.contract_hash}",` +
+    `"initiator_submission_hash":"${inputs.initiator_submission_hash}",` +
+    `"output_hash":"${inputs.output_hash}",` +
+    `"prompt_template_hash":"${inputs.prompt_template_hash}",` +
+    `"receipt_signing_pubkey_hex":"${inputs.receipt_signing_pubkey_hex}",` +
+    `"responder_submission_hash":"${inputs.responder_submission_hash}",` +
+    `"version":"${TRANSCRIPT_VERSION}"` +
+    '}';
   return sha512(utf8ToBytes(canonical));
 }
 
 /**
- * Compute the transcript hash and return it as a lowercase hex string.
+ * Compute the v1 transcript hash and return it as a lowercase hex string.
  */
 export function computeTranscriptHashHex(inputs: TranscriptInputs): string {
   return bytesToHex(computeTranscriptHash(inputs));
+}
+
+/**
+ * Compute the v2 transcript hash (SHA-512, 64 bytes). Matches Rust
+ * `tee_transcript::compute_transcript_hash_v2`: the v1 template plus
+ * `model_identity_asserted`, with `av-tee-transcript-v2`.
+ */
+export function computeTranscriptHashV2(inputs: TranscriptInputsV2): Uint8Array {
+  const canonical =
+    '{' +
+    `"contract_hash":"${inputs.contract_hash}",` +
+    `"initiator_submission_hash":"${inputs.initiator_submission_hash}",` +
+    `"model_identity_asserted":"${inputs.model_identity_asserted}",` +
+    `"output_hash":"${inputs.output_hash}",` +
+    `"prompt_template_hash":"${inputs.prompt_template_hash}",` +
+    `"receipt_signing_pubkey_hex":"${inputs.receipt_signing_pubkey_hex}",` +
+    `"responder_submission_hash":"${inputs.responder_submission_hash}",` +
+    `"version":"${TRANSCRIPT_VERSION_V2}"` +
+    '}';
+  return sha512(utf8ToBytes(canonical));
+}
+
+export function computeTranscriptHashV2Hex(inputs: TranscriptInputsV2): string {
+  return bytesToHex(computeTranscriptHashV2(inputs));
+}
+
+/**
+ * Length-prefixed encoding shared by transcript v3 and the relay config hash:
+ * `LP(version) || LP(name_1) || LP(value_1) || ...`, where `LP(x)` is the
+ * UTF-8 byte length of `x` as a big-endian u64 followed by those bytes.
+ */
+function encodeFields(
+  version: string,
+  fields: ReadonlyArray<readonly [string, string]>,
+): Uint8Array {
+  const parts: Uint8Array[] = [utf8ToBytes(version)];
+  for (const [name, value] of fields) {
+    parts.push(utf8ToBytes(name), utf8ToBytes(value));
+  }
+  const total = parts.reduce((n, p) => n + 8 + p.length, 0);
+  const out = new Uint8Array(total);
+  const view = new DataView(out.buffer);
+  let offset = 0;
+  for (const p of parts) {
+    view.setBigUint64(offset, BigInt(p.length), false);
+    offset += 8;
+    out.set(p, offset);
+    offset += p.length;
+  }
+  return out;
+}
+
+/**
+ * Configuration the relay ran with, bound into transcript v3 through
+ * `relay_config_hash` (published at the relay's `GET /tee/info`). It is the
+ * relay's own statement; a matching v3 transcript shows which configuration
+ * the transcript was computed with, not which code computed it.
+ */
+export interface RelayConfig {
+  provider_id: string;
+  provider_base_url: string;
+  model_id_requested: string;
+  policy_lockfile_hash: string;
+  model_profile_allowlist_hash: string;
+  relay_git_rev: string;
+  echo_mode: boolean;
+  simulated: boolean;
+  env: string;
+}
+
+const RELAY_CONFIG_STRING_FIELDS = [
+  'provider_id',
+  'provider_base_url',
+  'model_id_requested',
+  'policy_lockfile_hash',
+  'model_profile_allowlist_hash',
+  'relay_git_rev',
+  'env',
+] as const;
+const RELAY_CONFIG_BOOL_FIELDS = ['echo_mode', 'simulated'] as const;
+const RELAY_CONFIG_KEYS: ReadonlySet<string> = new Set([
+  ...RELAY_CONFIG_STRING_FIELDS,
+  ...RELAY_CONFIG_BOOL_FIELDS,
+]);
+
+/**
+ * Check that a value has exactly the `RelayConfig` members with the right
+ * types, as the Rust `RelayConfig` deserialiser requires. Throws `TypeError`
+ * otherwise. Use it on a configuration parsed from JSON (e.g. `/tee/info`).
+ */
+export function assertRelayConfig(value: unknown): asserts value is RelayConfig {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError('relay_config must be an object');
+  }
+  const obj = value as Record<string, unknown>;
+  for (const key of Object.keys(obj)) {
+    if (!RELAY_CONFIG_KEYS.has(key)) {
+      throw new TypeError(`relay_config has unknown member '${key}'`);
+    }
+  }
+  for (const key of RELAY_CONFIG_STRING_FIELDS) {
+    if (typeof obj[key] !== 'string') {
+      throw new TypeError(`relay_config.${key} must be a string`);
+    }
+  }
+  for (const key of RELAY_CONFIG_BOOL_FIELDS) {
+    if (typeof obj[key] !== 'boolean') {
+      throw new TypeError(`relay_config.${key} must be a boolean`);
+    }
+  }
+}
+
+/** The length-prefixed relay configuration encoding (Rust `RelayConfig::encode`). */
+export function encodeRelayConfig(config: RelayConfig): Uint8Array {
+  assertRelayConfig(config);
+  return encodeFields(RELAY_CONFIG_VERSION, [
+    ['provider_id', config.provider_id],
+    ['provider_base_url', config.provider_base_url],
+    ['model_id_requested', config.model_id_requested],
+    ['policy_lockfile_hash', config.policy_lockfile_hash],
+    ['model_profile_allowlist_hash', config.model_profile_allowlist_hash],
+    ['relay_git_rev', config.relay_git_rev],
+    ['echo_mode', config.echo_mode ? 'true' : 'false'],
+    ['simulated', config.simulated ? 'true' : 'false'],
+    ['env', config.env],
+  ]);
+}
+
+/** SHA-256 of `encodeRelayConfig(config)` (Rust `compute_relay_config_hash`). */
+export function computeRelayConfigHash(config: RelayConfig): Uint8Array {
+  return sha256(encodeRelayConfig(config));
+}
+
+/** Lowercase hex of `computeRelayConfigHash` (Rust `RelayConfig::hash_hex`). */
+export function computeRelayConfigHashHex(config: RelayConfig): string {
+  return bytesToHex(computeRelayConfigHash(config));
+}
+
+/** The length-prefixed v3 transcript encoding (Rust `TranscriptInputsV3::encode`). */
+export function encodeTranscriptV3(inputs: TranscriptInputsV3): Uint8Array {
+  return encodeFields(TRANSCRIPT_VERSION_V3, [
+    ['contract_hash', inputs.contract_hash],
+    ['prompt_template_hash', inputs.prompt_template_hash],
+    ['initiator_submission_hash', inputs.initiator_submission_hash],
+    ['responder_submission_hash', inputs.responder_submission_hash],
+    ['output_hash', inputs.output_hash],
+    ['receipt_signing_pubkey_hex', inputs.receipt_signing_pubkey_hex],
+    ['model_identity_asserted', inputs.model_identity_asserted],
+    ['relay_config_hash', inputs.relay_config_hash],
+  ]);
+}
+
+/**
+ * Compute the v3 transcript hash (SHA-512 of the length-prefixed encoding,
+ * 64 bytes). Matches Rust `tee_transcript::compute_transcript_hash_v3`.
+ */
+export function computeTranscriptHashV3(inputs: TranscriptInputsV3): Uint8Array {
+  return sha512(encodeTranscriptV3(inputs));
+}
+
+export function computeTranscriptHashV3Hex(inputs: TranscriptInputsV3): string {
+  return bytesToHex(computeTranscriptHashV3(inputs));
 }
 
 // ---------------------------------------------------------------------------
@@ -114,6 +295,17 @@ export function checkMeasurementAllowlist(
 
 export type TranscriptBinding = 'ReceiptClaimedUserData' | 'TranscriptHashFallback' | 'None';
 
+/**
+ * Which transcript encoding matched.
+ *
+ * - `V3`: length-prefixed encoding; binds model identity and the relay
+ *   configuration hash (relay-asserted, not code-attested).
+ * - `V2`: legacy interpolated encoding; binds model identity; relay code and
+ *   configuration unbound.
+ * - `V1`: legacy interpolated encoding; model identity not bound.
+ */
+export type TranscriptSchema = 'V1' | 'V2' | 'V3';
+
 // ---------------------------------------------------------------------------
 // Full TEE verification result
 // ---------------------------------------------------------------------------
@@ -127,6 +319,13 @@ export interface TeeVerificationResult {
   attestation_hash_status: AttestationHashStatus;
   transcript_hash_valid: boolean;
   transcript_binding: TranscriptBinding;
+  // Which transcript encoding matched, or undefined if none did. With a
+  // relay config supplied (or v3 required), a V1/V2 match is reported here
+  // but transcript_hash_valid is false.
+  transcript_schema: TranscriptSchema | undefined;
+  // The relay configuration the v3 transcript matched (set only when
+  // transcript_schema is 'V3'). Callers apply their own policy to it.
+  relay_config: RelayConfig | undefined;
   // False until the verifier can parse the quote and cross-check transcript-
   // binding fields against the quote contents.
   quote_field_cross_checked: boolean;
@@ -151,12 +350,29 @@ export interface ReceiptCommitments {
   responder_submission_hash?: string;
 }
 
+export interface TeeVerifyOptions {
+  /** The receipt's `claims.model_identity_asserted` (bound by v2 and v3). */
+  model_identity_asserted?: string;
+  /**
+   * Relay configuration to check a v3 transcript against (e.g. the
+   * `relay_config` published at the relay's `GET /tee/info`). The receipt
+   * does not carry `relay_config_hash`, so a v3 transcript can match only
+   * when this is supplied. Supplying it also requires v3: a v1 or v2 match
+   * is then reported as invalid.
+   */
+  relay_config?: RelayConfig;
+  /** Require a v3 transcript even without a relay config. Implied by `relay_config`. */
+  require_transcript_v3?: boolean;
+}
+
 /**
- * Verify TEE-specific fields of a v2 receipt.
+ * Check the TEE-specific fields of a v2 or v3 receipt at receipt level.
  *
- * This covers transcript hash recomputation, attestation hash checking,
- * receipt-claimed measurement lookup, and submission hash presence. Receipt
- * signature verification is handled separately by `verifyReceipt()`.
+ * This covers transcript hash recomputation (v3, then v2, then v1, with the
+ * same selection rules as the Rust `tee-verifier`), attestation hash
+ * checking, receipt-claimed measurement lookup, and submission hash
+ * presence. Receipt signature verification is handled separately by
+ * `verifyReceipt()`.
  *
  * Quote parsing/platform verification is out of scope for the TS client, so
  * this helper must not claim quote-derived guarantees such as UserData-bound
@@ -166,6 +382,7 @@ export function verifyTeeReceipt(
   commitments: ReceiptCommitments,
   teeAttestation: TeeAttestation,
   allowlist: MeasurementEntry[],
+  options: TeeVerifyOptions = {},
 ): TeeVerificationResult {
   // 1. Attestation hash: SHA-256(base64_decode(quote)) == attestation_hash
   const attestation_hash_status = verifyAttestationHash(
@@ -178,30 +395,54 @@ export function verifyTeeReceipt(
     ? checkMeasurementAllowlist(teeAttestation.measurement, allowlist)
     : undefined;
 
-  // 3. Transcript hash recomputation
-  const inputs: TranscriptInputs = {
+  // 3. Transcript hash recomputation. A field absent from the receipt is
+  // encoded as "".
+  const v2Inputs: TranscriptInputsV2 = {
     contract_hash: commitments.contract_hash,
     prompt_template_hash: commitments.prompt_template_hash ?? '',
     initiator_submission_hash: commitments.initiator_submission_hash ?? '',
     responder_submission_hash: commitments.responder_submission_hash ?? '',
     output_hash: commitments.output_hash,
     receipt_signing_pubkey_hex: teeAttestation.receipt_signing_pubkey_hex ?? '',
+    model_identity_asserted: options.model_identity_asserted ?? '',
   };
-  const computedHex = computeTranscriptHashHex(inputs);
+  const relayConfig = options.relay_config;
+  const v3Hex =
+    relayConfig !== undefined
+      ? computeTranscriptHashV3Hex({
+          ...v2Inputs,
+          relay_config_hash: computeRelayConfigHashHex(relayConfig),
+        })
+      : undefined;
+  const v2Hex = computeTranscriptHashV2Hex(v2Inputs);
+  const v1Hex = computeTranscriptHashHex(v2Inputs);
 
-  let transcript_hash_valid: boolean;
+  const schemaFor = (target: string): TranscriptSchema | undefined => {
+    if (v3Hex !== undefined && v3Hex === target) return 'V3';
+    if (v2Hex === target) return 'V2';
+    if (v1Hex === target) return 'V1';
+    return undefined;
+  };
+
   let transcript_binding: TranscriptBinding;
+  let transcript_schema: TranscriptSchema | undefined;
 
   if (teeAttestation.user_data_hex !== undefined) {
-    transcript_hash_valid = computedHex === teeAttestation.user_data_hex;
     transcript_binding = 'ReceiptClaimedUserData';
+    transcript_schema = schemaFor(teeAttestation.user_data_hex);
   } else if (teeAttestation.transcript_hash_hex !== undefined) {
-    transcript_hash_valid = computedHex === teeAttestation.transcript_hash_hex;
     transcript_binding = 'TranscriptHashFallback';
+    transcript_schema = schemaFor(teeAttestation.transcript_hash_hex);
   } else {
-    transcript_hash_valid = false;
     transcript_binding = 'None';
+    transcript_schema = undefined;
   }
+
+  // With a relay config (or an explicit requirement), only v3 counts, so a
+  // legacy transcript cannot skip the configuration check.
+  const v3Required = options.require_transcript_v3 === true || relayConfig !== undefined;
+  const transcript_hash_valid =
+    transcript_schema === 'V3' || (transcript_schema !== undefined && !v3Required);
 
   // 4. Submission hashes present
   const submission_hashes_present =
@@ -214,6 +455,8 @@ export function verifyTeeReceipt(
     attestation_hash_status,
     transcript_hash_valid,
     transcript_binding,
+    transcript_schema,
+    relay_config: transcript_schema === 'V3' ? relayConfig : undefined,
     quote_field_cross_checked: false,
     submission_hashes_present,
   };
