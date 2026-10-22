@@ -5,6 +5,7 @@ pub mod agent_registry;
 pub mod auth;
 pub mod enforcement_policy;
 pub mod error;
+pub mod host_guard;
 pub mod inbox;
 pub mod inbox_handlers;
 #[cfg(feature = "persistence")]
@@ -683,6 +684,7 @@ async fn run_inference(state: Arc<AppState>, session_id: String) {
                 &input_a,
                 &input_b,
                 &provider,
+                relay::InputOrigin::Bilateral,
                 &state,
             )
             .await
@@ -958,7 +960,16 @@ async fn session_metadata_handler(
         .ok_or(RelayError::Unauthorized)?;
 
     match metadata {
-        Some(meta) => {
+        Some(mut meta) => {
+            // Each participant sees its own input time and size, never the
+            // counterparty's.
+            if role.is_initiator() {
+                meta.timing.responder_input_at = None;
+                meta.sizes.responder_input_bytes = None;
+            } else {
+                meta.timing.initiator_input_at = None;
+                meta.sizes.initiator_input_bytes = None;
+            }
             let value = serde_json::to_value(meta)
                 .map_err(|e| RelayError::Internal(format!("metadata serialization: {e}")))?;
             Ok(Json(value))

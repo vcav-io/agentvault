@@ -175,6 +175,14 @@ impl InboxStore {
                 "contract participants must include to_agent_id".to_string(),
             ));
         }
+        // The sender receives the initiator tokens, whose input is committed
+        // under participants[0]; the recipient's under participants[1].
+        if contract.participants[0] != from_agent_id || contract.participants[1] != to_agent_id {
+            return Err(RelayError::ContractValidation(
+                "contract participants must be [from_agent_id, to_agent_id] in that order"
+                    .to_string(),
+            ));
+        }
         crate::relay::validate_contract_key_fields(contract)?;
         Ok(())
     }
@@ -515,6 +523,15 @@ impl InboxStore {
                     invite.status
                 )));
             }
+
+            // Re-run the create-time binding checks: invites stored by an
+            // earlier relay version (persistence) may predate them.
+            Self::validate_invite_contract_binding(
+                &invite.from_agent_id,
+                &invite.to_agent_id,
+                &invite.purpose_code,
+                &invite.contract,
+            )?;
 
             // Verify contract hash if provided
             if let Some(expected) = expected_contract_hash {
@@ -1906,15 +1923,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_invite_participants_reversed_order() {
+    async fn test_create_invite_rejects_reversed_participant_order() {
         let store = InboxStore::new(Duration::from_secs(604800));
         let mut request = test_create_request();
         // Reverse the order: ["bob", "alice"] instead of ["alice", "bob"]
         request.contract["participants"] = serde_json::json!(["bob", "alice"]);
 
-        // Should succeed — order doesn't matter, just membership
+        // The sender must be participants[0] (initiator), the recipient [1].
         let result = store.create_invite("alice", &request, None).await;
-        assert!(result.is_ok());
+        assert!(
+            matches!(result, Err(RelayError::ContractValidation(ref msg)) if msg.contains("in that order"))
+        );
+        assert!(store.is_empty().await);
     }
 
     // ── Purpose code consistency (#257) ─────────────────────────────────
@@ -2118,5 +2138,32 @@ mod tests {
         }
         assert_eq!(created, 5);
         assert_eq!(store.len().await, 5);
+    }
+
+    #[tokio::test]
+    async fn test_accept_rechecks_stored_participant_order() {
+        let store = InboxStore::new(Duration::from_secs(600));
+        let sessions = SessionStore::new(Duration::from_secs(600));
+        let created = store
+            .create_invite("alice", &test_create_request(), None)
+            .await
+            .unwrap();
+        // As stored by an earlier version: participants in reversed order.
+        store
+            .inner
+            .write()
+            .await
+            .invites
+            .get_mut(&created.invite_id)
+            .unwrap()
+            .contract
+            .participants
+            .reverse();
+        let err = store
+            .accept_invite(&created.invite_id, "bob", None, &sessions)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RelayError::ContractValidation(_)));
+        assert!(sessions.is_empty().await);
     }
 }

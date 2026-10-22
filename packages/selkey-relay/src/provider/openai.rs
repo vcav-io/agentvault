@@ -141,7 +141,8 @@ impl OpenAIProvider {
             .map_err(|e| RelayError::Provider(format!("failed to read response body: {e}")))?;
 
         if !status.is_success() {
-            tracing::debug!(status = %status, body = %response_text, "OpenAI API error");
+            // Status only: an error body can echo the request (including inputs).
+            tracing::debug!(status = %status, "OpenAI API error");
             return Err(match status.as_u16() {
                 401 | 403 => RelayError::Provider("OpenAI API authentication error".to_string()),
                 429 => RelayError::Provider("OpenAI API rate limited".to_string()),

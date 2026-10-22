@@ -11,6 +11,9 @@ services:
       - "127.0.0.1:3100:3100"
     environment:
       - SELKEY_BIND_ADDR=0.0.0.0
+      # Host header check: the demo reaches the relay as "relay"; the host
+      # reaches it as localhost.
+      - SELKEY_ALLOWED_HOSTS=relay
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}

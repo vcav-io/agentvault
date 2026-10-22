@@ -419,6 +419,24 @@ request bodies are limited (see `docs/environment-variables.md`). Inference runs
 its own task: a client disconnect cannot interrupt it, a timed-out session cancels
 its inference, and the reapers restart if they fail.
 
+**Policy enforcement and output gates**
+
+Every enforcement policy field is enforced or the policy is refused at load:
+`provider_allowlist` and `entropy_constraints` (Gate) are checked before inputs,
+`max_output_tokens` caps the provider request, and policies with unsupported scopes,
+categories or capabilities stop startup on every loading path (lockfile directory and
+registry admission). Unicode category rules check string values, JSON numbers (by their
+JSON text) and object keys the schema does not declare; `skip_keys` exempts a top-level
+key only when the schema pins it to one value. Integral numbers are released in one
+form (`2`, never `2.0`), participant names are quoted and escaped in the prompt, and
+provider errors are logged by status only.
+
+**Host header check**
+
+A relay listening on loopback (or with `SELKEY_ALLOWED_HOSTS` set) rejects requests
+whose `Host` header is not `localhost`, `127.0.0.1`, `[::1]` or a listed name. A web
+page cannot use DNS rebinding to reach it through the visitor's browser.
+
 **Constant-shape error responses**
 
 Policy gate rejections return a fixed-body 422 with no detail. Auth failures return

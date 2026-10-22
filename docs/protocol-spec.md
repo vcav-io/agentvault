@@ -216,7 +216,7 @@ released; `output_hash` covers only released output. v3 therefore has no
 | `token_usage` | object or null | `{prompt_tokens, completion_tokens, total_tokens}`. |
 | `relay_software_version` | string or null | Relay software version string. |
 | `status` | string or null | Session outcome status. |
-| `signal_class` | string or null | Classification of the signal produced. |
+| `signal_class` | string or null | Classification of the signal produced. `SINGLE_CALLER_COMPLETED` when one request supplied both inputs (`POST /relay`). `SESSION_COMPLETED` means the two inputs arrived through the session's two role-scoped submit tokens. The relay does not attest who held those tokens: `POST /sessions` returns all four tokens to the creator, so one caller can produce it. Only the inbox lane binds tokens to registry-authenticated agents. |
 | `execution_lane` | string enum or null | `standard` (software relay) or `tee` (TEE execution). |
 | `channel_capacity_bits_upper_bound` | integer or null | Computed upper bound on the output schema's information capacity (bits). |
 | `channel_capacity_measurement_version` | string or null | Algorithm version used to compute the channel capacity bound (e.g., `"enum_cardinality_v1"`). |

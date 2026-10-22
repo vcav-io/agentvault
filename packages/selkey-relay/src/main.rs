@@ -526,7 +526,17 @@ async fn main() {
         limits: selkey_relay::limits::Limits::new(limit_config),
     });
 
-    let app = build_router(state);
+    let host_policy = selkey_relay::host_guard::HostPolicy::for_bind(
+        bind_addr,
+        std::env::var("SELKEY_ALLOWED_HOSTS").ok().as_deref(),
+    );
+    match &host_policy {
+        Some(policy) => tracing::info!(?policy, "Host header check enabled"),
+        None => tracing::info!(
+            "Host header check disabled (non-loopback bind, no SELKEY_ALLOWED_HOSTS)"
+        ),
+    }
+    let app = selkey_relay::host_guard::apply(build_router(state), host_policy);
 
     let addr = std::net::SocketAddr::new(bind_addr, port);
     tracing::info!(%addr, session_ttl_secs, "Selkey relay starting");
