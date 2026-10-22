@@ -1,0 +1,234 @@
+{
+  "description": "Golden vectors for transcript v3 (av-tee-transcript-v3) and the relay configuration hash (av-tee-relay-config-v1). Encoding: LP(version) || LP(name) || LP(value) for each field in order, LP(x) = big-endian u64 byte length || UTF-8 bytes. Booleans encode as \"true\"/\"false\". Relay config hash = hex(SHA-256(encoding)); transcript hash = hex(SHA-512(encoding)).",
+  "transcript_version": "av-tee-transcript-v3",
+  "relay_config_version": "av-tee-relay-config-v1",
+  "relay_config_field_order": [
+    "provider_id",
+    "provider_base_url",
+    "model_id_requested",
+    "policy_lockfile_hash",
+    "model_profile_allowlist_hash",
+    "relay_git_rev",
+    "echo_mode",
+    "simulated",
+    "env"
+  ],
+  "transcript_field_order": [
+    "contract_hash",
+    "prompt_template_hash",
+    "initiator_submission_hash",
+    "responder_submission_hash",
+    "output_hash",
+    "receipt_signing_pubkey_hex",
+    "model_identity_asserted",
+    "relay_config_hash"
+  ],
+  "relay_config_vectors": [
+    {
+      "name": "default",
+      "relay_config": {
+        "provider_id": "anthropic",
+        "provider_base_url": "https://api.anthropic.com",
+        "model_id_requested": "claude-sonnet-4-5-20250929",
+        "policy_lockfile_hash": "",
+        "model_profile_allowlist_hash": "",
+        "relay_git_rev": "0123456789abcdef0123456789abcdef01234567",
+        "echo_mode": false,
+        "simulated": false,
+        "env": ""
+      },
+      "expected_hash_hex": "6d1da32941eb7eeb368fd65e9ab0d0c1b3e05b7eaaea75388de718a627971662",
+      "expected_encoding_hex": "000000000000001661762d7465652d72656c61792d636f6e6669672d7631000000000000000b70726f76696465725f69640000000000000009616e7468726f706963000000000000001170726f76696465725f626173655f75726c000000000000001968747470733a2f2f6170692e616e7468726f7069632e636f6d00000000000000126d6f64656c5f69645f726571756573746564000000000000001a636c617564652d736f6e6e65742d342d352d32303235303932390000000000000014706f6c6963795f6c6f636b66696c655f686173680000000000000000000000000000001c6d6f64656c5f70726f66696c655f616c6c6f776c6973745f686173680000000000000000000000000000000d72656c61795f6769745f72657600000000000000283031323334353637383961626364656630313233343536373839616263646566303132333435363700000000000000096563686f5f6d6f6465000000000000000566616c7365000000000000000973696d756c61746564000000000000000566616c73650000000000000003656e760000000000000000"
+    },
+    {
+      "name": "quote_and_delimiter_characters",
+      "relay_config": {
+        "provider_id": "anthropic",
+        "provider_base_url": "https://api.example.test/a\"b\\c,d\n\u0000é",
+        "model_id_requested": "m\",\"x\":\"y",
+        "policy_lockfile_hash": "",
+        "model_profile_allowlist_hash": "",
+        "relay_git_rev": "0123456789abcdef0123456789abcdef01234567",
+        "echo_mode": false,
+        "simulated": false,
+        "env": "prod"
+      },
+      "expected_hash_hex": "88c49e89e6a95a98fb0850fc363889c663ba0ba7a1f0e9f75268d4ad100f6d48",
+      "expected_encoding_hex": "000000000000001661762d7465652d72656c61792d636f6e6669672d7631000000000000000b70726f76696465725f69640000000000000009616e7468726f706963000000000000001170726f76696465725f626173655f75726c000000000000002468747470733a2f2f6170692e6578616d706c652e746573742f6122625c632c640a00c3a900000000000000126d6f64656c5f69645f72657175657374656400000000000000096d222c2278223a22790000000000000014706f6c6963795f6c6f636b66696c655f686173680000000000000000000000000000001c6d6f64656c5f70726f66696c655f616c6c6f776c6973745f686173680000000000000000000000000000000d72656c61795f6769745f72657600000000000000283031323334353637383961626364656630313233343536373839616263646566303132333435363700000000000000096563686f5f6d6f6465000000000000000566616c7365000000000000000973696d756c61746564000000000000000566616c73650000000000000003656e76000000000000000470726f64"
+    },
+    {
+      "name": "simulated_echo_dev",
+      "relay_config": {
+        "provider_id": "anthropic",
+        "provider_base_url": "https://api.anthropic.com",
+        "model_id_requested": "claude-sonnet-4-5-20250929",
+        "policy_lockfile_hash": "",
+        "model_profile_allowlist_hash": "",
+        "relay_git_rev": "unknown",
+        "echo_mode": true,
+        "simulated": true,
+        "env": "dev"
+      },
+      "expected_hash_hex": "c9dbd40ece2a5af314db64b0c92026cf32c4c9148de99e579f660e01550833e6",
+      "expected_encoding_hex": "000000000000001661762d7465652d72656c61792d636f6e6669672d7631000000000000000b70726f76696465725f69640000000000000009616e7468726f706963000000000000001170726f76696465725f626173655f75726c000000000000001968747470733a2f2f6170692e616e7468726f7069632e636f6d00000000000000126d6f64656c5f69645f726571756573746564000000000000001a636c617564652d736f6e6e65742d342d352d32303235303932390000000000000014706f6c6963795f6c6f636b66696c655f686173680000000000000000000000000000001c6d6f64656c5f70726f66696c655f616c6c6f776c6973745f686173680000000000000000000000000000000d72656c61795f6769745f7265760000000000000007756e6b6e6f776e00000000000000096563686f5f6d6f6465000000000000000474727565000000000000000973696d756c617465640000000000000004747275650000000000000003656e760000000000000003646576"
+    }
+  ],
+  "transcript_vectors": [
+    {
+      "name": "success",
+      "inputs": {
+        "contract_hash": "aaaa",
+        "prompt_template_hash": "bbbb",
+        "initiator_submission_hash": "cccc",
+        "responder_submission_hash": "dddd",
+        "output_hash": "eeee",
+        "receipt_signing_pubkey_hex": "ffff",
+        "model_identity_asserted": "anthropic/test-model",
+        "relay_config_hash": "6d1da32941eb7eeb368fd65e9ab0d0c1b3e05b7eaaea75388de718a627971662"
+      },
+      "expected_hash_hex": "a4a5db7e5da33cd0455e8f5740e23b3709faa3909524326bd33df4744c4188138ed5ad4c148204a769a13803e94f4e4bb76ede99c917ef04719a713943ae61b8"
+    },
+    {
+      "name": "failure_receipt_absent_fields",
+      "inputs": {
+        "contract_hash": "aaaa",
+        "prompt_template_hash": "",
+        "initiator_submission_hash": "cccc",
+        "responder_submission_hash": "dddd",
+        "output_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "receipt_signing_pubkey_hex": "ffff",
+        "model_identity_asserted": "",
+        "relay_config_hash": "6d1da32941eb7eeb368fd65e9ab0d0c1b3e05b7eaaea75388de718a627971662"
+      },
+      "expected_hash_hex": "c25ee4e1edf1f1b12493412e908055f2652450ed1e31f3eb47ab151359e2d910138fbf2bfb25d68861693413682f90f0d5e759bd0c72b5693819235bb17fa017"
+    },
+    {
+      "name": "quote_and_delimiter_characters_in_model_id",
+      "inputs": {
+        "contract_hash": "aaaa",
+        "prompt_template_hash": "bbbb",
+        "initiator_submission_hash": "cccc",
+        "responder_submission_hash": "dddd",
+        "output_hash": "eeee",
+        "receipt_signing_pubkey_hex": "ffff",
+        "model_identity_asserted": "anthropic/m\",\"output_hash\":\"x\\\"\n",
+        "relay_config_hash": "6d1da32941eb7eeb368fd65e9ab0d0c1b3e05b7eaaea75388de718a627971662"
+      },
+      "expected_hash_hex": "6c1830b7b49a23cd6d47d01731130c2c21c4100ca2daf39616870f9fbb7846549ab5ef014f3fe50c4bb37aa201d22baf8c382ab53b1eb859948ba4090a5612b5"
+    }
+  ],
+  "negative_vectors": [
+    {
+      "name": "model_id_absorbs_output_hash",
+      "kind": "transcript",
+      "description": "Distinct inputs: in a, model_identity_asserted contains a quoted output_hash member. Same bytes under the v2 encoding; different v3 hashes.",
+      "a": {
+        "contract_hash": "aaaa",
+        "prompt_template_hash": "bbbb",
+        "initiator_submission_hash": "cccc",
+        "responder_submission_hash": "dddd",
+        "output_hash": "eeee",
+        "receipt_signing_pubkey_hex": "ffff",
+        "model_identity_asserted": "anthropic/m\",\"output_hash\":\"eeee",
+        "relay_config_hash": "6d1da32941eb7eeb368fd65e9ab0d0c1b3e05b7eaaea75388de718a627971662"
+      },
+      "b": {
+        "contract_hash": "aaaa",
+        "prompt_template_hash": "bbbb",
+        "initiator_submission_hash": "cccc",
+        "responder_submission_hash": "dddd",
+        "output_hash": "eeee\",\"output_hash\":\"eeee",
+        "receipt_signing_pubkey_hex": "ffff",
+        "model_identity_asserted": "anthropic/m",
+        "relay_config_hash": "6d1da32941eb7eeb368fd65e9ab0d0c1b3e05b7eaaea75388de718a627971662"
+      },
+      "expected_hash_hex_a": "ae9bd7753c402189809004ab4c84600b67b5a24a93667c8b3bba3773bc3cf94c82ac907218b04fad53a702ba0a3feff5456d1b97287094cd4743dff972e239e6",
+      "expected_hash_hex_b": "eaea94bc189b764342fbc2ac5ae0ec3694f18300f224cfbe73dcccc60c7a78d6813ed16db784c0963a2b9a972d13521cd17152164a6d67c9120d7eeccf160425"
+    },
+    {
+      "name": "submission_hash_absorbs_model_id",
+      "kind": "transcript",
+      "description": "Distinct inputs that move a quoted model_identity_asserted member between fields. Same bytes under v2; different v3 hashes.",
+      "a": {
+        "contract_hash": "aaaa",
+        "prompt_template_hash": "bbbb",
+        "initiator_submission_hash": "cccc\",\"model_identity_asserted\":\"anthropic/x",
+        "responder_submission_hash": "dddd",
+        "output_hash": "eeee",
+        "receipt_signing_pubkey_hex": "ffff",
+        "model_identity_asserted": "anthropic/y",
+        "relay_config_hash": "6d1da32941eb7eeb368fd65e9ab0d0c1b3e05b7eaaea75388de718a627971662"
+      },
+      "b": {
+        "contract_hash": "aaaa",
+        "prompt_template_hash": "bbbb",
+        "initiator_submission_hash": "cccc",
+        "responder_submission_hash": "dddd",
+        "output_hash": "eeee",
+        "receipt_signing_pubkey_hex": "ffff",
+        "model_identity_asserted": "anthropic/x\",\"model_identity_asserted\":\"anthropic/y",
+        "relay_config_hash": "6d1da32941eb7eeb368fd65e9ab0d0c1b3e05b7eaaea75388de718a627971662"
+      },
+      "expected_hash_hex_a": "3dd2cc151429196ba7b525f68495d41c1f093513e7e10b2732d6f7c7369c2ffef043341ebd94376010e1c8e0f278f85e2415c0102b85c9b0adfbd08392ddc99c",
+      "expected_hash_hex_b": "5be64e54a010b0e8224ce31e3edbe92b2fe285535d839d80bb837daf89fbfe29e808553a627c28a7a575749fc228ba25c6aa46887a7f889639d7b18c799f78b3"
+    },
+    {
+      "name": "base_url_absorbs_provider_id",
+      "kind": "relay_config",
+      "description": "Distinct configs where provider_base_url carries a quoted provider_id member. Same bytes under an interpolated encoding; different hashes.",
+      "a": {
+        "provider_id": "anthropic",
+        "provider_base_url": "https://api.example.test\",\"provider_id\":\"x",
+        "model_id_requested": "claude-sonnet-4-5-20250929",
+        "policy_lockfile_hash": "",
+        "model_profile_allowlist_hash": "",
+        "relay_git_rev": "0123456789abcdef0123456789abcdef01234567",
+        "echo_mode": false,
+        "simulated": false,
+        "env": ""
+      },
+      "b": {
+        "provider_id": "x\",\"provider_id\":\"anthropic",
+        "provider_base_url": "https://api.example.test",
+        "model_id_requested": "claude-sonnet-4-5-20250929",
+        "policy_lockfile_hash": "",
+        "model_profile_allowlist_hash": "",
+        "relay_git_rev": "0123456789abcdef0123456789abcdef01234567",
+        "echo_mode": false,
+        "simulated": false,
+        "env": ""
+      },
+      "expected_hash_hex_a": "1aae183f1351e48a70ffce0f11f739e339af20dc1c352e366490458ce251fde0",
+      "expected_hash_hex_b": "bf017d2a0872214a92b3191e97a3c113dbb25a3c0c728a2d19b43b635b39ce98"
+    },
+    {
+      "name": "model_id_absorbs_allowlist_hash",
+      "kind": "relay_config",
+      "description": "Distinct configs where model_id_requested carries a quoted model_profile_allowlist_hash member. Same bytes under an interpolated encoding; different hashes.",
+      "a": {
+        "provider_id": "anthropic",
+        "provider_base_url": "https://api.anthropic.com",
+        "model_id_requested": "m\",\"model_profile_allowlist_hash\":\"",
+        "policy_lockfile_hash": "",
+        "model_profile_allowlist_hash": "",
+        "relay_git_rev": "0123456789abcdef0123456789abcdef01234567",
+        "echo_mode": false,
+        "simulated": false,
+        "env": ""
+      },
+      "b": {
+        "provider_id": "anthropic",
+        "provider_base_url": "https://api.anthropic.com",
+        "model_id_requested": "m",
+        "policy_lockfile_hash": "",
+        "model_profile_allowlist_hash": "\",\"model_profile_allowlist_hash\":\"",
+        "relay_git_rev": "0123456789abcdef0123456789abcdef01234567",
+        "echo_mode": false,
+        "simulated": false,
+        "env": ""
+      },
+      "expected_hash_hex_a": "4391eee08b4c03449db8962ae6263a9aa1f7e716f815580958943b45c35ee909",
+      "expected_hash_hex_b": "f61fbb349a444a8770470f2450f467c4fe433e8f7aabf3dc9381e87f4018ce11"
+    }
+  ]
+}

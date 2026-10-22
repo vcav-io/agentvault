@@ -12,6 +12,13 @@ on:
       - '.github/workflows/docker-relay.yml'
   workflow_dispatch:
 
+# One publish per ref at a time. A run in progress is allowed to finish (so a
+# multi-arch push is never cut off half way); GitHub keeps only the newest
+# pending run, so the last run to finish, and :latest, is the newest commit.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: vcav-io/selkey-relay
