@@ -740,7 +740,9 @@ the policy selected by `contract.enforcement_policy_hash`, or the relay's defaul
 loaded; `policies.default` in the admission config in registry mode). The hash of
 the policy applied is bound into the receipt as `commitments.preflight_bundle.policy_hash`.
 A verifier who obtains the policy file can independently compute the hash and confirm
-which rules were active.
+which rules were active. Policy files MUST be canonical: every field written explicitly,
+with `null` for an absent optional value, and no repeated member names; the relay rejects
+other files on both load paths, so the policy hash is the same on each.
 
 ---
 
@@ -961,7 +963,8 @@ accepted.
 
 Every artefact is identified by `SHA-256(JCS(artefact_json))`. The registry
 stores artefacts by hash and validates that the stored content re-hashes to
-the same value on load (integrity check).
+the same value on load (integrity check). Artefact JSON with a repeated member
+name is rejected. Enforcement policies must also be canonical (Section 9.5).
 
 ### 12.4 Contract Composition
 

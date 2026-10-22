@@ -306,8 +306,10 @@ pub fn policy_from_value(value: serde_json::Value) -> Result<RelayEnforcementPol
 }
 
 /// Parse a relay enforcement policy from JSON text (see [`policy_from_value`]).
+/// The text is parsed strictly: a repeated member name is rejected rather
+/// than resolved as "last value wins".
 fn policy_from_str(data: &str) -> Result<RelayEnforcementPolicy, String> {
-    let value: serde_json::Value = serde_json::from_str(data).map_err(|e| e.to_string())?;
+    let value = receipt_core::parse_json_strict(data).map_err(|e| e.to_string())?;
     policy_from_value(value)
 }
 
@@ -1089,6 +1091,43 @@ mod tests {
                 err.to_string().contains("not in canonical form"),
                 "{name}: {err}"
             );
+
+            std::fs::remove_dir_all(&dir).ok();
+        }
+    }
+
+    #[test]
+    fn test_lockfile_rejects_policy_with_repeated_key() {
+        let mut policy = sample_policy();
+        policy.entropy_constraints = Some(EntropyConstraints {
+            budget_bits: 32,
+            classification: EnforcementClass::Advisory,
+            review_trigger_pct: Some(80),
+        });
+        let canonical = serde_json::to_string(&policy).unwrap();
+        let texts = [
+            // Top level: the gate rules are overridden by an empty list.
+            format!(r#"{},"rules":[]}}"#, &canonical[..canonical.len() - 1]),
+            // Nested: a repeated member inside entropy_constraints.
+            canonical.replace(r#""budget_bits":32"#, r#""budget_bits":8,"budget_bits":32"#),
+        ];
+        for (i, text) in texts.iter().enumerate() {
+            assert_ne!(text, &canonical);
+            let lenient: RelayEnforcementPolicy =
+                serde_json::from_value(serde_json::from_str::<serde_json::Value>(text).unwrap())
+                    .unwrap();
+            let hash = content_hash(&lenient).unwrap();
+            let dir = std::env::temp_dir().join(format!("vcav-enforcement-repeated-key-{i}"));
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("compatibility_safe_v1.json"), text).unwrap();
+            write_lockfile_entries(&dir, &[("compatibility_safe_v1", &hash)]);
+
+            let dir_str = dir.to_str().unwrap();
+            let err = validate_enforcement_lockfile(dir_str).unwrap_err();
+            assert!(err.to_string().contains("duplicate"), "{text}: {err}");
+            let entries = HashMap::from([("compatibility_safe_v1".to_string(), hash)]);
+            let err = load_all_policies(dir_str, &entries).unwrap_err();
+            assert!(err.to_string().contains("duplicate"), "{text}: {err}");
 
             std::fs::remove_dir_all(&dir).ok();
         }

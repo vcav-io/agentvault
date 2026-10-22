@@ -274,8 +274,10 @@ fn load_kind<T>(
             ))
         })?;
 
-        // 2. Parse as generic JSON for digest verification
-        let json_value: serde_json::Value = serde_json::from_str(&raw).map_err(|e| {
+        // 2. Parse as generic JSON for digest verification, strictly: a
+        //    repeated member name is rejected, not resolved as "last value
+        //    wins", so the digest covers exactly one reading of the file.
+        let json_value = receipt_core::parse_json_strict(&raw).map_err(|e| {
             RelayError::Internal(format!(
                 "failed to parse JSON from {}: {e}",
                 file_path.display()
@@ -749,6 +751,38 @@ path = "{}"
             fs::write(&config_path, config).unwrap();
             let err = load_admission(&config_path, None).unwrap_err().to_string();
             assert!(err.contains("not in canonical form"), "{bad}: {err}");
+            fs::remove_dir_all(&tmp).ok();
+        }
+    }
+
+    #[test]
+    fn test_admitted_policy_with_repeated_key_rejected() {
+        let canonical = serde_json::to_string(&sample_policy()).unwrap();
+        let gate = r#"[{"rule_id":"r","type":"unicode_category_reject","value":"Nd","scope":{"kind":"all_string_values","skip_keys":[]},"classification":"GATE"}]"#;
+        let texts = [
+            // Top level: an earlier "rules" is overridden by the later one.
+            canonical.replacen('{', &format!(r#"{{"rules":{gate},"#), 1),
+            // Nested: a repeated member inside entropy_constraints.
+            canonical.replace(
+                r#""entropy_constraints":null"#,
+                r#""entropy_constraints":{"budget_bits":8,"budget_bits":32,"classification":"ADVISORY","review_trigger_pct":null}"#,
+            ),
+        ];
+        for text in texts {
+            assert_ne!(text, canonical);
+            // The digest of the "last value wins" reading.
+            let lenient: serde_json::Value = serde_json::from_str(&text).unwrap();
+            let hash = compute_jcs_sha256(&lenient).unwrap();
+            let tmp = test_tmp("repeated-key-policy");
+            let (config_path, _, policy_digest, _, _) = setup_admission(&tmp);
+            let dir = tmp.join("registry").join("policies");
+            fs::write(dir.join(format!("sha256-{hash}.json")), &text).unwrap();
+            let config = fs::read_to_string(&config_path)
+                .unwrap()
+                .replace(&policy_digest, &format!("sha256:{hash}"));
+            fs::write(&config_path, config).unwrap();
+            let err = load_admission(&config_path, None).unwrap_err().to_string();
+            assert!(err.contains("failed to parse JSON"), "{text}: {err}");
             fs::remove_dir_all(&tmp).ok();
         }
     }
