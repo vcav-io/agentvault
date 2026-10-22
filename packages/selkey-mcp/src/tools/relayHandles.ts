@@ -44,6 +44,13 @@ export interface RelayHandle {
   submitted?: boolean;
   /** Stored from first call for use on resume (responder only). */
   myInput?: string;
+  /**
+   * This agent's relay submission: the session it went to, the exact context
+   * sent and the commitment nonce sent with it. Kept in memory only, so the
+   * receipt's commitment to this agent's input can be checked. The nonce is a
+   * local secret: never put it in tool results, logs or state files.
+   */
+  inputCommitment?: { sessionId: string; context: unknown; nonce: string };
   expectedPurpose?: string;
   /**
    * Soft purpose preference used only for collision fallback. Unlike

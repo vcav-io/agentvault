@@ -1,0 +1,49 @@
+{
+  "cases": [
+    {
+      "expected_canonical": "[56,{\"1\":[],\"10\":null,\"d\":true}]",
+      "expected_sha256_hex": "099601b171cafed97c333f8878d68e7f8c8f795412adb34b2fdcf0e7c7beac42",
+      "input_json": "[\n  56,\n  {\n    \"d\": true,\n    \"10\": null,\n    \"1\": [ ]\n  }\n]\n",
+      "name": "arrays",
+      "within_v3_number_limit": true
+    },
+    {
+      "expected_canonical": "{\"peach\":\"This sorting order\",\"péché\":\"is wrong according to French\",\"pêche\":\"but canonicalization MUST\",\"sin\":\"ignore locale\"}",
+      "expected_sha256_hex": "d99d0ebdcb0033cb858cfa830ae46bc0fb3309413b271f1da828c89901a27ed5",
+      "input_json": "{\n  \"peach\": \"This sorting order\",\n  \"péché\": \"is wrong according to French\",\n  \"pêche\": \"but canonicalization MUST\",\n  \"sin\":   \"ignore locale\"\n}\n",
+      "name": "french",
+      "within_v3_number_limit": true
+    },
+    {
+      "expected_canonical": "{\"\":\"empty\",\"1\":{\"\\n\":56,\"f\":{\"F\":5,\"f\":\"hi\"}},\"10\":{},\"111\":[{\"E\":\"no\",\"e\":\"yes\"}],\"A\":{},\"a\":{}}",
+      "expected_sha256_hex": "605f65004ec2db7692522a0852c22f1c989e036d547e88963d1a3143cf3195d5",
+      "input_json": "{\n  \"1\": {\"f\": {\"f\": \"hi\",\"F\": 5} ,\"\\n\": 56.0},\n  \"10\": { },\n  \"\": \"empty\",\n  \"a\": { },\n  \"111\": [ {\"e\": \"yes\",\"E\": \"no\" } ],\n  \"A\": { }\n}",
+      "name": "structures",
+      "within_v3_number_limit": true
+    },
+    {
+      "expected_canonical": "{\"Unnormalized Unicode\":\"Å\"}",
+      "expected_sha256_hex": "0d99aad92a125196ff887876643fd3206786a84ddce2cee52ba4ad256d2381d3",
+      "input_json": "{\n  \"Unnormalized Unicode\":\"A\\u030a\"\n}\n",
+      "name": "unicode",
+      "within_v3_number_limit": true
+    },
+    {
+      "expected_canonical": "{\"literals\":[null,true,false],\"numbers\":[333333333.3333333,1e+30,4.5,0.002,1e-27],\"string\":\"€$\\u000f\\nA'B\\\"\\\\\\\\\\\"/\"}",
+      "expected_sha256_hex": "2d5e01a318d0f0879ab568c4be289c8b1f64ef8921a53c6277d5e069978baacb",
+      "input_json": "{\n  \"numbers\": [333333333.33333329, 1E30, 4.50, 2e-3, 0.000000000000000000000000001],\n  \"string\": \"\\u20ac$\\u000F\\u000aA'\\u0042\\u0022\\u005c\\\\\\\"\\/\",\n  \"literals\": [null, true, false]\n}",
+      "name": "values",
+      "within_v3_number_limit": false
+    },
+    {
+      "expected_canonical": "{\"\\n\":\"Newline\",\"\\r\":\"Carriage Return\",\"1\":\"One\",\"</script>\":\"Browser Challenge\",\"\":\"Control\",\"ö\":\"Latin Small Letter O With Diaeresis\",\"€\":\"Euro Sign\",\"😂\":\"Smiley\",\"דּ\":\"Hebrew Letter Dalet With Dagesh\"}",
+      "expected_sha256_hex": "6af595a9aa80110b964b4de3f82a05fa6ae7423005019bacfa2620dddc4e94d1",
+      "input_json": "{\n  \"\\u20ac\": \"Euro Sign\",\n  \"\\r\": \"Carriage Return\",\n  \"\\u000a\": \"Newline\",\n  \"1\": \"One\",\n  \"\\u0080\": \"Control\\u007f\",\n  \"\\ud83d\\ude02\": \"Smiley\",\n  \"\\u00f6\": \"Latin Small Letter O With Diaeresis\",\n  \"\\ufb33\": \"Hebrew Letter Dalet With Dagesh\",\n  \"</script>\": \"Browser Challenge\"\n}\n",
+      "name": "weird",
+      "within_v3_number_limit": true
+    }
+  ],
+  "description": "RFC 8785 reference test data (plain RFC 8785, no v3 number limit). Cases with within_v3_number_limit=false are rejected by the v3 profile.",
+  "license": "Apache-2.0, Copyright 2018 Anders Rundgren",
+  "source": "https://github.com/cyberphone/json-canonicalization/tree/32a48195b9b20fe67b1795e39e4509f14d860b45/testdata"
+}

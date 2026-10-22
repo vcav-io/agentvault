@@ -17,6 +17,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { buildSuccess, buildError, type ToolResponse, type ErrorCode } from '../envelope.js';
 import { createAndSubmit, pollUntilDone, joinAndWait } from 'selkey';
+import { generateCommitmentNonce } from 'selkey/commitment';
 import {
   submitInput as rawSubmitInput,
   getStatus as httpGetStatus,
@@ -53,6 +54,7 @@ import {
 import {
   assertRelayTrusted,
   checkReceiptAgainstPinnedKey,
+  type LocalSessionData,
   isRelayKeyPinned,
   isRelayUrlAllowed,
   normalizeRelayUrl,
@@ -1037,11 +1039,34 @@ function awaitingResponse(
   });
 }
 
+/**
+ * Commitment nonce for this handle's submission to `sessionId`. A retry of the
+ * same submission reuses its nonce; any other submission gets a fresh one.
+ */
+function submissionNonce(handle: RelayHandle, sessionId: string, context: unknown): string {
+  const prior = handle.inputCommitment;
+  if (prior && prior.sessionId === sessionId) return prior.nonce;
+  const nonce = generateCommitmentNonce();
+  handle.inputCommitment = { sessionId, context, nonce };
+  return nonce;
+}
+
+/** What this agent holds locally for checking the session receipt. */
+function localSessionData(handle: RelayHandle): LocalSessionData {
+  const sub = handle.inputCommitment;
+  return {
+    ownInput: sub
+      ? { participantId: handle.agentId, context: sub.context, commitmentNonce: sub.nonce }
+      : undefined,
+    contract: handle.contract,
+  };
+}
+
 function completedResponse(
   handle: RelayHandle,
   output: SessionOutputResponse,
 ): ToolResponse<RelaySignalOutput> {
-  const receiptCheck = checkReceiptAgainstPinnedKey(output);
+  const receiptCheck = checkReceiptAgainstPinnedKey(output, localSessionData(handle));
   if (receiptCheck.status === 'FAILED') {
     // Do not present output whose receipt fails the pinned-key check.
     return failedResponse(handle, 'RECEIPT_VERIFICATION_FAILED', receiptCheck.detail);
@@ -1181,7 +1206,13 @@ async function createCommittedDirectSession(params: {
 }): Promise<void> {
   await assertRelayTrusted(params.relayUrl, [transportLocalRelayUrl(params.transport)]);
   const config = { relay_url: params.relayUrl };
-  const created = await createAndSubmit(config, params.contract, params.myInput, 'initiator');
+  const nonce = generateCommitmentNonce();
+  const created = await createAndSubmit(config, params.contract, params.myInput, 'initiator', nonce);
+  params.handle.inputCommitment = {
+    sessionId: created.sessionId,
+    context: params.myInput,
+    nonce,
+  };
   const relaySession: RelaySessionBinding = {
     session_id: created.sessionId,
     responder_submit_token: created.responderSubmitToken,
@@ -1567,7 +1598,10 @@ async function phaseInvite(
   if (!(transport instanceof DirectAfalTransport)) {
     await assertRelayTrusted(relayUrl, [transportLocalRelayUrl(transport)]);
     const config = { relay_url: relayUrl };
-    const created = await createAndSubmit(config, contract, args.my_input ?? '', 'initiator');
+    const myContext = args.my_input ?? '';
+    const nonce = generateCommitmentNonce();
+    const created = await createAndSubmit(config, contract, myContext, 'initiator', nonce);
+    handle.inputCommitment = { sessionId: created.sessionId, context: myContext, nonce };
     const relay: RelayInvitePayload = {
       session_id: created.sessionId,
       responder_submit_token: created.responderSubmitToken,
@@ -1723,13 +1757,15 @@ async function phasePollInvite(
       );
     }
     const config = { relay_url: handle.relayUrl };
+    const myContext = handle.myInput ?? '';
     try {
       await rawSubmitInput(
         config,
         handle.sessionId,
         handle.tokens.submit,
         'initiator',
-        handle.myInput ?? '',
+        myContext,
+        submissionNonce(handle, handle.sessionId, myContext),
         handle.contractHash,
       );
     } catch (submitErr) {
@@ -2331,13 +2367,15 @@ async function phaseJoin(
       }
     }
 
+    const myContext = handle.myInput ?? '';
     try {
       await rawSubmitInput(
         config,
         handle.sessionId!,
         handle.tokens!.submit,
         'responder',
-        handle.myInput ?? '',
+        myContext,
+        submissionNonce(handle, handle.sessionId!, myContext),
         handle.contractHash,
       );
     } catch (submitErr) {
@@ -2439,7 +2477,39 @@ async function phaseJoin(
   });
 }
 
-// ── Legacy Modes (unchanged) ────────────────────────────────────────────
+// ── Legacy Modes ────────────────────────────────────────────────────────
+
+function ownInputFromContract(
+  contract: unknown,
+  index: number,
+  context: unknown,
+  commitmentNonce: string,
+): LocalSessionData['ownInput'] {
+  const participants =
+    contract && typeof contract === 'object'
+      ? (contract as Record<string, unknown>)['participants']
+      : undefined;
+  const participantId = Array.isArray(participants) ? participants[index] : undefined;
+  return typeof participantId === 'string'
+    ? { participantId, context, commitmentNonce }
+    : undefined;
+}
+
+function ownInputFromReceipt(
+  output: SessionOutputResponse,
+  index: number,
+  context: unknown,
+  commitmentNonce: string,
+): LocalSessionData['ownInput'] {
+  const receipt = output.receipt as Record<string, unknown> | null | undefined;
+  const commitments = receipt?.['commitments'] as Record<string, unknown> | undefined;
+  const entries = commitments?.['input_commitments'];
+  const entry = Array.isArray(entries) ? (entries[index] as Record<string, unknown>) : undefined;
+  const participantId = entry?.['participant_id'];
+  return typeof participantId === 'string'
+    ? { participantId, context, commitmentNonce }
+    : undefined;
+}
 
 async function handleCreate(args: RelaySignalArgs): Promise<ToolResponse<RelaySignalCreateData>> {
   if (!args.contract) {
@@ -2449,8 +2519,18 @@ async function handleCreate(args: RelaySignalArgs): Promise<ToolResponse<RelaySi
   await assertRelayTrusted(relayUrl);
   const config = { relay_url: relayUrl };
 
-  const created = await createAndSubmit(config, args.contract, args.my_input ?? '', 'initiator');
+  const myContext = args.my_input ?? '';
+  const nonce = generateCommitmentNonce();
+  const created = await createAndSubmit(config, args.contract, myContext, 'initiator', nonce);
   const output = await pollUntilDone(config, created.sessionId, created.initiatorReadToken);
+
+  const receiptCheck = checkReceiptAgainstPinnedKey(output, {
+    ownInput: ownInputFromContract(args.contract, 0, myContext, nonce),
+    contract: args.contract,
+  });
+  if (receiptCheck.status === 'FAILED') {
+    return buildError('VERIFICATION_FAILED', receiptCheck.detail);
+  }
 
   return buildSuccess('COMPLETE', {
     mode: 'CREATE' as const,
@@ -2474,17 +2554,24 @@ async function handleJoin(args: RelaySignalArgs): Promise<ToolResponse<RelaySign
   await assertRelayTrusted(relayUrl);
   const config = { relay_url: relayUrl };
 
+  const myContext = args.my_input ?? '';
+  const nonce = generateCommitmentNonce();
   const output = await joinAndWait(
     config,
     args.session_id,
     args.submit_token,
     args.read_token,
     args.contract_hash,
-    args.my_input ?? '',
+    myContext,
     'responder',
+    nonce,
   );
 
-  const receiptCheck = checkReceiptAgainstPinnedKey(output);
+  // JOIN mode does not hold the contract, so the responder's participant id
+  // is read from the receipt's second commitment entry (contract order).
+  const receiptCheck = checkReceiptAgainstPinnedKey(output, {
+    ownInput: ownInputFromReceipt(output, 1, myContext, nonce),
+  });
   if (receiptCheck.status === 'FAILED') {
     return buildError('VERIFICATION_FAILED', receiptCheck.detail);
   }

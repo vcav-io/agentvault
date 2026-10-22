@@ -1,0 +1,96 @@
+{
+  "contract_json": "{\n  \"purpose_code\": \"COMPATIBILITY\",\n  \"output_schema_id\": \"urn:vcav:schema:compatibility.v1\",\n  \"output_schema\": {\n    \"type\": \"object\",\n    \"additionalProperties\": false,\n    \"required\": [\"decision\", \"note\"],\n    \"properties\": {\n      \"decision\": {\"type\": \"string\", \"enum\": [\"PROCEED\", \"DECLINE\"]},\n      \"note\": {\"type\": \"string\", \"maxLength\": 64}\n    }\n  },\n  \"participants\": [\"agent-alice\", \"agent-bob\"],\n  \"prompt_template_hash\": \"8888888888888888888888888888888888888888888888888888888888888888\",\n  \"entropy_budget_bits\": 8,\n  \"metadata\": {\"\\ufb33\": \"hebrew\", \"\\ud83d\\ude00\": \"emoji\"},\n  \"model_constraints\": {\"allowed_providers\": [\"anthropic\"]},\n  \"entropy_enforcement\": \"Gate\"\n}",
+  "description": "Signed v3 receipt (success, inline output). The participant data and contract below let a verifier run the own-input, output and contract checks of docs/receipt-v3.md section 6.",
+  "expected": {
+    "canonical_unsigned": "{\"assurance_level\":\"SELF_ASSERTED\",\"claims\":{\"budget_enforcement_mode\":\"enforced\",\"budget_usage\":{\"bits_used_after\":3,\"bits_used_before\":0,\"budget_limit\":8,\"scope\":\"SESSION\"},\"channel_capacity_bits_upper_bound\":3,\"channel_capacity_measurement_version\":\"enum_cardinality_v1\",\"entropy_budget_bits\":8,\"execution_lane\":\"standard\",\"model_identity_asserted\":\"anthropic/claude-sonnet\",\"model_profile_hash_asserted\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"provider_latency_ms\":1234,\"relay_software_version\":\"0.1.0\",\"runtime_hash_asserted\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"schema_entropy_ceiling_bits\":3,\"signal_class\":\"SESSION_COMPLETED\",\"status\":\"success\",\"token_usage\":{\"completion_tokens\":24,\"prompt_tokens\":128,\"total_tokens\":152}},\"commitments\":{\"assembled_prompt_hash\":\"7777777777777777777777777777777777777777777777777777777777777777\",\"contract_hash\":\"8eff8018bef6b35cb0fa7422a1ffd38e84fb7663e1a467584a1af3839800a798\",\"contract_hash_alg\":\"SHA256_JCS_V2\",\"input_commitments\":[{\"input_commitment\":\"ff3cff1affc4c45d9fcd8ff6e3c0b3b2adbecbc4d7d3b5a3cb3a5d81c82089c4\",\"participant_id\":\"agent-alice\",\"scheme\":\"SHA256_N32_JCS_V3\"},{\"input_commitment\":\"0fe5b61ce97ef51ae82c979b130b677e4e0c9938548672fde81f223b178d6fd9\",\"participant_id\":\"agent-bob\",\"scheme\":\"SHA256_N32_JCS_V3\"}],\"output\":{\"decision\":\"PROCEED\",\"note\":\"café  😀\"},\"output_hash\":\"51ad06b8e226f1eafa6cddab96e49b5db30800cc3639c2fa1dfdfa929fa67411\",\"prompt_assembly_version\":\"1.0.0\",\"prompt_template_hash\":\"8888888888888888888888888888888888888888888888888888888888888888\",\"schema_hash\":\"5cd87e1f0cb52f36091c6553b3783eb1037fa9aa2965be472d5a934c8c6002fb\"},\"issued_at\":\"2026-10-22T12:00:00Z\",\"operator\":{\"operator_id\":\"relay.example\",\"operator_key_fingerprint\":\"34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e\"},\"receipt_canonicalization\":\"JCS_RFC8785\",\"receipt_id\":\"c0ffee00-0000-4000-8000-000000000003\",\"receipt_schema_version\":\"3.0.0\",\"session_id\":\"5e551011-0000-4000-8000-000000000003\"}",
+    "operator_key_fingerprint": "34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+    "signing_digest_hex": "114fad702011732bf07d10c5ff62fed13571e3784582d2fb1085026da515ef38",
+    "verification_result": "PASS"
+  },
+  "input": {
+    "domain_prefix": "VCAV-RECEIPT-V3:",
+    "receipt_json": "{\"receipt_schema_version\":\"3.0.0\",\"receipt_canonicalization\":\"JCS_RFC8785\",\"receipt_id\":\"c0ffee00-0000-4000-8000-000000000003\",\"session_id\":\"5e551011-0000-4000-8000-000000000003\",\"issued_at\":\"2026-10-22T12:00:00Z\",\"assurance_level\":\"SELF_ASSERTED\",\"operator\":{\"operator_id\":\"relay.example\",\"operator_key_fingerprint\":\"34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e\"},\"commitments\":{\"contract_hash\":\"8eff8018bef6b35cb0fa7422a1ffd38e84fb7663e1a467584a1af3839800a798\",\"contract_hash_alg\":\"SHA256_JCS_V2\",\"schema_hash\":\"5cd87e1f0cb52f36091c6553b3783eb1037fa9aa2965be472d5a934c8c6002fb\",\"output_hash\":\"51ad06b8e226f1eafa6cddab96e49b5db30800cc3639c2fa1dfdfa929fa67411\",\"input_commitments\":[{\"participant_id\":\"agent-alice\",\"input_commitment\":\"ff3cff1affc4c45d9fcd8ff6e3c0b3b2adbecbc4d7d3b5a3cb3a5d81c82089c4\",\"scheme\":\"SHA256_N32_JCS_V3\"},{\"participant_id\":\"agent-bob\",\"input_commitment\":\"0fe5b61ce97ef51ae82c979b130b677e4e0c9938548672fde81f223b178d6fd9\",\"scheme\":\"SHA256_N32_JCS_V3\"}],\"assembled_prompt_hash\":\"7777777777777777777777777777777777777777777777777777777777777777\",\"prompt_assembly_version\":\"1.0.0\",\"output\":{\"decision\":\"PROCEED\",\"note\":\"café  😀\"},\"prompt_template_hash\":\"8888888888888888888888888888888888888888888888888888888888888888\"},\"claims\":{\"model_identity_asserted\":\"anthropic/claude-sonnet\",\"model_profile_hash_asserted\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"runtime_hash_asserted\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"budget_enforcement_mode\":\"enforced\",\"provider_latency_ms\":1234,\"token_usage\":{\"prompt_tokens\":128,\"completion_tokens\":24,\"total_tokens\":152},\"relay_software_version\":\"0.1.0\",\"status\":\"success\",\"signal_class\":\"SESSION_COMPLETED\",\"execution_lane\":\"standard\",\"channel_capacity_bits_upper_bound\":3,\"channel_capacity_measurement_version\":\"enum_cardinality_v1\",\"entropy_budget_bits\":8,\"schema_entropy_ceiling_bits\":3,\"budget_usage\":{\"scope\":\"SESSION\",\"bits_used_before\":0,\"bits_used_after\":3,\"budget_limit\":8}},\"signature\":{\"alg\":\"Ed25519\",\"value\":\"xvTptA2QicZeJrtIT5jS-LDcuPOePRTKY1huBWCNAPOOoXUmKSuZ0tQ6wURjwP9_HRsgDEAxDZwYRR-pTPcvBQ\",\"signed_fields\":\"ALL_EXCEPT_SIGNATURE\"}}",
+    "verifying_key_hex": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c"
+  },
+  "participants_private": [
+    {
+      "context_json": "{\"role\":\"initiator\",\"preferences\":{\"budget\":5000,\"city\":\"Lisbon\",\"flexible\":true}}",
+      "nonce_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "participant_id": "agent-alice"
+    },
+    {
+      "context_json": "{\"role\":\"responder\",\"notes\":\"café 😀\",\"scores\":[1,2.5,-0]}",
+      "nonce_hex": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+      "participant_id": "agent-bob"
+    }
+  ],
+  "receipt": {
+    "assurance_level": "SELF_ASSERTED",
+    "claims": {
+      "budget_enforcement_mode": "enforced",
+      "budget_usage": {
+        "bits_used_after": 3,
+        "bits_used_before": 0,
+        "budget_limit": 8,
+        "scope": "SESSION"
+      },
+      "channel_capacity_bits_upper_bound": 3,
+      "channel_capacity_measurement_version": "enum_cardinality_v1",
+      "entropy_budget_bits": 8,
+      "execution_lane": "standard",
+      "model_identity_asserted": "anthropic/claude-sonnet",
+      "model_profile_hash_asserted": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "provider_latency_ms": 1234,
+      "relay_software_version": "0.1.0",
+      "runtime_hash_asserted": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "schema_entropy_ceiling_bits": 3,
+      "signal_class": "SESSION_COMPLETED",
+      "status": "success",
+      "token_usage": {
+        "completion_tokens": 24,
+        "prompt_tokens": 128,
+        "total_tokens": 152
+      }
+    },
+    "commitments": {
+      "assembled_prompt_hash": "7777777777777777777777777777777777777777777777777777777777777777",
+      "contract_hash": "8eff8018bef6b35cb0fa7422a1ffd38e84fb7663e1a467584a1af3839800a798",
+      "contract_hash_alg": "SHA256_JCS_V2",
+      "input_commitments": [
+        {
+          "input_commitment": "ff3cff1affc4c45d9fcd8ff6e3c0b3b2adbecbc4d7d3b5a3cb3a5d81c82089c4",
+          "participant_id": "agent-alice",
+          "scheme": "SHA256_N32_JCS_V3"
+        },
+        {
+          "input_commitment": "0fe5b61ce97ef51ae82c979b130b677e4e0c9938548672fde81f223b178d6fd9",
+          "participant_id": "agent-bob",
+          "scheme": "SHA256_N32_JCS_V3"
+        }
+      ],
+      "output": {
+        "decision": "PROCEED",
+        "note": "café  😀"
+      },
+      "output_hash": "51ad06b8e226f1eafa6cddab96e49b5db30800cc3639c2fa1dfdfa929fa67411",
+      "prompt_assembly_version": "1.0.0",
+      "prompt_template_hash": "8888888888888888888888888888888888888888888888888888888888888888",
+      "schema_hash": "5cd87e1f0cb52f36091c6553b3783eb1037fa9aa2965be472d5a934c8c6002fb"
+    },
+    "issued_at": "2026-10-22T12:00:00Z",
+    "operator": {
+      "operator_id": "relay.example",
+      "operator_key_fingerprint": "34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e"
+    },
+    "receipt_canonicalization": "JCS_RFC8785",
+    "receipt_id": "c0ffee00-0000-4000-8000-000000000003",
+    "receipt_schema_version": "3.0.0",
+    "session_id": "5e551011-0000-4000-8000-000000000003",
+    "signature": {
+      "alg": "Ed25519",
+      "signed_fields": "ALL_EXCEPT_SIGNATURE",
+      "value": "xvTptA2QicZeJrtIT5jS-LDcuPOePRTKY1huBWCNAPOOoXUmKSuZ0tQ6wURjwP9_HRsgDEAxDZwYRR-pTPcvBQ"
+    }
+  },
+  "received_output_json": "{\"decision\":\"PROCEED\",\"note\":\"café  😀\"}"
+}

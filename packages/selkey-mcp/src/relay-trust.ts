@@ -12,6 +12,7 @@
  */
 
 import { fetchRelayPublicKey, verifyReceipt } from 'selkey/verify';
+import type { OwnInputArtefact, VerifyArtefacts } from 'selkey/verify';
 
 export const RELAY_URL_ENV = 'SELKEY_RELAY_URL';
 export const RELAY_ALLOWLIST_ENV = 'SELKEY_RELAY_ALLOWLIST';
@@ -131,15 +132,52 @@ export function isRelayKeyPinned(): boolean {
   return Boolean(process.env[RELAY_VERIFYING_KEY_ENV]?.trim());
 }
 
+/** Data this agent holds locally about its own side of the session. */
+export interface LocalSessionData {
+  /** This agent's input, its participant id and the commitment nonce it sent. */
+  ownInput?: OwnInputArtefact;
+  /** The contract this agent agreed to, if it holds it. */
+  contract?: unknown;
+}
+
+function pickReceipt(output: {
+  receipt?: unknown;
+  receipt_signature?: string | null;
+  receipt_v2?: Record<string, unknown> | null;
+}): Record<string, unknown> | undefined {
+  const primary =
+    output.receipt && typeof output.receipt === 'object'
+      ? (output.receipt as Record<string, unknown>)
+      : undefined;
+  // Current relays emit only receipt v3, under `receipt`.
+  if (primary && typeof primary['receipt_schema_version'] === 'string') return primary;
+  if (output.receipt_v2 && typeof output.receipt_v2 === 'object') return output.receipt_v2;
+  if (primary) {
+    return primary['signature'] === undefined && typeof output.receipt_signature === 'string'
+      ? { ...primary, signature: output.receipt_signature }
+      : primary;
+  }
+  return undefined;
+}
+
 /**
  * Verify a session output's receipt against SELKEY_RELAY_VERIFYING_KEY_HEX.
  * Returns NOT_PINNED when no key is configured.
+ *
+ * Besides the signature, the receipt must commit to what this agent holds
+ * locally: the output it received, its own input (opened with the commitment
+ * nonce it sent; receipt v3), and the contract when it is known.
  */
-export function checkReceiptAgainstPinnedKey(output: {
-  receipt?: unknown;
-  receipt_signature?: string;
-  receipt_v2?: Record<string, unknown>;
-}): ReceiptCheck {
+export function checkReceiptAgainstPinnedKey(
+  output: {
+    state?: string;
+    output?: unknown;
+    receipt?: unknown;
+    receipt_signature?: string | null;
+    receipt_v2?: Record<string, unknown> | null;
+  },
+  local: LocalSessionData = {},
+): ReceiptCheck {
   const pinned = process.env[RELAY_VERIFYING_KEY_ENV]?.trim();
   if (!pinned) return { status: 'NOT_PINNED' };
   if (!KEY_HEX_RE.test(pinned)) {
@@ -150,16 +188,7 @@ export function checkReceiptAgainstPinnedKey(output: {
   }
   const key = pinned.toLowerCase();
 
-  let receipt: Record<string, unknown> | undefined;
-  if (output.receipt_v2 && typeof output.receipt_v2 === 'object') {
-    receipt = output.receipt_v2;
-  } else if (output.receipt && typeof output.receipt === 'object') {
-    const v1 = output.receipt as Record<string, unknown>;
-    receipt =
-      v1['signature'] === undefined && typeof output.receipt_signature === 'string'
-        ? { ...v1, signature: output.receipt_signature }
-        : v1;
-  }
+  const receipt = pickReceipt(output);
   if (!receipt) {
     return { status: 'FAILED', detail: 'Session output has no receipt to verify' };
   }
@@ -176,7 +205,16 @@ export function checkReceiptAgainstPinnedKey(output: {
     }
   }
 
-  const result = verifyReceipt(receipt, key);
+  const artefacts: VerifyArtefacts = {};
+  if (output.output !== undefined && output.output !== null) artefacts.output = output.output;
+  if (local.ownInput) artefacts.ownInput = local.ownInput;
+  if (local.contract !== undefined) artefacts.contract = local.contract;
+
+  const result = verifyReceipt(
+    receipt,
+    key,
+    Object.keys(artefacts).length > 0 ? artefacts : undefined,
+  );
   if (!result.valid) {
     return {
       status: 'FAILED',

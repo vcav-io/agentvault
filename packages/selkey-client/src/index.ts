@@ -21,6 +21,14 @@ export {
   createRegistryIndex,
   buildContract,
 } from './contract-builder.js';
+export {
+  generateCommitmentNonce,
+  isValidCommitmentNonce,
+  computeInputCommitmentV3,
+  verifyInputCommitmentV3,
+} from './commitment-v3.js';
+export { computeContractHashV2, normalizeContractV2 } from './contract-hash-v2.js';
+
 export type {
   ArtefactKind,
   ArtefactEntry,
@@ -48,15 +56,26 @@ export interface CreateAndSubmitResult {
 /**
  * Create a relay session and submit the initiator's input in one call.
  * Returns session ID, contract hash, and the tokens the responder needs.
+ *
+ * `commitmentNonce` is a fresh nonce from `generateCommitmentNonce()` for this
+ * submission; keep it with `myInput` to check the receipt's commitment later.
  */
 export async function createAndSubmit(
   config: RelayClientConfig,
   contract: object,
   myInput: unknown,
   role: string,
+  commitmentNonce: string,
 ): Promise<CreateAndSubmitResult> {
   const session: CreateSessionResponse = await httpCreateSession(config, contract);
-  await httpSubmitInput(config, session.session_id, session.initiator_submit_token, role, myInput);
+  await httpSubmitInput(
+    config,
+    session.session_id,
+    session.initiator_submit_token,
+    role,
+    myInput,
+    commitmentNonce,
+  );
   return {
     sessionId: session.session_id,
     contractHash: session.contract_hash,
@@ -70,6 +89,9 @@ export async function createAndSubmit(
  * Join an existing relay session: submit input with expected contract hash
  * (relay verifies server-side), poll until Completed or Aborted, then
  * retrieve and return the output.
+ *
+ * `commitmentNonce` is a fresh nonce from `generateCommitmentNonce()` for this
+ * submission; keep it with `myInput` to check the receipt's commitment later.
  */
 export async function joinAndWait(
   config: RelayClientConfig,
@@ -79,6 +101,7 @@ export async function joinAndWait(
   expectedContractHash: string,
   myInput: unknown,
   role: string,
+  commitmentNonce: string,
   pollIntervalMs: number = DEFAULT_POLL_INTERVAL_MS,
   timeoutMs: number = POLL_TIMEOUT_MS,
 ): Promise<SessionOutputResponse> {
@@ -87,7 +110,15 @@ export async function joinAndWait(
 
   // Pass expected_contract_hash to the relay — the relay verifies it matches
   // the session's actual contract hash and rejects with ContractMismatch if not.
-  await httpSubmitInput(config, sessionId, submitToken, role, myInput, expectedContractHash);
+  await httpSubmitInput(
+    config,
+    sessionId,
+    submitToken,
+    role,
+    myInput,
+    commitmentNonce,
+    expectedContractHash,
+  );
 
   const deadline = Date.now() + timeoutMs;
 

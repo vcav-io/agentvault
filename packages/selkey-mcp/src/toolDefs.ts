@@ -32,8 +32,9 @@ export const VERIFY_TOOLS = [
     name: 'selkey.verify_receipt',
     description:
       'Verify the cryptographic signature of an Selkey session receipt. ' +
-      'Supports v1 receipts (schema_version: "1.0.0") and v2 receipts ' +
-      '(receipt_schema_version: "2.1.0"). ' +
+      'Supports v3 receipts (receipt_schema_version: "3.0.0", emitted by current relays, ' +
+      'checked with strict Ed25519 rules), v2 receipts (receipt_schema_version: "2.x.y") ' +
+      'and v1 receipts (schema_version: "1.0.0"). ' +
       'Returns valid: true only if the receipt signature is valid under the relay verifying key. ' +
       'A relay key is required: pass public_key_hex, or configure SELKEY_RELAY_VERIFYING_KEY_HEX. ' +
       'Obtain the key out of band from the relay operator (not from the receipt or the counterparty). ' +

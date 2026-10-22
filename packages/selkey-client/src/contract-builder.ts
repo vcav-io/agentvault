@@ -9,10 +9,8 @@
 
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { canonicalize } from 'json-canonicalize';
-import { sha256 } from '@noble/hashes/sha256';
-import { bytesToHex } from '@noble/hashes/utils';
 import type { RelayContract } from './relay-contracts.js';
+import { normalizeContractV2 } from './contract-hash-v2.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -282,31 +280,31 @@ export function buildContract(
     if (/\s/.test(p)) throw new Error(`Participant ID "${p}" contains whitespace`);
   }
 
-  // Assemble the contract object.
-  // Field order matches RelayContract / existing TEMPLATES for hash parity.
+  // Assemble the contract object. Absent optional members are omitted (never
+  // written as null), and the contract carries no contract_hash member: the
+  // relay hashes exactly the object it receives with contract hash v2
+  // (computeContractHashV2 / computeRelayContractHash).
   const contract: Record<string, unknown> = {
     purpose_code: options.purpose_code,
     output_schema_id: schema.entry.id,
     output_schema: {},
     participants: options.participants,
     prompt_template_hash: bareDigest(program.digest),
-    entropy_budget_bits: options.entropy_budget_bits ?? null,
-    timing_class: null,
-    metadata: null,
     model_profile_id: profile.entry.id,
     model_profile_hash: bareDigest(profile.digest),
     enforcement_policy_hash: bareDigest(policy.digest),
     output_schema_hash: bareDigest(schema.digest),
   };
 
+  if (options.entropy_budget_bits !== undefined) {
+    contract['entropy_budget_bits'] = options.entropy_budget_bits;
+  }
   if (options.entropy_enforcement) {
     contract['entropy_enforcement'] = options.entropy_enforcement;
   }
 
-  // Compute contract_hash = SHA-256(JCS(contract))
-  const canonical = canonicalize(contract);
-  const contractHash = bytesToHex(sha256(canonical));
-  contract['contract_hash'] = contractHash;
+  // Fail early on anything contract hash v2 (and so the relay) would reject.
+  normalizeContractV2(contract);
 
   return Object.freeze(contract) as unknown as RelayContract;
 }

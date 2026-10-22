@@ -308,9 +308,11 @@ describe('INITIATE with AFAL', () => {
       expect.any(Object),
       'hello',
       'initiator',
+      expect.stringMatching(/^[0-9a-f]{64}$/),
     );
     expect(vi.mocked(createAndSubmit)).not.toHaveBeenCalledWith(
       { relay_url: 'http://relay.from.card' },
+      expect.anything(),
       expect.anything(),
       expect.anything(),
       expect.anything(),
@@ -500,6 +502,7 @@ describe('INITIATE with AFAL', () => {
       }),
       'hello',
       'initiator',
+      expect.stringMatching(/^[0-9a-f]{64}$/),
     );
     expect(result).toMatchObject({
       ok: true,
@@ -640,6 +643,7 @@ describe('INITIATE with AFAL', () => {
       }),
       'hello',
       'initiator',
+      expect.stringMatching(/^[0-9a-f]{64}$/),
     );
   });
 

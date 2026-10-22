@@ -331,6 +331,15 @@ var VaultCardManager = (function () {
             var receipt = outputWrap.receipt || null;
             var receiptV2 = outputWrap.receipt_v2 || null;
             var receiptSignature = outputWrap.receipt_signature || null;
+            // Current relays send receipt v3 under `receipt`; it uses the same
+            // envelope (commitments / claims / signature object) as v2.
+            var receiptVersion = '2';
+            if (receipt && typeof receipt.receipt_schema_version === 'string' &&
+                receipt.receipt_schema_version.indexOf('3.') === 0) {
+              receiptV2 = receipt;
+              receipt = null;
+              receiptVersion = '3';
+            }
 
             // Hero result card — output signal
             var card = addCard(label + ' — session complete', 'vault-card--hero vault-card--expanded');
@@ -360,8 +369,8 @@ var VaultCardManager = (function () {
                 var rcLabel = document.createElement('div');
                 rcLabel.className = 'receipt-card__label';
                 rcLabel.textContent = isFailureReceipt
-                  ? 'FAILURE RECEIPT (v2) \u2014 ' + receiptStatus.toUpperCase()
-                  : 'CRYPTOGRAPHIC RECEIPT (v2)';
+                  ? 'FAILURE RECEIPT (v' + receiptVersion + ') \u2014 ' + receiptStatus.toUpperCase()
+                  : 'CRYPTOGRAPHIC RECEIPT (v' + receiptVersion + ')';
                 rcSection.appendChild(rcLabel);
 
                 // Assurance level — mandatory context
@@ -421,7 +430,17 @@ var VaultCardManager = (function () {
                   ['template hash', commitments.prompt_template_hash],
                 ];
                 var inputComm = commitments.input_commitments;
-                if (inputComm && typeof inputComm === 'object') {
+                if (Array.isArray(inputComm)) {
+                  // v2/v3: one entry per participant, in contract order. v3
+                  // commitments are salted with each party's own nonce.
+                  for (var ia = 0; ia < inputComm.length; ia++) {
+                    var entry = inputComm[ia] || {};
+                    commFields.push([
+                      'input: ' + (entry.participant_id || ia),
+                      entry.input_commitment || entry.input_hash,
+                    ]);
+                  }
+                } else if (inputComm && typeof inputComm === 'object') {
                   var inputKeys = Object.keys(inputComm);
                   for (var ik = 0; ik < inputKeys.length; ik++) {
                     var ic = inputComm[inputKeys[ik]];
@@ -559,7 +578,7 @@ var VaultCardManager = (function () {
                 }
                 rcSection.appendChild(claimsSection);
 
-                // Verify button — sends the full v2 receipt (signature is an object)
+                // Verify button — sends the full v2/v3 receipt (signature is an object)
                 var verifyReceipt = receiptV2;
                 var verifyBtn = document.createElement('button');
                 verifyBtn.className = 'receipt-card__verify-btn';

@@ -642,7 +642,7 @@ app.post('/api/message', async (req, res) => {
   });
 });
 
-// Verify receipt signature — supports both v1 and v2 receipts via shared verifier
+// Verify receipt signature — v3, v2 and v1 receipts via the shared verifier
 app.post('/api/verify-receipt', async (req, res) => {
   try {
     if (DEMO_SMOKE_MODE) {

@@ -1,8 +1,9 @@
 /**
  * Tests for relay contract templates and hashing.
  *
- * Golden hash vectors validate parity with the Rust relay's
- * compute_contract_hash (RFC 8785 JCS + SHA-256).
+ * Golden hash vectors validate parity with the Rust relay's contract hash v2
+ * (receipt_core::compute_contract_hash_v2: RFC 8785 + SHA-256 over the
+ * contract with absent optional members omitted).
  */
 
 import { readFileSync } from 'node:fs';
@@ -39,7 +40,7 @@ describe('buildRelayContract', () => {
     expect(contract!.model_profile_hash).toBe(
       '5f01005dcfe4c95ee52b5f47958b4943134cc97da487b222dd4f936d474f70f8',
     );
-    expect(contract!.timing_class).toBeNull();
+    expect(contract).not.toHaveProperty('timing_class');
     expect(contract!.metadata).toEqual({ scenario: 'cofounder-mediation', version: '3' });
   });
 
@@ -177,10 +178,33 @@ describe('computeOutputSchemaHash', () => {
  *
  * Or by running the Rust relay tests.
  */
+describe('contract hash v2', () => {
+  it('omits null optional members, so null and absent hash the same', () => {
+    const contract = buildRelayContract('MEDIATION', ['alice-demo', 'bob-demo'])!;
+    const withNulls = { ...contract, timing_class: null, model_constraints: { min_tier: null } };
+    const withEmpty = { ...contract, model_constraints: {} };
+    expect(computeRelayContractHash(withNulls)).toBe(computeRelayContractHash(withEmpty));
+    expect(computeRelayContractHash({ ...contract, timing_class: null })).toBe(
+      computeRelayContractHash(contract),
+    );
+  });
+
+  it('rejects a contract that carries a contract_hash member', () => {
+    const contract = buildRelayContract('MEDIATION', ['alice-demo', 'bob-demo'])!;
+    expect(() =>
+      computeRelayContractHash({ ...contract, contract_hash: 'a'.repeat(64) }),
+    ).toThrow(/contract_hash/);
+  });
+
+  it('rejects unknown members instead of dropping them', () => {
+    const contract = buildRelayContract('MEDIATION', ['alice-demo', 'bob-demo'])!;
+    expect(() => computeRelayContractHash({ ...contract, extra: 1 })).toThrow(/unknown member/);
+  });
+});
+
 describe('golden hash vectors (cross-language parity)', () => {
-  // Golden hashes include v2 contract fields (enforcement_policy_hash,
-  // entropy_enforcement, output_schema_hash). Must re-verify against live
-  // Rust relay after template changes (POST /sessions → contract_hash).
+  // Golden hashes are contract hash v2 values. Re-verify against the Rust
+  // relay after template changes (POST /sessions → contract_hash).
   //
   // To regenerate: POST the contract JSON to the relay's /sessions endpoint,
   // record contract_hash from the response.
@@ -188,13 +212,13 @@ describe('golden hash vectors (cross-language parity)', () => {
   it('mediation contract hash matches Rust relay', () => {
     const contract = buildRelayContract('MEDIATION', ['alice-demo', 'bob-demo'])!;
     const hash = computeRelayContractHash(contract);
-    expect(hash).toBe('945c35e38865653c9edbb976fb8c55a6d6715e91df9dd3eaf06a29470bb23622');
+    expect(hash).toBe('794530d27300909adeb81ac313becfe1f085cb2f5ae13774fba749de10eb335e');
   });
 
   it('compatibility contract hash matches Rust relay', () => {
     const contract = buildRelayContract('COMPATIBILITY', ['alice-demo', 'bob-demo'])!;
     const hash = computeRelayContractHash(contract);
-    expect(hash).toBe('9b763505b3ce2569b064a05d42abce7242d377be410ad16b57ae3ffc04e9c4fd');
+    expect(hash).toBe('26ebef92a1df95d42c4e6bcaa685fdad7695feb996d75999ce905cfc721dd056');
   });
 });
 

@@ -1,0 +1,98 @@
+{
+  "description": "Signed v3 failure receipt (rejected output, no inline output, preflight bundle with effective_config_hash, TEE lane fields whose embedded key equals the pinned key).",
+  "expected": {
+    "canonical_unsigned": "{\"assurance_level\":\"SELF_ASSERTED\",\"claims\":{\"budget_enforcement_mode\":\"enforced\",\"budget_usage\":{\"bits_used_after\":3,\"bits_used_before\":0,\"budget_limit\":8,\"scope\":\"SESSION\"},\"channel_capacity_bits_upper_bound\":3,\"channel_capacity_measurement_version\":\"enum_cardinality_v1\",\"entropy_budget_bits\":8,\"execution_lane\":\"tee\",\"model_identity_asserted\":\"anthropic/claude-sonnet\",\"model_profile_hash_asserted\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"provider_latency_ms\":1234,\"relay_software_version\":\"0.1.0\",\"runtime_hash_asserted\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"schema_entropy_ceiling_bits\":3,\"signal_class\":\"SCHEMA_VALIDATION_FAILED\",\"status\":\"rejected\"},\"commitments\":{\"assembled_prompt_hash\":\"7777777777777777777777777777777777777777777777777777777777777777\",\"contract_hash\":\"8eff8018bef6b35cb0fa7422a1ffd38e84fb7663e1a467584a1af3839800a798\",\"contract_hash_alg\":\"SHA256_JCS_V2\",\"effective_config_hash\":\"326d1054eafcec6c3641939b15aab3998b4cb4c72f1f08a1ce74c4ff55384541\",\"initiator_submission_hash\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"input_commitments\":[{\"input_commitment\":\"ff3cff1affc4c45d9fcd8ff6e3c0b3b2adbecbc4d7d3b5a3cb3a5d81c82089c4\",\"participant_id\":\"agent-alice\",\"scheme\":\"SHA256_N32_JCS_V3\"},{\"input_commitment\":\"0fe5b61ce97ef51ae82c979b130b677e4e0c9938548672fde81f223b178d6fd9\",\"participant_id\":\"agent-bob\",\"scheme\":\"SHA256_N32_JCS_V3\"}],\"output_hash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"preflight_bundle\":{\"enforcement_parameters\":{\"labels\":{\"😀\":\"emoji\",\"דּ\":\"hebrew\"},\"max_completion_tokens\":512,\"ratio\":0.25,\"session_ttl_secs\":600},\"model_profile_hash\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"policy_hash\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"prompt_template_hash\":\"8888888888888888888888888888888888888888888888888888888888888888\",\"schema_hash\":\"5cd87e1f0cb52f36091c6553b3783eb1037fa9aa2965be472d5a934c8c6002fb\"},\"prompt_assembly_version\":\"1.0.0\",\"prompt_template_hash\":\"8888888888888888888888888888888888888888888888888888888888888888\",\"rejected_output_hash\":\"bf9826a24550ed9c7ca92682fb0697aa02283720f50f49ab80aa4240fc760225\",\"responder_submission_hash\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"schema_hash\":\"5cd87e1f0cb52f36091c6553b3783eb1037fa9aa2965be472d5a934c8c6002fb\"},\"issued_at\":\"2026-12-31T23:59:59Z\",\"operator\":{\"operator_id\":\"relé.example\",\"operator_key_discovery\":\"https://relay.example/.well-known/selkey-relay-key\",\"operator_key_fingerprint\":\"34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e\"},\"receipt_canonicalization\":\"JCS_RFC8785\",\"receipt_id\":\"c0ffee00-0000-4000-8000-000000000004\",\"receipt_schema_version\":\"3.0.0\",\"session_id\":\"5e551011-0000-4000-8000-000000000003\",\"tee_attestation\":{\"measurement\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"receipt_signing_pubkey_hex\":\"8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c\",\"tee_type\":\"Simulated\"}}",
+    "operator_key_fingerprint": "34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+    "signing_digest_hex": "2d8bc09caad8900b174fa39ea2904fbd0224863df98afce5219789e23e72ae98",
+    "verification_result": "PASS"
+  },
+  "input": {
+    "domain_prefix": "VCAV-RECEIPT-V3:",
+    "receipt_json": "{\"receipt_schema_version\":\"3.0.0\",\"receipt_canonicalization\":\"JCS_RFC8785\",\"receipt_id\":\"c0ffee00-0000-4000-8000-000000000004\",\"session_id\":\"5e551011-0000-4000-8000-000000000003\",\"issued_at\":\"2026-12-31T23:59:59Z\",\"assurance_level\":\"SELF_ASSERTED\",\"operator\":{\"operator_id\":\"relé.example\",\"operator_key_fingerprint\":\"34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e\",\"operator_key_discovery\":\"https://relay.example/.well-known/selkey-relay-key\"},\"commitments\":{\"contract_hash\":\"8eff8018bef6b35cb0fa7422a1ffd38e84fb7663e1a467584a1af3839800a798\",\"contract_hash_alg\":\"SHA256_JCS_V2\",\"schema_hash\":\"5cd87e1f0cb52f36091c6553b3783eb1037fa9aa2965be472d5a934c8c6002fb\",\"output_hash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"input_commitments\":[{\"participant_id\":\"agent-alice\",\"input_commitment\":\"ff3cff1affc4c45d9fcd8ff6e3c0b3b2adbecbc4d7d3b5a3cb3a5d81c82089c4\",\"scheme\":\"SHA256_N32_JCS_V3\"},{\"participant_id\":\"agent-bob\",\"input_commitment\":\"0fe5b61ce97ef51ae82c979b130b677e4e0c9938548672fde81f223b178d6fd9\",\"scheme\":\"SHA256_N32_JCS_V3\"}],\"assembled_prompt_hash\":\"7777777777777777777777777777777777777777777777777777777777777777\",\"prompt_assembly_version\":\"1.0.0\",\"prompt_template_hash\":\"8888888888888888888888888888888888888888888888888888888888888888\",\"effective_config_hash\":\"326d1054eafcec6c3641939b15aab3998b4cb4c72f1f08a1ce74c4ff55384541\",\"preflight_bundle\":{\"policy_hash\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"prompt_template_hash\":\"8888888888888888888888888888888888888888888888888888888888888888\",\"model_profile_hash\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"schema_hash\":\"5cd87e1f0cb52f36091c6553b3783eb1037fa9aa2965be472d5a934c8c6002fb\",\"enforcement_parameters\":{\"labels\":{\"דּ\":\"hebrew\",\"😀\":\"emoji\"},\"max_completion_tokens\":512,\"ratio\":0.25,\"session_ttl_secs\":600}},\"rejected_output_hash\":\"bf9826a24550ed9c7ca92682fb0697aa02283720f50f49ab80aa4240fc760225\",\"initiator_submission_hash\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"responder_submission_hash\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"},\"claims\":{\"model_identity_asserted\":\"anthropic/claude-sonnet\",\"model_profile_hash_asserted\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"runtime_hash_asserted\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"budget_enforcement_mode\":\"enforced\",\"provider_latency_ms\":1234,\"relay_software_version\":\"0.1.0\",\"status\":\"rejected\",\"signal_class\":\"SCHEMA_VALIDATION_FAILED\",\"execution_lane\":\"tee\",\"channel_capacity_bits_upper_bound\":3,\"channel_capacity_measurement_version\":\"enum_cardinality_v1\",\"entropy_budget_bits\":8,\"schema_entropy_ceiling_bits\":3,\"budget_usage\":{\"scope\":\"SESSION\",\"bits_used_before\":0,\"bits_used_after\":3,\"budget_limit\":8}},\"tee_attestation\":{\"tee_type\":\"Simulated\",\"measurement\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"receipt_signing_pubkey_hex\":\"8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c\"},\"signature\":{\"alg\":\"Ed25519\",\"value\":\"SLJV0FM1CHJvtnbeLBnZVhBGHueGnAyQHgL-09OH6IG5ng8aQCAxZJPYhmV6tVOaSpxdjk52DDAOX6Ipx5YsDg\",\"signed_fields\":\"ALL_EXCEPT_SIGNATURE\"}}",
+    "verifying_key_hex": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c"
+  },
+  "receipt": {
+    "assurance_level": "SELF_ASSERTED",
+    "claims": {
+      "budget_enforcement_mode": "enforced",
+      "budget_usage": {
+        "bits_used_after": 3,
+        "bits_used_before": 0,
+        "budget_limit": 8,
+        "scope": "SESSION"
+      },
+      "channel_capacity_bits_upper_bound": 3,
+      "channel_capacity_measurement_version": "enum_cardinality_v1",
+      "entropy_budget_bits": 8,
+      "execution_lane": "tee",
+      "model_identity_asserted": "anthropic/claude-sonnet",
+      "model_profile_hash_asserted": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "provider_latency_ms": 1234,
+      "relay_software_version": "0.1.0",
+      "runtime_hash_asserted": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "schema_entropy_ceiling_bits": 3,
+      "signal_class": "SCHEMA_VALIDATION_FAILED",
+      "status": "rejected"
+    },
+    "commitments": {
+      "assembled_prompt_hash": "7777777777777777777777777777777777777777777777777777777777777777",
+      "contract_hash": "8eff8018bef6b35cb0fa7422a1ffd38e84fb7663e1a467584a1af3839800a798",
+      "contract_hash_alg": "SHA256_JCS_V2",
+      "effective_config_hash": "326d1054eafcec6c3641939b15aab3998b4cb4c72f1f08a1ce74c4ff55384541",
+      "initiator_submission_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "input_commitments": [
+        {
+          "input_commitment": "ff3cff1affc4c45d9fcd8ff6e3c0b3b2adbecbc4d7d3b5a3cb3a5d81c82089c4",
+          "participant_id": "agent-alice",
+          "scheme": "SHA256_N32_JCS_V3"
+        },
+        {
+          "input_commitment": "0fe5b61ce97ef51ae82c979b130b677e4e0c9938548672fde81f223b178d6fd9",
+          "participant_id": "agent-bob",
+          "scheme": "SHA256_N32_JCS_V3"
+        }
+      ],
+      "output_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "preflight_bundle": {
+        "enforcement_parameters": {
+          "labels": {
+            "דּ": "hebrew",
+            "😀": "emoji"
+          },
+          "max_completion_tokens": 512,
+          "ratio": 0.25,
+          "session_ttl_secs": 600
+        },
+        "model_profile_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "policy_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+        "prompt_template_hash": "8888888888888888888888888888888888888888888888888888888888888888",
+        "schema_hash": "5cd87e1f0cb52f36091c6553b3783eb1037fa9aa2965be472d5a934c8c6002fb"
+      },
+      "prompt_assembly_version": "1.0.0",
+      "prompt_template_hash": "8888888888888888888888888888888888888888888888888888888888888888",
+      "rejected_output_hash": "bf9826a24550ed9c7ca92682fb0697aa02283720f50f49ab80aa4240fc760225",
+      "responder_submission_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "schema_hash": "5cd87e1f0cb52f36091c6553b3783eb1037fa9aa2965be472d5a934c8c6002fb"
+    },
+    "issued_at": "2026-12-31T23:59:59Z",
+    "operator": {
+      "operator_id": "relé.example",
+      "operator_key_discovery": "https://relay.example/.well-known/selkey-relay-key",
+      "operator_key_fingerprint": "34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e"
+    },
+    "receipt_canonicalization": "JCS_RFC8785",
+    "receipt_id": "c0ffee00-0000-4000-8000-000000000004",
+    "receipt_schema_version": "3.0.0",
+    "session_id": "5e551011-0000-4000-8000-000000000003",
+    "signature": {
+      "alg": "Ed25519",
+      "signed_fields": "ALL_EXCEPT_SIGNATURE",
+      "value": "SLJV0FM1CHJvtnbeLBnZVhBGHueGnAyQHgL-09OH6IG5ng8aQCAxZJPYhmV6tVOaSpxdjk52DDAOX6Ipx5YsDg"
+    },
+    "tee_attestation": {
+      "measurement": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "receipt_signing_pubkey_hex": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+      "tee_type": "Simulated"
+    }
+  }
+}

@@ -1,0 +1,152 @@
+{
+  "accepted": [
+    {
+      "expected_canonical": "{\"c1_first\":\"\",\"c1_last\":\"\",\"del\":\"\",\"nbsp\":\" \"}",
+      "expected_sha256_hex": "bc4994e126457967f6ded280603985ecbacfb290d58d1f582ed989f2346dad7a",
+      "input_json": "{\"del\":\"\\u007f\",\"c1_first\":\"\\u0080\",\"c1_last\":\"\\u009f\",\"nbsp\":\"\\u00a0\"}",
+      "name": "del_and_c1_written_raw"
+    },
+    {
+      "expected_canonical": "[\"\\u0000\",\"\\u0001\",\"\\b\",\"\\t\",\"\\n\",\"\\u000b\",\"\\f\",\"\\r\",\"\\u001f\",\"\\\"\",\"\\\\\",\"/\"]",
+      "expected_sha256_hex": "bf8f2742bfff73e00638c00a36567fc44ef367d303c3284f5afd07c3f081a365",
+      "input_json": "[\"\\u0000\",\"\\u0001\",\"\\u0008\",\"\\u0009\",\"\\u000a\",\"\\u000b\",\"\\u000c\",\"\\u000d\",\"\\u001f\",\"\\\"\",\"\\\\\",\"\\/\"]",
+      "name": "control_character_escapes"
+    },
+    {
+      "expected_canonical": "[1e-7,1.5e-10,0.000001,0.000001,0.002,1.23,5e-324]",
+      "expected_sha256_hex": "d175443bae88e1e7574911d24957c03bda95f5c62e4518d85ffcffb1c2e93c37",
+      "input_json": "[1e-7,1.5e-10,0.000001,1e-6,2e-3,123e-2,5e-324]",
+      "name": "small_exponents"
+    },
+    {
+      "expected_canonical": "[4.5,0,0,100,100,-12.5,0.1,333333333.3333333,1,4503599627370495.5]",
+      "expected_sha256_hex": "ee1d803f5f52e9a59e535624f620db30bbb12c26fa64867a371e4bbb8474678b",
+      "input_json": "[4.50,-0,0.0,1E2,100,-1.25e1,0.1,333333333.33333329,1e0,4503599627370495.5]",
+      "name": "number_forms"
+    },
+    {
+      "expected_canonical": "[9007199254740991,-9007199254740991,9007199254740990,9007199254740991]",
+      "expected_sha256_hex": "3f08a355b8e07f6a78ec5c540f5f0b54b39bb31cd3b3f06ac46ce041aa814f29",
+      "input_json": "[9007199254740991,-9007199254740991,9007199254740990,9007199254740991.0]",
+      "name": "integer_limit_boundary"
+    },
+    {
+      "expected_canonical": "{\"z\":\"z\",\"é\":\"e-acute\",\"€\":\"euro\",\"𐀀\":\"linear-b\",\"😀\":\"emoji\",\"דּ\":\"hebrew\"}",
+      "expected_sha256_hex": "a5198f2934b230eb5ffeaaab53b849ad3c648772ced29e311676af60cd109338",
+      "input_json": "{\"\\ufb33\":\"hebrew\",\"\\ud83d\\ude00\":\"emoji\",\"\\u00e9\":\"e-acute\",\"z\":\"z\",\"\\u20ac\":\"euro\",\"\\ud800\\udc00\":\"linear-b\"}",
+      "name": "utf16_key_order"
+    },
+    {
+      "expected_canonical": "{\"a\":[],\"b\":{},\"c\":[{}],\"d\":{\"x\":[[],[[]]],\"y\":{\"x\":{}}}}",
+      "expected_sha256_hex": "a32279e998fdae36cf861b2ae6eacc2dc6305be9dacf7316f74c204d27dd2bfe",
+      "input_json": "{\"b\":{},\"a\":[],\"c\":[{}],\"d\":{\"y\":{\"x\":{}},\"x\":[[],[[]]]}}",
+      "name": "nested_and_empty"
+    },
+    {
+      "expected_canonical": "{\"nfc\":\"Å\",\"nfd\":\"Å\",\"raw\":\"日本語 café 😀\"}",
+      "expected_sha256_hex": "c2c9e8f48c7fa001444130ff873e0d494498635c3c1c97bbcf8ae7a1ffa56657",
+      "input_json": "{\"nfc\":\"\\u00c5\",\"nfd\":\"A\\u030a\",\"raw\":\"日本語 café 😀\"}",
+      "name": "unicode_not_normalised"
+    },
+    {
+      "expected_canonical": "{\"\":1,\"a\":{\"\":[]}}",
+      "expected_sha256_hex": "31b58c7468d6de799597fcc09a291e4300cb1a21fdce48287753303c3b7515b7",
+      "input_json": "{\"\":1,\"a\":{\"\":[]}}",
+      "name": "empty_string_key"
+    },
+    {
+      "expected_canonical": "{\"a\":{\"c\":true},\"b\":[1,2]}",
+      "expected_sha256_hex": "8d79d0d88f4c710fc75e75fa3ac460e30320a02c0590ea86b20d831b7a1c6892",
+      "input_json": "{\n  \"b\" : [ 1 , 2 ] ,\n\t\"a\" : { \"c\" : true }\r\n}",
+      "name": "insignificant_whitespace"
+    },
+    {
+      "expected_canonical": "\"text\"",
+      "expected_sha256_hex": "1e1d0f251d3a76fa2b1bfc81164078572623403887db02988b504b0492e9f076",
+      "input_json": "\"text\"",
+      "name": "top_level_string"
+    },
+    {
+      "expected_canonical": "null",
+      "expected_sha256_hex": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "input_json": "null",
+      "name": "top_level_null"
+    },
+    {
+      "expected_canonical": "[]",
+      "expected_sha256_hex": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "input_json": "[]",
+      "name": "top_level_empty_array"
+    },
+    {
+      "expected_canonical": "[true,false,null]",
+      "expected_sha256_hex": "4d0f18de2133118249c26acc481838d4f6bb6bc1de882d99abbd19ae9397e8df",
+      "input_json": "[true,false,null]",
+      "name": "literals"
+    }
+  ],
+  "description": "v3 canonicalisation profile: RFC 8785 plus rejection of numbers with magnitude > 2^53-1, duplicate keys, lone surrogates. Parse input_json strictly, canonicalise, compare with expected_canonical and SHA-256 (lowercase hex) of its UTF-8 bytes.",
+  "max_safe_integer": 9007199254740991,
+  "rejected": [
+    {
+      "expected_error": "NUMBER_OUT_OF_RANGE",
+      "input_json": "9007199254740992",
+      "name": "integer_above_limit"
+    },
+    {
+      "expected_error": "NUMBER_OUT_OF_RANGE",
+      "input_json": "-9007199254740992",
+      "name": "integer_below_limit"
+    },
+    {
+      "expected_error": "NUMBER_OUT_OF_RANGE",
+      "input_json": "18446744073709551615",
+      "name": "u64_max"
+    },
+    {
+      "expected_error": "NUMBER_OUT_OF_RANGE",
+      "input_json": "[1e21]",
+      "name": "exponent_above_limit"
+    },
+    {
+      "expected_error": "NUMBER_OUT_OF_RANGE",
+      "input_json": "{\"x\":1.7976931348623157e308}",
+      "name": "largest_double"
+    },
+    {
+      "expected_error": "NUMBER_OUT_OF_RANGE",
+      "input_json": "{\"a\":[{\"b\":9007199254740993}]}",
+      "name": "nested_integer_above_limit"
+    },
+    {
+      "expected_error": "DUPLICATE_KEY",
+      "input_json": "{\"a\":1,\"a\":1}",
+      "name": "duplicate_key"
+    },
+    {
+      "expected_error": "DUPLICATE_KEY",
+      "input_json": "{\"a\":{\"b\":1,\"b\":2}}",
+      "name": "duplicate_nested_key"
+    },
+    {
+      "expected_error": "PARSE_ERROR",
+      "input_json": "\"\\ud800\"",
+      "name": "lone_high_surrogate"
+    },
+    {
+      "expected_error": "PARSE_ERROR",
+      "input_json": "{\"\\udc00\":1}",
+      "name": "lone_low_surrogate_in_key"
+    },
+    {
+      "expected_error": "PARSE_ERROR",
+      "input_json": "{} {}",
+      "name": "trailing_content"
+    },
+    {
+      "expected_error": "PARSE_ERROR",
+      "input_json": "NaN",
+      "name": "nan_literal"
+    }
+  ]
+}

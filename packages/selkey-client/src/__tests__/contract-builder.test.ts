@@ -295,38 +295,33 @@ describe('buildContract', () => {
     expect(contract['model_profile_hash']).toBe(profileDigest.slice(7));
     expect(contract['entropy_budget_bits']).toBe(12);
     expect(contract['entropy_enforcement']).toBe('Advisory');
-    expect(contract['timing_class']).toBeNull();
-    expect(contract['metadata']).toBeNull();
+    expect(contract).not.toHaveProperty('timing_class');
+    expect(contract).not.toHaveProperty('metadata');
   });
 
-  it('computes a deterministic contract_hash', () => {
+  it('sends no contract_hash member and no null optional members', () => {
     const { registry } = buildTestRegistry();
-    const c1 = buildContract(registry, defaultOptions()) as unknown as Record<string, unknown>;
-    const c2 = buildContract(registry, defaultOptions()) as unknown as Record<string, unknown>;
-    expect(c1['contract_hash']).toBe(c2['contract_hash']);
-    expect(typeof c1['contract_hash']).toBe('string');
-    expect((c1['contract_hash'] as string).length).toBe(64);
-    expect(c1['contract_hash']).toMatch(/^[0-9a-f]{64}$/);
+    const contract = buildContract(
+      registry,
+      defaultOptions({ entropy_budget_bits: undefined }),
+    ) as unknown as Record<string, unknown>;
+    expect(contract).not.toHaveProperty('contract_hash');
+    expect(Object.values(contract)).not.toContain(null);
   });
 
-  it('contract_hash changes with different participants', () => {
+  it('computes a deterministic contract hash v2', () => {
+    const { registry } = buildTestRegistry();
+    const h1 = computeRelayContractHash(buildContract(registry, defaultOptions()));
+    const h2 = computeRelayContractHash(buildContract(registry, defaultOptions()));
+    expect(h1).toBe(h2);
+    expect(h1).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('contract hash changes with different participants', () => {
     const { registry } = buildTestRegistry();
     const c1 = buildContract(registry, defaultOptions({ participants: ['alice', 'bob'] }));
     const c2 = buildContract(registry, defaultOptions({ participants: ['bob', 'alice'] }));
-    expect((c1 as unknown as Record<string, unknown>)['contract_hash']).not.toBe(
-      (c2 as unknown as Record<string, unknown>)['contract_hash'],
-    );
-  });
-
-  it('contract_hash is computed excluding contract_hash field', () => {
-    const { registry } = buildTestRegistry();
-    const contract = buildContract(registry, defaultOptions()) as unknown as Record<string, unknown>;
-    const hash = contract['contract_hash'] as string;
-
-    // Manually verify: remove contract_hash, JCS, SHA-256
-    const { contract_hash: _, ...rest } = contract;
-    const manualHash = computeRelayContractHash(rest);
-    expect(hash).toBe(manualHash);
+    expect(computeRelayContractHash(c1)).not.toBe(computeRelayContractHash(c2));
   });
 
   it('returns a frozen object', () => {
@@ -354,13 +349,13 @@ describe('buildContract', () => {
     expect(contract).not.toHaveProperty('entropy_enforcement');
   });
 
-  it('sets entropy_budget_bits to null when not provided', () => {
+  it('omits entropy_budget_bits when not provided', () => {
     const { registry } = buildTestRegistry();
     const contract = buildContract(
       registry,
       defaultOptions({ entropy_budget_bits: undefined }),
     ) as unknown as Record<string, unknown>;
-    expect(contract['entropy_budget_bits']).toBeNull();
+    expect(contract).not.toHaveProperty('entropy_budget_bits');
   });
 });
 

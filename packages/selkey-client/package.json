@@ -37,6 +37,22 @@
     "./contract-builder": {
       "import": "./dist/contract-builder.js",
       "types": "./dist/contract-builder.d.ts"
+    },
+    "./receipt-v3": {
+      "import": "./dist/receipt-v3.js",
+      "types": "./dist/receipt-v3.d.ts"
+    },
+    "./commitment": {
+      "import": "./dist/commitment-v3.js",
+      "types": "./dist/commitment-v3.d.ts"
+    },
+    "./contract-hash": {
+      "import": "./dist/contract-hash-v2.js",
+      "types": "./dist/contract-hash-v2.d.ts"
+    },
+    "./jcs": {
+      "import": "./dist/jcs-v3.js",
+      "types": "./dist/jcs-v3.d.ts"
     }
   },
   "bin": {
@@ -65,6 +81,7 @@
   "dependencies": {
     "@noble/curves": "^1.9.7",
     "@noble/hashes": "^1.8.0",
+    "canonicalize": "5.1.0",
     "json-canonicalize": "^2.0.0"
   },
   "devDependencies": {

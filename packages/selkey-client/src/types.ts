@@ -39,14 +39,30 @@ export interface Receipt {
   [key: string]: unknown;
 }
 
+/** POST /sessions/:id/input request body. */
+export interface SubmitInputRequest {
+  /** Ignored by the relay (the role comes from the submit token). */
+  role: string;
+  context: unknown;
+  /**
+   * Required. A fresh 32-byte nonce from the client CSPRNG, as 64 lowercase
+   * hex characters. The relay uses it for the receipt's input commitment and
+   * never returns it.
+   */
+  commitment_nonce: string;
+  expected_contract_hash?: string;
+}
+
 export interface SessionOutputResponse {
   state: SessionState;
   abort_reason?: AbortReason;
   output?: unknown;
-  receipt?: Receipt;
-  receipt_signature?: string;
-  /** v2 receipt with commitments/claims split and structured signature. */
-  receipt_v2?: Record<string, unknown>;
+  /** Signed receipt. Current relays emit receipt v3 (`receipt_schema_version` "3.0.0"). */
+  receipt?: Receipt | null;
+  /** Earlier relays only: v1 receipt signature. */
+  receipt_signature?: string | null;
+  /** Earlier relays only: v2 receipt. */
+  receipt_v2?: Record<string, unknown> | null;
 }
 
 // ── Inbox Types ──────────────────────────────────────────────────────────
