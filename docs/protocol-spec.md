@@ -926,7 +926,7 @@ This section describes the `selkey-tee` prototype as it is today. Check the
   commitments add `initiator_submission_hash` and `responder_submission_hash`
   (SHA-256 of each ciphertext).
 - Output that the schema rejects gets a failure receipt with status `rejected`.
-- The TypeScript `selkey/tee` helper (`packages/selkey-client`) currently computes only the v1 transcript, so it reports `transcript_hash_valid: false` for current TEE receipts; use the Rust `tee-verifier`.
+- The TypeScript `selkey/tee` helper (`packages/selkey-client`) recomputes v1, v2 and v3 transcripts with the same selection rules as the Rust `tee-verifier` (a v3 transcript needs the relay configuration, passed as `relay_config`). It does not verify the attestation quote, so its results are receipt-level only; use the Rust `tee-verifier` for full verification.
 
 **Provider and model**
 

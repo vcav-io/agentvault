@@ -1,0 +1,13 @@
+{
+  "description": "Golden fixture for cross-language transcript hash parity testing",
+  "version": "av-tee-transcript-v1",
+  "inputs": {
+    "contract_hash": "aaaa",
+    "prompt_template_hash": "bbbb",
+    "initiator_submission_hash": "cccc",
+    "responder_submission_hash": "dddd",
+    "output_hash": "eeee",
+    "receipt_signing_pubkey_hex": "ffff"
+  },
+  "expected_hash_hex": "b0fceb1f1dfd40fab87a529883810443dabde5416f0d06fbc57026a8bff0989c233781c7beeca30d85154ea3896eba00e21d99a8aac2dbd05ae85bb1e806a256"
+}
