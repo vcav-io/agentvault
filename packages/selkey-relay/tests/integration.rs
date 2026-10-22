@@ -3473,7 +3473,7 @@ async fn test_create_session_rejects_malformed_relay_verifying_key() {
 #[tokio::test]
 async fn test_session_with_malformed_relay_key_reaches_terminal_state() {
     // A session whose contract carries a malformed pinned key (inserted directly
-    // into the store, bypassing request validation) must still end in a
+    // into the store without going through request validation) must still end in a
     // terminal state with raw inputs cleared once both inputs are submitted.
     let (prompt_dir, prompt_hash) = setup_prompt_program("malformed-key-session");
     let state = Arc::new(test_app_state("http://unused", &prompt_dir));
