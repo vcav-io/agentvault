@@ -8,6 +8,7 @@ use crate::types::{Contract, ModelProfile, RelayInput};
 
 /// A content-addressed description of how to assemble a provider prompt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PromptProgram {
     pub version: String,
     pub system_instruction: String,
@@ -396,6 +397,70 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("hash mismatch"));
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_prompt_program_with_unknown_field_rejected() {
+        let dir = std::env::temp_dir().join("vcav-e-relay-test-program-unknown-field");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let program = sample_program();
+        let hash = program.content_hash().unwrap();
+        let mut json = serde_json::to_value(&program).unwrap();
+        json["unenforced_extra"] = serde_json::json!(true);
+        std::fs::write(dir.join(format!("{hash}.json")), json.to_string()).unwrap();
+
+        let err = load_prompt_program(dir.to_str().unwrap(), &hash).unwrap_err();
+        assert!(err.to_string().contains("unknown field"), "{err}");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_model_profile_with_unknown_field_rejected() {
+        let dir = std::env::temp_dir().join("vcav-e-relay-test-profile-unknown-field");
+        std::fs::create_dir_all(&dir).unwrap();
+        let profile = serde_json::json!({
+            "profile_version": "1",
+            "profile_id": "p1",
+            "provider": "anthropic",
+            "model_id": "claude-sonnet-4-6",
+            "model_family": "claude-sonnet",
+            "reasoning_mode": "unconstrained",
+            "structured_output": true,
+            "unenforced_extra": true
+        });
+        std::fs::write(dir.join("p1.json"), profile.to_string()).unwrap();
+
+        let err = load_model_profile(dir.to_str().unwrap(), "p1").unwrap_err();
+        assert!(err.to_string().contains("unknown field"), "{err}");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_committed_profiles_and_programs_load() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/prompt_programs");
+        validate_model_profile_lockfile(dir).unwrap();
+        let (mut profiles, mut programs) = (0, 0);
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let stem = path.file_stem().unwrap().to_str().unwrap();
+            if stem.len() == 64 && stem.chars().all(|c| c.is_ascii_hexdigit()) {
+                // Parse only: this test is about the field set, not the
+                // file-name hash.
+                let data = std::fs::read_to_string(&path).unwrap();
+                serde_json::from_str::<PromptProgram>(&data).unwrap();
+                programs += 1;
+            } else {
+                load_model_profile(dir, stem).unwrap();
+                profiles += 1;
+            }
+        }
+        assert!(profiles > 0 && programs > 0);
     }
 
     #[test]
