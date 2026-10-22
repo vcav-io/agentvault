@@ -99,16 +99,6 @@ pub fn compute_input_commitments(
     .collect()
 }
 
-/// Value written to `commitments.assembled_prompt_hash` while the receipt
-/// type still requires the field.
-///
-/// The assembled prompt contains both parties' inputs, so no hash of it is
-/// put in the receipt: inputs appear in receipts only through their salted
-/// input commitments. This is a fixed value (SHA-256 of zero bytes) that does
-/// not depend on the session.
-pub fn assembled_prompt_hash_placeholder() -> String {
-    hex::encode(Sha256::digest(b""))
-}
 
 /// Validate JSON output against the contract's output schema.
 fn validate_output_schema(
@@ -736,7 +726,6 @@ fn build_receipt_v3(
             schema_hash: schema_hash.to_string(),
             output_hash,
             input_commitments,
-            assembled_prompt_hash: assembled_prompt_hash_placeholder(),
             prompt_assembly_version: "1.0.0".to_string(),
             output: Some(output.clone()),
             prompt_template_hash: Some(prompt_template_hash.to_string()),
@@ -745,7 +734,6 @@ fn build_receipt_v3(
             output_retrieval_uri: None,
             output_media_type: None,
             preflight_bundle_uri: None,
-            rejected_output_hash: None,
             initiator_submission_hash: None,
             responder_submission_hash: None,
         },
@@ -864,7 +852,6 @@ pub fn build_failure_receipt_v3(
             schema_hash: schema_hash.to_string(),
             output_hash,
             input_commitments,
-            assembled_prompt_hash: assembled_prompt_hash_placeholder(),
             prompt_assembly_version: "1.0.0".to_string(),
             output: None, // no accepted output for failure receipts
             prompt_template_hash: Some(prompt_template_hash.to_string()),
@@ -873,9 +860,6 @@ pub fn build_failure_receipt_v3(
             output_retrieval_uri: None,
             output_media_type: None,
             preflight_bundle_uri: None,
-            // Never populated: a hash of a rejected model output would be an
-            // unsalted function of both inputs.
-            rejected_output_hash: None,
             initiator_submission_hash: None,
             responder_submission_hash: None,
         },
@@ -1178,11 +1162,9 @@ mod tests {
             Some("provider_error")
         );
         assert!(receipt.claims.provider_latency_ms.is_some());
-        assert!(receipt.commitments.rejected_output_hash.is_none());
-        assert_eq!(
-            receipt.commitments.assembled_prompt_hash,
-            assembled_prompt_hash_placeholder()
-        );
+        let json = serde_json::to_value(&receipt).unwrap();
+        assert!(json["commitments"].get("assembled_prompt_hash").is_none());
+        assert!(json["commitments"].get("rejected_output_hash").is_none());
     }
 
     #[test]

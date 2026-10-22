@@ -732,3 +732,101 @@ async fn test_capabilities_report_receipt_v3() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(caps["receipt_schema_version"], "3.0.0");
 }
+
+// ============================================================================
+// Receipt field privacy: nothing in a receipt can be matched against guesses
+// ============================================================================
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    hex::encode(Sha256::digest(bytes))
+}
+
+/// Every hash a participant could compute offline from its own knowledge
+/// (contract, prompt program, its own input) plus a guess of the other
+/// party's input: hashes of each context and of the assembled prompt, under
+/// both canonicalisers and in raw form.
+fn hashes_from_guess(
+    prompt_dir: &str,
+    prompt_hash: &str,
+    own_context: &serde_json::Value,
+    guessed_context: &serde_json::Value,
+) -> Vec<String> {
+    use selkey_relay::types::{CommitmentNonce, RelayInput};
+    let program = selkey_relay::prompt_program::load_prompt_program(prompt_dir, prompt_hash).unwrap();
+    let typed: selkey_relay::types::Contract =
+        serde_json::from_value(contract(prompt_hash)).unwrap();
+    let input = |role: &str, context: &serde_json::Value| RelayInput {
+        role: role.to_string(),
+        context: context.clone(),
+        commitment_nonce: CommitmentNonce::parse(NONCE_C).unwrap(),
+    };
+    let mut out = Vec::new();
+    for ctx in [own_context, guessed_context] {
+        out.push(sha256_hex(receipt_core::canonicalize_v3(ctx).unwrap().as_bytes()));
+        out.push(sha256_hex(receipt_core::canonicalize(ctx).as_bytes()));
+        out.push(sha256_hex(ctx.to_string().as_bytes()));
+    }
+    let assembled = program
+        .assemble(&typed, &input("alice", own_context), &input("bob", guessed_context))
+        .unwrap();
+    let prompt = serde_json::json!({
+        "system": assembled.system,
+        "user_message": assembled.user_message,
+    });
+    out.push(sha256_hex(receipt_core::canonicalize_v3(&prompt).unwrap().as_bytes()));
+    out.push(sha256_hex(receipt_core::canonicalize(&prompt).as_bytes()));
+    out.push(sha256_hex(assembled.user_message.as_bytes()));
+    out.push(sha256_hex(
+        format!("{}{}", assembled.system, assembled.user_message).as_bytes(),
+    ));
+    out
+}
+
+fn all_strings(value: &serde_json::Value, out: &mut Vec<String>) {
+    match value {
+        serde_json::Value::String(s) => out.push(s.clone()),
+        serde_json::Value::Array(a) => a.iter().for_each(|v| all_strings(v, out)),
+        serde_json::Value::Object(o) => o.values().for_each(|v| all_strings(v, out)),
+        _ => {}
+    }
+}
+
+async fn assert_receipt_resists_guessing(failing_provider: bool, test_name: &str) {
+    let (prompt_dir, prompt_hash) = setup_prompt_program(test_name);
+    let mock = if failing_provider {
+        start_failing_mock_provider().await
+    } else {
+        start_mock_provider().await
+    };
+    let state = app_state(&mock, &prompt_dir);
+    let own = serde_json::json!({"salary_band": 4});
+    let other = serde_json::json!({"salary_band": 7});
+    let output = run_session(&state, &prompt_hash, own.clone(), NONCE_A, other, NONCE_B).await;
+    let receipt = &output["receipt"];
+    verified_receipt(receipt);
+
+    let mut fields = Vec::new();
+    all_strings(receipt, &mut fields);
+    // Alice guesses Bob's input over the whole (small) input space,
+    // which includes the true value.
+    for band in 0..16 {
+        let guess = serde_json::json!({"salary_band": band});
+        for h in hashes_from_guess(&prompt_dir, &prompt_hash, &own, &guess) {
+            assert!(
+                !fields.contains(&h),
+                "receipt field matches a hash computed from a guess (salary_band {band})"
+            );
+        }
+    }
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}
+
+#[tokio::test]
+async fn test_success_receipt_has_no_field_matching_guessed_inputs() {
+    assert_receipt_resists_guessing(false, "privacy-success").await;
+}
+
+#[tokio::test]
+async fn test_failure_receipt_has_no_field_matching_guessed_inputs() {
+    assert_receipt_resists_guessing(true, "privacy-failure").await;
+}
