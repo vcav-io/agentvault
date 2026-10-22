@@ -216,7 +216,7 @@ const server = http.createServer(async (req, res) => {
   sendJson(res, 404, { error: 'not_found', path: url });
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, '127.0.0.1', () => {
   console.log(`openai-proxy listening on port ${PORT} (model: ${OPENAI_MODEL})`);
 });
 

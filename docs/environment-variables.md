@@ -15,6 +15,7 @@ Complete reference for all environment variables used by the Selkey relay and MC
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SELKEY_PORT` | `3100` | Port the relay listens on |
+| `SELKEY_ALLOW_UNAUTHENTICATED` | unset | Set to `1` to let a non-dev relay start on a non-loopback address without `SELKEY_OPERATOR_TOKEN` (only when access is controlled elsewhere) |
 | `SELKEY_BIND_ADDR` | `127.0.0.1` | IP address the relay listens on. Loopback by default; set `0.0.0.0` (or a specific interface) to accept remote connections, e.g. inside a container |
 | `SELKEY_OPERATOR_TOKEN` | — | Operator bearer token. When set, `POST /relay` and `POST /sessions` require `Authorization: Bearer <token>` |
 | `SELKEY_MODEL_ID` | `claude-sonnet-4-6` | Anthropic model ID |
@@ -33,6 +34,10 @@ Complete reference for all environment variables used by the Selkey relay and MC
 The relay listens on `127.0.0.1` unless `SELKEY_BIND_ADDR` says otherwise. In Docker, set
 `SELKEY_BIND_ADDR=0.0.0.0` inside the container and choose exposure when publishing the port
 (the demo compose file publishes `127.0.0.1:3100:3100`).
+
+Outside dev, the relay refuses to start on a non-loopback address unless `SELKEY_OPERATOR_TOKEN`
+is set. If access is controlled some other way (for example an authenticating reverse proxy),
+set `SELKEY_ALLOW_UNAUTHENTICATED=1` to start anyway.
 
 | Endpoint | `SELKEY_ENV=dev`, no token | Non-dev, no token | `SELKEY_OPERATOR_TOKEN` set |
 |---|---|---|---|

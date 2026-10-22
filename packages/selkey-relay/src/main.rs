@@ -450,6 +450,18 @@ async fn main() {
             "SELKEY_OPERATOR_TOKEN not set — POST /relay is disabled; POST /sessions is unauthenticated"
         ),
     }
+    let allow_unauthenticated = std::env::var("SELKEY_ALLOW_UNAUTHENTICATED")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+    if let Err(msg) = selkey_relay::check_exposure(
+        bind_addr,
+        operator_token.is_some(),
+        is_dev,
+        allow_unauthenticated,
+    ) {
+        tracing::error!(%bind_addr, "{msg}");
+        std::process::exit(1);
+    }
     if operator_token.is_none() && !bind_addr.is_loopback() {
         tracing::warn!(
             %bind_addr,
