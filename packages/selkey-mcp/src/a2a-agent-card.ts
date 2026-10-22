@@ -29,10 +29,35 @@ export const AGENT_CARD_MAX_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
 /** How far in the future a card's issued_at may be (clock skew). */
 export const AGENT_CARD_MAX_FUTURE_SKEW_MS = 60 * 1000;
 
-const RFC3339_UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$/;
+const RFC3339_UTC_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?Z$/;
 
+/**
+ * Parse an RFC 3339 UTC timestamp strictly: every date and time field must
+ * be in range for the calendar (no 2026-02-30, T24:00:00 or month 13, which
+ * Date.parse would roll over). Returns NaN otherwise.
+ */
 function parseUtc(value: unknown): number {
-  return typeof value === 'string' && RFC3339_UTC_RE.test(value) ? Date.parse(value) : NaN;
+  if (typeof value !== 'string') return NaN;
+  const m = RFC3339_UTC_RE.exec(value);
+  if (!m) return NaN;
+  const [year, month, day, hour, minute, second] = m.slice(1, 7).map(Number);
+  const millis = m[7] ? Number(m[7].slice(0, 3).padEnd(3, '0')) : 0;
+  const d = new Date(0);
+  d.setUTCFullYear(year, month - 1, day);
+  d.setUTCHours(hour, minute, second, millis);
+  const ms = d.getTime();
+  if (
+    Number.isNaN(ms) ||
+    d.getUTCFullYear() !== year ||
+    d.getUTCMonth() !== month - 1 ||
+    d.getUTCDate() !== day ||
+    d.getUTCHours() !== hour ||
+    d.getUTCMinutes() !== minute ||
+    d.getUTCSeconds() !== second
+  ) {
+    return NaN;
+  }
+  return ms;
 }
 
 /**

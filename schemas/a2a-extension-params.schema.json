@@ -5,6 +5,9 @@
   "description": "Extension parameters for the urn:selkey:bounded-disclosure:v1 A2A extension.",
   "type": "object",
   "required": ["public_key_hex", "supported_purposes"],
+  "dependentRequired": {
+    "card_signature": ["issued_at", "expires_at"]
+  },
   "additionalProperties": false,
   "properties": {
     "public_key_hex": {

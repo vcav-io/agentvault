@@ -47,26 +47,26 @@ JCS-canonicalized `AgentCardSignedPayload` object with domain prefix
 `expires_at`) to the signed payload; cards signed under the earlier
 `VCAV-AGENT-CARD-V1:` prefix have no expiry and do not verify.
 
-The signed payload contains these fields (alphabetically sorted for
-deterministic canonicalization):
+The signed payload contains these fields (shown in the alphabetical order
+that JCS canonicalization produces):
 
 | Field | Type | Source |
 |-------|------|--------|
+| `a2a_send_message_url` | `string` | From extension params (omitted if absent) |
+| `afal_endpoint` | `string` | From extension params (omitted if absent) |
 | `agent_id` | `string` | `card.name` |
-| `issued_at` | `string` | From extension params (required) |
 | `expires_at` | `string` | From extension params (required) |
 | `extension_uri` | `string` | Always `"urn:selkey:bounded-disclosure:v1"` |
 | `extension_version` | `string` | Always `"1"` |
+| `issued_at` | `string` | From extension params (required) |
 | `public_key_hex` | `string` | From extension params |
-| `supported_purposes` | `string[]` | From extension params |
 | `relay_url` | `string` | From extension params (omitted if absent) |
-| `a2a_send_message_url` | `string` | From extension params (omitted if absent) |
-| `afal_endpoint` | `string` | From extension params (omitted if absent) |
-| `supports_topic_alignment` | `boolean` | From extension params (omitted if absent) |
-| `supported_topic_codes` | `string[]` | From extension params (omitted if absent) |
-| `supports_precontract_negotiation` | `boolean` | From extension params (omitted if absent) |
-| `supports_bespoke_contract_negotiation` | `boolean` | From extension params (omitted if absent) |
 | `supported_contract_offers` | `SupportedContractOffer[]` | From extension params (omitted if absent) |
+| `supported_purposes` | `string[]` | From extension params |
+| `supported_topic_codes` | `string[]` | From extension params (omitted if absent) |
+| `supports_bespoke_contract_negotiation` | `boolean` | From extension params (omitted if absent) |
+| `supports_precontract_negotiation` | `boolean` | From extension params (omitted if absent) |
+| `supports_topic_alignment` | `boolean` | From extension params (omitted if absent) |
 
 Optional fields are included in the signed payload only when present in the
 extension params. The verifier must reconstruct the same object from the

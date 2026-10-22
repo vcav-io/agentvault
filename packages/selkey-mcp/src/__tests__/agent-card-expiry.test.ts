@@ -105,6 +105,45 @@ describe('agent card validity window', () => {
     expect(() => signAgentCard('bob', { ...base, expires_at: undefined }, SEED)).toThrow(/issued_at and expires_at/);
   });
 
+  it('rejects calendar dates and times that are out of range', () => {
+    const base = params(T0, T0 + HOUR);
+    const now = Date.parse('2026-02-27T00:00:00Z');
+    for (const [field, value] of [
+      ['issued_at', '2026-02-30T00:00:00Z'],
+      ['issued_at', '2026-02-26T24:00:00Z'],
+      ['issued_at', '2026-13-01T00:00:00Z'],
+      ['expires_at', '2026-02-30T00:00:00Z'],
+      ['expires_at', '2026-02-27T24:00:00Z'],
+      ['expires_at', '2026-13-01T00:00:00Z'],
+    ] as const) {
+      const p = {
+        ...base,
+        issued_at: '2026-02-26T12:00:00Z',
+        expires_at: '2026-02-28T00:00:00Z',
+        [field]: value,
+      };
+      expect(verifyAgentCardSignature('bob', p, signedAt(p), PUB, now)).toBe(false);
+    }
+    const ok = { ...base, issued_at: '2026-02-26T12:00:00Z', expires_at: '2026-02-28T23:59:59.999999Z' };
+    expect(verifyAgentCardSignature('bob', ok, signedAt(ok), PUB, now)).toBe(true);
+  });
+
+  it('covers the validity window with the signature', () => {
+    const p = params(T0, T0 + 24 * HOUR);
+    const sig = signedAt(p);
+    const now = T0 + HOUR;
+    expect(verifyAgentCardSignature('bob', p, sig, PUB, now)).toBe(true);
+    for (const changed of [
+      { ...p, expires_at: new Date(T0 + 48 * HOUR).toISOString() },
+      { ...p, issued_at: new Date(T0 + 1000).toISOString() },
+      { ...p, issued_at: p.issued_at.replace('.000Z', 'Z') },
+      { ...p, expires_at: p.expires_at.replace('.000Z', 'Z') },
+    ]) {
+      expect(changed).not.toEqual(p);
+      expect(verifyAgentCardSignature('bob', changed, sig, PUB, now)).toBe(false);
+    }
+  });
+
   it('rejects a card signed under the previous domain', () => {
     const p = params(T0, T0 + HOUR);
     const v1 = sign(
