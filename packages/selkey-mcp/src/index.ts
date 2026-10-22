@@ -471,6 +471,8 @@ if (isDirectExecution) {
             SELKEY_RELAY_URL: 'http://localhost:8080',
             SELKEY_AGENT_ID: 'your-agent-id',
             SELKEY_RESUME_TOKEN_SECRET: 'your-secret-here',
+            SELKEY_RELAY_VERIFYING_KEY_HEX: 'relay-verifying-key-64-hex-from-the-relay-operator',
+            SELKEY_OPERATOR_TOKEN: 'relay-operator-token-if-the-relay-requires-one',
           },
         },
       },

@@ -171,3 +171,44 @@ describe('demo ui smoke flow', () => {
     await page.close();
   }, 30_000);
 });
+
+describe('demo relay key from .env', () => {
+  const ENV_PORT = 3321;
+  const ENV_FILE = path.join(DEMO_DIR, '.env');
+  const KEY = 'ab'.repeat(32);
+  let proc: ChildProcess | undefined;
+
+  afterAll(() => {
+    if (proc && proc.exitCode === null) proc.kill('SIGTERM');
+  });
+
+  it.skipIf(fs.existsSync(ENV_FILE))('pins a relay key that is set only in .env', async () => {
+    fs.writeFileSync(ENV_FILE, `SELKEY_RELAY_VERIFYING_KEY_HEX=${KEY}\n`, { mode: 0o600 });
+    try {
+      const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        DEMO_PORT: String(ENV_PORT),
+        DEMO_BIND_ADDRESS: '127.0.0.1',
+        DEMO_RUNS_DIR: RUNS_DIR,
+        DEMO_SMOKE_MODE: '1',
+      };
+      delete env['SELKEY_RELAY_VERIFYING_KEY_HEX'];
+      proc = spawn(process.execPath, [DIST_SERVER], { cwd: DEMO_DIR, env, stdio: 'ignore' });
+      const base = `http://127.0.0.1:${ENV_PORT}`;
+      await waitForServer(`${base}/api/status`);
+    } finally {
+      fs.rmSync(ENV_FILE, { force: true });
+    }
+    const base = `http://127.0.0.1:${ENV_PORT}`;
+    const started = await fetch(`${base}/api/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Selkey-Demo-Request': '1' },
+      body: '{}',
+    });
+    expect(started.status).toBe(200);
+    const status = (await (await fetch(`${base}/api/status`)).json()) as {
+      relay_key_pin: { key_id: string; source: string } | null;
+    };
+    expect(status.relay_key_pin?.source).toBe('configured');
+  }, 30_000);
+});

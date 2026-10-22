@@ -22,9 +22,10 @@ services:
       - SELKEY_GEMINI_MODEL_ID=${SELKEY_GEMINI_MODEL_ID:-gemini-3-flash-preview}
       - SELKEY_ENV=dev
       # Shared with the demo service, which creates sessions with it. The
-      # default only keeps `docker compose up` working out of the box; set
-      # your own (openssl rand -hex 32) in the environment or .env.
-      - SELKEY_OPERATOR_TOKEN=${SELKEY_OPERATOR_TOKEN:-e389cfc46cd914d538582adbcaf54cd0065662fb90fe0a795fd5666f8fea2567}
+      # default is a published demo value, not a secret: it only keeps
+      # `docker compose up` working out of the box with the relay on loopback.
+      # Set your own (openssl rand -hex 32) in the environment or .env.
+      - SELKEY_OPERATOR_TOKEN=${SELKEY_OPERATOR_TOKEN:-selkey-demo-only-not-a-secret-e389cfc46cd914d538582adbcaf54cd0}
       - SELKEY_INBOX_AUTH=off
       - SELKEY_HEALTH_EXPOSE_MODEL=true
     healthcheck:
@@ -53,7 +54,7 @@ services:
       # key from the relay's /health at the first start (the relay is on the
       # private compose network); set SELKEY_RELAY_VERIFYING_KEY_HEX to pin a
       # key you obtained yourself.
-      - SELKEY_OPERATOR_TOKEN=${SELKEY_OPERATOR_TOKEN:-e389cfc46cd914d538582adbcaf54cd0065662fb90fe0a795fd5666f8fea2567}
+      - SELKEY_OPERATOR_TOKEN=${SELKEY_OPERATOR_TOKEN:-selkey-demo-only-not-a-secret-e389cfc46cd914d538582adbcaf54cd0}
       - SELKEY_RELAY_VERIFYING_KEY_HEX=${SELKEY_RELAY_VERIFYING_KEY_HEX:-}
       - SELKEY_WORKDIR=/app/packages/selkey-demo-ui
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}

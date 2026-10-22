@@ -67,6 +67,7 @@ import {
   requireRelayKeyPin,
   assertContractCarriesRelayPin,
   relayClientConfig,
+  isDevEnvironment,
 } from '../relay-trust.js';
 import { buildExpectedContractHashes, localAllowedPurposes } from '../responder-contracts.js';
 import { chargeOwnDisclosure, EntropyLedgerError } from '../entropy-ledger.js';
@@ -2287,13 +2288,24 @@ async function phaseDiscover(
     // Rebuilt each poll so configuration changes take effect.
     // Maps each accepted hash to the locally built contract (undefined for an
     // explicitly supplied hash, whose contract is not known locally).
-    const expectedContractHashes: Map<string, RelayContract | undefined> = handle.expectedContractHash
-      ? new Map([[handle.expectedContractHash, undefined]])
-      : await buildExpectedContractHashes({
-          purposes: responderAcceptablePurposes(handle, transport),
-          participants: [handle.counterparty, handle.agentId],
-          relayKeys: expectedRelayKeyVariants(),
-        });
+    // Outside development an explicit hash must also be one of the locally
+    // built contracts bound to the pinned relay key.
+    let expectedContractHashes: Map<string, RelayContract | undefined>;
+    if (handle.expectedContractHash && isDevEnvironment()) {
+      expectedContractHashes = new Map([[handle.expectedContractHash, undefined]]);
+    } else {
+      const built = await buildExpectedContractHashes({
+        purposes: responderAcceptablePurposes(handle, transport),
+        participants: [handle.counterparty, handle.agentId],
+        relayKeys: expectedRelayKeyVariants(),
+      });
+      if (handle.expectedContractHash) {
+        const local = built.get(handle.expectedContractHash);
+        expectedContractHashes = local ? new Map([[handle.expectedContractHash, local]]) : new Map();
+      } else {
+        expectedContractHashes = built;
+      }
+    }
 
     // Sleep between polls (not before the first check)
     if (!isFirstCheck) {

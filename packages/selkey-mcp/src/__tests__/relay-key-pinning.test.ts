@@ -250,6 +250,35 @@ describe('responder expects the pinned contract', () => {
   });
 });
 
+describe('responder with an explicit expected_contract_hash', () => {
+  async function respondExpecting(hash: string): Promise<RelaySignalOutput> {
+    const result = await handleRelaySignal(
+      { mode: 'RESPOND', from: ALICE, expected_contract_hash: hash, my_input: 'hi' },
+      responderTransport([directInvite(hash)]),
+    );
+    return result.data as RelaySignalOutput;
+  }
+
+  it('outside development accepts only a pinned contract it would build itself', async () => {
+    process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'] = PINNED;
+    const prior = process.env['SELKEY_ENV'];
+    Reflect.deleteProperty(process.env, 'SELKEY_ENV');
+    try {
+      const unpinned = await respondExpecting(computeRelayContractHash(contractFor()));
+      expect(unpinned.phase).toBe('FAILED');
+      expect(unpinned.error_code).toBe('CONTRACT_MISMATCH');
+      _resetHandlesForTesting();
+      const pinned = await respondExpecting(
+        computeRelayContractHash({ ...contractFor(), relay_verifying_key_hex: PINNED }),
+      );
+      expect(pinned.phase).toBe('JOIN');
+    } finally {
+      if (prior === undefined) Reflect.deleteProperty(process.env, 'SELKEY_ENV');
+      else process.env['SELKEY_ENV'] = prior;
+    }
+  });
+});
+
 describe('expected relay key variants', () => {
   let prior: Record<string, string | undefined>;
   beforeEach(() => {

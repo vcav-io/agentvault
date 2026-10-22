@@ -77,9 +77,6 @@ const RUNS_DIR = process.env['DEMO_RUNS_DIR'] ?? path.join(DEMO_DIR, 'runs');
 const BOB_AFAL_PORT = parseInt(process.env['BOB_AFAL_PORT'] ?? '3201', 10);
 const ALICE_AFAL_PORT = parseInt(process.env['ALICE_AFAL_PORT'] ?? '3202', 10);
 const SELKEY_WORKDIR = process.env['SELKEY_WORKDIR'] ?? DEMO_DIR;
-// A relay key configured by the operator; otherwise the demo pins the local
-// relay's key at the first start (see relay-pin.ts).
-const CONFIGURED_RELAY_KEY = process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'];
 let relayPin: DemoRelayPin | undefined;
 
 // ── Load .env ────────────────────────────────────────────────────────────
@@ -87,6 +84,11 @@ let relayPin: DemoRelayPin | undefined;
 // Try loading from package dir, then from repo root
 dotenvConfig({ path: path.join(DEMO_DIR, '.env') });
 dotenvConfig({ path: path.resolve(DEMO_DIR, '../../.env') });
+
+// A relay key configured by the operator (environment or .env, so read after
+// loading .env); otherwise the demo pins the local relay's key at the first
+// start (see relay-pin.ts).
+const CONFIGURED_RELAY_KEY = process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'];
 
 // ── Provider setup ───────────────────────────────────────────────────────
 
