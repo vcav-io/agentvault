@@ -153,6 +153,8 @@ describe('verifyTeeReceipt', () => {
   const EXPECTED_TRANSCRIPT_HASH =
     'b0fceb1f1dfd40fab87a529883810443dabde5416f0d06fbc57026a8bff0989c' +
     '233781c7beeca30d85154ea3896eba00e21d99a8aac2dbd05ae85bb1e806a256';
+  // EXPECTED_TRANSCRIPT_HASH is a v1 transcript, which counts only on opt-in.
+  const LEGACY = { allow_legacy_transcripts: true };
 
   it('downgrades UserData to a receipt-claimed binding without quote parsing', () => {
     const att: TeeAttestation = {
@@ -161,7 +163,7 @@ describe('verifyTeeReceipt', () => {
       user_data_hex: EXPECTED_TRANSCRIPT_HASH,
     };
 
-    const result = verifyTeeReceipt(commitments, att, allowlist);
+    const result = verifyTeeReceipt(commitments, att, allowlist, LEGACY);
     expect(result.transcript_hash_valid).toBe(true);
     expect(result.transcript_binding).toBe('ReceiptClaimedUserData');
     expect(result.quote_field_cross_checked).toBe(false);
@@ -177,7 +179,7 @@ describe('verifyTeeReceipt', () => {
       transcript_hash_hex: EXPECTED_TRANSCRIPT_HASH,
     };
 
-    const result = verifyTeeReceipt(commitments, att, allowlist);
+    const result = verifyTeeReceipt(commitments, att, allowlist, LEGACY);
     expect(result.transcript_hash_valid).toBe(true);
     expect(result.transcript_binding).toBe('TranscriptHashFallback');
   });
@@ -248,7 +250,7 @@ describe('verifyTeeReceipt', () => {
       }),
     };
 
-    const result = verifyTeeReceipt(partialCommitments, att, allowlist);
+    const result = verifyTeeReceipt(partialCommitments, att, allowlist, LEGACY);
     expect(result.submission_hashes_present).toBe(false);
     expect(result.transcript_hash_valid).toBe(true);
   });
@@ -371,9 +373,19 @@ describe('verifyTeeReceipt transcript versions', () => {
     expect(result.transcript_schema).toBeUndefined();
   });
 
-  it('accepts a v2 transcript by default and reports V2', () => {
+  it('reports a v2 transcript as invalid by default', () => {
     const result = verifyTeeReceipt(commitments, att(V2_HASH), [], {
       model_identity_asserted: MODEL_ID,
+    });
+    expect(result.transcript_hash_valid).toBe(false);
+    expect(result.transcript_schema).toBe('V2');
+    expect(result.relay_config).toBeUndefined();
+  });
+
+  it('accepts a v2 transcript when legacy transcripts are allowed', () => {
+    const result = verifyTeeReceipt(commitments, att(V2_HASH), [], {
+      model_identity_asserted: MODEL_ID,
+      allow_legacy_transcripts: true,
     });
     expect(result.transcript_hash_valid).toBe(true);
     expect(result.transcript_schema).toBe('V2');
@@ -381,17 +393,40 @@ describe('verifyTeeReceipt transcript versions', () => {
   });
 
   it('requires the receipt model identity for a v2 transcript', () => {
-    const result = verifyTeeReceipt(commitments, att(V2_HASH), []);
+    const result = verifyTeeReceipt(commitments, att(V2_HASH), [], {
+      allow_legacy_transcripts: true,
+    });
     expect(result.transcript_hash_valid).toBe(false);
     expect(result.transcript_schema).toBeUndefined();
   });
 
-  it('accepts a v1 transcript by default and reports V1', () => {
+  it('reports a v1 transcript as invalid by default', () => {
     const result = verifyTeeReceipt(commitments, att(V1_HASH), [], {
       model_identity_asserted: MODEL_ID,
     });
+    expect(result.transcript_hash_valid).toBe(false);
+    expect(result.transcript_schema).toBe('V1');
+  });
+
+  it('accepts a v1 transcript when legacy transcripts are allowed', () => {
+    const result = verifyTeeReceipt(commitments, att(V1_HASH), [], {
+      model_identity_asserted: MODEL_ID,
+      allow_legacy_transcripts: true,
+    });
     expect(result.transcript_hash_valid).toBe(true);
     expect(result.transcript_schema).toBe('V1');
+  });
+
+  it('accepts a v3 transcript whether or not legacy transcripts are allowed', () => {
+    for (const allow_legacy_transcripts of [false, true]) {
+      const result = verifyTeeReceipt(commitments, att(V3_HASH), [], {
+        model_identity_asserted: MODEL_ID,
+        relay_config: RELAY_CONFIG,
+        allow_legacy_transcripts,
+      });
+      expect(result.transcript_hash_valid).toBe(true);
+      expect(result.transcript_schema).toBe('V3');
+    }
   });
 
   it('reports v1/v2 matches as invalid when a relay config is supplied', () => {
@@ -399,6 +434,7 @@ describe('verifyTeeReceipt transcript versions', () => {
       const result = verifyTeeReceipt(commitments, att(hash), [], {
         model_identity_asserted: MODEL_ID,
         relay_config: RELAY_CONFIG,
+        allow_legacy_transcripts: true,
       });
       expect(result.transcript_hash_valid).toBe(false);
       expect(result.transcript_schema).toBe(hash === V1_HASH ? 'V1' : 'V2');
@@ -406,10 +442,11 @@ describe('verifyTeeReceipt transcript versions', () => {
     }
   });
 
-  it('reports v1/v2 matches as invalid when v3 is required', () => {
+  it('keeps v1/v2 matches invalid when the deprecated require_transcript_v3 is set', () => {
     for (const hash of [V1_HASH, V2_HASH]) {
       const result = verifyTeeReceipt(commitments, att(hash), [], {
         model_identity_asserted: MODEL_ID,
+        allow_legacy_transcripts: true,
         require_transcript_v3: true,
       });
       expect(result.transcript_hash_valid).toBe(false);
