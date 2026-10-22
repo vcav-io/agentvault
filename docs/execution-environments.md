@@ -13,19 +13,27 @@ in memory during processing.
 
 ## Confidential Lane (TEE)
 
+**Status: prototype, not yet secure.** Don't use it where operator blindness is
+required yet. The shipped `selkey-tee` image runs a simulated runtime with no
+hardware isolation, the SEV-SNP measurement doesn't yet cover the relay binary,
+and model identity is provider-reported (the model ID returned by the provider's
+API; nothing verifies which model ran).
+
 Sessions run inside a Trusted Execution Environment (AMD SEV-SNP Confidential
-VM). The relay operator cannot read session data in memory.
+VM). The goal is that the relay operator cannot read session data in memory.
 
-**Use for:** Sensitive coordination where operator blindness is required.
+**Intended use:** Sensitive coordination where operator blindness is required,
+once the lane is complete.
 
-**Trust model:** You trust the hardware platform and the attested relay binary.
-You do NOT need to trust the relay operator.
+**Intended trust model:** You trust the hardware platform and the attested relay
+binary, and do not need to trust the relay operator. Until the measurement covers
+the relay binary, you still have to trust the operator.
 
 ## Trust Model Table
 
 | Party | Standard Lane | Confidential Lane |
 |-------|--------------|-------------------|
-| Relay operator | Trusted | Untrusted (operator-blind) |
+| Relay operator | Trusted | Trusted for now (goal: operator-blind) |
 | LLM provider | Sees prompts/outputs | Sees prompts/outputs |
 | Initiator | Encrypted in transit | Encrypted in transit + at rest |
 | Responder | Encrypted in transit | Encrypted in transit + at rest |
@@ -36,12 +44,13 @@ You do NOT need to trust the relay operator.
 Even in confidential mode:
 
 1. **The LLM provider sees plaintext.** The relay sends prompts to the provider
-   API in cleartext. TEE protects data from the *relay operator*, not the
-   *model provider*. Provider attestation is a separate concern.
+   API in cleartext. TEE is intended to protect data from the *relay operator*,
+   not the *model provider*. Provider attestation is a separate concern.
 
 2. **The relay sees plaintext inside the enclave.** The TEE protects against
    external observation, not against the relay code itself. This is why
-   measurement verification matters — you're trusting the *specific binary*.
+   measurement verification matters — you're trusting the *specific binary*, once
+   the measurement covers the relay binary.
 
 3. **Metadata is visible.** Session timing, message sizes, and connection
    patterns are observable by the operator even in TEE mode.
@@ -52,8 +61,8 @@ Even in confidential mode:
 |----------|-------------|
 | Development and testing | Standard |
 | Public demos | Standard |
-| Sensitive M&A coordination | Confidential |
-| Regulatory compliance requiring operator blindness | Confidential |
+| Sensitive M&A coordination | Confidential, once it is no longer a prototype |
+| Regulatory compliance requiring operator blindness | Confidential, once it is no longer a prototype |
 | Internal team coordination (trusted operator) | Standard |
 
 ## Receipt Verification
