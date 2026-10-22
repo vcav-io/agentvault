@@ -31,7 +31,7 @@ import {
   listKnownModelProfiles,
   listSupportedContractOffers,
   listSupportedTopicCodes,
-  supportsBespokePrecontractNegotiation,
+  advertisesBespokeContractNegotiation,
   supportsTopicAlignment,
 } from 'selkey-mcp';
 import type {
@@ -211,7 +211,7 @@ function buildDescriptor(agentId: string, seedHex: string, pubKeyHex: string, ht
       supported_topic_codes: listSupportedTopicCodes(),
       supports_topic_alignment: supportsTopicAlignment(),
       supported_contract_offers: listSupportedContractOffers(),
-      supports_bespoke_contract_negotiation: supportsBespokePrecontractNegotiation(),
+      supports_bespoke_contract_negotiation: advertisesBespokeContractNegotiation(),
     },
     policy_commitments: {},
   };

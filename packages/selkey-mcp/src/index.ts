@@ -64,7 +64,7 @@ import { signMessage, DOMAIN_PREFIXES } from './afal-signing.js';
 import type { AdmissionPolicy, TrustedAgent } from './afal-responder.js';
 import { listKnownModelProfiles } from './model-profiles.js';
 import { listSupportedContractOffers } from './contract-offers.js';
-import { supportsBespokePrecontractNegotiation } from './bespoke-contracts.js';
+import { advertisesBespokeContractNegotiation } from './bespoke-contracts.js';
 import { listSupportedTopicCodes, supportsTopicAlignment } from './topic-codes.js';
 import { IfcService, type IfcKnownAgent } from './ifc.js';
 import { PinStore, parsePinMode, parsePinReseed, type PinResolver, type PinSeed } from './pin-store.js';
@@ -206,7 +206,7 @@ function buildDirectTransportFromEnv(pinStore: PinStore): DirectAfalTransport | 
       supported_topic_codes: listSupportedTopicCodes(),
       supports_topic_alignment: supportsTopicAlignment(),
       supported_contract_offers: listSupportedContractOffers(),
-      supports_bespoke_contract_negotiation: supportsBespokePrecontractNegotiation(),
+      supports_bespoke_contract_negotiation: advertisesBespokeContractNegotiation(),
     },
     policy_commitments: {},
   };
@@ -509,4 +509,7 @@ export { listSupportedTopicCodes, supportsTopicAlignment } from './topic-codes.j
 export { listSupportedContractOffers } from './contract-offers.js';
 export { buildAgentCard, buildCardSignedPayload, signAgentCard, verifyAgentCardSignature, SELKEY_A2A_EXTENSION_URI } from './a2a-agent-card.js';
 export type { AgentCard, AgentCardSignedPayload, SelkeyA2AExtensionParams } from './a2a-agent-card.js';
-export { supportsBespokePrecontractNegotiation } from './bespoke-contracts.js';
+export {
+  advertisesBespokeContractNegotiation,
+  supportsBespokePrecontractNegotiation,
+} from './bespoke-contracts.js';

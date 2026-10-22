@@ -232,7 +232,7 @@ export const RELAY_TOOLS = [
         expected_contract_hash: {
           type: 'string',
           description:
-            'Explicit contract hash for custom contracts (RESPOND mode). Overrides expected_purpose. Obtain it from your own records, not from the invite.',
+            'Explicit contract hash (RESPOND mode). Obtain it from your own records, not from the invite. In development (SELKEY_ENV=dev) it overrides expected_purpose and may name a custom contract. Outside development it must match a contract this agent builds itself, for an acceptable purpose and bound to the pinned relay key.',
         },
         counterparty: {
           type: 'string',

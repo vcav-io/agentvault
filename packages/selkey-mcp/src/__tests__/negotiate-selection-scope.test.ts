@@ -16,6 +16,7 @@ vi.mock('../bespoke-contracts.js', async () => {
   const contracts = await import('selkey/contracts');
   return {
     supportsBespokePrecontractNegotiation: () => true,
+    advertisesBespokeContractNegotiation: () => true,
     resolveNegotiationRegistryPath: () => '/registry',
     validateBespokeContractSelection: async () => true,
     resolveBespokeContractToContract: async (params: {
