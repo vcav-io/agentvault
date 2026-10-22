@@ -16,7 +16,7 @@ AgentVault is built for those cases. It constrains what can be revealed during c
 
 ## Run the demo UI (recommended)
 
-This demo shows the protocol flow end-to-end. Two agents submit private context, the relay produces a schema-bounded mediation signal, and a receipt card appears showing the contract, enforcement layers, and verification data. Fifteen built-in scenarios are included.
+This demo shows the protocol flow end-to-end. Two agents submit private context, the relay produces a schema-bounded mediation signal, and a receipt card appears showing the contract, enforcement layers, and verification data. Fourteen built-in scenarios (including two red-team cases) and a blank template are included.
 
 ```bash
 git clone https://github.com/vcav-io/agentvault && cd agentvault
