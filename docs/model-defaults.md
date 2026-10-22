@@ -1,6 +1,6 @@
 # Demo UI Model Defaults
 
-Current model defaults per provider for the AgentVault demo UI.
+Current model defaults per provider for the Selkey demo UI.
 
 ## Coordination models (UI selector)
 

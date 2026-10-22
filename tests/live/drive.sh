@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# drive.sh — Direct HTTP experiment driver for AgentVault relay sessions
+# drive.sh — Direct HTTP experiment driver for Selkey relay sessions
 #
 # Drives relay sessions via curl, bypassing MCP. Submits pre-defined inputs
 # from scenario files, polls for output, and calls verify.sh for validation.
@@ -163,9 +163,9 @@ start_relay() {
   detect_provider
 
   # Build relay (skip if binary is current)
-  local relay_bin="${REPO_ROOT}/target/release/agentvault-relay"
+  local relay_bin="${REPO_ROOT}/target/release/selkey-relay"
   log_info "Building relay (release)..."
-  cargo build --release -p agentvault-relay --manifest-path "${REPO_ROOT}/Cargo.toml" 2>&1 | \
+  cargo build --release -p selkey-relay --manifest-path "${REPO_ROOT}/Cargo.toml" 2>&1 | \
     while IFS= read -r line; do log_info "  cargo: ${line}"; done
   log_success "Relay binary ready: ${relay_bin}"
 
@@ -175,8 +175,8 @@ start_relay() {
 
   # Start relay
   local relay_log="${RESULTS_BASE}/_drive_relay.log"
-  AV_PORT="${relay_port}" \
-  AV_PROMPT_PROGRAM_DIR="${REPO_ROOT}/packages/agentvault-relay/prompt_programs" \
+  SELKEY_PORT="${relay_port}" \
+  SELKEY_PROMPT_PROGRAM_DIR="${REPO_ROOT}/packages/selkey-relay/prompt_programs" \
   ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
   OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
     "${relay_bin}" > "${relay_log}" 2>&1 &
@@ -188,7 +188,7 @@ start_relay() {
 }
 
 # ---------------------------------------------------------------------------
-# Build contract via agentvault-client
+# Build contract via selkey
 # ---------------------------------------------------------------------------
 
 CONTRACT_JSON=""
@@ -198,7 +198,7 @@ PROMPT_TEMPLATE_HASH=""
 build_contract() {
   local result
   result="$(node --input-type=module -e "
-import { buildRelayContract, computeRelayContractHash } from '${REPO_ROOT}/packages/agentvault-client/dist/relay-contracts.js';
+import { buildRelayContract, computeRelayContractHash } from '${REPO_ROOT}/packages/selkey-client/dist/relay-contracts.js';
 const c = buildRelayContract('${PURPOSE}', ['alice', 'bob']);
 if (!c) { console.error('Unknown purpose: ${PURPOSE}'); process.exit(1); }
 const h = computeRelayContractHash(c);
@@ -316,7 +316,7 @@ run_session() {
   log_info "Session created: ${session_id}"
 
   # --- Submit Alice's input ---
-  # Matches SubmitInputRequest (packages/agentvault-relay/src/types.rs:97)
+  # Matches SubmitInputRequest (packages/selkey-relay/src/types.rs:97)
   local alice_body
   alice_body="$(jq -n --argjson ctx "${alice_context}" '{role: "alice", context: $ctx}')"
 
@@ -554,7 +554,7 @@ fi
 
 echo ""
 echo "==========================================================="
-echo "  AgentVault Direct HTTP Driver"
+echo "  Selkey Direct HTTP Driver"
 echo "  Scenario:  ${SCENARIO}"
 echo "  Purpose:   ${PURPOSE}"
 echo "  Sessions:  ${NUM_SESSIONS}"

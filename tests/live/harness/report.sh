@@ -148,8 +148,8 @@ generate_report() {
   # Read session info from output files if present
   local alice_session_id="null"
   local bob_session_id="null"
-  local alice_session_file="${ALICE_DIR:-${HOME}/vcav-test/alice}/.agentvault/last_session.json"
-  local bob_session_file="${BOB_DIR:-${HOME}/vcav-test/bob}/.agentvault/last_session.json"
+  local alice_session_file="${ALICE_DIR:-${HOME}/vcav-test/alice}/.selkey/last_session.json"
+  local bob_session_file="${BOB_DIR:-${HOME}/vcav-test/bob}/.selkey/last_session.json"
 
   if [[ -f "${alice_session_file}" ]]; then
     local _alice_raw
@@ -232,7 +232,7 @@ process.stdin.on('end',()=>{
   fi
 
   cat >"${run_dir}/report.md" <<MARKDOWN
-# AgentVault Live Test Report
+# Selkey Live Test Report
 
 | Field | Value |
 |-------|-------|

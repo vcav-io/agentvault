@@ -5,7 +5,7 @@
 
 ## 1. Role of IFC in the Modern Stack
 
-This note proposes how to reintegrate IFC into the current AgentVault architecture without blurring its role with AFAL or vault execution.
+This note proposes how to reintegrate IFC into the current Selkey architecture without blurring its role with AFAL or vault execution.
 
 The intended layering is:
 
@@ -21,7 +21,7 @@ That gives the system two complementary controls:
 - **bounded computation** inside a vault session
 - **bounded communication** outside a vault session
 
-This restores a clean architecture. Without IFC, AgentVault risks having a highly disciplined in-vault path and a comparatively ungoverned out-of-vault path.
+This restores a clean architecture. Without IFC, Selkey risks having a highly disciplined in-vault path and a comparatively ungoverned out-of-vault path.
 
 ### 1.1 Distinct responsibilities
 
@@ -86,7 +86,7 @@ The existing IFC machinery in `vfc` remains strong in concept:
 - capability grants
 - HIDE semantics
 
-What needs updating is the semantic surface. The old IFC policy model still reflects earlier purpose buckets such as `MEDIATION` and `NEGOTIATION`. Current AgentVault has moved toward more explicit contract fields and richer session semantics, so IFC should do the same.
+What needs updating is the semantic surface. The old IFC policy model still reflects earlier purpose buckets such as `MEDIATION` and `NEGOTIATION`. Current Selkey has moved toward more explicit contract fields and richer session semantics, so IFC should do the same.
 
 ### 2.1 Envelope model
 

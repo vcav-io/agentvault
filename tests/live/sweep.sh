@@ -78,9 +78,9 @@ fi
 # Build relay binary once
 # ---------------------------------------------------------------------------
 
-RELAY_BIN="${REPO_ROOT}/target/release/agentvault-relay"
+RELAY_BIN="${REPO_ROOT}/target/release/selkey-relay"
 log_info "Building relay (release)..."
-cargo build --release -p agentvault-relay --manifest-path "${REPO_ROOT}/Cargo.toml" 2>&1 | \
+cargo build --release -p selkey-relay --manifest-path "${REPO_ROOT}/Cargo.toml" 2>&1 | \
   while IFS= read -r line; do log_info "  cargo: ${line}"; done
 log_success "Relay binary ready: ${RELAY_BIN}"
 
@@ -108,9 +108,9 @@ api_key_for_provider() {
 
 model_env_var_for_provider() {
   case "$1" in
-    anthropic) echo "AV_MODEL_ID" ;;
-    openai)    echo "AV_OPENAI_MODEL_ID" ;;
-    gemini)    echo "AV_GEMINI_MODEL_ID" ;;
+    anthropic) echo "SELKEY_MODEL_ID" ;;
+    openai)    echo "SELKEY_OPENAI_MODEL_ID" ;;
+    gemini)    echo "SELKEY_GEMINI_MODEL_ID" ;;
     *)         echo "" ;;
   esac
 }
@@ -185,10 +185,10 @@ for (( i=0; i<NUM_MODELS; i++ )); do
   relay_log="${SWEEP_DIR}/${provider}_${model}.relay.log"
 
   env \
-    AV_PORT="${RELAY_PORT}" \
-    AV_PROMPT_PROGRAM_DIR="${REPO_ROOT}/packages/agentvault-relay/prompt_programs" \
-    AV_ENV=dev \
-    AV_INBOX_AUTH=off \
+    SELKEY_PORT="${RELAY_PORT}" \
+    SELKEY_PROMPT_PROGRAM_DIR="${REPO_ROOT}/packages/selkey-relay/prompt_programs" \
+    SELKEY_ENV=dev \
+    SELKEY_INBOX_AUTH=off \
     ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
     OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
     GEMINI_API_KEY="${GEMINI_API_KEY:-}" \

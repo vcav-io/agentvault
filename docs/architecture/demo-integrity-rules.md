@@ -1,10 +1,10 @@
 # Demo Integrity Rules
 
-This document defines the design constraints for the AgentVault demo UI, its
+This document defines the design constraints for the Selkey demo UI, its
 scenario corpus, its agent-facing system prompts, and the implementation
 choices that shape the live experience.
 
-The goal is simple: the demo should show AgentVault working with ordinary agent
+The goal is simple: the demo should show Selkey working with ordinary agent
 inputs under bounded disclosure. It should not depend on hidden signaling,
 special prompt engineering, or UI behavior that quietly smuggles information
 outside the protocol.
@@ -29,15 +29,15 @@ The demo must preserve that claim at every layer.
 These rules apply to:
 
 - scenario prompts in
-  [public/scenarios.js](/Users/tobykershaw/Development/vcav-io/av-codex/packages/agentvault-demo-ui/public/scenarios.js)
+  [public/scenarios.js](../../packages/selkey-demo-ui/public/scenarios.js)
 - agent-facing system prompts in
-  [src/server.ts](/Users/tobykershaw/Development/vcav-io/av-codex/packages/agentvault-demo-ui/src/server.ts)
+  [src/server.ts](../../packages/selkey-demo-ui/src/server.ts)
 - UI language and controls in
-  [public/app.js](/Users/tobykershaw/Development/vcav-io/av-codex/packages/agentvault-demo-ui/public/app.js),
-  [public/render.js](/Users/tobykershaw/Development/vcav-io/av-codex/packages/agentvault-demo-ui/public/render.js),
-  and [public/index.html](/Users/tobykershaw/Development/vcav-io/av-codex/packages/agentvault-demo-ui/public/index.html)
+  [public/app.js](../../packages/selkey-demo-ui/public/app.js),
+  [public/render.js](../../packages/selkey-demo-ui/public/render.js),
+  and [public/index.html](../../packages/selkey-demo-ui/public/index.html)
 - runtime behavior in
-  [src/agent-loop.ts](/Users/tobykershaw/Development/vcav-io/av-codex/packages/agentvault-demo-ui/src/agent-loop.ts)
+  [src/agent-loop.ts](../../packages/selkey-demo-ui/src/agent-loop.ts)
   and related demo server code
 
 ## Core principles
@@ -69,7 +69,7 @@ Forbidden patterns:
 - instructions that assume knowledge of the relay implementation
 - test-harness phrasing designed around internal states rather than user needs
 
-Allowed prompts should still make sense if the user never heard of AgentVault.
+Allowed prompts should still make sense if the user never heard of Selkey.
 
 ### 3. No coaching the system
 
@@ -120,7 +120,7 @@ the harness.
 Each scenario prompt must satisfy all of the following:
 
 - it is written as a normal user message
-- it does not mention AgentVault or relay mechanics
+- it does not mention Selkey or relay mechanics
 - it does not prescribe the output format
 - it does not instruct the agent to signal hidden content indirectly
 - it contains enough realistic context to motivate a bounded mediation or
@@ -138,7 +138,7 @@ System prompts are allowed to define:
 
 - role and tone
 - the available tools
-- when to use `agentvault.get_identity` and `agentvault.relay_signal`
+- when to use `selkey.get_identity` and `selkey.relay_signal`
 - that the agent should help the user achieve their goal through the available
   workflow
 

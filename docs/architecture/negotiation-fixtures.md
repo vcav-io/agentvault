@@ -1,7 +1,7 @@
 # Negotiation Fixtures
 
 > Status: Draft fixture note
-> Related: [agentvault-negotiation-protocol.md](agentvault-negotiation-protocol.md), [negotiation-wire-format.md](negotiation-wire-format.md)
+> Related: [selkey-negotiation-protocol.md](selkey-negotiation-protocol.md), [negotiation-wire-format.md](negotiation-wire-format.md)
 
 ## 1. Purpose
 

@@ -1,7 +1,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset=".github/logo-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset=".github/logo-light.svg">
-  <img alt="AgentVault" src=".github/logo-light.svg" height="48">
+  <img alt="Selkey" src=".github/logo-light.svg" height="48">
 </picture>
 
 People already share deeply personal context with AI — health concerns, financial anxieties, private doubts. AI agents that carry that context are beginning to coordinate directly with each other.
@@ -10,7 +10,7 @@ That creates huge potential utility, but also serious disclosure risk.
 
 The obvious mitigation is to strip agents of context before they coordinate. But context-free agents can only do shallow work. The real opportunity is the opposite: agents reasoning together with full context on things that are genuinely hard to do alone — negotiation, mediation, compatibility, dispute resolution.
 
-AgentVault is built for those cases. It constrains what can be revealed during coordination through fixed contracts, schema-bound outputs, and verifiable receipts. The same protocol runs as a conventional relay (this repo) or inside a hardware-isolated TEE ([av-tee](https://github.com/vcav-io/av-tee)), where AMD SEV-SNP attestation binds the receipt to a measured execution environment.
+Selkey is built for those cases. It constrains what can be revealed during coordination through fixed contracts, schema-bound outputs, and verifiable receipts. The same protocol runs as a conventional relay (this repo) or inside a hardware-isolated TEE ([selkey-tee](https://github.com/vcav-io/selkey-tee)), where AMD SEV-SNP attestation binds the receipt to a measured execution environment.
 
 ---
 
@@ -19,7 +19,7 @@ AgentVault is built for those cases. It constrains what can be revealed during c
 This demo shows the protocol flow end-to-end. Two agents submit private context, the relay produces a schema-bounded mediation signal, and a receipt card appears showing the contract, enforcement layers, and verification data. Fourteen built-in scenarios (including two red-team cases) and a blank template are included.
 
 ```bash
-git clone https://github.com/vcav-io/agentvault && cd agentvault
+git clone https://github.com/vcav-io/selkey && cd selkey
 
 # 1. Add your API key (any provider works)
 echo "GEMINI_API_KEY=AIza..." > .env
@@ -52,7 +52,7 @@ See [docs/getting-started.md](docs/getting-started.md) for provider options, mod
 agents → contract → relay enforcement → bounded signal → receipt
 ```
 
-> **The relay sees both inputs in plaintext.** Counterparty confidentiality is enforced, neither agent sees the other's raw context. Relay confidentiality is not. The bounded output is the point. The relay enforces a JSON Schema that structurally limits what can leave, independent of model behavior. The receipt proves the output satisfied the contract and schema. It does **not** prove the relay did not inspect or log the inputs, or fabricate the output. The [TEE lane](https://github.com/vcav-io/av-tee) removes this assumption. The same protocol runs inside an AMD SEV-SNP confidential VM (validated on GCP N2D), where hardware attestation binds the receipt to a measured execution environment. See [docs/threat-model.md](docs/threat-model.md).
+> **The relay sees both inputs in plaintext.** Counterparty confidentiality is enforced, neither agent sees the other's raw context. Relay confidentiality is not. The bounded output is the point. The relay enforces a JSON Schema that structurally limits what can leave, independent of model behavior. The receipt proves the output satisfied the contract and schema. It does **not** prove the relay did not inspect or log the inputs, or fabricate the output. The [TEE lane](https://github.com/vcav-io/selkey-tee) removes this assumption. The same protocol runs inside an AMD SEV-SNP confidential VM (validated on GCP N2D), where hardware attestation binds the receipt to a measured execution environment. See [docs/threat-model.md](docs/threat-model.md).
 
 ---
 
@@ -96,7 +96,7 @@ After the run completes, click **Verify Signature** on any result card.
 - That the relay actually executed the model it claims to have run
 - That the relay did not inspect or log your input
 
-In the software lane, assurance level is `SELF_ASSERTED` — the relay asserts its own honesty. The [TEE lane](https://github.com/vcav-io/av-tee) raises this to `TEE_ATTESTED`: the same protocol runs inside an AMD SEV-SNP confidential VM (validated on GCP N2D), where attestation binding and transcript hashes are included in the receipt.
+In the software lane, assurance level is `SELF_ASSERTED` — the relay asserts its own honesty. The [TEE lane](https://github.com/vcav-io/selkey-tee) raises this to `TEE_ATTESTED`: the same protocol runs inside an AMD SEV-SNP confidential VM (validated on GCP N2D), where attestation binding and transcript hashes are included in the receipt.
 
 See [docs/receipt-verification-guide.md](docs/receipt-verification-guide.md) for the full verification algorithm, field reference, and TypeScript/Python examples.
 
@@ -108,10 +108,10 @@ Contracts compose from registry artefacts. Browse what is available, assemble a 
 
 ```bash
 # List registered schemas
-av-contract list --kind schema
+selkey-contract list --kind schema
 
 # Build a contract from registry artefacts
-av-contract build \
+selkey-contract build \
   --schema mediation-triage-v2 \
   --policy safe-string-guard \
   --program bilateral-mediation
@@ -130,12 +130,12 @@ The contract builder resolves artefacts, validates compatibility between schemas
 
 | Component | Description |
 |---|---|
-| `agentvault-demo-ui` | Optional browser UI for running and observing bounded-disclosure sessions |
-| `agentvault-relay` (Rust) | Ephemeral relay enforcing schema validation, guardian policy, and receipt signing (no persistent storage; bilateral sessions hold state in memory until inference completes) |
-| `agentvault-client` (TypeScript) | Standalone relay client library |
-| `agentvault-mcp-server` (TypeScript) | MCP server exposing `agentvault.*` tools for agent integration |
+| `selkey-demo-ui` | Optional browser UI for running and observing bounded-disclosure sessions |
+| `selkey-relay` (Rust) | Ephemeral relay enforcing schema validation, guardian policy, and receipt signing (no persistent storage; bilateral sessions hold state in memory until inference completes) |
+| `selkey` (TypeScript, `packages/selkey-client`) | Standalone relay client library |
+| `selkey-mcp` (TypeScript) | MCP server exposing `selkey.*` tools for agent integration |
 | Artefact registry | Content-addressed ecosystem of schemas, policies, profiles, and prompt programs |
-| Contract CLI (`av-contract`) | Compose and validate contracts from registry artefacts |
+| Contract CLI (`selkey-contract`) | Compose and validate contracts from registry artefacts |
 
 Use the MCP server for agent frameworks, the TypeScript client for direct HTTP integration, or run your own relay for full control.
 
@@ -145,7 +145,7 @@ Shared protocol types and AFAL handshake implementation live in [vault-family-co
 
 ## Two execution lanes
 
-The same protocol runs in two lanes: a software lane (this repo) where the relay operator is trusted, and a sealed execution lane ([av-tee](https://github.com/vcav-io/av-tee)) where hardware attestation replaces that trust.
+The same protocol runs in two lanes: a software lane (this repo) where the relay operator is trusted, and a sealed execution lane ([selkey-tee](https://github.com/vcav-io/selkey-tee)) where hardware attestation replaces that trust.
 
 ---
 
@@ -179,8 +179,8 @@ To build and test the project locally:
 cargo build --workspace && cargo test --workspace
 cargo clippy --workspace -- -D warnings
 
-cd packages/agentvault-client && npm install && npm test
-cd packages/agentvault-mcp-server && npm install && npm run build
+cd packages/selkey-client && npm install && npm test
+cd packages/selkey-mcp && npm install && npm run build
 ```
 
 Requires Rust 1.88.0+. See [docs/relay-dev-setup.md](docs/relay-dev-setup.md) for relay development setup.
@@ -193,4 +193,4 @@ MIT OR Apache-2.0
 
 ---
 
-*Not affiliated with any other projects named "AgentVault."*
+*Not affiliated with any other projects named "Selkey."*

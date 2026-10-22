@@ -1,11 +1,11 @@
-# AgentVault Roadmap
+# Selkey Roadmap
 
 ## 0. Mission
 
-AgentVault provides structured, bounded, verifiable agent-to-agent coordination
+Selkey provides structured, bounded, verifiable agent-to-agent coordination
 with privacy-preserving outputs.
 
-AgentVault is the "everyday lane" sibling to hardened VCAV-H. It prioritises:
+Selkey is the "everyday lane" sibling to hardened VCAV-H. It prioritises:
 
 - Mechanically enforceable bounded outputs
 - Verifiable execution via receipts
@@ -233,7 +233,7 @@ local enforcement config — distinct from the vcav orchestrator's governance
   `RuleScopeKind`, `EnforcementClass` — no stringly-typed variants)
 - RFC 8785 JCS content addressing (via `receipt_core::canonicalize_serializable`)
 - Lockfile validation (fail-closed by default; dev override requires both
-  `AV_ENV=dev` and `AV_ENFORCEMENT_LOCKFILE_SKIP=1`)
+  `SELKEY_ENV=dev` and `SELKEY_ENFORCEMENT_LOCKFILE_SKIP=1`)
 - Reverse lockfile check (disk → lockfile, not just lockfile → disk)
 - Capability derivation from rules (not declared in JSON)
 - Receipt binding: `guardian_policy_hash` = real enforcement policy content hash
@@ -288,7 +288,7 @@ Phase 1 being complete (v2 schema hardened) but does not depend on Phase 2.
 
 *Completed: PR #25, merged 2026-02-26.*
 
-- Created OpenClaw Skill (`skills/openclaw/agentvault/SKILL.md`)
+- Created OpenClaw Skill (`skills/openclaw/selkey/SKILL.md`)
 - VPS deployment runbook (`docs/guides/openclaw-vps-runbook.md`)
 - Skill covers: identity discovery, INITIATE/RESPOND flow, resume loop,
   completion, failure, session state file, protocol rules, display rules
@@ -313,8 +313,8 @@ coincidence" that previously required both agents to be online simultaneously.
   GET /invites/:id, POST accept/decline/cancel, GET /inbox/events (SSE)
 - `agent_registry.rs` — Static agent auth (JSON file, fail-closed, constant-time
   token validation)
-- `packages/agentvault-client/src/inbox.ts` — HTTP client functions
-- `packages/agentvault-mcp-server/src/relay-inbox-transport.ts` —
+- `packages/selkey-client/src/inbox.ts` — HTTP client functions
+- `packages/selkey-mcp/src/relay-inbox-transport.ts` —
   `RelayInboxTransport` implementing `AfalTransport`
 - `relaySignal.ts` FSM integration — INITIATE/phaseInvite, RESPOND/phaseDiscover,
   phaseJoin with relay inbox path
@@ -396,7 +396,7 @@ Scope: Prepare for ecosystem-scale usage.
 
 ## 13. Formal Registries — DONE
 
-*Completed: Content-addressed artefact registry implemented. `av-contract` CLI
+*Completed: Content-addressed artefact registry implemented. `selkey-contract` CLI
 composes contracts from registry artefacts.*
 
 Registries for:
@@ -413,11 +413,11 @@ Properties:
 - Deprecation without deletion
 
 Registry artefacts live in `schemas/output/` (content-addressed by hash).
-The `av-contract` CLI resolves artefacts from the registry when composing
+The `selkey-contract` CLI resolves artefacts from the registry when composing
 contracts.
 
 Trust model for registry discovery and key distribution is explicitly out of
-scope for AgentVault (see Out of Scope section).
+scope for Selkey (see Out of Scope section).
 
 ## 14. Receipt Completeness Improvements — DONE
 
@@ -461,7 +461,7 @@ Optional feature:
 - Append-only receipt log
 - Useful for audit deployments
 
-Not required for core AgentVault UX.
+Not required for core Selkey UX.
 
 ---
 
@@ -503,7 +503,7 @@ RICH contracts must be explicitly labeled and not silently substituted.
 
 ---
 
-# III. Out of Scope (For AgentVault Lane)
+# III. Out of Scope (For Selkey Lane)
 
 These belong to VCAV-H or the TEE-hardened lane:
 
@@ -512,9 +512,9 @@ These belong to VCAV-H or the TEE-hardened lane:
 - Cryptographic model execution proofs
 - Canonical registry key distribution and trust bootstrap
 
-Hardware enclave attestation (SEV-SNP) has been validated in the av-tee repo
-on GCP N2D (AMD Milan). TEE relay integration into AgentVault is a future
-milestone, not out of scope — it is tracked in av-tee. AgentVault's own relay
+Hardware enclave attestation (SEV-SNP) has been validated in the selkey-tee repo
+on GCP N2D (AMD Milan). TEE relay integration into Selkey is a future
+milestone, not out of scope — it is tracked in selkey-tee. Selkey's own relay
 remains software-attested (`SELF_ASSERTED`).
 
 ---
@@ -534,14 +534,14 @@ remains software-attested (`SELF_ASSERTED`).
 8. ~~Receipt completeness improvements (Phase 3, item 14)~~ — **done** (receipt v2, PRs #173, #174)
 9. ~~Contract completeness — model constraints, TTLs, entropy enforcement (#151)~~ — **done** (PR #173)
 10. ~~Enforcement policy binding into contract (#147)~~ — **done** (PR #173)
-11. ~~`agentvault.verify_receipt` MCP tool (#143)~~ — **done** (PR #174)
+11. ~~`selkey.verify_receipt` MCP tool (#143)~~ — **done** (PR #174)
 
 **Next priorities:**
 12. First live async invite session (Phase 2b, item 11a)
     — **Current state:** Skill, runbook, and async inbox all exist. Run `drive-inbox.sh`
     against a real provider to validate the wire format end-to-end.
 13. Content-addressed artefact registry (Phase 3, item 13) — **done**
-    — Registry implemented; `av-contract` CLI composes contracts from registry artefacts.
+    — Registry implemented; `selkey-contract` CLI composes contracts from registry artefacts.
 14. RelayEnforcementPolicy Phase B — wire hardcoded guard to policy config
     — **Current state:** Phase A complete (PR #26). Hardcoded Nd/Sc guard runs
     independently of policy. Phase B wires the guard to read from the policy JSON.
@@ -562,8 +562,8 @@ Stop there before expanding scope.
 | 2026-02-26 | Model profile immutability: Option A (hash-named files) vs Option B (lockfile). Option A adds indirection and breaks human readability; Option B gives equivalent enforcement with a simpler model. | Use lockfile approach (Option B). Relay refuses to start on hash mismatch. Lockfile regenerated by explicit CLI command only. | Simplest mechanism that achieves the enforcement goal |
 | 2026-02-26 | Digit/currency guard is defense-in-depth, not primary privacy control. Fires only on schema regression or provider structured-output bug. | Documented threat model explicitly in code and decision log. Guard uses Unicode categories (Nd, Sc) not ASCII-only. Hardcoded schema ID for Phase 1; migrates to PolicyBundle in Phase 2. | Defense-in-depth must be explicitly classified to prevent over-trust |
 | 2026-02-27 | Relay sessions required synchrony coincidence — both agents online simultaneously. Blocked real-world usage. | Added relay-mediated async inbox with durable invites (7-day TTL), fail-closed agent auth, constant-shape errors. Types prototyped in relay crate with `version: "1"` — extract to VFC only after live session validates wire format. | Simplest mechanism that achieves the enforcement goal |
-| 2026-03 | Content-addressed artefact registry needed for ecosystem-scale usage. | Registry implemented with content-addressed lookup by hash. `av-contract` CLI composes contracts from registry artefacts. `schemas/output/` stores artefacts. | All enforcement-relevant artefacts are first-class |
-| 2026-03 | TEE execution lane needed hardware validation before integration. | SEV-SNP hardware validated on GCP N2D (AMD Milan) in av-tee repo. Real attestation reports, sealed key material, transcript-bound receipts with populated `tee_attestation`. Receipt schema updated to v2.1. | Hardware validation before integration |
+| 2026-03 | Content-addressed artefact registry needed for ecosystem-scale usage. | Registry implemented with content-addressed lookup by hash. `selkey-contract` CLI composes contracts from registry artefacts. `schemas/output/` stores artefacts. | All enforcement-relevant artefacts are first-class |
+| 2026-03 | TEE execution lane needed hardware validation before integration. | SEV-SNP hardware validated on GCP N2D (AMD Milan) in selkey-tee repo. Real attestation reports, sealed key material, transcript-bound receipts with populated `tee_attestation`. Receipt schema updated to v2.1. | Hardware validation before integration |
 | 2026-03 | Receipt v2 schema needed TEE attestation fields and additional claims. | Receipt schema v2.1: added `TeeType::Simulated`, `TeeAttestation` fields (`attestation_hash`, `receipt_signing_pubkey_hex`, `transcript_hash_hex`), submission hash commitments. Gemini added as supported provider. | Receipts bind the consent boundary |
 
 *Decision log entries before 2026-02-28 were recorded contemporaneously. Later entries were backfilled during a documentation refresh.*

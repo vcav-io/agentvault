@@ -8,11 +8,11 @@ set -euo pipefail
 # Environment vars consumed:
 #   ANTHROPIC_API_KEY     → use Anthropic directly
 #   OPENAI_API_KEY        → start openai-proxy.mjs on port 3199
-#   AV_MOCK             → set to "1" (or pass --mock to prep.sh)
-#   AV_PORT             → relay port (default 3100)
-#   AV_MODEL_ID         → relay model ID
-#   AV_SIGNING_KEY_HEX  → hex-encoded Ed25519 relay signing seed
-#   AV_SESSION_TTL_SECS → session TTL (default 600)
+#   SELKEY_MOCK             → set to "1" (or pass --mock to prep.sh)
+#   SELKEY_PORT             → relay port (default 3100)
+#   SELKEY_MODEL_ID         → relay model ID
+#   SELKEY_SIGNING_KEY_HEX  → hex-encoded Ed25519 relay signing seed
+#   SELKEY_SESSION_TTL_SECS → session TTL (default 600)
 
 HARNESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${HARNESS_DIR}/../../.." && pwd)"
@@ -20,10 +20,10 @@ REPO_ROOT="$(cd "${HARNESS_DIR}/../../.." && pwd)"
 # shellcheck source=lib.sh
 source "${HARNESS_DIR}/lib.sh"
 
-RELAY_PORT="${AV_PORT:-3100}"
+RELAY_PORT="${SELKEY_PORT:-3100}"
 PROXY_PORT=3199
-RELAY_BIN="${REPO_ROOT}/target/release/agentvault-relay"
-PROMPT_PROGRAM_DIR="${REPO_ROOT}/packages/agentvault-relay/prompt_programs"
+RELAY_BIN="${REPO_ROOT}/target/release/selkey-relay"
+PROMPT_PROGRAM_DIR="${REPO_ROOT}/packages/selkey-relay/prompt_programs"
 RELAY_LOG_FILE=""
 PROXY_LOG_FILE=""
 
@@ -37,11 +37,11 @@ PROXY_PID_FILE=""
 
 _detect_provider_mode() {
   # Explicit override from --provider flag
-  if [[ -n "${AV_PROVIDER:-}" ]]; then
-    echo "${AV_PROVIDER}"
+  if [[ -n "${SELKEY_PROVIDER:-}" ]]; then
+    echo "${SELKEY_PROVIDER}"
     return
   fi
-  if [[ "${AV_MOCK:-}" == "1" ]]; then
+  if [[ "${SELKEY_MOCK:-}" == "1" ]]; then
     echo "mock"
   elif [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
     echo "anthropic"
@@ -62,8 +62,8 @@ start_stack() {
   # -------------------------------------------------------------------------
   # Build relay
   # -------------------------------------------------------------------------
-  log_info "Building agentvault-relay (release)..."
-  cargo build -p agentvault-relay --release --manifest-path "${REPO_ROOT}/Cargo.toml" \
+  log_info "Building selkey-relay (release)..."
+  cargo build -p selkey-relay --release --manifest-path "${REPO_ROOT}/Cargo.toml" \
     2>&1 | while IFS= read -r line; do log_info "  cargo: ${line}"; done
   log_success "Relay binary ready: ${RELAY_BIN}"
 
@@ -116,7 +116,7 @@ start_stack() {
       log_error "No AI provider configured. Set one of:"
       log_error "  ANTHROPIC_API_KEY=sk-ant-... (use Anthropic directly)"
       log_error "  OPENAI_API_KEY=sk-...        (use OpenAI via proxy)"
-      log_error "  AV_MOCK=1                  (use mock server)"
+      log_error "  SELKEY_MOCK=1                  (use mock server)"
       exit 1
       ;;
   esac
@@ -129,23 +129,23 @@ start_stack() {
   # -------------------------------------------------------------------------
   # Start relay
   # -------------------------------------------------------------------------
-  log_info "Starting agentvault-relay on port ${RELAY_PORT}"
+  log_info "Starting selkey-relay on port ${RELAY_PORT}"
 
   if [[ -n "${run_dir}" ]]; then
     RELAY_LOG_FILE="${run_dir}/relay.log"
     RELAY_PID_FILE="${run_dir}/relay.pid"
   fi
 
-  AV_PORT="${RELAY_PORT}" \
-  AV_PROMPT_PROGRAM_DIR="${AV_PROMPT_PROGRAM_DIR:-${PROMPT_PROGRAM_DIR}}" \
-  AV_MODEL_ID="${AV_MODEL_ID:-claude-sonnet-4-5-20250929}" \
-  AV_SIGNING_KEY_HEX="${AV_SIGNING_KEY_HEX:-}" \
-  AV_SESSION_TTL_SECS="${AV_SESSION_TTL_SECS:-600}" \
+  SELKEY_PORT="${RELAY_PORT}" \
+  SELKEY_PROMPT_PROGRAM_DIR="${SELKEY_PROMPT_PROGRAM_DIR:-${PROMPT_PROGRAM_DIR}}" \
+  SELKEY_MODEL_ID="${SELKEY_MODEL_ID:-claude-sonnet-4-5-20250929}" \
+  SELKEY_SIGNING_KEY_HEX="${SELKEY_SIGNING_KEY_HEX:-}" \
+  SELKEY_SESSION_TTL_SECS="${SELKEY_SESSION_TTL_SECS:-600}" \
   "${RELAY_BIN}" \
     >"${RELAY_LOG_FILE:-/tmp/relay.log}" 2>&1 &
 
   local relay_pid=$!
-  register_pid "${relay_pid}" "agentvault-relay"
+  register_pid "${relay_pid}" "selkey-relay"
   if [[ -n "${RELAY_PID_FILE}" ]]; then
     echo "${relay_pid}" >"${RELAY_PID_FILE}"
   fi

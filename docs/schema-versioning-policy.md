@@ -1,7 +1,7 @@
 # Schema Versioning and Migration Policy
 
-> Defines how output schemas evolve in the AgentVault protocol.
-> Addresses [AV #54](https://github.com/vcav-io/agentvault/issues/54).
+> Defines how output schemas evolve in the Selkey protocol.
+> Addresses [AV #54](https://github.com/vcav-io/selkey/issues/54).
 
 ## Core Rules
 

@@ -592,7 +592,7 @@ const noisyNote = experimentNoisy
   ? `\n> Contract mismatch rate exceeds 30% ${em} results may be unreliable.`
   : '';
 
-let reportMd = `# AgentVault Accumulation Report
+let reportMd = `# Selkey Accumulation Report
 
 ## Experiment Metadata
 

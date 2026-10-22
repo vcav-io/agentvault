@@ -1,33 +1,33 @@
-# A2A Integration Spec: AgentVault as an A2A Extension
+# A2A Integration Spec: Selkey as an A2A Extension
 
 > Status: Implemented (bootstrap + maturity cluster)
-> Related: agentvault #214, VFC #15 (AFAL discovery)
-> Extension spec: [a2a-extension-spec.md](./a2a-extension-spec.md) — canonical reference for `urn:agentvault:bounded-disclosure:v1`
+> Related: selkey #214, VFC #15 (AFAL discovery)
+> Extension spec: [a2a-extension-spec.md](./a2a-extension-spec.md) — canonical reference for `urn:selkey:bounded-disclosure:v1`
 
 ## Context
 
 Google's Agent-to-Agent (A2A) protocol is becoming a de facto standard for agent
 interoperability. It handles discovery (agent cards), task lifecycle, message
-exchange, streaming, and authentication. AgentVault's current agent-to-agent
+exchange, streaming, and authentication. Selkey's current agent-to-agent
 transport (AFAL) is a custom protocol that duplicates some of this infrastructure.
 
-This document specifies how AgentVault integrates with A2A: using A2A for
-discovery and, when useful, transport while preserving AgentVault's
+This document specifies how Selkey integrates with A2A: using A2A for
+discovery and, when useful, transport while preserving Selkey's
 bounded-disclosure semantics, bilateral consent, and receipt-verified
-governance. AFAL remains the native AgentVault transport throughout.
+governance. AFAL remains the native Selkey transport throughout.
 
 ## Design Principles
 
-1. **A2A is transport, AgentVault is governance.** A2A carries messages between
-   agents. AgentVault constrains what flows through the bounded session and
+1. **A2A is transport, Selkey is governance.** A2A carries messages between
+   agents. Selkey constrains what flows through the bounded session and
    proves how it was governed. These are distinct layers.
-2. **Extension, not fork.** AgentVault capabilities are declared via A2A's
+2. **Extension, not fork.** Selkey capabilities are declared via A2A's
    extension mechanism, not by modifying A2A semantics.
 3. **Bilateral consent before context.** A2A is client→agent (asymmetric).
-   AgentVault requires bilateral consent before private context is exchanged.
+   Selkey requires bilateral consent before private context is exchanged.
    The integration must preserve this property within A2A's request/response
    model.
-4. **Dual transport, shared semantics.** AFAL remains AgentVault's native
+4. **Dual transport, shared semantics.** AFAL remains Selkey's native
    transport. A2A is an interoperability bridge that carries the same bounded
    bootstrap semantics into the wider A2A ecosystem. Agents may support either
    transport or both; neither transport is deprecated in favor of the other.
@@ -40,12 +40,12 @@ governance. AFAL remains the native AgentVault transport throughout.
 │  Discovery (Agent Cards) · Task Lifecycle · Message Exchange     │
 │  Streaming (SSE) · Auth (OAuth2, mTLS, etc.)                    │
 ├──────────────────────────────────────────────────────────────────┤
-│                   AgentVault A2A Extension                        │
-│  Extension URI: urn:agentvault:bounded-disclosure:v1             │
+│                   Selkey A2A Extension                        │
+│  Extension URI: urn:selkey:bounded-disclosure:v1             │
 │  Proposal/Admit/Deny via A2A messages                            │
 │  Relay session tokens via A2A artifacts                          │
 ├──────────────────────────────────────────────────────────────────┤
-│                     AgentVault Relay                              │
+│                     Selkey Relay                              │
 │  Contract · Schema · Guardian · Receipt                          │
 │  (unchanged — A2A integration affects bootstrap only)            │
 └──────────────────────────────────────────────────────────────────┘
@@ -53,15 +53,15 @@ governance. AFAL remains the native AgentVault transport throughout.
 
 ## Phase 1: A2A Discovery (Agent Card Extension)
 
-### AgentVault Extension in Agent Card
+### Selkey Extension in Agent Card
 
-Agents that support AgentVault bounded-disclosure sessions declare this via
+Agents that support Selkey bounded-disclosure sessions declare this via
 an A2A `AgentExtension`:
 
 ```json
 {
-  "uri": "urn:agentvault:bounded-disclosure:v1",
-  "description": "Supports AgentVault bounded-disclosure coordination sessions",
+  "uri": "urn:selkey:bounded-disclosure:v1",
+  "description": "Supports Selkey bounded-disclosure coordination sessions",
   "required": false,
   "params": {
     "relay_url": "https://relay.example.com",
@@ -81,25 +81,25 @@ Fields in `params`:
 - `afal_endpoint` (optional) — AFAL HTTP endpoint for agents that support
   both transports. Omit if A2A-only.
 
-### AgentVault Skill Declaration
+### Selkey Skill Declaration
 
 Each supported purpose maps to an A2A `AgentSkill`:
 
 ```json
 {
-  "id": "agentvault-compatibility",
+  "id": "selkey-compatibility",
   "name": "Bounded Compatibility Assessment",
-  "description": "Schema-bounded compatibility signal via AgentVault relay",
-  "tags": ["agentvault", "bounded-disclosure", "compatibility"],
-  "input_modes": ["application/vnd.agentvault.propose+json"],
-  "output_modes": ["application/vnd.agentvault.session-tokens+json"]
+  "description": "Schema-bounded compatibility signal via Selkey relay",
+  "tags": ["selkey", "bounded-disclosure", "compatibility"],
+  "input_modes": ["application/vnd.selkey.propose+json"],
+  "output_modes": ["application/vnd.selkey.session-tokens+json"]
 }
 ```
 
 ### Discovery Flow
 
 1. Client fetches `/.well-known/agent-card.json` from target agent
-2. Client checks for `urn:agentvault:bounded-disclosure:v1` in
+2. Client checks for `urn:selkey:bounded-disclosure:v1` in
    `capabilities.extensions`
 3. If present, client reads `params` to learn relay URL, public key, and
    supported purposes
@@ -148,20 +148,20 @@ This phase requires minimal code changes:
 ## Phase 3: A2A-Native Transport
 
 Offer an A2A-native bootstrap path alongside AFAL's HTTP endpoints by carrying
-AgentVault-specific message parts over A2A `SendMessage`.
+Selkey-specific message parts over A2A `SendMessage`.
 
 ### Media Types
 
 | Type | Direction | Content |
 |------|-----------|---------|
-| `application/vnd.agentvault.propose+json` | Initiator → Responder | AfalPropose equivalent |
-| `application/vnd.agentvault.admit+json` | Responder → Initiator | AfalAdmit equivalent |
-| `application/vnd.agentvault.deny+json` | Responder → Initiator | AfalDeny equivalent |
-| `application/vnd.agentvault.session-tokens+json` | Initiator → Responder | Relay session credentials |
-| `application/vnd.agentvault.topic-alignment-proposal+json` | Initiator → Responder | Bounded topic-alignment proposal |
-| `application/vnd.agentvault.topic-alignment-selection+json` | Responder → Initiator | Topic-alignment response |
-| `application/vnd.agentvault.contract-offer-proposal+json` | Initiator → Responder | Pre-contract negotiation proposal |
-| `application/vnd.agentvault.contract-offer-selection+json` | Responder → Initiator | Contract offer selection response |
+| `application/vnd.selkey.propose+json` | Initiator → Responder | AfalPropose equivalent |
+| `application/vnd.selkey.admit+json` | Responder → Initiator | AfalAdmit equivalent |
+| `application/vnd.selkey.deny+json` | Responder → Initiator | AfalDeny equivalent |
+| `application/vnd.selkey.session-tokens+json` | Initiator → Responder | Relay session credentials |
+| `application/vnd.selkey.topic-alignment-proposal+json` | Initiator → Responder | Bounded topic-alignment proposal |
+| `application/vnd.selkey.topic-alignment-selection+json` | Responder → Initiator | Topic-alignment response |
+| `application/vnd.selkey.contract-offer-proposal+json` | Initiator → Responder | Pre-contract negotiation proposal |
+| `application/vnd.selkey.contract-offer-selection+json` | Responder → Initiator | Contract offer selection response |
 
 ### Proposal via A2A SendMessage
 
@@ -176,15 +176,15 @@ AgentVault-specific message parts over A2A `SendMessage`.
       "parts": [
         {
           "data": { /* AfalPropose fields */ },
-          "media_type": "application/vnd.agentvault.propose+json"
+          "media_type": "application/vnd.selkey.propose+json"
         }
       ],
-      "extensions": ["urn:agentvault:bounded-disclosure:v1"]
+      "extensions": ["urn:selkey:bounded-disclosure:v1"]
     },
     "configuration": {
       "accepted_output_modes": [
-        "application/vnd.agentvault.admit+json",
-        "application/vnd.agentvault.deny+json"
+        "application/vnd.selkey.admit+json",
+        "application/vnd.selkey.deny+json"
       ]
     }
   }
@@ -202,15 +202,15 @@ After creating the relay session, the initiator sends a follow-up
 `SendMessage` with the session tokens.
 
 Current implementation note:
-- AgentVault implements a narrow A2A task lifecycle for bootstrap:
+- Selkey implements a narrow A2A task lifecycle for bootstrap:
   proposal admission/denial, bounded topic alignment, bounded contract
   negotiation, and session-token delivery
-- AFAL and A2A-native bootstrap carry the same AgentVault concepts; A2A is not
+- AFAL and A2A-native bootstrap carry the same Selkey concepts; A2A is not
   the canonical source of those semantics
 
 ### Bilateral Consent in A2A's Asymmetric Model
 
-A2A is client→agent (one side initiates, the other responds). AgentVault
+A2A is client→agent (one side initiates, the other responds). Selkey
 requires bilateral consent. The integration maps this as:
 
 1. **Initiator sends proposal** — this is the A2A "client" role

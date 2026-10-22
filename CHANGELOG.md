@@ -8,6 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Renamed AgentVault → Selkey.** Clean break, no compatibility aliases:
+  packages moved to `packages/selkey-{relay,client,mcp,demo-ui}`; crate
+  `selkey-relay`; npm packages `selkey` (bin `selkey-contract`) and `selkey-mcp`
+  (bin and MCP server name `selkey-mcp`); MCP tools, contract offer IDs and A2A
+  media types use the `selkey.` prefix; A2A extension URI
+  `urn:selkey:bounded-disclosure:v1`; env vars `AV_*` → `SELKEY_*`; default
+  operator ID `selkey-relay-dev`; images `ghcr.io/vcav-io/selkey-relay` and
+  `ghcr.io/vcav-io/selkey-demo`. `VCAV-*` domain separators and existing
+  receipts are unchanged. Entries below this one use the old names.
+
 ### Added
 
 - Package READMEs for `agentvault-client` and `agentvault-mcp-server`.

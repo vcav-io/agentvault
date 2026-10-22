@@ -1,10 +1,10 @@
 # Red Team Evaluation of Bounded-Disclosure Coordination Protocol
 
-**Research Notes — AgentVault v0.1**
+**Research Notes — Selkey v0.1**
 **Date:** 2026-02-26
 **Authors:** T. Kershaw (vcav.io), with automated test execution by Claude Opus 4.6
 
-> These notes document a structured adversarial evaluation of AgentVault's
+> These notes document a structured adversarial evaluation of Selkey's
 > information-flow control guarantees. They are intended to (a) support external
 > review of the red team methodology and results, and (b) serve as primary source
 > material for a research paper on bounded-disclosure coordination protocols.
@@ -78,7 +78,7 @@ I0 and I1 are deferred to a future evaluation requiring a metadata observer endp
 
 ### 2.1 System Under Test
 
-**AgentVault** is an ephemeral API-mediated relay (no persistent storage) that accepts private inputs from
+**Selkey** is an ephemeral API-mediated relay (no persistent storage) that accepts private inputs from
 two participants, passes both to a single LLM inference call, and returns a
 structured output visible to both participants. The relay enforces:
 
@@ -90,7 +90,7 @@ structured output visible to both participants. The relay enforces:
   receipt containing the contract hash, prompt template hash, model identity,
   output entropy estimate, and a copy of the output.
 
-The relay is implemented in Rust (`packages/agentvault-relay`). It supports two
+The relay is implemented in Rust (`packages/selkey-relay`). It supports two
 inference providers: Anthropic (Messages API) and OpenAI (Chat Completions API).
 
 ### 2.2 Output Schema Design (v2)
@@ -269,13 +269,13 @@ export $(grep -v '^#' .env | xargs)
 for s in 04-adversarial-extraction 05-tool-exfiltration \
          09-encoding-reflection 10-social-engineering; do
   ./tests/live/drive.sh --scenario $s --provider anthropic
-  AV_OPENAI_MODEL_ID="gpt-4.1" ./tests/live/drive.sh --scenario $s --provider openai
+  SELKEY_OPENAI_MODEL_ID="gpt-4.1" ./tests/live/drive.sh --scenario $s --provider openai
 done
 
 # Multi-session scenarios (3 sessions each)
 for s in 07-accumulation-strategic 08-accumulation-expert; do
   ./tests/live/drive.sh --scenario $s --provider anthropic --sessions 3
-  AV_OPENAI_MODEL_ID="gpt-4.1" ./tests/live/drive.sh --scenario $s --provider openai --sessions 3
+  SELKEY_OPENAI_MODEL_ID="gpt-4.1" ./tests/live/drive.sh --scenario $s --provider openai --sessions 3
 done
 ```
 
@@ -726,7 +726,7 @@ channel capacity by a factor of ~30×.
 | Scenario definitions | `tests/live/scenarios/{04,05,07,08,09,10}/` |
 | Criteria files | `tests/live/scenarios/*/criteria.json` |
 | Relay input files | `tests/live/scenarios/*/alice_relay_input.json`, `bob_relay_input_s1.json`, `bob_relay_input_template.json` |
-| Prompt program (v2) | `packages/agentvault-relay/prompt_programs/18b1b459...f874.json` |
+| Prompt program (v2) | `packages/selkey-relay/prompt_programs/18b1b459...f874.json` |
 | Output schema (v2) | Embedded in contract; example at `tests/live/results/20260226T102922Z/contract.json` |
 | Driver script | `tests/live/drive.sh` |
 | Verification script | `tests/live/verify.sh` |

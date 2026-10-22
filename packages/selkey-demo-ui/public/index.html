@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Selkey — Protocol Observatory</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:ital,wght@0,300..800;1,300..800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+</head>
+<body>
+  <div class="dot-grid"></div>
+
+  <header class="toolbar">
+    <div class="toolbar-left">
+      <div class="brand">
+        <span class="brand-icon">&#9670;</span>
+        <span class="brand-name">Selkey</span>
+      </div>
+      <span class="toolbar-sep"></span>
+      <span class="toolbar-label">Bounded-Disclosure Mediation</span>
+    </div>
+    <div class="toolbar-right">
+      <div class="status-chip" id="status-chip">
+        <span class="status-dot" id="status-dot"></span>
+        <span id="status-text">Configure</span>
+      </div>
+      <button class="btn-secondary btn-stop" id="stop-btn" style="display:none">Stop</button>
+      <button class="btn-secondary" id="reset-btn" style="display:none">Reset</button>
+      <button class="btn-secondary" id="new-run-btn" style="display:none">New Run</button>
+      <a href="/replay.html" class="back-link" id="replay-link">Replay</a>
+    </div>
+  </header>
+
+  <main class="viewport">
+    <!-- Setup phase: prompt editors + template selector -->
+    <div class="setup" id="setup-phase">
+      <div class="setup-header">
+        <div class="setup-header-top">
+          <h2>Configure Agents</h2>
+          <label class="canary-toggle canary-toggle--header" id="canary-toggle-wrap">
+            <input type="checkbox" id="canary-check-toggle">
+            <span>Check bounded output for canary leaks</span>
+          </label>
+        </div>
+        <div class="setup-selectors">
+          <div class="template-selector">
+            <label for="template-select">Template</label>
+            <select id="template-select"></select>
+          </div>
+          <div class="template-selector">
+            <label for="coordination-model-select">Coordination model</label>
+            <select id="coordination-model-select">
+              <option value="">Loading...</option>
+            </select>
+          </div>
+          <label class="split-toggle">
+            <input type="checkbox" id="split-model-toggle">
+            <span>Split model config</span>
+          </label>
+          <div class="template-selector split-model-field" id="agent-provider-wrap" style="display:none">
+            <label for="provider-select">Agent provider</label>
+            <select id="provider-select">
+              <option value="">Loading...</option>
+            </select>
+          </div>
+          <div class="template-selector split-model-field" id="agent-model-wrap" style="display:none">
+            <label for="model-select">Agent model</label>
+            <select id="model-select">
+              <option value="">—</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="prompt-editors">
+        <div class="prompt-editor alice">
+          <div class="prompt-label">
+            <span class="dot"></span>
+            <label for="alice-prompt">Alice &mdash; Initiator</label>
+          </div>
+          <textarea id="alice-prompt" placeholder="Enter Alice's instructions..."></textarea>
+        </div>
+        <div class="prompt-editor bob">
+          <div class="prompt-label">
+            <span class="dot"></span>
+            <label for="bob-prompt">Bob &mdash; Responder</label>
+          </div>
+          <textarea id="bob-prompt" placeholder="Enter Bob's instructions..."></textarea>
+        </div>
+      </div>
+      <div class="setup-actions">
+        <button class="btn-primary btn-large" id="start-btn">Start Protocol</button>
+      </div>
+    </div>
+
+    <!-- Protocol view: three-panel grid + collapsible log -->
+    <div class="protocol-view hidden" id="protocol-phase">
+      <div class="sim-grid" id="sim-grid">
+        <!-- Left panel: Alice's chat -->
+        <div class="sim-panel sim-panel--chat sim-panel--alice" id="panel-left">
+          <div class="sim-panel__header">
+            <span class="sim-panel__agent-name">
+              <span class="sim-panel__agent-dot" id="alice-dot"></span>
+              Alice
+              <span class="sim-panel__role">(principal)</span>
+            </span>
+            <div class="sim-panel__agent-meta">
+              <span class="sim-panel__agent-badge">INITIATOR</span>
+              <span class="sim-panel__agent-turns" id="alice-turns"></span>
+            </div>
+          </div>
+          <div class="sim-panel__messages" id="alice-log"></div>
+          <div class="chat-input" id="alice-input-bar">
+            <input type="text" id="alice-input" placeholder="Message AliceBot..." disabled>
+            <button class="chat-send" id="alice-send" disabled>&#9654;</button>
+          </div>
+        </div>
+
+        <!-- Centre panel: The Vault -->
+        <div class="sim-panel sim-panel--vault" id="panel-centre">
+          <div class="sim-panel__header">
+            <div class="sim-panel__vault-header-text">
+              <span class="sim-panel__vault-label">Protocol Milestones</span>
+              <span class="sim-panel__vault-caption">Bounded output, receipts, and terminal state</span>
+            </div>
+          </div>
+          <div class="sim-panel__vault-scroll" id="vault-scroll">
+            <div class="sim-panel__vault-events" id="vault-events"></div>
+          </div>
+          <div class="signal-overlay" id="signal-overlay"></div>
+        </div>
+
+        <!-- Right panel: Bob's chat -->
+        <div class="sim-panel sim-panel--chat sim-panel--bob" id="panel-right">
+          <div class="sim-panel__header">
+            <span class="sim-panel__agent-name">
+              <span class="sim-panel__agent-dot" id="bob-dot"></span>
+              Bob
+              <span class="sim-panel__role">(principal)</span>
+            </span>
+            <div class="sim-panel__agent-meta">
+              <span class="sim-panel__agent-badge">RESPONDER</span>
+              <span class="sim-panel__agent-turns" id="bob-turns"></span>
+            </div>
+          </div>
+          <div class="sim-panel__messages" id="bob-log"></div>
+          <div class="chat-input" id="bob-input-bar">
+            <input type="text" id="bob-input" placeholder="Message BobBot..." disabled>
+            <button class="chat-send" id="bob-send" disabled>&#9654;</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Collapsible protocol log (debug view) -->
+      <section class="log-panel collapsed" id="log-panel">
+        <div class="log-bar" id="log-bar">
+          <div class="log-title">
+            <span class="log-icon">&#9642;</span>
+            <h3>Raw Runtime Events</h3>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span class="log-count" id="event-count">0 events</span>
+            <span class="log-chevron">&#9656;</span>
+          </div>
+        </div>
+        <div class="log-feed" id="event-log"></div>
+      </section>
+    </div>
+  </main>
+
+  <script src="scenarios.js"></script>
+  <script src="render.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

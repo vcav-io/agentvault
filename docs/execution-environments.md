@@ -1,6 +1,6 @@
 # Execution Environments
 
-AgentVault supports two execution lanes for coordinated disclosure sessions.
+Selkey supports two execution lanes for coordinated disclosure sessions.
 
 ## Standard Lane
 
@@ -61,7 +61,7 @@ Even in confidential mode:
 Both lanes produce signed receipts. TEE lane receipts additionally contain
 `tee_attestation` with measurement, attestation hash, and transcript hash.
 
-- **Standard receipts:** Verify with `agentvault.verify_receipt` (TS)
+- **Standard receipts:** Verify with `selkey.verify_receipt` (TS)
 - **TEE receipts:** `verify_receipt` surfaces TEE fields for introspection.
   Full cryptographic verification (measurement allowlist, transcript hash
   recomputation) requires the `tee-verifier` crate (Rust).

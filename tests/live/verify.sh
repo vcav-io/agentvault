@@ -8,7 +8,7 @@ set -euo pipefail
 #   ./tests/live/verify.sh <run_id>
 #   ./tests/live/verify.sh <run_id> --session <id> --read-token <token>
 #
-# Reads session info from agent working dirs (~/vcav-test/alice|bob/.agentvault/last_session.json)
+# Reads session info from agent working dirs (~/vcav-test/alice|bob/.selkey/last_session.json)
 # or falls back to --session / --read-token for manual override.
 # ---------------------------------------------------------------------------
 
@@ -67,10 +67,10 @@ fi
 require_cmd node
 require_cmd curl
 
-RELAY_URL="${AV_RELAY_URL:-http://localhost:3100}"
-AV_TEST_BASE="${AV_TEST_DIR:-${HOME}/vcav-test}"
-ALICE_SESSION_FILE="${AV_TEST_BASE}/alice/.agentvault/last_session.json"
-BOB_SESSION_FILE="${AV_TEST_BASE}/bob/.agentvault/last_session.json"
+RELAY_URL="${SELKEY_RELAY_URL:-http://localhost:3100}"
+SELKEY_TEST_BASE="${SELKEY_TEST_DIR:-${HOME}/vcav-test}"
+ALICE_SESSION_FILE="${SELKEY_TEST_BASE}/alice/.selkey/last_session.json"
+BOB_SESSION_FILE="${SELKEY_TEST_BASE}/bob/.selkey/last_session.json"
 
 # ---------------------------------------------------------------------------
 # Read session IDs and tokens from session files

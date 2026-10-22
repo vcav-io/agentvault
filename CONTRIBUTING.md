@@ -1,4 +1,4 @@
-# Contributing to AgentVault
+# Contributing to Selkey
 
 ## Prerequisites
 
@@ -16,8 +16,8 @@ cargo test --workspace
 
 TypeScript:
 ```bash
-cd packages/agentvault-client && npm install && npm test
-cd packages/agentvault-mcp-server && npm install && npm run build
+cd packages/selkey-client && npm install && npm test
+cd packages/selkey-mcp && npm install && npm run build
 ```
 
 ## CI Checks

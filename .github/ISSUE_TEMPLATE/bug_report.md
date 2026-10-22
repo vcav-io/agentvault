@@ -1,6 +1,6 @@
 ---
 name: Bug Report
-about: Report a bug in AgentVault
+about: Report a bug in Selkey
 labels: bug
 ---
 
@@ -13,4 +13,4 @@ labels: bug
 **Environment**
 - OS:
 - Rust version:
-- AgentVault version/commit:
+- Selkey version/commit:

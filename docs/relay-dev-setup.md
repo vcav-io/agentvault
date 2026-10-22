@@ -1,6 +1,6 @@
 # Run the Relay from Source
 
-This guide covers building and running the AgentVault relay from source — for contributors, operators, and anyone who wants to inspect or modify the relay itself.
+This guide covers building and running the Selkey relay from source — for contributors, operators, and anyone who wants to inspect or modify the relay itself.
 
 For a quick demo using Docker, see [Getting Started](getting-started.md).
 
@@ -15,15 +15,15 @@ For a quick demo using Docker, see [Getting Started](getting-started.md).
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `ANTHROPIC_API_KEY` | Yes | — | Anthropic API key |
-| `AV_PORT` | No | `3100` | Port the relay listens on |
-| `AV_MODEL_ID` | No | `claude-sonnet-4-6` | Anthropic model to use |
-| `AV_SIGNING_KEY_HEX` | No | ephemeral | 64-char hex Ed25519 signing key. If unset, generates a random key on each start (receipts won't verify across restarts) |
-| `AV_PROMPT_PROGRAM_DIR` | No | `prompt_programs` | Directory containing prompt programs and lockfiles. The default is relative to CWD — when running from the repo root, set to `packages/agentvault-relay/prompt_programs` |
-| `AV_SESSION_TTL_SECS` | No | `600` | Session expiry in seconds |
-| `AV_ENV` | No | — | Set to `dev` for local development (enables dev-only overrides) |
-| `AV_INBOX_AUTH` | No | — | Set to `off` (with `AV_ENV=dev`) to skip agent registry requirement |
+| `SELKEY_PORT` | No | `3100` | Port the relay listens on |
+| `SELKEY_MODEL_ID` | No | `claude-sonnet-4-6` | Anthropic model to use |
+| `SELKEY_SIGNING_KEY_HEX` | No | ephemeral | 64-char hex Ed25519 signing key. If unset, generates a random key on each start (receipts won't verify across restarts) |
+| `SELKEY_PROMPT_PROGRAM_DIR` | No | `prompt_programs` | Directory containing prompt programs and lockfiles. The default is relative to CWD — when running from the repo root, set to `packages/selkey-relay/prompt_programs` |
+| `SELKEY_SESSION_TTL_SECS` | No | `600` | Session expiry in seconds |
+| `SELKEY_ENV` | No | — | Set to `dev` for local development (enables dev-only overrides) |
+| `SELKEY_INBOX_AUTH` | No | — | Set to `off` (with `SELKEY_ENV=dev`) to skip agent registry requirement |
 | `OPENAI_API_KEY` | No | — | Enables the OpenAI provider |
-| `AV_OPENAI_MODEL_ID` | No | `gpt-4o` | OpenAI model to use |
+| `SELKEY_OPENAI_MODEL_ID` | No | `gpt-4o` | OpenAI model to use |
 | `ANTHROPIC_BASE_URL` | No | — | Override Anthropic API base URL (for proxies) |
 | `OPENAI_BASE_URL` | No | — | Override OpenAI API base URL (for proxies) |
 
@@ -41,10 +41,10 @@ cp .env.example .env
 
 # Source and start
 set -a && source .env && set +a
-cargo run -p agentvault-relay
+cargo run -p selkey-relay
 ```
 
-The `.env.example` includes dev-mode defaults (`AV_ENV=dev`, `AV_INBOX_AUTH=off`) that let you start the relay without an agent registry. For production, see the [OpenClaw VPS Runbook](guides/openclaw-vps-runbook.md).
+The `.env.example` includes dev-mode defaults (`SELKEY_ENV=dev`, `SELKEY_INBOX_AUTH=off`) that let you start the relay without an agent registry. For production, see the [OpenClaw VPS Runbook](guides/openclaw-vps-runbook.md).
 
 The relay starts on port 3100 by default. Verify with:
 

@@ -1,4 +1,4 @@
-# AgentVault CLI Demo (Claude Code)
+# Selkey CLI Demo (Claude Code)
 
 > **Looking for the quickest start?** Use `./run-demo.sh` from the repo root or `docker compose -f docker/docker-compose.demo.yml up` — a browser-based demo that doesn't require Claude Code. See [docs/getting-started.md](../docs/getting-started.md).
 

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:agentvault:schema:a2a-extension-params:v1",
-  "title": "AgentVaultA2AExtensionParams",
-  "description": "Extension parameters for the urn:agentvault:bounded-disclosure:v1 A2A extension.",
+  "$id": "urn:selkey:schema:a2a-extension-params:v1",
+  "title": "SelkeyA2AExtensionParams",
+  "description": "Extension parameters for the urn:selkey:bounded-disclosure:v1 A2A extension.",
   "type": "object",
   "required": ["public_key_hex", "supported_purposes"],
   "additionalProperties": false,

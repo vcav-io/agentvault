@@ -1,4 +1,4 @@
-# AgentVault Threat Model
+# Selkey Threat Model
 
 > **Issue:** #156 (explicit confidentiality model)
 > **Protocol version:** 0.1.0
@@ -8,15 +8,15 @@
 
 ## 1. Purpose
 
-This document defines the trust model and threat analysis for the AgentVault
+This document defines the trust model and threat analysis for the Selkey
 bounded-disclosure coordination protocol. It is intended for:
 
-- Operators evaluating whether AgentVault is appropriate for a given deployment
-- Developers building on top of AgentVault who need to reason about information flow
+- Operators evaluating whether Selkey is appropriate for a given deployment
+- Developers building on top of Selkey who need to reason about information flow
 - Auditors reviewing claims made about session confidentiality and receipt integrity
 
 This document is a security document, not a marketing document. It names what
-AgentVault does not provide with the same precision as what it does provide.
+Selkey does not provide with the same precision as what it does provide.
 
 The term "confidentiality" is used below in its technical sense: whether a party
 can observe information they are not supposed to observe, not whether they choose
@@ -28,13 +28,13 @@ to act on it.
 
 ### 2.1 Participants
 
-Every AgentVault session involves four parties:
+Every Selkey session involves four parties:
 
 | Party | Role |
 |-------|------|
 | **Alice** | An agent (or its user) submitting a private context as input to the relay |
 | **Bob** | A second agent (or its user) submitting a separate private context to the same session |
-| **Relay operator** | The entity that runs the AgentVault relay. Controls the infrastructure that processes both inputs and calls the LLM provider. |
+| **Relay operator** | The entity that runs the Selkey relay. Controls the infrastructure that processes both inputs and calls the LLM provider. |
 | **LLM provider** | The external inference service (OpenAI, Anthropic, etc.) that the relay calls to generate output. The relay submits the assembled prompt; the provider returns model output. |
 
 Alice and Bob are treated symmetrically by the protocol. Either may be the session
@@ -47,7 +47,7 @@ initiator. The roles differ only in how inputs and tokens are routed.
                         │              Relay Operator                  │
                         │                                              │
   Alice ──[input_A]──► │  ┌───────────────────────────────────────┐  │
-                        │  │           AgentVault Relay            │  │
+                        │  │           Selkey Relay            │  │
   Bob   ──[input_B]──► │  │                                       │  │──[assembled prompt]──► LLM Provider
                         │  │  assemble_prompt(input_A, input_B)    │  │
                         │  │  validate_output(schema)              │ ◄│──[raw LLM output]──────
@@ -87,7 +87,7 @@ of the API-mediated tier.
 
 ## 3. Confidentiality Model
 
-### 3.1 What AgentVault Provides
+### 3.1 What Selkey Provides
 
 **Counterparty confidentiality**
 
@@ -138,20 +138,20 @@ of the bound fields have been modified since signing. A recipient who also holds
 the artefacts (contract, schema, policy) can independently recompute the hashes
 and confirm they match.
 
-### 3.2 What AgentVault Does Not Provide
+### 3.2 What Selkey Does Not Provide
 
 **Relay confidentiality**
 
 The relay sees both inputs in plaintext. This is architectural. An operator running
-an AgentVault relay has complete visibility into every session: both inputs, the
-assembled prompt, the raw LLM output, and the bounded result. Deploying AgentVault
+an Selkey relay has complete visibility into every session: both inputs, the
+assembled prompt, the raw LLM output, and the bounded result. Deploying Selkey
 does not constrain operator access to session data.
 
 Operators who need to limit their own access to session inputs should evaluate the
 TEE upgrade path described in Section 5. The `TEE_ATTESTED` tier has been
-hardware-validated on GCP N2D (AMD SEV-SNP) in the av-tee repo and produces
+hardware-validated on GCP N2D (AMD SEV-SNP) in the selkey-tee repo and produces
 receipts with populated `tee_attestation` fields. The `PROVIDER_ATTESTED` tier
-is not yet implemented. Integration of TEE attestation into the AgentVault relay
+is not yet implemented. Integration of TEE attestation into the Selkey relay
 is pending.
 
 **Provider confidentiality**
@@ -197,7 +197,7 @@ different model than the one actually called. A provider attestation (
 
 ## 4. Adversary Classes
 
-| Adversary | Capability | What AgentVault Prevents | What It Does Not Prevent |
+| Adversary | Capability | What Selkey Prevents | What It Does Not Prevent |
 |-----------|-----------|--------------------------|--------------------------|
 | Curious counterparty | Sees bounded output only | Raw input disclosure | Inference from output structure, field presence, or value patterns |
 | Curious relay operator | Full access to inputs, prompts, and outputs | Nothing — relay is a trusted party in the API-mediated tier | N/A |
@@ -208,7 +208,7 @@ different model than the one actually called. A provider attestation (
 
 ### 4.1 Notes on the Counterparty Adversary
 
-The primary use case of AgentVault is protecting each participant from the other.
+The primary use case of Selkey is protecting each participant from the other.
 The guarantees here are strong but not absolute:
 
 - The output schema eliminates unbounded free-text channels.
@@ -256,23 +256,23 @@ presented together with the assurance level.
 | `SELF_ASSERTED` | The relay signs its own receipt. Trust the operator. | Implemented |
 | `OPERATOR_AUDITED` | The operator publishes an independently verifiable audit trail. Trust is externally checkable but still rests on the operator. | Not yet implemented |
 | `PROVIDER_ATTESTED` | The LLM provider co-signs inference metadata, binding `model_identity` to a cryptographic commitment. | Not yet implemented |
-| `TEE_ATTESTED` | A hardware enclave (SGX, TDX, SEV-SNP) signs the receipt and binds it to an enclave measurement. The relay operator cannot see inputs or fabricate outputs without breaking the attestation. | Hardware validated (av-tee, GCP N2D AMD SEV-SNP). Not yet integrated into the AgentVault relay. |
+| `TEE_ATTESTED` | A hardware enclave (SGX, TDX, SEV-SNP) signs the receipt and binds it to an enclave measurement. The relay operator cannot see inputs or fabricate outputs without breaking the attestation. | Hardware validated (selkey-tee, GCP N2D AMD SEV-SNP). Not yet integrated into the Selkey relay. |
 
-All current AgentVault deployments operate at `SELF_ASSERTED`. The operator-audited
+All current Selkey deployments operate at `SELF_ASSERTED`. The operator-audited
 tier is the near-term upgrade path. TEE attestation is the intended end state for
 deployments where relay confidentiality is a hard requirement.
 
 Receipt v2.1 includes attestation slots (`provider_attestation`, `tee_attestation`).
-The `tee_attestation` slot is populated by the av-tee relay when running in a
+The `tee_attestation` slot is populated by the selkey-tee relay when running in a
 TEE environment, binding `attestation_hash`, `receipt_signing_pubkey_hex`, and
-`transcript_hash_hex` into the receipt. The AgentVault relay does not yet populate
+`transcript_hash_hex` into the receipt. The Selkey relay does not yet populate
 these slots. `provider_attestation` is not yet populated by any implementation.
 
 ---
 
 ## 6. Residual Information Channels
 
-AgentVault narrows the information channel from unbounded free text to structured
+Selkey narrows the information channel from unbounded free text to structured
 output. It does not eliminate all information channels.
 
 ### 6.1 Output Structure
@@ -379,16 +379,16 @@ Policy gate rejections return a fixed-body 422 with no detail. Auth failures ret
 a fixed-body 401. This prevents callers from reverse-engineering the guardian policy
 or enumerating session state through error shapes.
 
-### 7.2 Validated (Not Yet Integrated into AgentVault Relay)
+### 7.2 Validated (Not Yet Integrated into Selkey Relay)
 
 **TEE execution**
 
 A hardware-attested execution environment (VCAV-H) binds the receipt to an enclave
 measurement, preventing relay operators from observing inputs or fabricating outputs
 without breaking the attestation. This has been hardware-validated on GCP N2D
-(AMD SEV-SNP) in the av-tee repo: real SEV-SNP attestation reports, sealed key
+(AMD SEV-SNP) in the selkey-tee repo: real SEV-SNP attestation reports, sealed key
 material, and transcript-bound receipts with populated `tee_attestation` fields.
-Integration into the AgentVault relay is the remaining step.
+Integration into the Selkey relay is the remaining step.
 
 ### 7.3 Planned (Not Yet Implemented)
 
@@ -487,7 +487,7 @@ This document does not cover:
 - **Denial of service** — availability attacks against the relay are not in scope.
 - **Client-side security** — how participant agents protect their own inputs before
   submission is out of scope for this document.
-- **Compliance** — whether AgentVault satisfies any specific regulatory framework
+- **Compliance** — whether Selkey satisfies any specific regulatory framework
   is out of scope. This document describes technical properties; compliance analysis
   requires additional legal and operational context.
 

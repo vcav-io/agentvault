@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# prep-multi.sh — Multi-run experiment orchestration for AgentVault red team
+# prep-multi.sh — Multi-run experiment orchestration for Selkey red team
 #
 # Wraps prep.sh for running N sessions of the same scenario in a Category B
 # cross-session accumulation experiment.
@@ -17,7 +17,7 @@ set -euo pipefail
 #   ./tests/live/prep-multi.sh <experiment_id> <session_number> [--mock]
 #
 # Environment:
-#   ANTHROPIC_API_KEY, OPENAI_API_KEY, AV_MOCK, AV_TEST_DIR, AV_PORT
+#   ANTHROPIC_API_KEY, OPENAI_API_KEY, SELKEY_MOCK, SELKEY_TEST_DIR, SELKEY_PORT
 # ---------------------------------------------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,10 +36,10 @@ source "${HARNESS_DIR}/provision.sh"
 # shellcheck source=harness/workspace.sh
 source "${HARNESS_DIR}/workspace.sh"
 
-RELAY_PORT="${AV_PORT:-3100}"
-AV_TEST_BASE="${AV_TEST_DIR:-${HOME}/vcav-test}"
-ALICE_DIR="${AV_TEST_BASE}/alice"
-BOB_DIR="${AV_TEST_BASE}/bob"
+RELAY_PORT="${SELKEY_PORT:-3100}"
+SELKEY_TEST_BASE="${SELKEY_TEST_DIR:-${HOME}/vcav-test}"
+ALICE_DIR="${SELKEY_TEST_BASE}/alice"
+BOB_DIR="${SELKEY_TEST_BASE}/bob"
 
 # ---------------------------------------------------------------------------
 # Usage
@@ -212,7 +212,7 @@ EOF
   # --- Print next steps -----------------------------------------------------
   echo ""
   echo "═══════════════════════════════════════════════════════"
-  echo "  AgentVault Multi-Run Experiment Created"
+  echo "  Selkey Multi-Run Experiment Created"
   echo "  Experiment ID: ${experiment_id}"
   echo "  Scenario:      ${scenario}"
   echo "  Bob profile:   ${bob_profile}"
@@ -276,7 +276,7 @@ _run_session() {
       log_error "CANARY LEAK DETECTED: '${canary_token}' found in Bob's workspace (${BOB_DIR})."
       log_error "The workspace has not been cleaned between sessions. Aborting."
       log_error "Clean Bob's workspace and retry:"
-      log_error "  rm -rf ${BOB_DIR}/.agentvault ${BOB_DIR}/*.txt ${BOB_DIR}/*.json ${BOB_DIR}/*.log"
+      log_error "  rm -rf ${BOB_DIR}/.selkey ${BOB_DIR}/*.txt ${BOB_DIR}/*.json ${BOB_DIR}/*.log"
       exit 1
     fi
     log_success "Canary audit passed — no leakage detected in ${BOB_DIR}"
@@ -373,9 +373,9 @@ EOF
   setup_cleanup_trap
 
   # --- Generate relay signing key if not set --------------------------------
-  if [[ -z "${AV_SIGNING_KEY_HEX:-}" ]]; then
-    export AV_SIGNING_KEY_HEX
-    AV_SIGNING_KEY_HEX="$(openssl rand -hex 32)"
+  if [[ -z "${SELKEY_SIGNING_KEY_HEX:-}" ]]; then
+    export SELKEY_SIGNING_KEY_HEX
+    SELKEY_SIGNING_KEY_HEX="$(openssl rand -hex 32)"
     log_info "Generated relay signing key"
   fi
 
@@ -419,7 +419,7 @@ EOF
 
   # --- Provider display helper (matches prep.sh) ----------------------------
   _provider_display() {
-    if [[ "${AV_MOCK:-}" == "1" ]]; then echo "mock"
+    if [[ "${SELKEY_MOCK:-}" == "1" ]]; then echo "mock"
     elif [[ -n "${OPENAI_API_KEY:-}" ]]; then echo "openai (via proxy)"
     elif [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then echo "anthropic (direct)"
     else echo "unknown"; fi
@@ -429,7 +429,7 @@ EOF
   cat <<INSTRUCTIONS
 
 ═══════════════════════════════════════════════════════
-  AgentVault Live Test — Multi-Run Experiment
+  Selkey Live Test — Multi-Run Experiment
   Experiment:  ${experiment_id}
   Session:     ${session_number} of ${planned_sessions}
   Scenario:    ${scenario}
@@ -536,7 +536,7 @@ case "$1" in
           shift 2
           ;;
         --mock)
-          export AV_MOCK=1
+          export SELKEY_MOCK=1
           FLAG_MOCK=1
           shift
           ;;
@@ -608,7 +608,7 @@ case "$1" in
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --mock)
-          export AV_MOCK=1
+          export SELKEY_MOCK=1
           shift
           ;;
         *)
@@ -636,10 +636,10 @@ case "$1" in
     cargo metadata --no-deps --manifest-path "${REPO_ROOT}/Cargo.toml" --format-version 1 \
       >/dev/null 2>&1 || { log_error "cargo metadata failed"; exit 1; }
 
-    MCP_SERVER_DIR="${REPO_ROOT}/packages/agentvault-mcp-server"
-    log_info "Building agentvault-mcp-server..."
+    MCP_SERVER_DIR="${REPO_ROOT}/packages/selkey-mcp"
+    log_info "Building selkey-mcp..."
     (cd "${MCP_SERVER_DIR}" && npm install --silent && npm run build --silent)
-    log_success "agentvault-mcp-server built"
+    log_success "selkey-mcp built"
 
     _run_session "${EXP_ID}" "${SESSION_NUM}"
     ;;

@@ -16,22 +16,22 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Lint & build agentvault-client
-        working-directory: packages/agentvault-client
+      - name: Lint & build selkey client
+        working-directory: packages/selkey-client
         run: npm ci && npm run lint && npm run build
 
-      - name: Lint agentvault-mcp-server
-        working-directory: packages/agentvault-mcp-server
+      - name: Lint selkey-mcp
+        working-directory: packages/selkey-mcp
         run: npm ci && npm run lint
 
-      - name: Test agentvault-client
-        working-directory: packages/agentvault-client
+      - name: Test selkey client
+        working-directory: packages/selkey-client
         run: npm test
 
-      - name: Build & test agentvault-mcp-server
-        working-directory: packages/agentvault-mcp-server
+      - name: Build & test selkey-mcp
+        working-directory: packages/selkey-mcp
         run: npm run build && npm test
 
-      - name: Build & test agentvault-demo-ui
-        working-directory: packages/agentvault-demo-ui
+      - name: Build & test selkey-demo-ui
+        working-directory: packages/selkey-demo-ui
         run: npm ci && npx playwright install --with-deps chromium && npm run build && npm test

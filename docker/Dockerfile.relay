@@ -4,28 +4,28 @@ WORKDIR /build
 
 # Cache dependencies by copying manifests first
 COPY Cargo.toml Cargo.lock ./
-COPY packages/agentvault-relay/Cargo.toml packages/agentvault-relay/Cargo.toml
-RUN mkdir -p packages/agentvault-relay/src && echo "fn main() {}" > packages/agentvault-relay/src/main.rs
+COPY packages/selkey-relay/Cargo.toml packages/selkey-relay/Cargo.toml
+RUN mkdir -p packages/selkey-relay/src && echo "fn main() {}" > packages/selkey-relay/src/main.rs
 # INTENTIONAL: `|| true` — the dummy build will fail because main.rs is a stub,
 # but it caches crates.io and git dependencies for the real build below.
 # Do NOT "fix" the || true — it is load-bearing.
-RUN cargo build --release --package agentvault-relay 2>/dev/null || true
+RUN cargo build --release --package selkey-relay 2>/dev/null || true
 
 # Copy real source and build
-COPY packages/agentvault-relay packages/agentvault-relay
-RUN cargo build --release --package agentvault-relay
+COPY packages/selkey-relay packages/selkey-relay
+RUN cargo build --release --package selkey-relay
 
 # Stage 2: Runtime
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /build/target/release/agentvault-relay /usr/local/bin/agentvault-relay
-COPY packages/agentvault-relay/prompt_programs /opt/agentvault/prompt_programs
+COPY --from=builder /build/target/release/selkey-relay /usr/local/bin/selkey-relay
+COPY packages/selkey-relay/prompt_programs /opt/selkey/prompt_programs
 
-ENV AV_PROMPT_PROGRAM_DIR=/opt/agentvault/prompt_programs
-ENV AV_PORT=3100
+ENV SELKEY_PROMPT_PROGRAM_DIR=/opt/selkey/prompt_programs
+ENV SELKEY_PORT=3100
 EXPOSE 3100
 
 HEALTHCHECK --interval=10s --timeout=3s --retries=3 \
     CMD curl -sf http://localhost:3100/health || exit 1
 
-ENTRYPOINT ["agentvault-relay"]
+ENTRYPOINT ["selkey-relay"]

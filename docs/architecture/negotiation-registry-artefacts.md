@@ -1,11 +1,11 @@
 # Negotiation Registry Artefacts
 
 > Status: Draft architecture note
-> Related: [agentvault-negotiation-protocol.md](agentvault-negotiation-protocol.md), [protocol-spec.md](../protocol-spec.md)
+> Related: [selkey-negotiation-protocol.md](selkey-negotiation-protocol.md), [protocol-spec.md](../protocol-spec.md)
 
 ## 1. Purpose
 
-This note sketches the registry artefacts needed to support structured bounded-computation negotiation in AgentVault.
+This note sketches the registry artefacts needed to support structured bounded-computation negotiation in Selkey.
 
 It is intentionally lightweight. The goal is to define the shape of the artefacts and their compatibility links before governance and wire formats are frozen.
 

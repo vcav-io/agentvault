@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Build a schema bundle JSON for the agentvault protocol.
+# Build a schema bundle JSON for the selkey protocol.
 #
 # Output: dist/schemas.json
-# Format: { "protocol": "agentvault", "version": "0.1.0", "generated": "<ISO>", "files": { ... } }
+# Format: { "protocol": "selkey", "version": "0.1.0", "generated": "<ISO>", "files": { ... } }
 #
-# Usage: agentvault/scripts/build-schema-bundle.sh
-#   (run from the agentvault workspace root or repo root)
+# Usage: selkey/scripts/build-schema-bundle.sh
+#   (run from the selkey workspace root or repo root)
 
 set -euo pipefail
 
@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 
 schemas_dir = sys.argv[1]
 bundle = {
-    'protocol': 'agentvault',
+    'protocol': 'selkey',
     'version': '0.1.0',
     'generated': datetime.now(timezone.utc).isoformat(),
     'files': {}
@@ -42,4 +42,4 @@ print(json.dumps(bundle, indent=2))
 " "$SCHEMAS_DIR" > "$DIST_DIR/schemas.json"
 
 COUNT=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d['files']))" < "$DIST_DIR/schemas.json")
-echo "Built agentvault schema bundle: $DIST_DIR/schemas.json ($COUNT schemas)"
+echo "Built selkey schema bundle: $DIST_DIR/schemas.json ($COUNT schemas)"

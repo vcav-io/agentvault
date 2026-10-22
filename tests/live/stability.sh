@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# stability.sh — Paraphrase stability evaluator for AgentVault relay sessions
+# stability.sh — Paraphrase stability evaluator for Selkey relay sessions
 #
 # Runs drive.sh --variant all for a scenario, then compares v2 enum fields
 # across variant outputs to measure surface-rephrasing stability.
