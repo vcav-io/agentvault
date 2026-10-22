@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { signNegotiationRequest } from '../negotiation-auth.js';
 import { ed25519 } from '@noble/curves/ed25519';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
@@ -213,6 +216,36 @@ describe('AfalHttpServer', () => {
     expect(params['supported_contract_offers']).toEqual(
       (descriptor.capabilities as Record<string, unknown>)['supported_contract_offers'],
     );
+  });
+
+  it('advertises bespoke contract negotiation only in development', async () => {
+    const registry = fs.mkdtempSync(path.join(os.tmpdir(), 'selkey-registry-'));
+    fs.writeFileSync(path.join(registry, 'registry.json'), '{}');
+    const prior = { env: process.env['SELKEY_ENV'], reg: process.env['SELKEY_REGISTRY_PATH'] };
+    process.env['SELKEY_REGISTRY_PATH'] = registry;
+    const bespokeFlag = async (): Promise<unknown> => {
+      const res = await fetch(`${baseUrl}/.well-known/agent-card.json`);
+      const body = (await res.json()) as Record<string, unknown>;
+      const extensions = (body['capabilities'] as Record<string, unknown>)['extensions'] as Array<
+        Record<string, unknown>
+      >;
+      return (extensions[0]['params'] as Record<string, unknown>)['supports_bespoke_contract_negotiation'];
+    };
+    try {
+      process.env['SELKEY_ENV'] = 'dev';
+      expect(await bespokeFlag()).toBe(true);
+      Reflect.deleteProperty(process.env, 'SELKEY_ENV');
+      expect(await bespokeFlag()).toBeUndefined();
+    } finally {
+      for (const [k, v] of [
+        ['SELKEY_ENV', prior.env],
+        ['SELKEY_REGISTRY_PATH', prior.reg],
+      ] as const) {
+        if (v === undefined) Reflect.deleteProperty(process.env, k);
+        else process.env[k] = v;
+      }
+      fs.rmSync(registry, { recursive: true, force: true });
+    }
   });
 
   it('POST /afal/negotiate returns a direct topic-alignment selection', async () => {

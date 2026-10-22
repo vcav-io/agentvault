@@ -9,6 +9,7 @@ import {
 import type { RelayContract } from 'selkey/contracts';
 import type { ModelProfileRef } from './model-profiles.js';
 import type { NegotiableBespokeContract } from './contract-negotiation.js';
+import { isDevEnvironment } from './relay-trust.js';
 
 const PACKAGE_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_REGISTRY_PATH = resolve(PACKAGE_DIR, '../../../selkey-registry');
@@ -25,6 +26,16 @@ export function resolveNegotiationRegistryPath(): string | null {
 
 export function supportsBespokePrecontractNegotiation(): boolean {
   return resolveNegotiationRegistryPath() !== null;
+}
+
+/**
+ * Whether to advertise bespoke contract negotiation in this agent's card and
+ * descriptor. Outside development (SELKEY_ENV=dev) a responder accepts only
+ * contracts it builds itself with the pinned relay key, so it cannot accept
+ * a negotiated bespoke contract and does not advertise the capability.
+ */
+export function advertisesBespokeContractNegotiation(): boolean {
+  return isDevEnvironment() && supportsBespokePrecontractNegotiation();
 }
 
 async function loadNegotiationRegistry(): Promise<RegistryIndex | null> {

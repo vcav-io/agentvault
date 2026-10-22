@@ -6,6 +6,10 @@
  *
  * Configuration:
  *   SELKEY_RELAY_URL              — relay base URL (required for CREATE/JOIN modes)
+ *   SELKEY_RELAY_VERIFYING_KEY_HEX — the relay's verifying key (required outside SELKEY_ENV=dev)
+ *   SELKEY_OPERATOR_TOKEN          — operator token of the relay at SELKEY_RELAY_URL, sent when
+ *                                    creating sessions (never logged)
+ *   SELKEY_ENV                    — "dev" allows relay sessions without a pinned relay key
  *   SELKEY_AGENT_ID               — this agent's ID (used for contract building and idempotency)
  *   SELKEY_RESUME_TOKEN_SECRET    — secret for HMAC-signing resume tokens (optional but recommended)
  *
@@ -50,12 +54,17 @@ import type { NormalizedKnownAgent } from './tools/relaySignal.js';
 import { DirectAfalTransport, isAgentDescriptor } from './direct-afal-transport.js';
 import type { DirectAfalTransportConfig } from './direct-afal-transport.js';
 import { RelayInboxTransport } from './relay-inbox-transport.js';
-import { isRelayTransportAllowed, RELAY_INSECURE_HTTP_HOSTS_ENV } from './relay-trust.js';
+import {
+  configuredRelayKeyHex,
+  isDevEnvironment,
+  isRelayTransportAllowed,
+  RELAY_INSECURE_HTTP_HOSTS_ENV,
+} from './relay-trust.js';
 import { signMessage, DOMAIN_PREFIXES } from './afal-signing.js';
 import type { AdmissionPolicy, TrustedAgent } from './afal-responder.js';
 import { listKnownModelProfiles } from './model-profiles.js';
 import { listSupportedContractOffers } from './contract-offers.js';
-import { supportsBespokePrecontractNegotiation } from './bespoke-contracts.js';
+import { advertisesBespokeContractNegotiation } from './bespoke-contracts.js';
 import { listSupportedTopicCodes, supportsTopicAlignment } from './topic-codes.js';
 import { IfcService, type IfcKnownAgent } from './ifc.js';
 import { PinStore, parsePinMode, parsePinReseed, type PinResolver, type PinSeed } from './pin-store.js';
@@ -197,7 +206,7 @@ function buildDirectTransportFromEnv(pinStore: PinStore): DirectAfalTransport | 
       supported_topic_codes: listSupportedTopicCodes(),
       supports_topic_alignment: supportsTopicAlignment(),
       supported_contract_offers: listSupportedContractOffers(),
-      supports_bespoke_contract_negotiation: supportsBespokePrecontractNegotiation(),
+      supports_bespoke_contract_negotiation: advertisesBespokeContractNegotiation(),
     },
     policy_commitments: {},
   };
@@ -378,6 +387,12 @@ export function buildRelayInboxTransportFromEnv(): RelayInboxTransport | null {
 // If SELKEY_AFAL_SEED_HEX is set, also starts DirectAfalTransport.
 // If SELKEY_INBOX_TRANSPORT=relay, uses RelayInboxTransport.
 async function main() {
+  if (!isDevEnvironment() && !configuredRelayKeyHex()) {
+    console.error(
+      'selkey-mcp: SELKEY_RELAY_VERIFYING_KEY_HEX is not set; relay sessions will be refused until it is ' +
+        '(only SELKEY_ENV=dev runs without a pinned relay key).',
+    );
+  }
   const knownAgents = parseKnownAgentsFromEnv();
   // Fails closed if pins.json is group/world-writable or malformed.
   const pinStore = openPinStoreFromEnv(knownAgents);
@@ -456,6 +471,8 @@ if (isDirectExecution) {
             SELKEY_RELAY_URL: 'http://localhost:8080',
             SELKEY_AGENT_ID: 'your-agent-id',
             SELKEY_RESUME_TOKEN_SECRET: 'your-secret-here',
+            SELKEY_RELAY_VERIFYING_KEY_HEX: 'relay-verifying-key-64-hex-from-the-relay-operator',
+            SELKEY_OPERATOR_TOKEN: 'relay-operator-token-if-the-relay-requires-one',
           },
         },
       },
@@ -490,6 +507,19 @@ export { listKnownModelProfiles, resolveModelProfileRefs } from './model-profile
 export type { ModelProfileRef } from './model-profiles.js';
 export { listSupportedTopicCodes, supportsTopicAlignment } from './topic-codes.js';
 export { listSupportedContractOffers } from './contract-offers.js';
-export { buildAgentCard, buildCardSignedPayload, signAgentCard, verifyAgentCardSignature, SELKEY_A2A_EXTENSION_URI } from './a2a-agent-card.js';
+export {
+  AGENT_CARD_LIFETIME_MS,
+  AGENT_CARD_MAX_FUTURE_SKEW_MS,
+  AGENT_CARD_MAX_LIFETIME_MS,
+  agentCardValidityError,
+  buildAgentCard,
+  buildCardSignedPayload,
+  signAgentCard,
+  verifyAgentCardSignature,
+  SELKEY_A2A_EXTENSION_URI,
+} from './a2a-agent-card.js';
 export type { AgentCard, AgentCardSignedPayload, SelkeyA2AExtensionParams } from './a2a-agent-card.js';
-export { supportsBespokePrecontractNegotiation } from './bespoke-contracts.js';
+export {
+  advertisesBespokeContractNegotiation,
+  supportsBespokePrecontractNegotiation,
+} from './bespoke-contracts.js';

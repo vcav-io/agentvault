@@ -31,7 +31,9 @@ interface:
 | `supports_precontract_negotiation` | `boolean` | No | `true` if the agent supports pre-contract offer negotiation |
 | `supports_bespoke_contract_negotiation` | `boolean` | No | `true` if the agent supports bespoke (custom) contract negotiation |
 | `supported_contract_offers` | `SupportedContractOffer[]` | No | List of contract offers this agent can fulfill (see section 8) |
-| `card_signature` | `string` | No | Ed25519 signature (hex) over the canonical card payload (see section 3) |
+| `issued_at` | `string` | With a signature | RFC 3339 UTC time the card was signed (signed; see section 3) |
+| `expires_at` | `string` | With a signature | RFC 3339 UTC time after which the card must not be used (signed; see section 3) |
+| `card_signature` | `string` | No | Ed25519 signature (lowercase hex) over the canonical card payload (see section 3). A card without it is not used |
 
 JSON Schema: [`schemas/a2a-extension-params.schema.json`](../../schemas/a2a-extension-params.schema.json)
 
@@ -41,26 +43,30 @@ JSON Schema: [`schemas/a2a-extension-params.schema.json`](../../schemas/a2a-exte
 
 When `card_signature` is present, it is an Ed25519 signature over a
 JCS-canonicalized `AgentCardSignedPayload` object with domain prefix
-`VCAV-AGENT-CARD-V1:`.
+`VCAV-AGENT-CARD-V2:`. Version 2 adds the validity window (`issued_at`,
+`expires_at`) to the signed payload; cards signed under the earlier
+`VCAV-AGENT-CARD-V1:` prefix have no expiry and do not verify.
 
-The signed payload contains these fields (alphabetically sorted for
-deterministic canonicalization):
+The signed payload contains these fields (shown in the alphabetical order
+that JCS canonicalization produces):
 
 | Field | Type | Source |
 |-------|------|--------|
-| `agent_id` | `string` | `card.name` |
-| `extension_uri` | `string` | Always `"urn:selkey:bounded-disclosure:v1"` |
-| `extension_version` | `string` | Always `"1"` |
-| `public_key_hex` | `string` | From extension params |
-| `supported_purposes` | `string[]` | From extension params |
-| `relay_url` | `string` | From extension params (omitted if absent) |
 | `a2a_send_message_url` | `string` | From extension params (omitted if absent) |
 | `afal_endpoint` | `string` | From extension params (omitted if absent) |
-| `supports_topic_alignment` | `boolean` | From extension params (omitted if absent) |
-| `supported_topic_codes` | `string[]` | From extension params (omitted if absent) |
-| `supports_precontract_negotiation` | `boolean` | From extension params (omitted if absent) |
-| `supports_bespoke_contract_negotiation` | `boolean` | From extension params (omitted if absent) |
+| `agent_id` | `string` | `card.name` |
+| `expires_at` | `string` | From extension params (required) |
+| `extension_uri` | `string` | Always `"urn:selkey:bounded-disclosure:v1"` |
+| `extension_version` | `string` | Always `"1"` |
+| `issued_at` | `string` | From extension params (required) |
+| `public_key_hex` | `string` | From extension params |
+| `relay_url` | `string` | From extension params (omitted if absent) |
 | `supported_contract_offers` | `SupportedContractOffer[]` | From extension params (omitted if absent) |
+| `supported_purposes` | `string[]` | From extension params |
+| `supported_topic_codes` | `string[]` | From extension params (omitted if absent) |
+| `supports_bespoke_contract_negotiation` | `boolean` | From extension params (omitted if absent) |
+| `supports_precontract_negotiation` | `boolean` | From extension params (omitted if absent) |
+| `supports_topic_alignment` | `boolean` | From extension params (omitted if absent) |
 
 Optional fields are included in the signed payload only when present in the
 extension params. The verifier must reconstruct the same object from the
@@ -75,31 +81,28 @@ To verify a card signature:
 2. Build the `AgentCardSignedPayload` from the extension params (excluding
    `card_signature` itself)
 3. JCS-canonicalize the payload
-4. Verify the Ed25519 signature using `VCAV-AGENT-CARD-V1:` domain prefix
-   and the `public_key_hex` from the extension params
+4. Check the validity window: `issued_at` and `expires_at` are RFC 3339 UTC
+   timestamps (`...Z`), `issued_at` is at most 60 seconds in the future,
+   `expires_at` is after `issued_at` and after the current time, and the
+   lifetime (`expires_at - issued_at`) is at most 7 days
+   (`AGENT_CARD_MAX_LIFETIME_MS`). A missing or malformed field fails.
+5. Verify the Ed25519 signature (strict verification, lowercase hex) using
+   the `VCAV-AGENT-CARD-V2:` domain prefix and the pinned key for
+   `agent_id`, which must equal `public_key_hex`
 
-### 3.3 Unsigned Card Transition Policy
+Signers: `selkey-mcp` signs the served card on each request with a 24 hour
+lifetime (`AGENT_CARD_LIFETIME_MS`), so a long-running agent never serves an
+expired card. An initiator caches discovery from a card for at most 5
+minutes and never past the card's `expires_at`.
 
-**Current behavior:** `card_signature` is optional. Agents may publish
-unsigned cards.
+### 3.3 Unsigned, Invalid and Expired Cards
 
-**Lenient mode (default):** When `card_signature` is absent, the client logs
-a warning and proceeds. The trust anchor falls back to the fetched A2A
-document itself (HTTPS transport security only).
-
-**Strict mode:** When `DirectAfalTransportConfig.requireSignedCards` is `true`:
-- Unsigned cards are rejected with an error
-- In strict mode, `a2a_send_message_url` must be explicitly present in the
-  signed extension params; fallback derivation from `card.url` is forbidden
-
-**Guarantees lost without signatures:**
-- No proof that the card was issued by the holder of the Ed25519 key
-- No tamper detection if the card is served through a compromised CDN or proxy
-- No binding between the public key and the declared endpoints
-
-**Deprecation timeline:** Unsigned cards are supported for backward
-compatibility. A future extension version (`:v2`) may require signatures.
-Implementers should begin signing cards now.
+`selkey-mcp` uses a card only if it is signed by the pinned key, the
+signature verifies under `VCAV-AGENT-CARD-V2:`, and the card is within its
+validity window. An unsigned card, a card that fails verification, a
+`VCAV-AGENT-CARD-V1:` card and an expired card are ignored, and the agent
+falls back to the peer's signed AFAL descriptor (`/afal/descriptor`). There
+is no compatibility window for version 1 cards.
 
 ## 4. Media Types
 
@@ -333,8 +336,8 @@ interface ModelProfileRef {
 
 ### 9.1 Unsigned Cards
 
-Agents that do not include `card_signature` are accepted in lenient mode
-(the default). See section 3.3 for the transition policy.
+Cards without `card_signature`, version 1 cards and expired cards are not
+used; see section 3.3.
 
 ### 9.2 Missing relay_preference
 
@@ -375,7 +378,7 @@ prepended to the JCS-canonicalized message before signing:
 
 | Domain Prefix | Usage |
 |---------------|-------|
-| `VCAV-AGENT-CARD-V1:` | Agent card signature |
+| `VCAV-AGENT-CARD-V2:` | Agent card signature (with `issued_at` / `expires_at`) |
 | `VCAV-DESCRIPTOR-V1:` | Agent descriptor signature |
 | `VCAV-PROPOSE-V1:` | AFAL propose message |
 | `VCAV-ADMIT-V1:` | AFAL admit message |

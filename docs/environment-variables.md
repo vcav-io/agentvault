@@ -37,9 +37,10 @@ The relay listens on `127.0.0.1` unless `SELKEY_BIND_ADDR` says otherwise. In Do
 (the demo compose file publishes `127.0.0.1:3100:3100`).
 
 The relay refuses to start on a non-loopback address unless `SELKEY_OPERATOR_TOKEN` is set. This
-applies with `SELKEY_ENV=dev` too. If access is controlled some other way (for example an
-authenticating reverse proxy, or a container port published only on host loopback as in the demo
-compose file), set `SELKEY_ALLOW_UNAUTHENTICATED=1` to start anyway.
+applies with `SELKEY_ENV=dev` too. The demo compose file sets a shared
+`SELKEY_OPERATOR_TOKEN` (a published demo value, not a secret) for the relay and the demo service.
+If access is controlled some other way (for example an authenticating reverse proxy), set
+`SELKEY_ALLOW_UNAUTHENTICATED=1` to start without a token.
 
 | Endpoint | `SELKEY_ENV=dev`, no token | Non-dev, no token | `SELKEY_OPERATOR_TOKEN` set |
 |---|---|---|---|
@@ -143,7 +144,9 @@ Unset variables use the default. A set value must be a positive integer, or the 
 | `SELKEY_RELAY_INSECURE_HTTP_HOSTS` | No | — | Comma-separated host names on which plain `http://` relays are allowed besides loopback (`localhost`, `127.0.0.0/8`, `[::1]`), for example `relay` on a private compose network in the local demo |
 | `SELKEY_AGENT_ID` | No | — | This agent's ID, used for contract building |
 | `SELKEY_RESUME_TOKEN_SECRET` | No | — | Secret for HMAC-signing resume tokens. Recommended for production |
-| `SELKEY_RELAY_VERIFYING_KEY_HEX` | No | — | Pinned relay Ed25519 verifying key (64 hex chars), obtained from the relay operator. Contracts this agent builds carry it as `relay_verifying_key_hex`, so a relay with a different key refuses the session before input is submitted (a responder expects the same value, so both parties should pin the same key). A pinned responder also still accepts the same contract without `relay_verifying_key_hex`, so that an initiator without a pin can reach it; in that case the relay key is not bound into the contract, and the responder relies on its own `/health` check and receipt verification against the pin. Session receipts must verify against it. `selkey.verify_receipt` uses it when no `public_key_hex` argument is given, and rejects an argument that differs from it. Without this or an argument, the tool returns an error |
+| `SELKEY_ENV` | No | — | `dev` lets the agent run relay sessions without `SELKEY_RELAY_VERIFYING_KEY_HEX` (local development only) |
+| `SELKEY_OPERATOR_TOKEN` | When the relay has one | — | The operator token of the relay at `SELKEY_RELAY_URL` (the relay's `SELKEY_OPERATOR_TOKEN`). Sent as `Authorization: Bearer <token>` when this agent creates a session on that relay, and never sent to other relays or logged |
+| `SELKEY_RELAY_VERIFYING_KEY_HEX` | Yes, outside `SELKEY_ENV=dev` | — | Pinned relay Ed25519 verifying key (64 hex chars), obtained from the relay operator. Contracts this agent builds carry it as `relay_verifying_key_hex`, so a relay with a different key refuses the session before input is submitted. A responder accepts only contracts that carry the same value, so both parties must pin the same key. Outside `SELKEY_ENV=dev`, `relay_signal` refuses INITIATE, CREATE, RESPOND and JOIN without it. Outside development, a responder given `expected_contract_hash` also requires that hash to be a contract it builds itself with the pinned key. In development an unpinned agent still works and a pinned responder also accepts contracts without the key field, but pinning is recommended there too. Session receipts must verify against it. `selkey.verify_receipt` uses it when no `public_key_hex` argument is given, and rejects an argument that differs from it. Without this or an argument, the tool returns an error |
 
 ### Owner-side disclosure budget
 

@@ -828,10 +828,13 @@ is no form that accepts whatever key the relay serves.
 
 A contract may carry `relay_verifying_key_hex`. The relay compares it with its own
 signing key when the session (or inbox invite) is created, and refuses the session
-on a mismatch, before any input is accepted. When `SELKEY_RELAY_VERIFYING_KEY_HEX`
-is set, `selkey-mcp` adds it to every contract it builds, and a responder expects
-the same value in the contract hash. Both parties should therefore pin the same
-key for the relay they share.
+on a mismatch, before any input is accepted. `selkey-mcp` adds
+`SELKEY_RELAY_VERIFYING_KEY_HEX` to every contract it builds, and a responder
+accepts only contracts that carry the same value. Both parties must therefore pin
+the same key for the relay they share. Outside `SELKEY_ENV=dev` the pin is
+required: without it an agent neither starts nor responds to sessions. Development
+setups also work without a pin, but pinning is recommended there too; the local
+demo pins the key of its local relay automatically.
 
 ---
 

@@ -129,6 +129,12 @@ if [[ "${NO_RELAY}" == "false" ]]; then
     log_success "Relay binary ready"
 
     RELAY_BIN="${REPO_ROOT}/target/release/selkey-relay"
+    # One operator token for the relay and both agents (fresh per run unless
+    # SELKEY_OPERATOR_TOKEN is set).
+    if [[ -z "${SELKEY_OPERATOR_TOKEN:-}" ]]; then
+      SELKEY_OPERATOR_TOKEN="$(openssl rand -hex 32)"
+    fi
+    SELKEY_OPERATOR_TOKEN="${SELKEY_OPERATOR_TOKEN}" \
     SELKEY_PORT=3100 \
     SELKEY_PROMPT_PROGRAM_DIR="${REPO_ROOT}/packages/selkey-relay/prompt_programs" \
     SELKEY_SCHEMA_DIR="${REPO_ROOT}/schemas/output" \
@@ -161,6 +167,22 @@ else
   fi
   log_success "Relay confirmed at ${RELAY_URL}"
 fi
+
+# ---------------------------------------------------------------------------
+# Pin the relay key for both agents
+# ---------------------------------------------------------------------------
+
+# The relay is local (loopback), so the demo pins the key it serves now. For a
+# relay you don't run yourself, get its key from the operator instead and set
+# SELKEY_RELAY_VERIFYING_KEY_HEX before running this script.
+if [[ -z "${SELKEY_RELAY_VERIFYING_KEY_HEX:-}" ]]; then
+  SELKEY_RELAY_VERIFYING_KEY_HEX="$(curl -sf "${RELAY_URL}/health" | python3 -c "import sys,json; print(json.load(sys.stdin)['verifying_key_hex'])")"
+fi
+if [[ ! "${SELKEY_RELAY_VERIFYING_KEY_HEX}" =~ ^[0-9a-fA-F]{64}$ ]]; then
+  log_error "Could not read the relay verifying key from ${RELAY_URL}/health"
+  exit 1
+fi
+log_success "Relay key pinned for both agents: ${SELKEY_RELAY_VERIFYING_KEY_HEX}"
 
 # ---------------------------------------------------------------------------
 # Kill stale AFAL servers from previous demo runs
@@ -225,7 +247,9 @@ cat >"${DEMO_DIR}/alice/.mcp.json" <<JSON
         "SELKEY_AFAL_PEER_DESCRIPTOR_URL": "http://localhost:3201/afal/descriptor",
         "SELKEY_KNOWN_AGENTS": "[{\"agent_id\":\"bob\",\"aliases\":[\"Bob\"],\"public_key_hex\":\"${BOB_PUB}\"}]",
         "SELKEY_RESUME_TOKEN_SECRET": "${ALICE_RESUME}",
-        "SELKEY_WORKDIR": "${DEMO_DIR}/alice"
+        "SELKEY_WORKDIR": "${DEMO_DIR}/alice",
+        "SELKEY_RELAY_VERIFYING_KEY_HEX": "${SELKEY_RELAY_VERIFYING_KEY_HEX}",
+        "SELKEY_OPERATOR_TOKEN": "${SELKEY_OPERATOR_TOKEN:-}"
       }
     }
   }
@@ -247,7 +271,9 @@ cat >"${DEMO_DIR}/bob/.mcp.json" <<JSON
         "SELKEY_AFAL_ALLOWED_PURPOSES": "MEDIATION,COMPATIBILITY",
         "SELKEY_KNOWN_AGENTS": "[{\"agent_id\":\"alice\",\"aliases\":[\"Alice\"]}]",
         "SELKEY_RESUME_TOKEN_SECRET": "${BOB_RESUME}",
-        "SELKEY_WORKDIR": "${DEMO_DIR}/bob"
+        "SELKEY_WORKDIR": "${DEMO_DIR}/bob",
+        "SELKEY_RELAY_VERIFYING_KEY_HEX": "${SELKEY_RELAY_VERIFYING_KEY_HEX}",
+        "SELKEY_OPERATOR_TOKEN": "${SELKEY_OPERATOR_TOKEN:-}"
       }
     }
   }

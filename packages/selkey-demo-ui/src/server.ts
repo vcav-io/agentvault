@@ -31,7 +31,7 @@ import {
   listKnownModelProfiles,
   listSupportedContractOffers,
   listSupportedTopicCodes,
-  supportsBespokePrecontractNegotiation,
+  advertisesBespokeContractNegotiation,
   supportsTopicAlignment,
 } from 'selkey-mcp';
 import type {
@@ -52,6 +52,7 @@ import {
 } from './agent-loop.js';
 import { withScenarioPurposeRegistry } from './scenario-purpose-registry.js';
 import { buildStartMilestoneEvents } from './start-milestones.js';
+import { resolveDemoRelayPin, type DemoRelayPin } from './relay-pin.js';
 import {
   DEMO_SMOKE_MODE,
   SMOKE_RELAY_HEALTH,
@@ -76,12 +77,18 @@ const RUNS_DIR = process.env['DEMO_RUNS_DIR'] ?? path.join(DEMO_DIR, 'runs');
 const BOB_AFAL_PORT = parseInt(process.env['BOB_AFAL_PORT'] ?? '3201', 10);
 const ALICE_AFAL_PORT = parseInt(process.env['ALICE_AFAL_PORT'] ?? '3202', 10);
 const SELKEY_WORKDIR = process.env['SELKEY_WORKDIR'] ?? DEMO_DIR;
+let relayPin: DemoRelayPin | undefined;
 
 // ── Load .env ────────────────────────────────────────────────────────────
 
 // Try loading from package dir, then from repo root
 dotenvConfig({ path: path.join(DEMO_DIR, '.env') });
 dotenvConfig({ path: path.resolve(DEMO_DIR, '../../.env') });
+
+// A relay key configured by the operator (environment or .env, so read after
+// loading .env); otherwise the demo pins the local relay's key at the first
+// start (see relay-pin.ts).
+const CONFIGURED_RELAY_KEY = process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'];
 
 // ── Provider setup ───────────────────────────────────────────────────────
 
@@ -204,7 +211,7 @@ function buildDescriptor(agentId: string, seedHex: string, pubKeyHex: string, ht
       supported_topic_codes: listSupportedTopicCodes(),
       supports_topic_alignment: supportsTopicAlignment(),
       supported_contract_offers: listSupportedContractOffers(),
-      supports_bespoke_contract_negotiation: supportsBespokePrecontractNegotiation(),
+      supports_bespoke_contract_negotiation: advertisesBespokeContractNegotiation(),
     },
     policy_commitments: {},
   };
@@ -463,6 +470,7 @@ app.get('/api/status', (_req, res) => {
     bob: { status: bobState.status, turnCount: bobState.turnCount },
     sseClients: events.clientCount,
     runFile: events.getRunFile(),
+    relay_key_pin: relayPin ? { key_id: relayKeyId(relayPin.keyHex), source: relayPin.source } : null,
   });
 });
 
@@ -492,6 +500,14 @@ app.post('/api/start', async (req, res) => {
         res.status(502).json({ error: `Cannot reach relay at ${RELAY_URL} (${detail}). Start the relay first: cargo run -p selkey-relay` });
         return;
       }
+    }
+
+    // Pin the relay key for both agents before any session starts.
+    try {
+      applyRelayPin(relayHealth);
+    } catch (err) {
+      res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+      return;
     }
 
     // Relay is reachable — safe to proceed with provider override and recording
@@ -670,25 +686,43 @@ app.post('/api/message', async (req, res) => {
 });
 
 /**
- * Local demo only: read the relay's /health key without a pin. The result is
- * labelled key_pinned: false in /api/verify-receipt responses.
+ * Pin the relay key for both agents (SELKEY_RELAY_VERIFYING_KEY_HEX) from the
+ * configured key, or from the local relay's /health at the first call.
  */
-async function readUnpinnedDemoRelayKey(relayUrl: string): Promise<string> {
-  const resp = await fetch(relayUrl.replace(/\/$/, '') + '/health', { signal: AbortSignal.timeout(3000) });
-  if (!resp.ok) throw new Error(`Relay /health returned ${resp.status}`);
-  const body = (await resp.json()) as Record<string, unknown>;
-  const key = body['verifying_key_hex'];
-  if (typeof key !== 'string' || !/^[0-9a-fA-F]{64}$/.test(key)) {
-    throw new Error('Relay /health response missing a valid verifying_key_hex');
+function applyRelayPin(health: Record<string, unknown> | null): DemoRelayPin {
+  const pin = resolveDemoRelayPin({
+    configured: CONFIGURED_RELAY_KEY,
+    current: relayPin,
+    relayUrl: RELAY_URL,
+    health,
+    insecureHosts: process.env['SELKEY_RELAY_INSECURE_HTTP_HOSTS'],
+  });
+  if (!relayPin) {
+    events.emitSystem(
+      `Relay key pinned for both agents: ${relayKeyId(pin.keyHex)} ` +
+        (pin.source === 'configured'
+          ? '(from SELKEY_RELAY_VERIFYING_KEY_HEX)'
+          : '(read from the local relay at the first start)'),
+    );
   }
-  return key.toLowerCase();
+  relayPin = pin;
+  process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'] = pin.keyHex;
+  return pin;
+}
+
+async function currentRelayPin(): Promise<DemoRelayPin> {
+  if (relayPin) return relayPin;
+  if (CONFIGURED_RELAY_KEY) return applyRelayPin(null);
+  const resp = await fetch(`${RELAY_URL.replace(/\/$/, '')}/health`, { signal: AbortSignal.timeout(3000) });
+  if (!resp.ok) throw new Error(`Relay /health returned ${resp.status}`);
+  return applyRelayPin((await resp.json()) as Record<string, unknown>);
 }
 
 // Verify receipt signature — v3, v2 and v1 receipts via the shared verifier
 app.post('/api/verify-receipt', async (req, res) => {
   try {
     if (DEMO_SMOKE_MODE) {
-      res.json(verifySmokeReceipt());
+      res.json({ ...verifySmokeReceipt(), key_pinned: Boolean(relayPin), key_source: relayPin?.source });
       return;
     }
 
@@ -701,43 +735,33 @@ app.post('/api/verify-receipt', async (req, res) => {
       return;
     }
 
-    // Verify against the pinned relay key when one is configured. Without a
-    // pin, this local demo reads the configured relay's /health key and says
-    // so in the response (key_pinned: false): that key comes from the relay
-    // being checked, so it is not a trust anchor.
-    const pinnedKeyHex = process.env['SELKEY_RELAY_VERIFYING_KEY_HEX']?.trim().toLowerCase();
-    let pubKeyHex: string;
-    if (pinnedKeyHex) {
-      if (!/^[0-9a-f]{64}$/.test(pinnedKeyHex)) {
-        res.json({ verified: false, error: 'SELKEY_RELAY_VERIFYING_KEY_HEX must be 64 hex characters' });
-        return;
-      }
-      pubKeyHex = pinnedKeyHex;
-    } else {
-      try {
-        pubKeyHex = await readUnpinnedDemoRelayKey(RELAY_URL);
-      } catch (err) {
-        res.json({ verified: false, error: `Could not fetch relay public key: ${err instanceof Error ? err.message : String(err)}` });
-        return;
-      }
+    // Verify against the relay key both agents pinned.
+    let pin: DemoRelayPin;
+    try {
+      pin = await currentRelayPin();
+    } catch (err) {
+      res.json({ verified: false, error: `No relay key pinned: ${err instanceof Error ? err.message : String(err)}` });
+      return;
     }
-
+    const pubKeyHex = pin.keyHex;
     const result = verifyReceipt(receipt, pubKeyHex);
     res.json({
       verified: result.valid,
       schema_version: result.schema_version,
       assurance_level: result.assurance_level,
       operator_id: result.operator_id,
-      key_pinned: Boolean(pinnedKeyHex),
+      key_pinned: true,
+      key_source: pin.source,
       key_id: relayKeyId(pubKeyHex),
       errors: result.errors,
-      warnings: pinnedKeyHex
-        ? result.warnings
-        : [
-            ...result.warnings,
-            'Relay key is not pinned: it was read from the relay /health endpoint (local demo only). ' +
-              'Set SELKEY_RELAY_VERIFYING_KEY_HEX to verify against a pinned key.',
-          ],
+      warnings:
+        pin.source === 'configured'
+          ? result.warnings
+          : [
+              ...result.warnings,
+              'Relay key pinned at the first demo start from the local relay /health endpoint (local demo only). ' +
+                'Set SELKEY_RELAY_VERIFYING_KEY_HEX to pin a key obtained out of band.',
+            ],
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

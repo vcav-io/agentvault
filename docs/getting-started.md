@@ -50,6 +50,8 @@ docker compose -f docker/docker-compose.demo.yml --env-file .env up
 
 If the images can't be pulled, Compose builds them from your checkout. Add `--build` to always build from source (about 10 minutes cold).
 
+The relay and the demo agents share one operator token (`SELKEY_OPERATOR_TOKEN`). The compose file has a published demo default (it says it is not a secret) so that `up` works out of the box; to use your own, add one to `.env` first (`echo "SELKEY_OPERATOR_TOKEN=..." >> .env`, with the value from `openssl rand -hex 32`). The demo also pins the relay's verifying key for both agents automatically: it reads the key from the local relay's `/health` at the first start and uses it for the agents and for receipt verification. Outside this local demo, agents need `SELKEY_RELAY_VERIFYING_KEY_HEX` set to a key you got from the relay operator, unless `SELKEY_ENV=dev`.
+
 To stop:
 
 ```bash

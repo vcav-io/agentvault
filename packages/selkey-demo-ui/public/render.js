@@ -602,7 +602,11 @@ var VaultCardManager = (function () {
                         if (res.verified) {
                           vStatus.className = 'receipt-card__verify-status verified';
                           vStatus.textContent = '\u2713 Signature valid (v' + (res.schema_version || '2') + ')' +
-                            (res.key_pinned === false ? ' \u2014 relay key not pinned (demo)' : '');
+                            (res.key_pinned === false
+                              ? ' \u2014 relay key not pinned (demo)'
+                              : res.key_source === 'local-relay'
+                                ? ' \u2014 relay key pinned from the local relay at demo start'
+                                : '');
                         } else {
                           vStatus.className = 'receipt-card__verify-status failed';
                           vStatus.textContent = '\u2717 ' + ((res.errors && res.errors[0]) || res.error || 'Verification failed');
