@@ -3569,11 +3569,11 @@ fn assert_redacted_schema_error(text: &str) {
     );
     assert!(
         !text.contains("PRIVATE_VALUE"),
-        "instance value leaked: {text}"
+        "instance value present: {text}"
     );
     assert!(
         !text.contains("private_key_bravo"),
-        "instance key leaked: {text}"
+        "instance key present: {text}"
     );
 }
 
