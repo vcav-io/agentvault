@@ -132,6 +132,12 @@ describe('untrusted content labels', () => {
     }
   });
 
+  it('does not tell the model to follow user_message, which can carry peer text', () => {
+    for (const tool of [...RELAY_TOOLS, ...IFC_TOOLS]) {
+      expect(tool.description).not.toMatch(/follow user_message/i);
+    }
+  });
+
   it('truncates a peer response body embedded in a PROPOSE rejection', async () => {
     vi.stubGlobal(
       'fetch',

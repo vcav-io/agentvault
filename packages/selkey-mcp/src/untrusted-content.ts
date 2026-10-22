@@ -95,6 +95,10 @@ export function relaySignalUntrustedPaths(response: ToolResponse<unknown>): stri
     'data.from',
     // Session ids come from the relay or, for a responder, the peer's invite.
     'data.session_id',
+    // Negotiated values originate from the counterparty's selection.
+    'data.aligned_topic_code',
+    'data.purpose_override',
+    'data.negotiated_contract',
     'error.detail',
   ];
   if (valueAt(response, 'data.state') === 'FAILED') paths.push('data.user_message');
