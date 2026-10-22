@@ -4437,7 +4437,7 @@ async fn test_invite_creation_runs_contract_checks() {
 #[tokio::test]
 async fn test_invite_acceptance_runs_contract_checks() {
     let state = Arc::new(inbox_test_app_state());
-    // Store an invite directly (bypassing the create-time checks) whose
+    // Store an invite directly (without the create-time checks) whose
     // contract names an unknown prompt program.
     let mut contract = valid_contract();
     contract["prompt_template_hash"] = serde_json::json!("c".repeat(64));
