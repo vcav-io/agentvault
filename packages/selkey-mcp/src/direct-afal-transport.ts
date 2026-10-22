@@ -131,6 +131,7 @@ export interface DirectAfalTransportConfig {
   localDescriptor: AgentDescriptor;
   relayUrl?: string;
   peerDescriptorUrl?: string;
+  /** @deprecated Unsigned agent cards are never used; this option has no effect. */
   requireSignedCards?: boolean;
   /**
    * Agent identity pins. Every peer signature is verified against the pinned
@@ -827,10 +828,16 @@ export class DirectAfalTransport implements AfalTransport {
     const cardSignature =
       typeof params['card_signature'] === 'string' ? params['card_signature'] : undefined;
 
-    const strictMode = this.config.requireSignedCards === true;
-
-    // Verify card_signature if present; enforce in strict mode
-    if (cardSignature) {
+    // A card is used only if it carries a valid card_signature. The signature
+    // covers every field taken from the card (endpoints, relay hint,
+    // capabilities), and the signing key must equal the peer's pin
+    // (acceptPeerKey). An unsigned card is never used; discovery falls back
+    // to the signed AFAL descriptor.
+    if (!cardSignature) {
+      console.warn('Peer agent card is unsigned — ignoring it and using the signed descriptor');
+      return null;
+    }
+    {
       // Reconstruct the extension params for verification (without card_signature itself)
       const verifyParams: SelkeyA2AExtensionParams = {
         public_key_hex: publicKeyHex as string,
@@ -890,28 +897,12 @@ export class DirectAfalTransport implements AfalTransport {
       // agent_id verification: the signed payload's agent_id must equal card.name
       // (This is inherently true since we use card.name as the agent_id for verification,
       // but if expectedPeerAgentId differs, that's caught below.)
-    } else if (strictMode) {
-      // Strict mode: unsigned card is a hard reject with no fallback —
-      // the operator opted into requiring signatures.
-      console.warn('Agent card is unsigned but requireSignedCards is enabled — falling back to descriptor');
-      return null;
-    } else {
-      console.warn(
-        'Peer agent card is unsigned — proceeding in lenient mode. ' +
-        'Set requireSignedCards=true to enforce card signatures.',
-      );
     }
 
-    // In strict mode, a2a_send_message_url must be explicit in the signed payload —
-    // fallback derivation from card.url is forbidden.
+    // a2a_send_message_url must be explicit in the signed payload; it is
+    // never derived from the unsigned card.url.
     const a2aSendMessageUrl =
-      typeof params['a2a_send_message_url'] === 'string'
-        ? params['a2a_send_message_url']
-        : strictMode
-          ? null
-          : typeof card.url === 'string'
-            ? deriveA2ASendMessageUrl(card.url)
-            : null;
+      typeof params['a2a_send_message_url'] === 'string' ? params['a2a_send_message_url'] : null;
     if (typeof publicKeyHex !== 'string' || (!afalEndpoint && !a2aSendMessageUrl)) {
       return null;
     }
@@ -934,7 +925,7 @@ export class DirectAfalTransport implements AfalTransport {
     if (!agentId) return null;
     if (expectedPeerAgentId !== undefined && agentId !== expectedPeerAgentId) {
       throw new Error(
-        `Peer agent card identity mismatch: expected ${expectedPeerAgentId} but got ${agentId}`,
+        `Peer agent card identity mismatch: expected ${expectedPeerAgentId} but got ${peerText(agentId)}`,
       );
     }
 
@@ -1188,7 +1179,7 @@ export class DirectAfalTransport implements AfalTransport {
     }
     if (expectedPeerAgentId !== undefined && descriptor.agent_id !== expectedPeerAgentId) {
       throw new Error(
-        `Peer descriptor identity mismatch: expected ${expectedPeerAgentId} but got ${descriptor.agent_id}`,
+        `Peer descriptor identity mismatch: expected ${expectedPeerAgentId} but got ${peerText(descriptor.agent_id)}`,
       );
     }
 
@@ -1225,14 +1216,6 @@ function deriveAgentCardUrl(peerUrl: string): string | null {
       return url.toString();
     }
     return `${url.origin}/.well-known/agent-card.json`;
-  } catch {
-    return null;
-  }
-}
-
-function deriveA2ASendMessageUrl(baseUrl: string): string | null {
-  try {
-    return new URL(A2A_SEND_MESSAGE_PATH, baseUrl).toString();
   } catch {
     return null;
   }
@@ -1306,6 +1289,16 @@ function parseDescriptorPeerDiscovery(descriptor: AgentDescriptor): SelkeyPeerDi
       descriptor.capabilities['supports_bespoke_contract_negotiation'] === true,
     ...(supportedContractOffers ? { supportedContractOffers } : {}),
   };
+}
+
+/**
+ * Quote a peer-supplied string for inclusion in an error: JSON-quoted,
+ * truncated, and marked as coming from the peer (not an instruction).
+ */
+export function peerText(value: unknown): string {
+  const text = typeof value === 'string' ? value : String(value);
+  const clipped = text.length > 64 ? `${text.slice(0, 64)}…` : text;
+  return `${JSON.stringify(clipped)} (peer-supplied text)`;
 }
 
 /** An ADMIT may be valid for at most 10 minutes. */

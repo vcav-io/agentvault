@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { signCard } from './helpers/sign-card.js';
 import { ed25519 } from '@noble/curves/ed25519';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
 import { DirectAfalTransport } from '../direct-afal-transport.js';
@@ -66,7 +67,7 @@ function makePeerDescriptor(overrides: Partial<AgentDescriptor> = {}): AgentDesc
 }
 
 function makeAgentCard(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
+  return signCard({
     name: 'bob-test',
     description: 'Supports Selkey bounded-disclosure coordination sessions',
     version: '1.0.0',
@@ -104,7 +105,7 @@ function makeAgentCard(overrides: Record<string, unknown> = {}): Record<string, 
     },
     skills: [],
     ...overrides,
-  };
+  }, PEER_SEED);
 }
 
 // ── AfalPropose helper ─────────────────────────────────────────────────────
@@ -748,6 +749,8 @@ describe('DirectAfalTransport', () => {
                       public_key_hex: PEER_PUBKEY,
                       relay_url: 'http://relay.example.com',
                       supported_purposes: ['MEDIATION'],
+                      // Endpoints come only from signed card fields.
+                      a2a_send_message_url: 'http://peer.example.com/a2a/send-message',
                     },
                   },
                 ],

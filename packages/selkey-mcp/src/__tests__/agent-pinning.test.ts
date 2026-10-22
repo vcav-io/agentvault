@@ -26,11 +26,12 @@ import {
   SELKEY_CONTRACT_OFFER_SELECTION_MEDIA_TYPE,
   buildA2ASendMessageRequest,
 } from '../a2a-messages.js';
-import { PinError, PinStore, keyFingerprint, resolveAgentHint } from '../pin-store.js';
+import { MAX_PENDING_PINS, PinError, PinStore, keyFingerprint, resolveAgentHint } from '../pin-store.js';
 import { runPinsCli, type PinsCliIo } from '../pin-cli.js';
 import { signNegotiationRequest } from '../negotiation-auth.js';
 import { IfcService } from '../ifc.js';
 import { InsecureStateFileError } from '../secure-fs.js';
+import { signCard } from './helpers/sign-card.js';
 
 const ALICE_SEED = '01'.repeat(32);
 const ALICE_PUB = bytesToHex(ed25519.getPublicKey(hexToBytes(ALICE_SEED)));
@@ -64,7 +65,14 @@ function descriptor(agentId: string, pub: string, seed: string): AgentDescriptor
 }
 
 /** An agent card for "bob-test" carrying `pub` (optionally self-signed). */
-function card(pub: string): Record<string, unknown> {
+const SEED_FOR: Record<string, string> = { [ALICE_PUB]: ALICE_SEED, [BOB_PUB]: BOB_SEED, [OTHER_PUB]: OTHER_SEED };
+
+/** A signed agent card for "bob-test" carrying `pub`, signed by that key. */
+function card(pub: string, extraParams: Record<string, unknown> = {}): Record<string, unknown> {
+  return signCard(unsignedCard(pub, extraParams), SEED_FOR[pub] ?? OTHER_SEED);
+}
+
+function unsignedCard(pub: string, extraParams: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     name: 'bob-test',
     url: 'http://peer.example.com',
@@ -76,6 +84,7 @@ function card(pub: string): Record<string, unknown> {
             public_key_hex: pub,
             supported_purposes: ['MEDIATION'],
             afal_endpoint: 'http://peer.example.com/afal',
+            ...extraParams,
           },
         },
       ],
@@ -239,6 +248,78 @@ describe('pin store', () => {
   });
 });
 
+describe('pin store shared with the CLI', () => {
+  const file = () => path.join(tmp, '.selkey', 'pins.json');
+
+  it('sees a CLI remove without a restart', async () => {
+    const server = PinStore.open({ filePath: file(), seeds: [{ agentId: 'bob-test', publicKeyHex: BOB_PUB }] });
+    expect(server.pinnedKeyFor('bob-test')).toBe(BOB_PUB);
+    const cli = PinStore.open({ filePath: file() });
+    expect(await runPinsCli(['remove', 'bob-test'], cli, cliIo(''))).toBe(0);
+    expect(server.pinnedKeyFor('bob-test')).toBeUndefined();
+  });
+
+  it('does not overwrite a CLI confirmation with a later server write', async () => {
+    const server = PinStore.open({ filePath: file(), mode: 'tofu' });
+    expect(() => server.checkPresentedKey('bob-test', BOB_PUB)).toThrow(PinError);
+    const cli = PinStore.open({ filePath: file(), mode: 'tofu' });
+    expect(await runPinsCli(['confirm', 'bob-test'], cli, cliIo(keyFingerprint(BOB_PUB)))).toBe(0);
+    // The server records another first contact afterwards.
+    expect(() => server.checkPresentedKey('carol-test', OTHER_PUB)).toThrow(PinError);
+    const reread = PinStore.open({ filePath: file(), mode: 'tofu' });
+    expect(reread.pinnedKeyFor('bob-test')).toBe(BOB_PUB);
+    expect(reread.listPending().map((p) => p.agent_id)).toEqual(['carol-test']);
+    expect(server.pinnedKeyFor('bob-test')).toBe(BOB_PUB);
+  });
+
+  it('refuses a configured key that differs from a stored re-pin unless reseeding', () => {
+    PinStore.open({ filePath: file(), seeds: [{ agentId: 'bob-test', publicKeyHex: BOB_PUB }] }).setPin(
+      'bob-test',
+      OTHER_PUB,
+    );
+    expect(() =>
+      PinStore.open({ filePath: file(), seeds: [{ agentId: 'bob-test', publicKeyHex: BOB_PUB }] }),
+    ).toThrow(/differs from the stored pin/);
+    expect(PinStore.open({ filePath: file() }).pinnedKeyFor('bob-test')).toBe(OTHER_PUB);
+    const reseeded = PinStore.open({
+      filePath: file(),
+      seeds: [{ agentId: 'bob-test', publicKeyHex: BOB_PUB }],
+      reseed: true,
+    });
+    expect(reseeded.pinnedKeyFor('bob-test')).toBe(BOB_PUB);
+  });
+
+  it('rejects a replayed or older rotation statement, across restarts', () => {
+    const store = PinStore.open({ filePath: file(), seeds: [{ agentId: 'bob-test', publicKeyHex: BOB_PUB }] });
+    const t1 = new Date(Date.now() - 60_000).toISOString();
+    const t2 = new Date().toISOString();
+    const forward = signMessage(
+      DOMAIN_PREFIXES.KEY_ROTATION,
+      { agent_id: 'bob-test', old_fpr: keyFingerprint(BOB_PUB), new_fpr: keyFingerprint(OTHER_PUB), issued_at: t1 },
+      BOB_SEED,
+    );
+    const back = signMessage(
+      DOMAIN_PREFIXES.KEY_ROTATION,
+      { agent_id: 'bob-test', old_fpr: keyFingerprint(OTHER_PUB), new_fpr: keyFingerprint(BOB_PUB), issued_at: t2 },
+      OTHER_SEED,
+    );
+    store.applyRotation(forward, OTHER_PUB);
+    store.applyRotation(back, BOB_PUB);
+    const restarted = PinStore.open({ filePath: file() });
+    expect(restarted.pinnedKeyFor('bob-test')).toBe(BOB_PUB);
+    expect(() => restarted.applyRotation(forward, OTHER_PUB)).toThrow(/already applied or is not newer/);
+    expect(restarted.pinnedKeyFor('bob-test')).toBe(BOB_PUB);
+  });
+
+  it('keeps at most a bounded number of pending first-contact keys', () => {
+    const store = PinStore.inMemory([], 'tofu');
+    for (let i = 0; i < MAX_PENDING_PINS + 10; i++) {
+      expect(() => store.checkPresentedKey(`agent-${i}`, BOB_PUB)).toThrow(PinError);
+    }
+    expect(store.listPending()).toHaveLength(MAX_PENDING_PINS);
+  });
+});
+
 // ── TOFU and the CLI ────────────────────────────────────────────────────────
 
 function cliIo(answer: string, interactive = true): PinsCliIo & { lines: string[] } {
@@ -297,6 +378,38 @@ describe('initiator verifies peers against pins', () => {
     await expect(
       transport.sendPropose({ propose: propose(), templateId: 't', budgetTier: 'SMALL' }),
     ).rejects.toMatchObject({ code: 'KEY_CHANGED' });
+  });
+
+  it('does not use endpoints from an unsigned agent card, even one carrying the pinned key', async () => {
+    const fetchMock = vi.fn((url: string) =>
+      Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve(unsignedCard(BOB_PUB, { afal_endpoint: 'http://other-host.example/afal' })),
+        text: () => Promise.resolve(''),
+        url,
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const transport = initiator(PinStore.inMemory([{ agentId: 'bob-test', publicKeyHex: BOB_PUB }]));
+    await expect(
+      transport.sendPropose({ propose: propose(), templateId: 't', budgetTier: 'SMALL' }),
+    ).rejects.toThrow();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('other-host.example'))).toBe(false);
+    expect(await transport.discoverPeerAgentCard()).toBeNull();
+  });
+
+  it('does not use a card whose signed fields were changed', async () => {
+    const tampered = card(BOB_PUB);
+    const ext = (tampered.capabilities as { extensions: Array<{ params: Record<string, unknown> }> }).extensions[0];
+    ext.params['afal_endpoint'] = 'http://other-host.example/afal';
+    const fetchMock = vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve(tampered) }));
+    vi.stubGlobal('fetch', fetchMock);
+    const transport = initiator(PinStore.inMemory([{ agentId: 'bob-test', publicKeyHex: BOB_PUB }]));
+    await expect(
+      transport.sendPropose({ propose: propose(), templateId: 't', budgetTier: 'SMALL' }),
+    ).rejects.toThrow();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('other-host.example'))).toBe(false);
   });
 
   it('accepts an ADMIT signed by the pinned key', async () => {
@@ -374,12 +487,10 @@ describe('negotiation selections are checked against the offered candidates', ()
       ],
       expected_counterparty: 'bob-test',
     };
-    const cardWithNegotiation = card(BOB_PUB);
-    delete cardWithNegotiation['url']; // use the direct /afal/negotiate endpoint
-    const params = (cardWithNegotiation.capabilities as { extensions: Array<{ params: Record<string, unknown> }> })
-      .extensions[0].params;
-    params['supports_precontract_negotiation'] = true;
-    params['supported_contract_offers'] = [{ contract_offer_id: 'offer-1', supported_model_profiles: [PROFILE_A] }];
+    const cardWithNegotiation = card(BOB_PUB, {
+      supports_precontract_negotiation: true,
+      supported_contract_offers: [{ contract_offer_id: 'offer-1', supported_model_profiles: [PROFILE_A] }],
+    });
 
     for (const [selection, message] of [
       [{ negotiation_id: 'neg-1', state: 'AGREED', selected_contract_offer_id: 'offer-2', selected_model_profile: PROFILE_A }, /not offered/],
@@ -400,12 +511,10 @@ describe('negotiation selections are checked against the offered candidates', ()
   });
 
   it('rejects a topic code that was not offered', async () => {
-    const cardWithTopics = card(BOB_PUB);
-    delete cardWithTopics['url']; // use the direct /afal/negotiate endpoint
-    const params = (cardWithTopics.capabilities as { extensions: Array<{ params: Record<string, unknown> }> })
-      .extensions[0].params;
-    params['supports_topic_alignment'] = true;
-    params['supported_topic_codes'] = ['salary_alignment', 'reference_check'];
+    const cardWithTopics = card(BOB_PUB, {
+      supports_topic_alignment: true,
+      supported_topic_codes: ['salary_alignment', 'reference_check'],
+    });
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string) =>
@@ -476,6 +585,12 @@ describe('negotiation requests at the responder', () => {
     const res = await post(signNegotiationRequest('CONTRACT_OFFER_PROPOSAL', proposal, 'alice-test', ALICE_SEED));
     expect(res.status).toBe(200);
     expect(((await res.json()) as Record<string, unknown>)['state']).toBe('AGREED');
+  });
+
+  it('answers each signed request once', async () => {
+    const signed = signNegotiationRequest('CONTRACT_OFFER_PROPOSAL', proposal, 'alice-test', ALICE_SEED);
+    expect((await post(signed)).status).toBe(200);
+    expect((await post(signed)).status).toBe(401);
   });
 
   it('rejects an unsigned request', async () => {

@@ -110,7 +110,7 @@ These enable the AFAL direct transport for INITIATE and RESPOND session modes (a
 | `SELKEY_AFAL_TRUSTED_AGENTS` | No | — | JSON array of trusted agents: `[{"agentId":"...","publicKeyHex":"..."}]`. Seeds the agent pin store (see below) |
 | `SELKEY_AFAL_ALLOWED_PURPOSES` | No | `MEDIATION` | Comma-separated list of allowed purpose codes (e.g. `MEDIATION,COMPATIBILITY`). Also the purposes RESPOND accepts when `expected_purpose` is omitted |
 | `SELKEY_AFAL_PEER_DESCRIPTOR_URL` | For INITIATE | — | URL of the peer agent's descriptor (used in INITIATE mode) |
-| `SELKEY_AFAL_REQUIRE_SIGNED_CARDS` | No | `false` | Set to `true` to reject unsigned A2A agent cards (strict mode). Peer keys from cards are checked against pins either way |
+| `SELKEY_AFAL_REQUIRE_SIGNED_CARDS` | No | — | No longer has an effect. An A2A agent card is used only if its `card_signature` verifies under the peer's pinned key; endpoints and relay hints are never taken from an unsigned card (discovery falls back to the signed AFAL descriptor) |
 | `SELKEY_AGENT_PIN_MODE` | No | `preshared` | `preshared`: peers must be pinned in advance. `tofu`: on first contact the peer's key is recorded as pending and the call fails with `NEEDS_CONFIRMATION` until a person runs `selkey-mcp pins confirm <agent_id>` in a terminal |
 
 ### Known Agents
@@ -129,7 +129,7 @@ IFC grant state lives in `$SELKEY_WORKDIR/.selkey/ifc-grants.json` and `ifc-audi
 
 ### Agent identity pins
 
-The MCP server keeps one pin store at `$SELKEY_WORKDIR/.selkey/pins.json` (directory `0700`, file `0600`; the server refuses to start if the file is group- or world-writable). It is seeded from `SELKEY_AFAL_TRUSTED_AGENTS` and the `public_key_hex` entries of `SELKEY_KNOWN_AGENTS`; a configured key replaces a stored pin for the same `agent_id`. Every PROPOSE, ADMIT, DENY, COMMIT, negotiation request and IFC signature from a peer is verified against the pinned key for its `agent_id`, never against a key in the peer's card, descriptor or message. A peer that presents a different key is rejected with both fingerprints (`ed25519:` + hex SHA-256 of the raw key).
+The MCP server keeps one pin store at `$SELKEY_WORKDIR/.selkey/pins.json` (directory `0700`, file `0600`; the server refuses to start if the file is group- or world-writable). It is seeded from `SELKEY_AFAL_TRUSTED_AGENTS` and the `public_key_hex` entries of `SELKEY_KNOWN_AGENTS`. Stored pins take precedence: if a configured key differs from a stored pin (for example after a CLI re-pin or a rotation), the server refuses to start and shows both fingerprints; set `SELKEY_AGENT_PIN_RESEED=true` to let the configured keys replace the stored pins. The running server re-reads `pins.json` when it changes, so `selkey-mcp pins` commands take effect without a restart. Every PROPOSE, ADMIT, DENY, COMMIT, negotiation request and IFC signature from a peer is verified against the pinned key for its `agent_id`, never against a key in the peer's card, descriptor or message. A peer that presents a different key is rejected with both fingerprints (`ed25519:` + hex SHA-256 of the raw key).
 
 Manage pins with:
 
@@ -141,4 +141,6 @@ selkey-mcp pins confirm <agent_id>      # tofu mode: interactive terminal only
 selkey-mcp pins rotate <statement.json> <new_public_key_hex>
 ```
 
-A rotation statement is `{agent_id, old_fpr, new_fpr, issued_at, signature}`, signed by the currently pinned key with the AFAL signing rules and the domain prefix `VCAV-KEY-ROTATION-V1:`.
+A rotation statement is `{agent_id, old_fpr, new_fpr, issued_at, signature}`, signed by the currently pinned key with the AFAL signing rules and the domain prefix `VCAV-KEY-ROTATION-V1:`. A statement is refused if it was applied before or its `issued_at` is not newer than the last rotation applied for that agent.
+
+`pins confirm` requires an interactive terminal and is not available as an MCP tool, so a model using the MCP tools cannot confirm a pin. It does not stop a model that has its own shell or terminal access; do not give such a model access to the terminal where pins are confirmed.

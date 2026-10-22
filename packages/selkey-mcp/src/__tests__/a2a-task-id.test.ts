@@ -11,6 +11,7 @@
  * - Initiator detects mismatched task_id in response
  */
 
+import { signCard } from './helpers/sign-card.js';
 import { PinStore } from '../pin-store.js';
 import { signNegotiationRequest } from '../negotiation-auth.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -529,7 +530,7 @@ describe('A2A task ID — transport mismatch throws', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () =>
-        Promise.resolve({
+        Promise.resolve(signCard({
           name: 'bob-test',
           url: 'http://peer.example.com',
           capabilities: {
@@ -546,7 +547,7 @@ describe('A2A task ID — transport mismatch throws', () => {
             ],
           },
           skills: [],
-        }),
+        }, RESPONDER_SEED)),
     });
 
     // Second call: sendPropose response — returns a WRONG task ID
