@@ -44,12 +44,13 @@ the relay binary, you still have to trust the operator.
 Even in confidential mode:
 
 1. **The LLM provider sees plaintext.** The relay sends prompts to the provider
-   API in cleartext. TEE protects data from the *relay operator*, not the
-   *model provider*. Provider attestation is a separate concern.
+   API in cleartext. TEE is intended to protect data from the *relay operator*,
+   not the *model provider*. Provider attestation is a separate concern.
 
 2. **The relay sees plaintext inside the enclave.** The TEE protects against
    external observation, not against the relay code itself. This is why
-   measurement verification matters — you're trusting the *specific binary*.
+   measurement verification matters — you're trusting the *specific binary*, once
+   the measurement covers the relay binary.
 
 3. **Metadata is visible.** Session timing, message sizes, and connection
    patterns are observable by the operator even in TEE mode.

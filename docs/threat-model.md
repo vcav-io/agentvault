@@ -190,8 +190,10 @@ reduces to trust in the relay operator.
 
 `model_identity` in v1 receipts and `claims.model_identity_asserted` in v2 receipts
 are operator assertions, not cryptographic commitments. The relay reports what the
-provider API response indicates. A relay operator could configure a relay to claim a
-different model than the one actually called. A provider attestation (
+provider API response indicates. The provider endpoint and model ID are operator
+configuration, in both the software lane and the selkey-tee lane, and aren't bound into
+any attestation. A relay operator could configure a relay to claim a different model than
+the one actually called. A provider attestation (
 `PROVIDER_ATTESTED` assurance tier) would address this, but is not yet implemented.
 
 ---

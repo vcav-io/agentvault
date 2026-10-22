@@ -215,7 +215,7 @@ independently recompute all these hashes):
 | `SELF_ASSERTED` | Relay signs its own receipt. No external attestation. Current default. |
 | `OPERATOR_AUDITED` | Operator publishes a verifiable audit trail alongside the receipt. |
 | `PROVIDER_ATTESTED` | Model provider supplied signed inference metadata bound into the receipt. |
-| `TEE_ATTESTED` | Hardware TEE attestation binds the receipt to an enclave measurement. |
+| `TEE_ATTESTED` | Hardware TEE attestation binds the receipt to an enclave measurement (prototype; see 11.4). |
 
 "Receipt verified" must always be reported with its assurance level. A `SELF_ASSERTED`
 receipt proves the relay's stated rules were declared — it does not prove relay honesty.
@@ -751,17 +751,17 @@ level and the additional attestation fields in the receipt.
 
 When running in the TEE lane, the relay:
 
-1. Derives a session-scoped Ed25519 signing key inside the CVM.
-2. Builds a canonical transcript of the session (versioned JSON, `av-tee-transcript-v1`).
+1. Uses a long-lived Ed25519 signing key generated and sealed inside the CVM.
+2. Builds a canonical transcript of the session (versioned JSON, `av-tee-transcript-v2`).
 3. Computes SHA-512 of the transcript (64 bytes) and embeds it in the SEV-SNP
    attestation report's `user_data` field.
-4. Signs the receipt with the CVM-derived key.
+4. Signs the receipt with that sealed key.
 5. Includes `tee_attestation` in the receipt with `attestation_hash`,
    `receipt_signing_pubkey_hex`, and `transcript_hash_hex`.
 
 A verifier can request the raw attestation report from the relay, verify the AMD
-signature chain, and confirm that the `user_data` matches the transcript hash —
-proving the receipt was produced inside an attested CVM.
+signature chain, and confirm that the `user_data` matches the transcript hash. This
+shows the report was requested by code in a CVM with that launch measurement (see 11.4).
 
 ### 11.4 Trust Properties
 
