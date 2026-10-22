@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
@@ -140,5 +141,57 @@ describe('lock files', () => {
     fs.writeFileSync(lock, 'old');
     expect(removeLockIfUnchanged(lock, 'old')).toBe(true);
     expect(fs.readdirSync(tmp)).toEqual([]);
+  });
+});
+
+describe('lock takeover under contention', () => {
+  // Patch node:fs for the module under test (ESM named exports are synced).
+  const fsc = createRequire(import.meta.url)('node:fs') as typeof fs;
+
+  it('lets only one process take over a stale lock when another takes it over mid-check', () => {
+    const lock = path.join(tmp, 'race.lock');
+    fs.writeFileSync(lock, 'abandoned-holder', { mode: 0o600 });
+    const past = new Date(Date.now() - 60_000);
+    fs.utimesSync(lock, past, past);
+
+    const origRead = fsc.readFileSync;
+    let releaseB: (() => void) | undefined;
+    let bError: unknown;
+    let fired = false;
+    // The first time A reads the lock's token, process B attempts its own
+    // takeover of the same stale lock.
+    fsc.readFileSync = function (this: unknown, p: unknown, ...rest: unknown[]) {
+      if (!fired && (p === lock || typeof p === 'number')) {
+        fired = true;
+        fsc.readFileSync = origRead;
+        syncBuiltinESMExports();
+        try {
+          releaseB = acquireFileLock(lock, { staleMs: 10_000, timeoutMs: 100 });
+        } catch (err) {
+          bError = err;
+        }
+      }
+      return (origRead as (...a: unknown[]) => unknown).call(this, p, ...rest);
+    } as typeof fs.readFileSync;
+    syncBuiltinESMExports();
+
+    let releaseA: (() => void) | undefined;
+    let aError: unknown;
+    try {
+      releaseA = acquireFileLock(lock, { staleMs: 10_000, timeoutMs: 1_000 });
+    } catch (err) {
+      aError = err;
+    } finally {
+      fsc.readFileSync = origRead;
+      syncBuiltinESMExports();
+    }
+    expect(fired).toBe(true);
+    // At most one holder at a time.
+    const holders = [releaseA, releaseB].filter(Boolean).length;
+    expect(holders).toBe(1);
+    expect(aError ?? bError).toBeDefined();
+    releaseA?.();
+    releaseB?.();
+    expect(fs.existsSync(lock)).toBe(false);
   });
 });
