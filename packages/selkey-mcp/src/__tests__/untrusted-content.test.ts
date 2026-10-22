@@ -27,7 +27,7 @@ const JOIN_ARGS = {
 };
 
 beforeEach(() => {
-  process.env['SELKEY_RELAY_URL'] = 'http://relay.test';
+  process.env['SELKEY_RELAY_URL'] = 'https://relay.test';
   delete process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'];
 });
 

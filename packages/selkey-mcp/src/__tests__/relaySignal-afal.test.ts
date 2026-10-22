@@ -1133,7 +1133,7 @@ describe('INITIATE with AFAL', () => {
 });
 
 describe('INITIATE relay preference ordering', () => {
-  const RESPONDER_RELAY = 'http://relay.responder.test';
+  const RESPONDER_RELAY = 'https://relay.responder.test';
 
   function stubPeer(relayPreference: { relay_url: string; policy: 'REQUIRED' | 'PREFERRED' }) {
     const commits: Array<Record<string, unknown>> = [];
