@@ -43,6 +43,22 @@ struct InboxStoreInner {
     inbox_index: HashMap<String, Vec<String>>,
     /// agent_id -> monotonic event counter.
     event_counters: HashMap<String, u64>,
+    /// Sum of [`invite_held_bytes`] over `invites`.
+    held_bytes: usize,
+}
+
+/// Approximate memory an invite's contract holds (typed and JSON copies),
+/// counted against the invite store budget.
+fn invite_held_bytes(invite: &Invite) -> usize {
+    crate::limits::approx_heap_bytes(&invite.contract_json).saturating_mul(2)
+}
+
+impl InboxStoreInner {
+    fn remove_invite(&mut self, invite_id: &str) -> Option<Invite> {
+        let removed = self.invites.remove(invite_id)?;
+        self.held_bytes = self.held_bytes.saturating_sub(invite_held_bytes(&removed));
+        Some(removed)
+    }
 }
 
 const SSE_CHANNEL_CAPACITY: usize = 64;
@@ -70,6 +86,8 @@ pub struct InboxStore {
     max_pending_per_agent: usize,
     /// Maximum invites (any state) held per sending agent.
     max_held_per_agent: usize,
+    /// Memory budget for the contracts of held invites.
+    max_held_bytes: usize,
     #[cfg(feature = "persistence")]
     db: Option<Arc<SqliteDb>>,
 }
@@ -81,6 +99,7 @@ impl InboxStore {
                 invites: HashMap::new(),
                 inbox_index: HashMap::new(),
                 event_counters: HashMap::new(),
+                held_bytes: 0,
             })),
             channels: Arc::new(Mutex::new(HashMap::new())),
             invite_ttl,
@@ -88,6 +107,7 @@ impl InboxStore {
             max_invites: crate::limits::DEFAULT_MAX_INVITES,
             max_pending_per_agent: crate::limits::DEFAULT_MAX_PENDING_INVITES_PER_AGENT,
             max_held_per_agent: crate::limits::DEFAULT_MAX_INVITES_PER_AGENT,
+            max_held_bytes: crate::limits::DEFAULT_MAX_STORE_BYTES,
             #[cfg(feature = "persistence")]
             db: None,
         }
@@ -103,6 +123,12 @@ impl InboxStore {
     /// Set the maximum number of invites (any state) held per sending agent.
     pub fn with_max_held_per_agent(mut self, max_held_per_agent: usize) -> Self {
         self.max_held_per_agent = max_held_per_agent;
+        self
+    }
+
+    /// Set the memory budget for the contracts of held invites.
+    pub fn with_max_held_bytes(mut self, max_held_bytes: usize) -> Self {
+        self.max_held_bytes = max_held_bytes;
         self
     }
 
@@ -131,11 +157,15 @@ impl InboxStore {
 
         tracing::info!(invites = invites.len(), "SQLite: loaded inbox into memory");
 
+        let held_bytes = invites.values().fold(0usize, |sum, inv| {
+            sum.saturating_add(invite_held_bytes(inv))
+        });
         Ok(Self {
             inner: Arc::new(RwLock::new(InboxStoreInner {
                 invites,
                 inbox_index,
                 event_counters,
+                held_bytes,
             })),
             channels: Arc::new(Mutex::new(HashMap::new())),
             invite_ttl,
@@ -143,6 +173,7 @@ impl InboxStore {
             max_invites: crate::limits::DEFAULT_MAX_INVITES,
             max_pending_per_agent: crate::limits::DEFAULT_MAX_PENDING_INVITES_PER_AGENT,
             max_held_per_agent: crate::limits::DEFAULT_MAX_INVITES_PER_AGENT,
+            max_held_bytes: crate::limits::DEFAULT_MAX_STORE_BYTES,
             db: Some(db),
         })
     }
@@ -296,6 +327,22 @@ impl InboxStore {
                 }
             }
         }
+        // Whole store memory budget: finished invites give way here too.
+        let new_bytes = invite_held_bytes(&invite);
+        while store.held_bytes.saturating_add(new_bytes) > self.max_held_bytes {
+            match Self::evict_oldest_terminal(&mut store, |_| true) {
+                Some(id) => evicted.push(id),
+                None => {
+                    tracing::warn!(
+                        max_held_bytes = self.max_held_bytes,
+                        "invite store memory budget reached"
+                    );
+                    return Err(RelayError::ServiceUnavailable(
+                        "invite capacity reached".to_string(),
+                    ));
+                }
+            }
+        }
 
         // SQLite write before the memory update (under the same lock).
         #[cfg(feature = "persistence")]
@@ -330,6 +377,7 @@ impl InboxStore {
 
         // Insert invite BEFORE emitting SSE event so that subscribers who
         // immediately call GET /invites/:id can find it.
+        store.held_bytes = store.held_bytes.saturating_add(new_bytes);
         store.invites.insert(invite_id.clone(), invite);
 
         // Update counter while holding write lock, then release before channel emit
@@ -385,7 +433,7 @@ impl InboxStore {
             .filter(|inv| inv.status != InviteStatus::Pending && filter(inv))
             .min_by_key(|inv| (inv.status == InviteStatus::Accepted, inv.updated_at))
             .map(|inv| inv.invite_id.clone())?;
-        store.invites.remove(&victim);
+        store.remove_invite(&victim);
         for index in store.inbox_index.values_mut() {
             index.retain(|id| *id != victim);
         }
@@ -941,7 +989,7 @@ impl InboxStore {
 
         // Phase 2: remove garbage-collected invites
         for id in &gc_ids {
-            store.invites.remove(id);
+            store.remove_invite(id);
             // Clean up inbox index entries
             for index in store.inbox_index.values_mut() {
                 index.retain(|iid| iid != id);
@@ -2115,6 +2163,40 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(store.len().await, 3);
+        assert!(store.get_invite(&ids[0], "alice").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_invite_store_memory_budget() {
+        let one = {
+            let accepted = crate::relay::accept_contract(&test_create_request().contract).unwrap();
+            crate::limits::approx_heap_bytes(&accepted.contract_json) * 2
+        };
+        // Room for two invites' contracts, not three.
+        let store = InboxStore::new(Duration::from_secs(600)).with_max_held_bytes(one * 2);
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            ids.push(
+                store
+                    .create_invite("alice", &test_create_request(), None)
+                    .await
+                    .unwrap()
+                    .invite_id,
+            );
+        }
+        let err = store
+            .create_invite("alice", &test_create_request(), None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RelayError::ServiceUnavailable(_)));
+        assert_eq!(store.len().await, 2);
+        // A finished invite gives way to a new one.
+        store.cancel_invite(&ids[0], "alice").await.unwrap();
+        store
+            .create_invite("alice", &test_create_request(), None)
+            .await
+            .unwrap();
+        assert_eq!(store.len().await, 2);
         assert!(store.get_invite(&ids[0], "alice").await.is_err());
     }
 

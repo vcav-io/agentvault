@@ -33,6 +33,40 @@ pub const DEFAULT_SESSION_CREATE_RATE_PER_MIN: u32 = 60;
 pub const DEFAULT_INVITE_CREATE_RATE_PER_MIN: u32 = 30;
 /// Maximum number of distinct keys a rate limiter tracks at once.
 pub const MAX_RATE_LIMIT_KEYS: usize = 10_000;
+/// Maximum size of a contract, as compact JSON. Checked before a contract is
+/// normalised, hashed or stored.
+pub const MAX_CONTRACT_BYTES: usize = 16 * 1024;
+/// Maximum size of a contract's `metadata`, as compact JSON.
+pub const MAX_CONTRACT_METADATA_BYTES: usize = 2 * 1024;
+/// Maximum length, in bytes, of each string in a contract outside
+/// `output_schema` and `metadata` (participant ids, hashes, profile ids).
+pub const MAX_CONTRACT_STRING_BYTES: usize = 256;
+/// Default memory budget of each in-memory store (`SELKEY_MAX_STORE_BYTES`):
+/// the session store's contracts and inputs, and separately the invite
+/// store's contracts, measured with [`approx_heap_bytes`].
+pub const DEFAULT_MAX_STORE_BYTES: usize = 256 * 1024 * 1024;
+
+/// Approximate heap footprint of a JSON value once parsed: one
+/// `serde_json::Value` per node plus string and key bytes. A compact JSON
+/// text can take many times its own length in memory (each `0` in an array
+/// is a whole `Value`), so store budgets count this rather than text length.
+pub fn approx_heap_bytes(value: &serde_json::Value) -> usize {
+    const NODE: usize = std::mem::size_of::<serde_json::Value>();
+    const KEY: usize = std::mem::size_of::<String>();
+    match value {
+        serde_json::Value::String(s) => NODE + s.len(),
+        serde_json::Value::Array(items) => {
+            NODE + items.iter().map(approx_heap_bytes).sum::<usize>()
+        }
+        serde_json::Value::Object(map) => {
+            NODE + map
+                .iter()
+                .map(|(k, v)| KEY + k.len() + approx_heap_bytes(v))
+                .sum::<usize>()
+        }
+        _ => NODE,
+    }
+}
 
 /// Operator-configured limits.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,6 +79,7 @@ pub struct LimitConfig {
     pub max_invites_per_agent: usize,
     pub session_create_rate_per_min: u32,
     pub invite_create_rate_per_min: u32,
+    pub max_store_bytes: usize,
 }
 
 impl Default for LimitConfig {
@@ -58,6 +93,7 @@ impl Default for LimitConfig {
             max_invites_per_agent: DEFAULT_MAX_INVITES_PER_AGENT,
             session_create_rate_per_min: DEFAULT_SESSION_CREATE_RATE_PER_MIN,
             invite_create_rate_per_min: DEFAULT_INVITE_CREATE_RATE_PER_MIN,
+            max_store_bytes: DEFAULT_MAX_STORE_BYTES,
         }
     }
 }
@@ -115,6 +151,7 @@ impl LimitConfig {
                 "SELKEY_INVITE_CREATE_RATE_PER_MIN",
                 d.invite_create_rate_per_min,
             )?,
+            max_store_bytes: read(&lookup, "SELKEY_MAX_STORE_BYTES", d.max_store_bytes)?,
         })
     }
 }
@@ -281,6 +318,15 @@ mod tests {
             .unwrap_err();
             assert!(err.contains("SELKEY_MAX_INVITES"), "{err}");
         }
+    }
+
+    #[test]
+    fn test_approx_heap_bytes_counts_nodes_not_text() {
+        let node = std::mem::size_of::<serde_json::Value>();
+        let zeros = serde_json::Value::Array(vec![serde_json::json!(0); 1000]);
+        // About 2 bytes of text per element, a whole Value in memory.
+        assert_eq!(approx_heap_bytes(&zeros), node * 1001);
+        assert!(approx_heap_bytes(&serde_json::json!("abcd")) >= 4);
     }
 
     #[test]

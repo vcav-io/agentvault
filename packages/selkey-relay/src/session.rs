@@ -80,9 +80,26 @@ pub struct Session {
     pub ttl: Duration,
     /// Handle to the running inference task, aborted if the session times out.
     pub inference_abort: Option<tokio::task::AbortHandle>,
+    /// Approximate memory held by the contract (see
+    /// [`crate::limits::approx_heap_bytes`]).
+    pub contract_bytes: usize,
+    /// Approximate memory held by submitted inputs, counted until the
+    /// session reaches a terminal state (inputs are cleared by then).
+    pub input_bytes: usize,
 }
 
 impl Session {
+    /// Approximate memory this session counts against the store budget.
+    pub fn held_bytes(&self) -> usize {
+        let inputs = match self.state {
+            SessionState::Created | SessionState::Partial | SessionState::Processing => {
+                self.input_bytes
+            }
+            SessionState::Completed | SessionState::Aborted => 0,
+        };
+        self.contract_bytes.saturating_add(inputs)
+    }
+
     /// Validate a token against this session. Returns the role if valid.
     ///
     /// The presented token is compared with all four session tokens in
@@ -123,6 +140,7 @@ pub struct SessionStore {
     inner: Arc<Mutex<HashMap<String, Session>>>,
     ttl: Duration,
     max_sessions: usize,
+    max_held_bytes: usize,
 }
 
 impl SessionStore {
@@ -131,6 +149,7 @@ impl SessionStore {
             inner: Arc::new(Mutex::new(HashMap::new())),
             ttl,
             max_sessions: crate::limits::DEFAULT_MAX_SESSIONS,
+            max_held_bytes: crate::limits::DEFAULT_MAX_STORE_BYTES,
         }
     }
 
@@ -140,10 +159,23 @@ impl SessionStore {
         self
     }
 
+    /// Set the memory budget for contracts and inputs held at once (see
+    /// [`Session::held_bytes`]).
+    pub fn with_max_held_bytes(mut self, max_held_bytes: usize) -> Self {
+        self.max_held_bytes = max_held_bytes;
+        self
+    }
+
+    fn held_bytes(store: &HashMap<String, Session>) -> usize {
+        store
+            .values()
+            .fold(0usize, |sum, s| sum.saturating_add(s.held_bytes()))
+    }
+
     /// Create a session unless the store is at capacity.
     ///
-    /// Request handlers use this; at capacity it returns
-    /// `ServiceUnavailable` and nothing is created.
+    /// Request handlers use this; at capacity (session count or memory
+    /// budget) it returns `ServiceUnavailable` and nothing is created.
     pub async fn try_create(
         &self,
         contract: Contract,
@@ -161,6 +193,15 @@ impl SessionStore {
             ));
         }
         let (session_id, tokens, session) = self.new_session(contract, contract_hash, provider);
+        if Self::held_bytes(&store).saturating_add(session.held_bytes()) > self.max_held_bytes {
+            tracing::warn!(
+                max_held_bytes = self.max_held_bytes,
+                "session store memory budget reached"
+            );
+            return Err(crate::error::RelayError::ServiceUnavailable(
+                "session capacity reached".to_string(),
+            ));
+        }
         store.insert(session_id.clone(), session);
         Ok((session_id, tokens))
     }
@@ -185,6 +226,9 @@ impl SessionStore {
         contract_hash: String,
         provider: String,
     ) -> (String, SessionTokens, Session) {
+        let contract_bytes = serde_json::to_value(&contract)
+            .map(|v| crate::limits::approx_heap_bytes(&v))
+            .unwrap_or(usize::MAX);
         let ttl = contract
             .session_ttl_secs
             .map(|secs| Duration::from_secs(u64::from(secs)).min(self.ttl))
@@ -216,6 +260,8 @@ impl SessionStore {
             metadata: None,
             ttl,
             inference_abort: None,
+            contract_bytes,
+            input_bytes: 0,
         };
 
         (session_id, tokens, session)
@@ -228,6 +274,34 @@ impl SessionStore {
     {
         let mut store = self.inner.lock().await;
         store.get_mut(session_id).map(f)
+    }
+
+    /// As [`Self::with_session`], but only if the store can hold
+    /// `extra_bytes` more within its memory budget; otherwise returns
+    /// `ServiceUnavailable` without calling `f`. `f` should add what it
+    /// stores to [`Session::input_bytes`].
+    pub async fn with_session_within_budget<F, R>(
+        &self,
+        session_id: &str,
+        extra_bytes: usize,
+        f: F,
+    ) -> Option<Result<R, crate::error::RelayError>>
+    where
+        F: FnOnce(&mut Session) -> R,
+    {
+        let mut store = self.inner.lock().await;
+        let held = Self::held_bytes(&store);
+        let session = store.get_mut(session_id)?;
+        if held.saturating_add(extra_bytes) > self.max_held_bytes {
+            tracing::warn!(
+                max_held_bytes = self.max_held_bytes,
+                "session store memory budget reached"
+            );
+            return Some(Err(crate::error::RelayError::ServiceUnavailable(
+                "session capacity reached".to_string(),
+            )));
+        }
+        Some(Ok(f(session)))
     }
 
     /// Get a read-only snapshot of session state.
@@ -674,6 +748,83 @@ mod tests {
             crate::error::RelayError::ServiceUnavailable(_)
         ));
         assert_eq!(store.len().await, 2);
+    }
+
+    #[tokio::test]
+    async fn test_try_create_refuses_over_memory_budget() {
+        let probe = SessionStore::new(Duration::from_secs(600));
+        let (id, _) = probe
+            .create(test_contract(), "hash".to_string(), "anthropic".to_string())
+            .await;
+        let one = probe.with_session(&id, |s| s.held_bytes()).await.unwrap();
+        assert!(one > 0);
+
+        // Room for two contracts, not three.
+        let store = SessionStore::new(Duration::from_secs(600)).with_max_held_bytes(one * 2);
+        for _ in 0..2 {
+            store
+                .try_create(test_contract(), "hash".to_string(), "anthropic".to_string())
+                .await
+                .unwrap();
+        }
+        let err = store
+            .try_create(test_contract(), "hash".to_string(), "anthropic".to_string())
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            crate::error::RelayError::ServiceUnavailable(_)
+        ));
+        assert_eq!(store.len().await, 2);
+    }
+
+    #[tokio::test]
+    async fn test_input_refused_over_memory_budget_until_released() {
+        let probe = SessionStore::new(Duration::from_secs(600));
+        let (id, _) = probe
+            .create(test_contract(), "hash".to_string(), "anthropic".to_string())
+            .await;
+        let contract_bytes = probe.with_session(&id, |s| s.held_bytes()).await.unwrap();
+
+        let store = SessionStore::new(Duration::from_secs(600))
+            .with_max_held_bytes(contract_bytes * 2 + 1000);
+        let (a, _) = store
+            .try_create(test_contract(), "hash".to_string(), "anthropic".to_string())
+            .await
+            .unwrap();
+        let (b, _) = store
+            .try_create(test_contract(), "hash".to_string(), "anthropic".to_string())
+            .await
+            .unwrap();
+
+        // Session a holds a 1000-byte input; b cannot add another.
+        store
+            .with_session_within_budget(&a, 1000, |s| {
+                s.input_bytes += 1000;
+                s.state = SessionState::Partial;
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        let refused = store
+            .with_session_within_budget(&b, 1000, |s| s.input_bytes += 1000)
+            .await
+            .unwrap();
+        assert!(matches!(
+            refused,
+            Err(crate::error::RelayError::ServiceUnavailable(_))
+        ));
+        assert_eq!(store.with_session(&b, |s| s.input_bytes).await, Some(0));
+
+        // Once a finishes (its inputs are cleared), the budget is released.
+        store
+            .with_session(&a, |s| s.state = SessionState::Completed)
+            .await;
+        store
+            .with_session_within_budget(&b, 1000, |s| s.input_bytes += 1000)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]

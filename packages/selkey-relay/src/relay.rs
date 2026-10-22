@@ -53,6 +53,7 @@ pub struct AcceptedContract {
 /// v2), never from a re-serialised typed contract. Unknown members, including
 /// a `contract_hash` member, are rejected.
 pub fn accept_contract(contract_json: &serde_json::Value) -> Result<AcceptedContract, RelayError> {
+    check_contract_size(contract_json)?;
     let normalized = receipt_core::normalize_contract_v2(contract_json)
         .map_err(|e| RelayError::ContractValidation(format!("contract: {e}")))?;
     let contract_hash = hash_json_v3(&normalized)
@@ -74,6 +75,73 @@ pub fn accept_contract(contract_json: &serde_json::Value) -> Result<AcceptedCont
         contract_json: normalized,
         contract_hash,
     })
+}
+
+/// Length of a JSON value as compact JSON text.
+fn compact_json_len(value: &serde_json::Value) -> usize {
+    struct Counter(usize);
+    impl std::io::Write for Counter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0 += buf.len();
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut counter = Counter(0);
+    match serde_json::to_writer(&mut counter, value) {
+        Ok(()) => counter.0,
+        // Serialising a Value into a counter cannot fail; treat it as too big.
+        Err(_) => usize::MAX,
+    }
+}
+
+/// Bound a contract's size before it is normalised, hashed or stored: the
+/// whole contract, its `metadata`, and each string outside `output_schema`
+/// and `metadata`.
+fn check_contract_size(contract_json: &serde_json::Value) -> Result<(), RelayError> {
+    use crate::limits::{
+        MAX_CONTRACT_BYTES, MAX_CONTRACT_METADATA_BYTES, MAX_CONTRACT_STRING_BYTES,
+    };
+    fn strings_within(value: &serde_json::Value, max: usize) -> bool {
+        match value {
+            serde_json::Value::String(s) => s.len() <= max,
+            serde_json::Value::Array(items) => items.iter().all(|v| strings_within(v, max)),
+            serde_json::Value::Object(map) => map
+                .iter()
+                .all(|(k, v)| k.len() <= max && strings_within(v, max)),
+            _ => true,
+        }
+    }
+    if compact_json_len(contract_json) > MAX_CONTRACT_BYTES {
+        return Err(RelayError::ContractValidation(format!(
+            "contract exceeds {MAX_CONTRACT_BYTES} bytes"
+        )));
+    }
+    if let Some(fields) = contract_json.as_object() {
+        for (key, value) in fields {
+            match key.as_str() {
+                "output_schema" => {}
+                "metadata" => {
+                    if compact_json_len(value) > MAX_CONTRACT_METADATA_BYTES {
+                        return Err(RelayError::ContractValidation(format!(
+                            "contract metadata exceeds {MAX_CONTRACT_METADATA_BYTES} bytes"
+                        )));
+                    }
+                }
+                _ => {
+                    if !strings_within(value, MAX_CONTRACT_STRING_BYTES) {
+                        return Err(RelayError::ContractValidation(format!(
+                            "contract field {key} has a string longer than \
+                             {MAX_CONTRACT_STRING_BYTES} bytes"
+                        )));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Check that an input context can be committed to (receipt v3 profile).

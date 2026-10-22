@@ -4621,6 +4621,123 @@ async fn test_default_request_body_limit() {
 }
 
 #[tokio::test]
+async fn test_oversized_contract_rejected_without_session() {
+    let state = Arc::new(test_app_state("http://unused", &shared_prompt_dir()));
+    let mut cases = Vec::new();
+    // Whole contract over the cap (the body is well under the body limit).
+    let mut contract = valid_contract();
+    contract["output_schema"]["description"] = serde_json::json!("x".repeat(20 * 1024));
+    cases.push(contract);
+    // Metadata over its cap.
+    let mut contract = valid_contract();
+    contract["metadata"] = serde_json::json!({ "note": "x".repeat(4 * 1024) });
+    cases.push(contract);
+    // An over-long participant id.
+    let mut contract = valid_contract();
+    contract["participants"] = serde_json::json!(["a".repeat(300), "bob"]);
+    cases.push(contract);
+    for contract in cases {
+        let status = post_json(
+            state.clone(),
+            "/sessions",
+            Some(TEST_OPERATOR_TOKEN),
+            serde_json::json!({ "contract": contract, "provider": "anthropic" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+    assert!(state.session_store.is_empty().await);
+}
+
+#[tokio::test]
+async fn test_oversized_invite_contract_rejected() {
+    let state = Arc::new(inbox_test_app_state());
+    let mut body: serde_json::Value = serde_json::from_str(&inbox_create_body()).unwrap();
+    body["contract"]["metadata"] = serde_json::json!({ "note": "x".repeat(4 * 1024) });
+    let response = build_router(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/invites")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {ALICE_INBOX_TOKEN}"))
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = status_and_json(response).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{json}");
+    assert!(state.inbox_store.is_empty().await);
+}
+
+#[tokio::test]
+async fn test_session_store_memory_budget_enforced() {
+    // No room for a contract: creation is refused and nothing is stored.
+    let mut state = test_app_state("http://unused", &shared_prompt_dir());
+    state.session_store = SessionStore::new(Duration::from_secs(600)).with_max_held_bytes(1);
+    let state = Arc::new(state);
+    let body = serde_json::json!({ "contract": valid_contract(), "provider": "anthropic" });
+    let status = post_json(state.clone(), "/sessions", Some(TEST_OPERATOR_TOKEN), body).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(state.session_store.is_empty().await);
+}
+
+#[tokio::test]
+async fn test_session_input_refused_over_memory_budget() {
+    let probe = SessionStore::new(Duration::from_secs(600));
+    let contract: selkey_relay::types::Contract = serde_json::from_value(valid_contract()).unwrap();
+    let (probe_id, _) = probe
+        .create(
+            contract.clone(),
+            "hash".to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+    let contract_bytes = probe
+        .with_session(&probe_id, |s| s.held_bytes())
+        .await
+        .unwrap();
+
+    // Room for the contract plus about 4 KiB of input.
+    let mut state = test_app_state("http://unused", &shared_prompt_dir());
+    state.session_store =
+        SessionStore::new(Duration::from_secs(600)).with_max_held_bytes(contract_bytes + 4096);
+    let state = Arc::new(state);
+    let (session_id, tokens) = state
+        .session_store
+        .create(contract, "hash".to_string(), "anthropic".to_string())
+        .await;
+
+    let submit = |context: serde_json::Value| {
+        let state = state.clone();
+        let uri = format!("/sessions/{session_id}/input");
+        let token = tokens.initiator_submit.clone();
+        async move {
+            post_json(
+                state,
+                &uri,
+                Some(&token),
+                serde_json::json!({ "role": "alice", "context": context, "commitment_nonce": TEST_NONCE }),
+            )
+            .await
+        }
+    };
+    // A small body that expands well past the budget once parsed.
+    let status = submit(serde_json::json!({ "items": vec![0; 2_000] })).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    let held = state
+        .session_store
+        .with_session(&session_id, |s| (s.initiator_submitted, s.input_bytes))
+        .await
+        .unwrap();
+    assert_eq!(held, (false, 0));
+    // An input that fits is still accepted.
+    let status = submit(serde_json::json!({ "preference": "morning" })).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
 async fn test_pending_invites_per_agent_capped() {
     let mut state = inbox_test_app_state();
     state.inbox_store = InboxStore::new(Duration::from_secs(600)).with_limits(100, 1);
