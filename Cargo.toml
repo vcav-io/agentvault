@@ -17,6 +17,8 @@ serde_json = "1.0"
 toml = "0.8"
 
 # Schema validation
+# default-features = false keeps out jsonschema's remote `$ref` resolution
+# (resolve-http / resolve-file): output schemas must never fetch references.
 jsonschema = { version = "0.18", default-features = false, features = ["draft202012"] }
 
 # Cryptography

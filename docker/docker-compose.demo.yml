@@ -11,6 +11,10 @@ services:
       - "127.0.0.1:3100:3100"
     environment:
       - SELKEY_BIND_ADDR=0.0.0.0
+      # The relay refuses a non-loopback bind without SELKEY_OPERATOR_TOKEN.
+      # Here the listener is reachable only from the compose network and the
+      # host port is published on 127.0.0.1, so start without a token.
+      - SELKEY_ALLOW_UNAUTHENTICATED=1
       # Host header check: the demo reaches the relay as "relay"; the host
       # reaches it as localhost.
       - SELKEY_ALLOWED_HOSTS=relay
