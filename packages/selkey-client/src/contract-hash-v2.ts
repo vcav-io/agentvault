@@ -40,35 +40,38 @@ export class ContractHashError extends Error {
 
 type MemberKind = 'string' | 'string_array' | 'u32' | 'any' | 'enforcement' | 'model_constraints';
 
-const REQUIRED: Record<string, MemberKind> = {
-  purpose_code: 'string',
-  output_schema_id: 'string',
-  output_schema: 'any',
-  participants: 'string_array',
-  prompt_template_hash: 'string',
-};
+// Member tables are Maps so that a lookup never reaches Object.prototype:
+// names such as `__proto__` or `constructor` are unknown members, as in the
+// Rust implementation (serde `deny_unknown_fields`).
+const REQUIRED: ReadonlyMap<string, MemberKind> = new Map([
+  ['purpose_code', 'string'],
+  ['output_schema_id', 'string'],
+  ['output_schema', 'any'],
+  ['participants', 'string_array'],
+  ['prompt_template_hash', 'string'],
+]);
 
-const OPTIONAL: Record<string, MemberKind> = {
-  entropy_budget_bits: 'u32',
-  timing_class: 'string',
-  metadata: 'any',
-  model_profile_id: 'string',
-  model_profile_hash: 'string',
-  enforcement_policy_hash: 'string',
-  output_schema_hash: 'string',
-  model_constraints: 'model_constraints',
-  max_completion_tokens: 'u32',
-  session_ttl_secs: 'u32',
-  invite_ttl_secs: 'u32',
-  entropy_enforcement: 'enforcement',
-  relay_verifying_key_hex: 'string',
-};
+const OPTIONAL: ReadonlyMap<string, MemberKind> = new Map([
+  ['entropy_budget_bits', 'u32'],
+  ['timing_class', 'string'],
+  ['metadata', 'any'],
+  ['model_profile_id', 'string'],
+  ['model_profile_hash', 'string'],
+  ['enforcement_policy_hash', 'string'],
+  ['output_schema_hash', 'string'],
+  ['model_constraints', 'model_constraints'],
+  ['max_completion_tokens', 'u32'],
+  ['session_ttl_secs', 'u32'],
+  ['invite_ttl_secs', 'u32'],
+  ['entropy_enforcement', 'enforcement'],
+  ['relay_verifying_key_hex', 'string'],
+]);
 
-const MODEL_CONSTRAINTS: Record<string, MemberKind> = {
-  allowed_providers: 'string_array',
-  allowed_models: 'string_array',
-  min_tier: 'string',
-};
+const MODEL_CONSTRAINTS: ReadonlyMap<string, MemberKind> = new Map([
+  ['allowed_providers', 'string_array'],
+  ['allowed_models', 'string_array'],
+  ['min_tier', 'string'],
+]);
 
 const ENFORCEMENT_MODES = new Set(['Advisory', 'Gate', 'Strict']);
 const U32_MAX = 0xffffffff;
@@ -122,7 +125,7 @@ function checkMember(
       if (!isPlainObject(value)) invalid(`${name} must be an object`);
       const out: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(value)) {
-        const sub = MODEL_CONSTRAINTS[k];
+        const sub = MODEL_CONSTRAINTS.get(k);
         if (sub === undefined) invalid(`unknown member ${name}.${k}`);
         if (v === null) continue;
         out[k] = checkMember(`${name}.${k}`, sub, v, `${path}/${k}`, lexemes);
@@ -138,8 +141,8 @@ function normalise(contract: unknown, lexemes?: NumberLexemes): Record<string, u
   if (!isPlainObject(contract)) invalid('contract must be a JSON object');
   const out: Record<string, unknown> = {};
   for (const [name, value] of Object.entries(contract)) {
-    const required = REQUIRED[name];
-    const optional = OPTIONAL[name];
+    const required = REQUIRED.get(name);
+    const optional = OPTIONAL.get(name);
     if (required === undefined && optional === undefined) {
       invalid(`unknown member ${name}`);
     }
@@ -151,8 +154,8 @@ function normalise(contract: unknown, lexemes?: NumberLexemes): Record<string, u
     const kind: MemberKind = required ?? optional ?? 'any';
     out[name] = checkMember(name, kind, value, `/${name}`, lexemes);
   }
-  for (const name of Object.keys(REQUIRED)) {
-    if (!(name in out)) invalid(`missing member ${name}`);
+  for (const name of REQUIRED.keys()) {
+    if (!Object.hasOwn(out, name)) invalid(`missing member ${name}`);
   }
   try {
     checkV3Profile(out);
@@ -211,7 +214,7 @@ export function computeContractHashV2Str(contractJson: string): string {
  * `contract_hash`) before hashing. Contract hash v2 itself rejects them.
  */
 export function stripContractEnvelope(contract: unknown): unknown {
-  if (!isPlainObject(contract) || !('contract_hash' in contract)) return contract;
+  if (!isPlainObject(contract) || !Object.hasOwn(contract, 'contract_hash')) return contract;
   const { contract_hash: _hash, ...rest } = contract;
   return rest;
 }
