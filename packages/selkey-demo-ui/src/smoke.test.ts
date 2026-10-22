@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+import * as http from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -29,6 +30,20 @@ async function waitForServer(url: string, timeoutMs = 15_000): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error(`Timed out waiting for ${url}`);
+}
+
+function fetchStatus(host: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { host: '127.0.0.1', port: PORT, method: 'GET', path: '/api/status', headers: { Host: host } },
+      (res) => {
+        res.resume();
+        res.on('end', () => resolve(res.statusCode ?? 0));
+      },
+    );
+    req.on('error', reject);
+    req.end();
+  });
 }
 
 async function collectMilestoneTitles(page: Page): Promise<string[]> {
@@ -73,6 +88,27 @@ describe('demo ui smoke flow', () => {
       serverProcess.kill('SIGTERM');
     }
     fs.rmSync(RUNS_DIR, { recursive: true, force: true });
+  });
+
+  it('refuses requests for other Host names and unmarked state-changing requests', async () => {
+    const byHost = await fetchStatus(`attacker.example:${PORT}`);
+    expect(byHost).toBe(421);
+    const unmarked = await fetch(`${BASE_URL}/api/reset`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    expect(unmarked.status).toBe(403);
+    const crossSite = await fetch(`${BASE_URL}/api/reset`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Selkey-Demo-Request': '1',
+        Origin: 'http://attacker.example',
+      },
+      body: '{}',
+    });
+    expect(crossSite.status).toBe(403);
   });
 
   it('renders the canonical live flow and preserves it in replay', async () => {

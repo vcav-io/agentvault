@@ -491,7 +491,7 @@
       }
       var res = await fetch('/api/start', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Selkey-Demo-Request': '1' },
         body: JSON.stringify(startBody),
       });
       var data = await res.json();
@@ -517,7 +517,11 @@
   els.stopBtn.addEventListener('click', async function () {
     els.stopBtn.disabled = true;
     try {
-      await fetch('/api/stop', { method: 'POST' });
+      await fetch('/api/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Selkey-Demo-Request': '1' },
+        body: '{}',
+      });
     } catch (err) {
       console.error('Stop error:', err);
     }
@@ -534,7 +538,11 @@
   els.resetBtn.addEventListener('click', async function () {
     els.resetBtn.disabled = true;
     try {
-      await fetch('/api/reset', { method: 'POST' });
+      await fetch('/api/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Selkey-Demo-Request': '1' },
+        body: '{}',
+      });
     } catch (err) {
       console.error('Reset error:', err);
     }
@@ -545,7 +553,11 @@
   // ── New run button ─────────────────────────────────────────
   els.newRunBtn.addEventListener('click', async function () {
     try {
-      await fetch('/api/reset', { method: 'POST' });
+      await fetch('/api/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Selkey-Demo-Request': '1' },
+        body: '{}',
+      });
     } catch (err) {
       console.error('Reset error:', err);
     }
@@ -576,7 +588,7 @@
     inputEl.disabled = true;
     fetch('/api/message', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Selkey-Demo-Request': '1' },
       body: JSON.stringify({ agent: agent, message: text, localId: localId }),
     })
       .then(function (res) {

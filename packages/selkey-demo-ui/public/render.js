@@ -592,7 +592,7 @@ var VaultCardManager = (function () {
                     vBtn.textContent = 'Verifying\u2026';
                     fetch('/api/verify-receipt', {
                       method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
+                      headers: { 'Content-Type': 'application/json', 'X-Selkey-Demo-Request': '1' },
                       body: JSON.stringify({ receipt: vReceipt }),
                     })
                       .then(function (r) { return r.json(); })
@@ -668,7 +668,7 @@ var VaultCardManager = (function () {
                       vBtn.textContent = 'Verifying\u2026';
                       fetch('/api/verify-receipt', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: { 'Content-Type': 'application/json', 'X-Selkey-Demo-Request': '1' },
                         body: JSON.stringify({ receipt: vReceipt }),
                       })
                         .then(function (r) { return r.json(); })

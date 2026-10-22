@@ -9,6 +9,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
+import { buildAllowedHosts, createRequestGuards } from './request-guards.js';
 import { config as dotenvConfig } from 'dotenv';
 import { ed25519 } from '@noble/curves/ed25519';
 import { bytesToHex } from '@noble/hashes/utils';
@@ -404,6 +405,15 @@ function startHeartbeatLoops(mainProvider: LLMProvider, hbProvider: LLMProvider)
 // ── Express app ──────────────────────────────────────────────────────────
 
 const app = express();
+const requestGuards = createRequestGuards(
+  buildAllowedHosts({
+    port: PORT,
+    bindAddress: BIND_ADDRESS,
+    extraHosts: process.env['DEMO_ALLOWED_HOSTS'],
+  }),
+);
+app.use(requestGuards.hostGuard);
+app.use(requestGuards.sameOriginGuard);
 app.use(express.json());
 app.use(express.static(PUBLIC_DIR));
 
