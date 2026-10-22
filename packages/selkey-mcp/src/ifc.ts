@@ -646,15 +646,13 @@ export class IfcService {
       store.received[grant.grant_id] = grant;
       // Bound the received-grants store: drop expired grants, then the oldest.
       const nowMs = Date.now();
-      const entries = Object.values(store.received).sort((a, b) => a.issued_at.localeCompare(b.issued_at));
-      for (const g of entries) {
-        if (Date.parse(g.expires_at) <= nowMs && g.grant_id !== grant.grant_id) delete store.received[g.grant_id];
-      }
-      const remaining = Object.values(store.received).sort((a, b) => a.issued_at.localeCompare(b.issued_at));
-      while (remaining.length > MAX_RECEIVED_GRANTS) {
-        const oldest = remaining.shift();
-        if (oldest) delete store.received[oldest.grant_id];
-      }
+      const kept = Object.values(store.received)
+        .filter((g) => g.grant_id === grant.grant_id || Date.parse(g.expires_at) > nowMs)
+        .sort((a, b) => a.issued_at.localeCompare(b.issued_at))
+        .slice(-MAX_RECEIVED_GRANTS);
+      const bounded: Record<string, IfcGrant> = Object.create(null);
+      for (const g of kept) bounded[g.grant_id] = g;
+      store.received = bounded;
       this.saveStore(store);
       this.audit('RECEIVE_GRANT', { grant_id: grant.grant_id, issuer: grant.issuer });
       return { accepted: true, grant_id: grant.grant_id };
