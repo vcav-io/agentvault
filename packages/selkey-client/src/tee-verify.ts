@@ -53,7 +53,8 @@ export interface TranscriptInputsV3 extends TranscriptInputsV2 {
  * Legacy: because values are not escaped, inputs that contain `"` or `,` can
  * produce the same encoding as different inputs. Current receipts use v3
  * (`computeTranscriptHashV3`); this function is kept to check receipts issued
- * before it.
+ * before it. `verifyTeeReceipt` counts a v1 match only with
+ * `allow_legacy_transcripts`.
  */
 export function computeTranscriptHash(inputs: TranscriptInputs): Uint8Array {
   const canonical =
@@ -83,7 +84,8 @@ export function computeTranscriptHashHex(inputs: TranscriptInputs): string {
  *
  * Legacy: like v1, values are interpolated without escaping, so inputs that
  * contain `"` or `,` can produce the same encoding as different inputs. Kept
- * to check receipts issued before v3.
+ * to check receipts issued before v3. `verifyTeeReceipt` counts a v2 match
+ * only with `allow_legacy_transcripts`.
  */
 export function computeTranscriptHashV2(inputs: TranscriptInputsV2): Uint8Array {
   const canonical =
@@ -360,9 +362,9 @@ export interface TeeVerificationResult {
   attestation_hash_status: AttestationHashStatus;
   transcript_hash_valid: boolean;
   transcript_binding: TranscriptBinding;
-  // Which transcript encoding matched, or undefined if none did. With a
-  // relay config supplied (or v3 required), a V1/V2 match is reported here
-  // but transcript_hash_valid is false.
+  // Which transcript encoding matched, or undefined if none did. A V1/V2
+  // match is reported here but transcript_hash_valid is false unless
+  // allow_legacy_transcripts is set (and no relay config is supplied).
   transcript_schema: TranscriptSchema | undefined;
   // The relay configuration the v3 transcript matched (set only when
   // transcript_schema is 'V3'). Callers apply their own policy to it.
@@ -402,16 +404,24 @@ export interface TeeVerifyOptions {
    * Relay configuration to check a v3 transcript against (e.g. the
    * `relay_config` published at the relay's `GET /tee/info`). The receipt
    * does not carry `relay_config_hash`, so a v3 transcript can match only
-   * when this is supplied. Supplying it also requires v3: a v1 or v2 match
-   * is then reported as invalid.
+   * when this is supplied. Supplying it also means a v1 or v2 match is
+   * reported as invalid, even with `allow_legacy_transcripts`, so a legacy
+   * transcript cannot skip the configuration check.
    */
   relay_config?: RelayConfig;
   /**
-   * Require a v3 transcript even without a relay config (in which case no
-   * transcript can match). Implied by `relay_config`. Recommended for
-   * current receipts: set this or supply `relay_config`, since the v1 and v2
-   * encodings are legacy and can be ambiguous for inputs containing `"` or
-   * `,`.
+   * Count a legacy v1 or v2 transcript match as valid (default `false`). The
+   * v1 and v2 encodings interpolate values without escaping, so they can be
+   * ambiguous for inputs containing `"` or `,`; by default only a v3 match
+   * sets `transcript_hash_valid`. A legacy match is still reported in
+   * `transcript_schema` either way. Has no effect when `relay_config` is
+   * supplied. Same option as the Rust `tee-verifier`.
+   */
+  allow_legacy_transcripts?: boolean;
+  /**
+   * @deprecated Requiring v3 is now the default. If set to `true`, it
+   * overrides `allow_legacy_transcripts` (v1/v2 matches stay invalid);
+   * `false` has no effect.
    */
   require_transcript_v3?: boolean;
 }
@@ -424,6 +434,10 @@ export interface TeeVerifyOptions {
  * checking, receipt-claimed measurement lookup, and submission hash
  * presence. Receipt signature verification is handled separately by
  * `verifyReceipt()`.
+ *
+ * Only a v3 match sets `transcript_hash_valid` by default. A v1 or v2 match
+ * is reported in `transcript_schema` and counts as valid only when the
+ * caller sets `allow_legacy_transcripts` and supplies no `relay_config`.
  *
  * Quote parsing/platform verification is out of scope for the TS client, so
  * this helper must not claim quote-derived guarantees such as UserData-bound
@@ -494,11 +508,15 @@ export function verifyTeeReceipt(
     transcript_schema = undefined;
   }
 
-  // With a relay config (or an explicit requirement), only v3 counts, so a
-  // legacy transcript cannot skip the configuration check.
-  const v3Required = options.require_transcript_v3 === true || relayConfig !== undefined;
+  // Only v3 counts unless the caller opts in to legacy transcripts. With a
+  // relay config, only v3 counts, so a legacy transcript cannot skip the
+  // configuration check.
+  const legacyAllowed =
+    options.allow_legacy_transcripts === true &&
+    options.require_transcript_v3 !== true &&
+    relayConfig === undefined;
   const transcript_hash_valid =
-    transcript_schema === 'V3' || (transcript_schema !== undefined && !v3Required);
+    transcript_schema === 'V3' || (transcript_schema !== undefined && legacyAllowed);
 
   // 4. Submission hashes present
   const submission_hashes_present =
