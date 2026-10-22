@@ -238,6 +238,25 @@ describe('strict signature verification', () => {
     expect(verify(DOMAIN_PREFIXES.PROPOSE, { other: 'message' }, sig, IDENTITY_HEX)).toBe(false);
   });
 
+  it('rejects an identity-R, zero-s signature under a small-order key for every domain', () => {
+    const sig = IDENTITY_HEX + '00'.repeat(32);
+    for (const prefix of Object.values(DOMAIN_PREFIXES)) {
+      expect(verifyMessage(prefix, { anything: prefix, signature: sig }, IDENTITY_HEX)).toBe(false);
+    }
+  });
+
+  it('rejects an uppercase signature on a key rotation statement', () => {
+    const signed = signMessage(DOMAIN_PREFIXES.KEY_ROTATION, { a: 1 }, VECTOR.seed_hex);
+    expect(verifyMessage(DOMAIN_PREFIXES.KEY_ROTATION, signed, VECTOR.verifying_key_hex)).toBe(true);
+    expect(
+      verifyMessage(
+        DOMAIN_PREFIXES.KEY_ROTATION,
+        { ...signed, signature: signed.signature.toUpperCase() },
+        VECTOR.verifying_key_hex,
+      ),
+    ).toBe(false);
+  });
+
   it('rejects a signature whose R has a small-order component', () => {
     // Same equation with R of order 8 and s = 0 under a small-order key.
     const sig = ORDER8_HEX + '00'.repeat(32);
