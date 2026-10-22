@@ -397,6 +397,7 @@ for current_provider in ${PROVIDERS}; do
     relay_env_args=(
       "SELKEY_PORT=${RELAY_PORT}"
       "SELKEY_PROMPT_PROGRAM_DIR=${REPO_ROOT}/packages/selkey-relay/prompt_programs"
+      "SELKEY_SCHEMA_DIR=${REPO_ROOT}/schemas/output"
       "SELKEY_ENV=dev"
       "SELKEY_INBOX_AUTH=off"
       "${model_env}=${relay_model}"

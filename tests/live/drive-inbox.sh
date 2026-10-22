@@ -138,6 +138,7 @@ start_relay() {
   local relay_log="${RESULTS_BASE}/_drive_inbox_relay.log"
   SELKEY_PORT="${relay_port}" \
   SELKEY_PROMPT_PROGRAM_DIR="${REPO_ROOT}/packages/selkey-relay/prompt_programs" \
+  SELKEY_SCHEMA_DIR="${REPO_ROOT}/schemas/output" \
   SELKEY_AGENT_REGISTRY_PATH="${AGENTS_FILE}" \
   ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
   OPENAI_API_KEY="${OPENAI_API_KEY:-}" \

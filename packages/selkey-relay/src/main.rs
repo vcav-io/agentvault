@@ -388,6 +388,13 @@ async fn main() {
         }
     };
 
+    if schema_registry.is_empty() && !is_dev {
+        tracing::warn!(
+            "schema registry is empty — contracts will be rejected (only registry output schemas \
+             are accepted outside SELKEY_ENV=dev). Set SELKEY_SCHEMA_DIR to the schemas/output directory."
+        );
+    }
+
     let health_expose_model = std::env::var("SELKEY_HEALTH_EXPOSE_MODEL")
         .map(|v| matches!(v.to_lowercase().as_str(), "true" | "1" | "yes"))
         .unwrap_or(false);

@@ -97,12 +97,21 @@ fn test_app_state(mock_base_url: &str, prompt_dir: &str) -> AppState {
         max_completion_tokens: 4096,
         session_ttl_secs: 600,
         invite_ttl_secs: 604800,
-        schema_registry: selkey_relay::schema_registry::SchemaRegistry::empty(),
+        schema_registry: test_schema_registry(),
         is_dev: false,
         health_expose_model: false,
         admitted_programs: None,
         admitted_profiles: None,
     }
+}
+
+/// Schema registry containing the sample mediation schema used by tests.
+fn test_schema_registry() -> selkey_relay::schema_registry::SchemaRegistry {
+    let schema = mediation_schema();
+    let hash = selkey_relay::relay::compute_output_schema_hash(&schema).unwrap();
+    selkey_relay::schema_registry::SchemaRegistry::from_map(std::collections::HashMap::from([(
+        hash, schema,
+    )]))
 }
 
 /// Sample mediation output schema.
@@ -1282,7 +1291,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         max_completion_tokens: 4096,
         session_ttl_secs: 600,
         invite_ttl_secs: 604800,
-        schema_registry: selkey_relay::schema_registry::SchemaRegistry::empty(),
+        schema_registry: test_schema_registry(),
         is_dev: false,
         health_expose_model: false,
         admitted_programs: None,
@@ -1338,7 +1347,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         max_completion_tokens: 4096,
         session_ttl_secs: 600,
         invite_ttl_secs: 604800,
-        schema_registry: selkey_relay::schema_registry::SchemaRegistry::empty(),
+        schema_registry: test_schema_registry(),
         is_dev: false,
         health_expose_model: false,
         admitted_programs: None,
@@ -1408,7 +1417,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         max_completion_tokens: 4096,
         session_ttl_secs: 600,
         invite_ttl_secs: 604800,
-        schema_registry: selkey_relay::schema_registry::SchemaRegistry::empty(),
+        schema_registry: test_schema_registry(),
         is_dev: false,
         health_expose_model: false,
         admitted_programs: None,
@@ -3611,6 +3620,207 @@ async fn test_relay_schema_error_response_omits_output_values() {
         .await
         .unwrap();
     assert_redacted_schema_error(&String::from_utf8_lossy(&body));
+
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}
+
+// ============================================================================
+// Output schema acceptance
+// ============================================================================
+
+async fn post_relay(
+    state: Arc<AppState>,
+    request: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    let response = build_router(state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/relay")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&request).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    (status, serde_json::from_slice(&body).unwrap())
+}
+
+fn relay_request_with_schema(prompt_hash: &str, schema: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "contract": {
+            "purpose_code": "MEDIATION",
+            "output_schema_id": "custom",
+            "output_schema": schema,
+            "participants": ["alice", "bob"],
+            "prompt_template_hash": prompt_hash
+        },
+        "input_a": { "role": "alice", "context": { "note": "private" } },
+        "input_b": { "role": "bob", "context": { "note": "private" } },
+        "provider": "anthropic"
+    })
+}
+
+fn unconstrained_output_schemas() -> Vec<serde_json::Value> {
+    vec![
+        serde_json::json!({}),
+        serde_json::json!(true),
+        serde_json::json!({"type": "object"}),
+        serde_json::json!({
+            "type": "object",
+            "properties": { "text": { "type": "string" } },
+            "required": ["text"],
+            "additionalProperties": false
+        }),
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "items": { "type": "array", "items": { "type": "string", "enum": ["A", "B"] } }
+            },
+            "required": ["items"],
+            "additionalProperties": false
+        }),
+    ]
+}
+
+#[tokio::test]
+async fn test_relay_rejects_unconstrained_output_schemas() {
+    let (prompt_dir, prompt_hash) = setup_prompt_program("unconstrained-schemas");
+    // The mock would return free-form output if the provider were called.
+    let mock_base_url = start_mock_anthropic(serde_json::json!({
+        "text": "FREE_FORM_OUTPUT",
+        "items": ["A", "B", "A", "B"]
+    }))
+    .await;
+
+    for is_dev in [false, true] {
+        let mut state = test_app_state(&mock_base_url, &prompt_dir);
+        state.is_dev = is_dev;
+        let state = Arc::new(state);
+        for schema in unconstrained_output_schemas() {
+            let (status, json) = post_relay(
+                state.clone(),
+                relay_request_with_schema(&prompt_hash, schema.clone()),
+            )
+            .await;
+            assert_eq!(
+                status,
+                StatusCode::BAD_REQUEST,
+                "schema {schema} (is_dev={is_dev}) should be rejected, got {json}"
+            );
+            assert!(json.get("output").is_none());
+        }
+    }
+
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}
+
+#[tokio::test]
+async fn test_relay_rejects_non_registry_schema_outside_dev() {
+    let (prompt_dir, prompt_hash) = setup_prompt_program("non-registry-schema");
+    let mut state = test_app_state("http://unused", &prompt_dir);
+    state.schema_registry = selkey_relay::schema_registry::SchemaRegistry::empty();
+
+    let (status, json) = post_relay(
+        Arc::new(state),
+        relay_request_with_schema(&prompt_hash, mediation_schema()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        json["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("not in this relay's schema registry"),
+        "unexpected error: {json}"
+    );
+
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}
+
+#[tokio::test]
+async fn test_relay_accepts_registry_schema_by_hash() {
+    let (prompt_dir, prompt_hash) = setup_prompt_program("registry-schema-by-hash");
+    let mock_output = serde_json::json!({
+        "decision": "PROCEED",
+        "confidence_bucket": "HIGH",
+        "reason_code": "ALIGNED"
+    });
+    let mock_base_url = start_mock_anthropic(mock_output.clone()).await;
+    let state = Arc::new(test_app_state(&mock_base_url, &prompt_dir));
+    let hash = selkey_relay::relay::compute_output_schema_hash(&mediation_schema()).unwrap();
+
+    let mut request = relay_request_with_schema(&prompt_hash, serde_json::json!({}));
+    request["contract"]["output_schema_hash"] = serde_json::json!(hash);
+    let (status, json) = post_relay(state, request).await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+    assert_eq!(json["output"], mock_output);
+    assert_eq!(json["receipt"]["output_schema_hash"], hash);
+    assert_eq!(json["receipt"]["output_entropy_bits"], 6);
+
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}
+
+#[tokio::test]
+async fn test_relay_rejects_registry_schema_without_computable_bound() {
+    let (prompt_dir, prompt_hash) = setup_prompt_program("registry-schema-no-bound");
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": { "text": { "type": "string" } },
+        "required": ["text"],
+        "additionalProperties": false
+    });
+    let hash = selkey_relay::relay::compute_output_schema_hash(&schema).unwrap();
+    let mock_base_url = start_mock_anthropic(serde_json::json!({"text": "FREE_FORM_OUTPUT"})).await;
+    let mut state = test_app_state(&mock_base_url, &prompt_dir);
+    state.schema_registry =
+        selkey_relay::schema_registry::SchemaRegistry::from_map(std::collections::HashMap::from([
+            (hash.clone(), schema),
+        ]));
+
+    let mut request = relay_request_with_schema(&prompt_hash, serde_json::json!({}));
+    request["contract"]["output_schema_hash"] = serde_json::json!(hash);
+    let (status, json) = post_relay(Arc::new(state), request).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{json}");
+    assert!(
+        json["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("entropy upper bound could not be computed"),
+        "unexpected error: {json}"
+    );
+
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}
+
+#[tokio::test]
+async fn test_relay_ignores_schema_declared_bound_for_inline_schema() {
+    let (prompt_dir, prompt_hash) = setup_prompt_program("inline-declared-bound");
+    let mock_base_url = start_mock_anthropic(serde_json::json!({"note": "OK"})).await;
+    let mut state = test_app_state(&mock_base_url, &prompt_dir);
+    state.is_dev = true;
+
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "note": { "type": "string", "maxLength": 10, "x-vcav-entropy-bits-upper-bound": 0 }
+        },
+        "required": ["note"],
+        "additionalProperties": false,
+        "x-vcav-entropy-bits-upper-bound": 0
+    });
+    let (status, json) = post_relay(
+        Arc::new(state),
+        relay_request_with_schema(&prompt_hash, schema),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+    // 10 characters * 21 bits + 4 length bits, computed by the relay.
+    assert_eq!(json["receipt"]["output_entropy_bits"], 214);
 
     std::fs::remove_dir_all(&prompt_dir).ok();
 }

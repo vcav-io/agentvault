@@ -18,12 +18,27 @@ Complete reference for all environment variables used by the Selkey relay and MC
 | `SELKEY_MODEL_ID` | `claude-sonnet-4-6` | Anthropic model ID |
 | `SELKEY_SIGNING_KEY_HEX` | ephemeral | 64-char hex Ed25519 signing key for receipt signing. If unset, a random key is generated on each start — receipts won't verify across restarts |
 | `SELKEY_PROMPT_PROGRAM_DIR` | `prompt_programs` | Directory containing prompt programs, model profile lockfile, and enforcement policy lockfile |
-| `SELKEY_SESSION_TTL_SECS` | `600` | Session expiry in seconds. Background reaper cleans up expired sessions |
+| `SELKEY_SCHEMA_DIR` | `<prompt dir>/../schemas/output` | Directory of content-addressed output schemas (the schema registry). Set it to the repo's `schemas/output` when running from a checkout; the Docker image sets it |
+| `SELKEY_SESSION_TTL_SECS` | `600` | Session expiry in seconds. Background reaper cleans up expired sessions. A session still processing one TTL after inference started is aborted with `TIMEOUT` |
 | `OPENAI_API_KEY` | — | Enables the OpenAI provider when set |
 | `SELKEY_OPENAI_MODEL_ID` | `gpt-4o` | OpenAI model ID (only used if `OPENAI_API_KEY` is set) |
 | `ANTHROPIC_BASE_URL` | — | Override Anthropic API base URL (for proxies or mock servers) |
 | `OPENAI_BASE_URL` | — | Override OpenAI API base URL |
 | `RUST_LOG` | — | Standard `tracing` log filter (e.g. `info`, `selkey_relay=debug`) |
+
+### Output schema acceptance
+
+Contracts must use an output schema from the relay's schema registry, matched by content hash
+(either `output_schema_hash` with a stub `output_schema: {}`, or the full registry schema inline).
+The relay computes the entropy upper bound for registry schemas and rejects the contract if it
+cannot.
+
+With `SELKEY_ENV=dev`, the relay also accepts inline schemas that are not in the registry, but only
+strict ones: `additionalProperties: false` and every property `required` on every object; every
+string bounded by `enum` or `maxLength`; every array bounded by `maxItems`; integers bounded by
+`minimum`/`maximum`; no `true`/`{}` subschemas, composition (`anyOf`, `oneOf`, ...), `$ref` or
+`patternProperties`. For these schemas the relay computes the entropy bound from the structure and
+ignores any `x-vcav-entropy-bits-upper-bound` annotations.
 
 ### Lockfile overrides (development only)
 

@@ -13,6 +13,7 @@ pub mod profile_resolution;
 pub mod prompt_program;
 pub mod provider;
 pub mod relay;
+pub mod schema_acceptance;
 pub mod schema_registry;
 pub mod session;
 pub mod types;
@@ -56,7 +57,7 @@ struct FailureReceiptContext {
     runtime_hash: String,
     effective_model_id: String,
     effective_max_tokens: u32,
-    entropy_bits: u16,
+    entropy_bits: u32,
     entropy_budget_bits: Option<u32>,
     policy_hash: String,
 }
@@ -476,27 +477,19 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
     // needed in the error arm to build a signed failure receipt, but some of
     // it (contract, inputs) will have been consumed by relay_core.
     let failure_ctx = (|| -> Option<FailureReceiptContext> {
-        use crate::relay::{compute_contract_hash, compute_output_schema_hash};
+        use crate::relay::compute_contract_hash;
         use sha2::{Digest as _, Sha256};
 
         let contract_hash = compute_contract_hash(&contract).ok()?;
 
-        // Resolve effective schema — same logic as relay_core (relay.rs ~line 387)
-        let is_stub_schema = contract
-            .output_schema
-            .as_object()
-            .map(|obj| !obj.contains_key("properties"))
-            .unwrap_or(true);
-        let effective_schema = if let Some(ref requested_hash) = contract.output_schema_hash {
-            if is_stub_schema {
-                state.schema_registry.get(requested_hash).cloned()?
-            } else {
-                contract.output_schema.clone()
-            }
-        } else {
-            contract.output_schema.clone()
-        };
-        let output_schema_hash = compute_output_schema_hash(&effective_schema).ok()?;
+        // Resolve the output schema with the same acceptance rules as relay_core
+        let resolved_schema = schema_acceptance::resolve_output_schema(
+            &contract,
+            &state.schema_registry,
+            state.is_dev,
+        )
+        .ok()?;
+        let output_schema_hash = resolved_schema.hash;
 
         // Input commitments — same logic as relay_core
         let input_commitments: Vec<receipt_core::InputCommitment> = [
@@ -550,9 +543,7 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
         let git_sha = env!("SELKEY_GIT_SHA");
         let runtime_hash = hex::encode(Sha256::digest(git_sha.as_bytes()));
 
-        // Entropy bits — must use the resolved effective schema, not the raw stub
-        let entropy_bits =
-            entropy_core::calculate_schema_entropy_upper_bound(&effective_schema).unwrap_or(0);
+        let entropy_bits = resolved_schema.entropy_bits;
 
         // Effective model ID and max tokens — profile-driven when available
         let effective_model_id = match &resolved_profile {
@@ -718,7 +709,7 @@ async fn complete_inference<F>(
                     None, // inference_start not captured yet
                     None, // inference_end not captured yet
                     ctx.effective_max_tokens,
-                    ctx.entropy_bits as u32,
+                    ctx.entropy_bits,
                     ctx.entropy_budget_bits,
                     None, // rejected_output_bytes
                 ) {

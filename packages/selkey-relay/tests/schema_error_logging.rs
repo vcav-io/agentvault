@@ -106,6 +106,20 @@ async fn test_session_schema_error_log_omits_output_values() {
         entropy_constraints: None,
     };
     let policy_hash = content_hash(&policy).unwrap();
+    let output_schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "decision": { "type": "string", "enum": ["PROCEED", "DECLINE"] }
+        },
+        "required": ["decision"],
+        "additionalProperties": false
+    });
+    let output_schema_hash =
+        selkey_relay::relay::compute_output_schema_hash(&output_schema).unwrap();
+    let schema_registry =
+        selkey_relay::schema_registry::SchemaRegistry::from_map(std::collections::HashMap::from([
+            (output_schema_hash, output_schema.clone()),
+        ]));
     let state = Arc::new(AppState {
         signing_key: SigningKey::from_bytes(&[0x42u8; 32]),
         anthropic_api_key: Some("test-key".to_string()),
@@ -125,7 +139,7 @@ async fn test_session_schema_error_log_omits_output_values() {
         max_completion_tokens: 4096,
         session_ttl_secs: 600,
         invite_ttl_secs: 604800,
-        schema_registry: selkey_relay::schema_registry::SchemaRegistry::empty(),
+        schema_registry,
         is_dev: false,
         health_expose_model: false,
         admitted_programs: None,
@@ -138,14 +152,7 @@ async fn test_session_schema_error_log_omits_output_values() {
             serde_json::from_value(serde_json::json!({
                 "purpose_code": "MEDIATION",
                 "output_schema_id": "vault_result_mediation",
-                "output_schema": {
-                    "type": "object",
-                    "properties": {
-                        "decision": { "type": "string", "enum": ["PROCEED", "DECLINE"] }
-                    },
-                    "required": ["decision"],
-                    "additionalProperties": false
-                },
+                "output_schema": output_schema,
                 "participants": ["alice", "bob"],
                 "prompt_template_hash": prompt_hash
             }))

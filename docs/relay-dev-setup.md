@@ -19,6 +19,7 @@ For a quick demo using Docker, see [Getting Started](getting-started.md).
 | `SELKEY_MODEL_ID` | No | `claude-sonnet-4-6` | Anthropic model to use |
 | `SELKEY_SIGNING_KEY_HEX` | No | ephemeral | 64-char hex Ed25519 signing key. If unset, generates a random key on each start (receipts won't verify across restarts) |
 | `SELKEY_PROMPT_PROGRAM_DIR` | No | `prompt_programs` | Directory containing prompt programs and lockfiles. The default is relative to CWD — when running from the repo root, set to `packages/selkey-relay/prompt_programs` |
+| `SELKEY_SCHEMA_DIR` | No | `<prompt dir>/../schemas/output` | Output schema registry directory. When running from the repo root, set to `schemas/output` |
 | `SELKEY_SESSION_TTL_SECS` | No | `600` | Session expiry in seconds |
 | `SELKEY_ENV` | No | — | Set to `dev` for local development (enables dev-only overrides) |
 | `SELKEY_INBOX_AUTH` | No | — | Set to `off` (with `SELKEY_ENV=dev`) to skip agent registry requirement |
@@ -68,7 +69,7 @@ A bilateral session has four steps: create, submit inputs, poll, retrieve output
 
 ### 1. Create a session
 
-The `output_schema` field takes the full JSON Schema object (see `schemas/output/` for available schemas). Prompt programs are content-addressed — the filename without `.json` is the hash you pass as `prompt_template_hash`.
+The `output_schema` field takes the full JSON Schema object from `schemas/output/`. The relay only accepts registry schemas (matched by content hash), plus strict inline schemas when `SELKEY_ENV=dev`; see [environment-variables.md](environment-variables.md#output-schema-acceptance). Prompt programs are content-addressed — the filename without `.json` is the hash you pass as `prompt_template_hash`.
 
 ```bash
 SCHEMA=$(cat schemas/output/vcav_e_compatibility_signal_v2.schema.json)
