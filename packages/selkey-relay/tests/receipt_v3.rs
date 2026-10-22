@@ -830,3 +830,72 @@ async fn test_success_receipt_has_no_field_matching_guessed_inputs() {
 async fn test_failure_receipt_has_no_field_matching_guessed_inputs() {
     assert_receipt_resists_guessing(true, "privacy-failure").await;
 }
+
+// ============================================================================
+// Request bodies with repeated member names are rejected
+// ============================================================================
+
+async fn send_text(
+    state: &Arc<AppState>,
+    uri: &str,
+    bearer: Option<&str>,
+    body: String,
+) -> StatusCode {
+    let mut builder = Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header("content-type", "application/json");
+    if let Some(token) = bearer {
+        builder = builder.header("authorization", format!("Bearer {token}"));
+    }
+    let request = builder.body(Body::from(body)).unwrap();
+    build_router(state.clone())
+        .oneshot(request)
+        .await
+        .unwrap()
+        .status()
+}
+
+#[tokio::test]
+async fn test_create_session_rejects_contract_with_repeated_member() {
+    let (prompt_dir, prompt_hash) = setup_prompt_program("dup-contract");
+    let state = app_state("http://127.0.0.1:9", &prompt_dir);
+    let contract_text = contract(&prompt_hash).to_string();
+    // Repeat a member: "last value wins" would silently pick one of them.
+    let duplicated = contract_text.replacen(
+        "\"purpose_code\":\"MEDIATION\"",
+        "\"purpose_code\":\"COMPATIBILITY\",\"purpose_code\":\"MEDIATION\"",
+        1,
+    );
+    assert_ne!(duplicated, contract_text);
+    let status = send_text(
+        &state,
+        "/sessions",
+        Some(OPERATOR_TOKEN),
+        format!("{{\"contract\":{duplicated},\"provider\":\"anthropic\"}}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}
+
+#[tokio::test]
+async fn test_submit_rejects_context_with_repeated_member() {
+    let (prompt_dir, prompt_hash) = setup_prompt_program("dup-context");
+    let state = app_state("http://127.0.0.1:9", &prompt_dir);
+    let (status, created) = create_session(&state, contract(&prompt_hash)).await;
+    assert_eq!(status, StatusCode::OK);
+    let sid = created["session_id"].as_str().unwrap();
+    let body = format!(
+        "{{\"role\":\"alice\",\"context\":{{\"offer\":1,\"offer\":2}},\"commitment_nonce\":\"{NONCE_A}\"}}"
+    );
+    let status = send_text(
+        &state,
+        &format!("/sessions/{sid}/input"),
+        created["initiator_submit_token"].as_str(),
+        body,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}

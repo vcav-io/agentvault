@@ -16,6 +16,7 @@ pub mod relay;
 pub mod schema_acceptance;
 pub mod schema_registry;
 pub mod session;
+pub mod strict_json;
 pub mod types;
 
 use std::collections::HashMap;
@@ -333,7 +334,7 @@ async fn capabilities_handler(State(state): State<Arc<AppState>>) -> Json<Capabi
 async fn relay_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(request): Json<RelayRequest>,
+    crate::strict_json::StrictJson(request): crate::strict_json::StrictJson<RelayRequest>,
 ) -> Result<Json<RelayResponse>, RelayError> {
     check_single_shot_relay_access(&state, &headers)?;
     let response = relay::relay(request, &state).await?;
@@ -348,7 +349,7 @@ async fn relay_handler(
 async fn create_session_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(request): Json<CreateSessionRequest>,
+    crate::strict_json::StrictJson(request): crate::strict_json::StrictJson<CreateSessionRequest>,
 ) -> Result<Json<CreateSessionResponse>, RelayError> {
     check_operator_token(&state, &headers)?;
 
@@ -388,7 +389,7 @@ async fn submit_input_handler(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
     headers: HeaderMap,
-    Json(request): Json<SubmitInputRequest>,
+    crate::strict_json::StrictJson(request): crate::strict_json::StrictJson<SubmitInputRequest>,
 ) -> Result<Json<SessionStatusResponse>, RelayError> {
     let token = extract_bearer_token(&headers)?;
 
