@@ -328,3 +328,43 @@ describe('submitInput — commitment nonce', () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+describe('verifyReceipt — v3 artefact handling', () => {
+  it('checks prompt_template_hash against the contract, not a recomputed program hash', () => {
+    const { receipt, publicKeyHex } = setup();
+    const r = receipt as unknown as Record<string, unknown>;
+    expect(verifyReceipt(r, publicKeyHex, { contract }).valid).toBe(true);
+    expect(
+      verifyReceipt(r, publicKeyHex, {
+        contract: { ...contract, prompt_template_hash: 'b'.repeat(64) },
+      }).valid,
+    ).toBe(false);
+    const withProgram = verifyReceipt(r, publicKeyHex, { promptProgram: { system: 'x' } });
+    expect(withProgram.valid).toBe(false);
+    expect(withProgram.errors.join(' ')).toMatch(/contract\.prompt_template_hash/);
+  });
+
+  it('rejects unknown artefact fields such as promptTemplate instead of skipping the check', () => {
+    const { receipt, publicKeyHex } = setup();
+    const result = verifyReceipt(receipt as unknown as Record<string, unknown>, publicKeyHex, {
+      promptTemplate: 'raw template text',
+    } as never);
+    expect(result.valid).toBe(false);
+    expect(result.errors.join(' ')).toMatch(/promptTemplate/);
+  });
+
+  it('checks the signature before internal consistency', () => {
+    const { seed, publicKeyHex, aliceNonce, bobNonce } = setup();
+    const receipt = buildReceipt(seed, publicKeyHex, { aliceNonce, bobNonce });
+    // Change the inline output after signing: both the signature and the
+    // output hash are now wrong; the signature rule is reported first.
+    const tampered = {
+      ...receipt,
+      commitments: { ...receipt.commitments, output: { decision: 'DECLINE' } },
+    } as unknown as Record<string, unknown>;
+    expect(verifyReceiptV3(tampered, publicKeyHex)).toMatchObject({
+      ok: false,
+      errorClass: 'SIGNATURE_INVALID',
+    });
+  });
+});

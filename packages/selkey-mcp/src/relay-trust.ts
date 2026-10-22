@@ -138,26 +138,23 @@ export interface LocalSessionData {
   ownInput?: OwnInputArtefact;
   /** The contract this agent agreed to, if it holds it. */
   contract?: unknown;
+  /**
+   * True when this agent submitted input to the session. The receipt must
+   * then commit to that input; without the data for the own-input check the
+   * receipt is not accepted.
+   */
+  submittedInput?: boolean;
 }
 
-function pickReceipt(output: {
-  receipt?: unknown;
-  receipt_signature?: string | null;
-  receipt_v2?: Record<string, unknown> | null;
-}): Record<string, unknown> | undefined {
-  const primary =
-    output.receipt && typeof output.receipt === 'object'
-      ? (output.receipt as Record<string, unknown>)
-      : undefined;
-  // Current relays emit only receipt v3, under `receipt`.
-  if (primary && typeof primary['receipt_schema_version'] === 'string') return primary;
-  if (output.receipt_v2 && typeof output.receipt_v2 === 'object') return output.receipt_v2;
-  if (primary) {
-    return primary['signature'] === undefined && typeof output.receipt_signature === 'string'
-      ? { ...primary, signature: output.receipt_signature }
-      : primary;
-  }
-  return undefined;
+/**
+ * The session receipt. Relays emit receipt v3 only, under `receipt`; any
+ * other version or location is not accepted on live flows.
+ */
+function pickReceipt(output: { receipt?: unknown }): Record<string, unknown> | undefined {
+  const r = output.receipt;
+  if (!r || typeof r !== 'object' || Array.isArray(r)) return undefined;
+  const receipt = r as Record<string, unknown>;
+  return receipt['receipt_schema_version'] === '3.0.0' ? receipt : undefined;
 }
 
 /**
@@ -190,7 +187,16 @@ export function checkReceiptAgainstPinnedKey(
 
   const receipt = pickReceipt(output);
   if (!receipt) {
-    return { status: 'FAILED', detail: 'Session output has no receipt to verify' };
+    return {
+      status: 'FAILED',
+      detail: 'Session output has no receipt v3 (receipt_schema_version "3.0.0") to verify',
+    };
+  }
+  if (local.submittedInput && !local.ownInput) {
+    return {
+      status: 'FAILED',
+      detail: "Cannot check the receipt's commitment to this agent's input (missing participant id or nonce)",
+    };
   }
 
   // A key embedded in the receipt is never trusted in place of the pinned key.

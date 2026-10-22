@@ -61,7 +61,13 @@ export interface VerifyArtefacts {
   contract?: unknown;
   /** The output schema the relay enforced. */
   outputSchema?: unknown;
-  /** The prompt program whose content hash is `prompt_template_hash`. */
+  /**
+   * The prompt program whose content hash is `prompt_template_hash` (v1/v2
+   * receipts only). The relay computes that hash with its legacy JCS_V1
+   * canonicaliser, so treat it as an identifier: for v3 receipts compare it
+   * with the contract instead (pass `contract`), and passing a program is an
+   * error.
+   */
   promptProgram?: unknown;
   /** This party's own input, for the own-input commitment check (v2, v3). */
   ownInput?: OwnInputArtefact;
@@ -430,8 +436,12 @@ function verifyCommitmentsV3(receipt: ReceiptV3, artefacts: VerifyArtefacts): Co
     if (computed !== undefined) record(out, 'schema_hash', c.schema_hash, computed);
   }
   if (artefacts.promptProgram !== undefined) {
-    const computed = tryCompute(out, 'prompt_template_hash', () => hashV3(artefacts.promptProgram));
-    if (computed !== undefined) record(out, 'prompt_template_hash', c.prompt_template_hash, computed);
+    // prompt_template_hash is a JCS_V1 identifier computed by the relay; it is
+    // checked against contract.prompt_template_hash (pass `contract`).
+    out.errors.push(
+      'promptProgram is not supported for v3 receipts: prompt_template_hash is checked against ' +
+        'contract.prompt_template_hash (pass the contract)',
+    );
   }
   return out;
 }
@@ -498,6 +508,24 @@ export function verifyReceipt(
     receipt = receiptInput;
   } else {
     return { valid: false, schema_version: 'unknown', errors: ['Receipt must be a JSON object'], warnings };
+  }
+
+  if (artefacts !== undefined) {
+    const known = new Set(['output', 'contract', 'outputSchema', 'promptProgram', 'ownInput']);
+    const unknown = Object.keys(artefacts).filter((k) => !known.has(k));
+    if (unknown.length > 0) {
+      return {
+        valid: false,
+        schema_version: 'unknown',
+        errors: [
+          `Unknown artefact field(s): ${unknown.join(', ')}` +
+            (unknown.includes('promptTemplate')
+              ? ' (promptTemplate was replaced by promptProgram; for v3 receipts pass the contract)'
+              : ''),
+        ],
+        warnings,
+      };
+    }
   }
 
   const { version, label } = detectVersion(receipt);
