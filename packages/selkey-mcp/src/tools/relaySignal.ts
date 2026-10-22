@@ -63,6 +63,7 @@ import {
 } from '../relay-trust.js';
 import { buildExpectedContractHashes, localAllowedPurposes } from '../responder-contracts.js';
 import { appendPrivateLine, ensurePrivateDir, selkeyStateDir, writePrivateJson } from '../secure-fs.js';
+import { PinError, normalizeAgentId, resolveAgentHint } from '../pin-store.js';
 import {
   encodeRelayToken,
   decodeRelayToken,
@@ -671,6 +672,15 @@ function responderAcceptablePurposes(handle: RelayHandle, transport: AfalTranspo
 }
 
 function mapRelayError(error: unknown): { code: ErrorCode; detail: string } {
+  if (error instanceof PinError) {
+    const code: ErrorCode =
+      error.code === 'NEEDS_CONFIRMATION'
+        ? 'NEEDS_CONFIRMATION'
+        : error.code === 'AMBIGUOUS_ALIAS'
+          ? 'INVALID_INPUT'
+          : 'PEER_IDENTITY_MISMATCH';
+    return { code, detail: error.message };
+  }
   if (error instanceof RelayTrustError) {
     return {
       code: error.message.startsWith('relay_url') ? 'INVALID_INPUT' : 'PRECONDITION_FAILED',
@@ -744,14 +754,18 @@ function writeLastSessionFile(
   }
 }
 
-function resolveAgentAlias(hint: string, knownAgents: NormalizedKnownAgent[]): string {
-  const hintLower = hint.toLowerCase();
-  const match = knownAgents.find(
-    (entry) =>
-      entry.agent_id.toLowerCase() === hintLower ||
-      entry.aliases.some((alias) => alias.toLowerCase() === hintLower),
-  );
-  return match ? match.agent_id : hint;
+/**
+ * Resolve an agent_id or alias to an agent_id (exact NFC match, no case
+ * folding). Aliases come from known agents and from the transport's pin
+ * store. An alias naming more than one agent throws AMBIGUOUS_ALIAS.
+ */
+function resolveAgentAlias(
+  hint: string,
+  knownAgents: NormalizedKnownAgent[],
+  transport?: AfalTransport,
+): string {
+  const pinned = transport instanceof DirectAfalTransport ? transport.pinStore.listPins() : [];
+  return resolveAgentHint(hint, [...knownAgents, ...pinned]) ?? normalizeAgentId(hint);
 }
 
 function hashInput(input: string): string {
@@ -1249,7 +1263,7 @@ async function phaseInvite(
   knownAgents: NormalizedKnownAgent[],
   relayProfileId?: string,
 ): Promise<ToolResponse<RelaySignalOutput>> {
-  const counterparty = resolveAgentAlias(handle.counterparty, knownAgents);
+  const counterparty = resolveAgentAlias(handle.counterparty, knownAgents, transport);
   const acceptablePurposes = parseAcceptablePurposes(args.acceptable_purposes);
   if (args.purpose && acceptablePurposes.length) {
     return buildError(
@@ -2702,7 +2716,7 @@ export async function handleRelaySignal(
           return buildError('INVALID_INPUT', 'counterparty is required for INITIATE mode');
         }
 
-        const counterparty = resolveAgentAlias(args.counterparty, knownAgents);
+        const counterparty = resolveAgentAlias(args.counterparty, knownAgents, transport);
         const agentId = transport.agentId ?? process.env['SELKEY_AGENT_ID'] ?? '';
 
         // Compute contract hash early — needed for both collision path and idempotency key
@@ -2808,7 +2822,7 @@ export async function handleRelaySignal(
           );
         }
 
-        const from = resolveAgentAlias(args.from, knownAgents);
+        const from = resolveAgentAlias(args.from, knownAgents, transport);
         const agentId = transport.agentId ?? process.env['SELKEY_AGENT_ID'] ?? '';
 
         // Compute idempotency key

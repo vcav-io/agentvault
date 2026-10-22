@@ -184,7 +184,14 @@ describe('IfcService', () => {
           hexToBytes('0202020202020202020202020202020202020202020202020202020202020202'),
         ),
       ),
-      knownAgents: [{ agent_id: 'alice-test', aliases: ['Alice'], public_key_hex: 'f'.repeat(64) }],
+      knownAgents: [
+        {
+          agent_id: 'alice-test',
+          aliases: ['Alice'],
+          // A valid key that is not Alice's.
+          public_key_hex: bytesToHex(ed25519.getPublicKey(hexToBytes('09'.repeat(32)))),
+        },
+      ],
     });
 
     const { grant } = alice.createGrant({

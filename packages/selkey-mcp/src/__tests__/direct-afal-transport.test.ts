@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ed25519 } from '@noble/curves/ed25519';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
 import { DirectAfalTransport } from '../direct-afal-transport.js';
+import { PinStore } from '../pin-store.js';
 import type { AgentDescriptor } from '../direct-afal-transport.js';
 import { SELKEY_A2A_EXTENSION_URI } from '../a2a-agent-card.js';
 import { signMessage, DOMAIN_PREFIXES, contentHash } from '../afal-signing.js';
@@ -21,6 +22,10 @@ const TEST_SEED = '0101010101010101010101010101010101010101010101010101010101010
 const TEST_PUBKEY = '8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c';
 const PEER_SEED = '0202020202020202020202020202020202020202020202020202020202020202';
 const PEER_PUBKEY = bytesToHex(ed25519.getPublicKey(hexToBytes(PEER_SEED)));
+
+function peerPins(): PinStore {
+  return PinStore.inMemory([{ agentId: 'bob-test', publicKeyHex: PEER_PUBKEY }]);
+}
 
 // ── Descriptor helpers ─────────────────────────────────────────────────────
 
@@ -146,7 +151,7 @@ function makeSignedAdmit(
     proposal_id: proposalId,
     admit_token_id: 'a'.repeat(64),
     admission_tier: 'DEFAULT',
-    expires_at: '2026-01-01T00:15:00Z',
+    expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
     ...overrides,
   };
   return signMessage(DOMAIN_PREFIXES.ADMIT, unsigned as Record<string, unknown>, PEER_SEED);
@@ -181,6 +186,7 @@ describe('DirectAfalTransport', () => {
     transport = new DirectAfalTransport({
       agentId: 'alice-test',
       seedHex: TEST_SEED,
+      pinStore: peerPins(),
       localDescriptor,
       peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-descriptor.json',
     });
@@ -269,7 +275,12 @@ describe('DirectAfalTransport', () => {
     });
 
     it('returns selected_model_profile from ADMIT responses', async () => {
-      const propose = makePropose();
+      const propose = makePropose({
+        acceptable_model_profiles: [
+          { id: 'api-claude-sonnet-v1', version: '1', hash: 'a'.repeat(64) },
+          { id: 'api-openai-4.1-mini-v1', version: '1', hash: 'b'.repeat(64) },
+        ],
+      });
       const admit = makeSignedAdmit(propose.proposal_id, {
         selected_model_profile: {
           id: 'api-openai-4.1-mini-v1',
@@ -407,6 +418,7 @@ describe('DirectAfalTransport', () => {
       const fresh = new DirectAfalTransport({
         agentId: 'alice-test',
         seedHex: TEST_SEED,
+        pinStore: peerPins(),
         localDescriptor,
         peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-descriptor.json',
       });
@@ -433,6 +445,7 @@ describe('DirectAfalTransport', () => {
       const fresh = new DirectAfalTransport({
         agentId: 'alice-test',
         seedHex: TEST_SEED,
+        pinStore: peerPins(),
         localDescriptor,
         peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-descriptor.json',
       });
@@ -713,6 +726,7 @@ describe('DirectAfalTransport', () => {
       const fresh = new DirectAfalTransport({
         agentId: 'alice-test',
         seedHex: TEST_SEED,
+        pinStore: peerPins(),
         localDescriptor,
         peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-card.json',
       });
@@ -782,6 +796,7 @@ describe('DirectAfalTransport', () => {
       const fresh = new DirectAfalTransport({
         agentId: 'alice-test',
         seedHex: TEST_SEED,
+        pinStore: peerPins(),
         localDescriptor,
         peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
       });
@@ -820,6 +835,7 @@ describe('DirectAfalTransport', () => {
       const fresh = new DirectAfalTransport({
         agentId: 'alice-test',
         seedHex: TEST_SEED,
+        pinStore: peerPins(),
         localDescriptor,
         peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
       });
@@ -867,6 +883,7 @@ describe('DirectAfalTransport', () => {
       const fresh = new DirectAfalTransport({
         agentId: 'alice-test',
         seedHex: TEST_SEED,
+        pinStore: peerPins(),
         localDescriptor,
         peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-card.json',
       });
@@ -913,6 +930,7 @@ describe('DirectAfalTransport', () => {
       const fresh = new DirectAfalTransport({
         agentId: 'alice-test',
         seedHex: TEST_SEED,
+        pinStore: peerPins(),
         localDescriptor,
         peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-card.json',
       });
@@ -994,6 +1012,7 @@ describe('DirectAfalTransport', () => {
       const fresh = new DirectAfalTransport({
         agentId: 'alice-test',
         seedHex: TEST_SEED,
+        pinStore: peerPins(),
         localDescriptor,
         peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-descriptor.json',
       });
@@ -1076,6 +1095,7 @@ describe('DirectAfalTransport', () => {
       const fresh = new DirectAfalTransport({
         agentId: 'alice-test',
         seedHex: TEST_SEED,
+        pinStore: peerPins(),
         localDescriptor,
         peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-descriptor.json',
       });
@@ -1131,6 +1151,7 @@ describe('DirectAfalTransport', () => {
       const fresh = new DirectAfalTransport({
         agentId: 'alice-test',
         seedHex: TEST_SEED,
+        pinStore: peerPins(),
         localDescriptor,
         peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-card.json',
       });
@@ -1185,6 +1206,7 @@ describe('DirectAfalTransport', () => {
       const fresh = new DirectAfalTransport({
         agentId: 'alice-test',
         seedHex: TEST_SEED,
+        pinStore: peerPins(),
         localDescriptor,
         peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-card.json',
       });
@@ -1242,6 +1264,7 @@ describe('DirectAfalTransport', () => {
       const fresh = new DirectAfalTransport({
         agentId: 'alice-test',
         seedHex: TEST_SEED,
+        pinStore: peerPins(),
         localDescriptor,
         peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
       });
@@ -1279,6 +1302,7 @@ describe('DirectAfalTransport', () => {
       const fresh = new DirectAfalTransport({
         agentId: 'alice-test',
         seedHex: TEST_SEED,
+        pinStore: peerPins(),
         localDescriptor,
         peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
       });
@@ -1298,6 +1322,7 @@ describe('DirectAfalTransport', () => {
       const fresh = new DirectAfalTransport({
         agentId: 'alice-test',
         seedHex: TEST_SEED,
+        pinStore: peerPins(),
         localDescriptor,
         peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
       });
@@ -1340,6 +1365,7 @@ describe('DirectAfalTransport', () => {
       const fresh = new DirectAfalTransport({
         agentId: 'alice-test',
         seedHex: TEST_SEED,
+        pinStore: peerPins(),
         localDescriptor,
         peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-descriptor.json',
       });
@@ -1379,6 +1405,7 @@ describe('DirectAfalTransport', () => {
       const fresh = new DirectAfalTransport({
         agentId: 'alice-test',
         seedHex: TEST_SEED,
+        pinStore: peerPins(),
         localDescriptor,
         peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-descriptor.json',
       });
@@ -1460,6 +1487,7 @@ describe('DirectAfalTransport', () => {
       const fresh = new DirectAfalTransport({
         agentId: 'alice-test',
         seedHex: TEST_SEED,
+        pinStore: peerPins(),
         localDescriptor,
         peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-descriptor.json',
       });
@@ -1486,6 +1514,7 @@ describe('DirectAfalTransport', () => {
       const fresh = new DirectAfalTransport({
         agentId: 'alice-test',
         seedHex: TEST_SEED,
+        pinStore: peerPins(),
         localDescriptor,
         peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-descriptor.json',
       });
@@ -1509,6 +1538,7 @@ describe('DirectAfalTransport', () => {
       const fresh = new DirectAfalTransport({
         agentId: 'alice-test',
         seedHex: TEST_SEED,
+        pinStore: peerPins(),
         localDescriptor,
         // no peerDescriptorUrl
       });
@@ -1523,6 +1553,7 @@ describe('DirectAfalTransport', () => {
       const fresh = new DirectAfalTransport({
         agentId: 'alice-test',
         seedHex: TEST_SEED,
+        pinStore: peerPins(),
         localDescriptor,
         peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-descriptor.json',
       });
@@ -1548,6 +1579,7 @@ describe('DirectAfalTransport', () => {
       const fresh = new DirectAfalTransport({
         agentId: 'alice-test',
         seedHex: TEST_SEED,
+        pinStore: peerPins(),
         localDescriptor,
         peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-descriptor.json',
       });

@@ -29,6 +29,7 @@ export const DOMAIN_PREFIXES = {
   AGENT_CARD: 'VCAV-AGENT-CARD-V1:',
   IFC_GRANT: 'VCAV-IFC-GRANT-V1:',
   IFC_ENVELOPE: 'VCAV-IFC-ENVELOPE-V1:',
+  KEY_ROTATION: 'VCAV-KEY-ROTATION-V1:',
 } as const;
 
 export type DomainPrefix = (typeof DOMAIN_PREFIXES)[keyof typeof DOMAIN_PREFIXES];

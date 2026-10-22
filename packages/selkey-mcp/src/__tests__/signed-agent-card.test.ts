@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { PinStore } from '../pin-store.js';
 import { ed25519 } from '@noble/curves/ed25519';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
 import {
@@ -310,6 +311,7 @@ describe('tryResolvePeerViaAgentCard card signature verification (transport-leve
     const localDescriptor = makeSignedDescriptor('local-agent', TEST_PUBLIC_KEY_HEX, TEST_SEED_HEX);
     initiatorTransport = new DirectAfalTransport({
       agentId: 'local-agent',
+      pinStore: PinStore.inMemory([{ agentId: 'peer-agent', publicKeyHex: PEER_PUBLIC_KEY_HEX }]),
       seedHex: TEST_SEED_HEX,
       localDescriptor,
       peerDescriptorUrl: `${baseUrl}/.well-known/agent-card.json`,
@@ -328,6 +330,7 @@ describe('tryResolvePeerViaAgentCard card signature verification (transport-leve
     const localDescriptor = makeSignedDescriptor('local-agent', TEST_PUBLIC_KEY_HEX, TEST_SEED_HEX);
     initiatorTransport = new DirectAfalTransport({
       agentId: 'local-agent',
+      pinStore: PinStore.inMemory([{ agentId: 'peer-agent', publicKeyHex: PEER_PUBLIC_KEY_HEX }]),
       seedHex: TEST_SEED_HEX,
       localDescriptor,
       peerDescriptorUrl: `${baseUrl}/.well-known/agent-card.json`,
@@ -347,6 +350,7 @@ describe('tryResolvePeerViaAgentCard card signature verification (transport-leve
     const localDescriptor = makeSignedDescriptor('local-agent', TEST_PUBLIC_KEY_HEX, TEST_SEED_HEX);
     initiatorTransport = new DirectAfalTransport({
       agentId: 'local-agent',
+      pinStore: PinStore.inMemory([{ agentId: 'peer-agent', publicKeyHex: PEER_PUBLIC_KEY_HEX }]),
       seedHex: TEST_SEED_HEX,
       localDescriptor,
       peerDescriptorUrl: `${baseUrl}/.well-known/agent-card.json`,
@@ -432,6 +436,7 @@ describe('tryResolvePeerViaAgentCard card signature verification (transport-leve
     const localDescriptor = makeSignedDescriptor('local-agent', TEST_PUBLIC_KEY_HEX, TEST_SEED_HEX);
     initiatorTransport = new DirectAfalTransport({
       agentId: 'local-agent',
+      pinStore: PinStore.inMemory([{ agentId: 'peer-agent', publicKeyHex: PEER_PUBLIC_KEY_HEX }]),
       seedHex: TEST_SEED_HEX,
       localDescriptor,
       peerDescriptorUrl: `${baseUrl}/.well-known/agent-card.json`,

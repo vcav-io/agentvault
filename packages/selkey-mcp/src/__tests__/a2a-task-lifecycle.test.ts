@@ -10,6 +10,7 @@
  * - In-flight task TTL expiry
  */
 
+import { signNegotiationRequest } from '../negotiation-auth.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ed25519 } from '@noble/curves/ed25519';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
@@ -371,7 +372,7 @@ describe('A2A task lifecycle (#311b)', () => {
         body: JSON.stringify(
           buildA2ASendMessageRequest({
             mediaType: SELKEY_CONTRACT_OFFER_PROPOSAL_MEDIA_TYPE,
-            data: {
+            data: signNegotiationRequest('CONTRACT_OFFER_PROPOSAL', {
               negotiation_id: 'neg-lifecycle-1',
               acceptable_offers: [
                 {
@@ -386,7 +387,7 @@ describe('A2A task lifecycle (#311b)', () => {
                 },
               ],
               expected_counterparty: 'bob-test',
-            },
+            }, 'alice-test', PROPOSER_SEED),
             acceptedOutputModes: [SELKEY_CONTRACT_OFFER_SELECTION_MEDIA_TYPE],
             taskId,
           }),

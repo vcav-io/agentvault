@@ -11,6 +11,8 @@
  * - Initiator detects mismatched task_id in response
  */
 
+import { PinStore } from '../pin-store.js';
+import { signNegotiationRequest } from '../negotiation-auth.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ed25519 } from '@noble/curves/ed25519';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
@@ -355,7 +357,7 @@ describe('A2A task ID — server echo', () => {
       body: JSON.stringify(
         buildA2ASendMessageRequest({
           mediaType: SELKEY_CONTRACT_OFFER_PROPOSAL_MEDIA_TYPE,
-          data: {
+          data: signNegotiationRequest('CONTRACT_OFFER_PROPOSAL', {
             negotiation_id: 'neg-456',
             acceptable_offers: [
               {
@@ -370,7 +372,7 @@ describe('A2A task ID — server echo', () => {
               },
             ],
             expected_counterparty: 'bob-test',
-          },
+          }, 'alice-test', PROPOSER_SEED),
           acceptedOutputModes: [SELKEY_CONTRACT_OFFER_SELECTION_MEDIA_TYPE],
           taskId,
         }),
@@ -514,6 +516,7 @@ describe('A2A task ID — transport mismatch throws', () => {
     const localDescriptor = makeTransportDescriptor('alice-test', PROPOSER_PUBKEY, PROPOSER_SEED);
     const transport = new DirectAfalTransport({
       agentId: 'alice-test',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-test', publicKeyHex: RESPONDER_PUBKEY }]),
       seedHex: PROPOSER_SEED,
       localDescriptor,
       peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-card.json',
