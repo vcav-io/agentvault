@@ -31,6 +31,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { contentHash, DOMAIN_PREFIXES, signMessage, verifyMessage } from './afal-signing.js';
@@ -51,6 +52,7 @@ import {
   type PinResolver,
 } from './pin-store.js';
 import { findHeldReceipt } from './held-receipts.js';
+import { peerText } from './direct-afal-transport.js';
 import { appendPrivateLine, readPrivateJson, selkeyStateDir, writePrivateJson } from './secure-fs.js';
 
 export type IfcMessageClass = 'LOGISTICS' | 'CONSENT' | 'REFERENCE' | 'ARTIFACT_TRANSFER';
@@ -226,6 +228,28 @@ const MAX_USES_CEILING = 100;
 const MAX_PAYLOAD_CHARS = 4096;
 const UUID_LOWER_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const HEX64_RE = /^[0-9a-f]{64}$/;
+const MAX_AUDIT_BYTES = 4 * 1024 * 1024;
+const MAX_RECEIVED_GRANTS = 256;
+const MAX_LOGGED_CHARS = 128;
+
+function clip(value: string): string {
+  return value.length > MAX_LOGGED_CHARS ? `${value.slice(0, MAX_LOGGED_CHARS)}…` : value;
+}
+
+/** The unsigned copies in a stored record must agree with its signed grant. */
+function recordMatchesGrant(record: IssuedGrantRecord): boolean {
+  const g = record.grant;
+  return (
+    record.grant_id === g.grant_id &&
+    record.audience === normalizeAgentId(g.audience) &&
+    record.audience_key_fpr === g.audience_key_fpr &&
+    record.max_uses === g.permissions.max_uses &&
+    record.expires_at === g.expires_at &&
+    record.issued_at === g.issued_at &&
+    JSON.stringify(record.scope) === JSON.stringify(g.scope) &&
+    JSON.stringify(record.provenance) === JSON.stringify(g.provenance)
+  );
+}
 
 /** Receipt and session ids are lowercase UUIDs or 64 lowercase hex chars. */
 function assertSessionRef(value: unknown, field: string): asserts value is string {
@@ -307,6 +331,7 @@ export class IfcService {
   private readonly stateDir: string;
   private readonly inbox: IfcStoredMessage[] = [];
   private hiddenCounter = 0;
+  private unauthenticatedDenials = 0;
 
   constructor(params: {
     agentId: string;
@@ -344,14 +369,21 @@ export class IfcService {
 
   private loadStore(): GrantStoreFileV1 {
     const raw = readPrivateJson(this.grantStorePath) as Partial<GrantStoreFileV1> | undefined;
-    if (raw === undefined) return { version: 1, agent_id: this.agentId, issued: {}, received: {} };
+    if (raw === undefined) {
+      return { version: 1, agent_id: this.agentId, issued: Object.create(null), received: Object.create(null) };
+    }
     if (raw.version !== 1 || typeof raw.issued !== 'object' || typeof raw.received !== 'object' || !raw.issued || !raw.received) {
       throw new Error(`${this.grantStorePath} is not a valid IFC grant store`);
     }
     if (raw.agent_id !== this.agentId) {
       throw new Error(`${this.grantStorePath} belongs to agent ${String(raw.agent_id)}`);
     }
-    return raw as GrantStoreFileV1;
+    // Null-prototype maps keyed only by 64-hex grant ids.
+    const issued: Record<string, IssuedGrantRecord> = Object.create(null);
+    for (const [id, record] of Object.entries(raw.issued)) if (HEX64_RE.test(id)) issued[id] = record;
+    const received: Record<string, IfcGrant> = Object.create(null);
+    for (const [id, grant] of Object.entries(raw.received)) if (HEX64_RE.test(id)) received[id] = grant;
+    return { version: 1, agent_id: this.agentId, issued, received };
   }
 
   private saveStore(store: GrantStoreFileV1): void {
@@ -359,9 +391,19 @@ export class IfcService {
   }
 
   private audit(event: string, fields: Record<string, unknown>): void {
+    const clipped: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(fields)) clipped[k] = typeof v === 'string' ? clip(v) : v;
+    // Bound the log: when it exceeds the limit, keep one previous generation.
+    try {
+      if (fs.statSync(this.auditPath).size > MAX_AUDIT_BYTES) {
+        fs.renameSync(this.auditPath, `${this.auditPath}.1`);
+      }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    }
     appendPrivateLine(
       this.auditPath,
-      JSON.stringify({ ts: new Date().toISOString(), agent: this.agentId, event, ...fields }),
+      JSON.stringify({ ts: new Date().toISOString(), agent: this.agentId, event, ...clipped }),
     );
   }
 
@@ -384,8 +426,8 @@ export class IfcService {
 
   private stateOf(record: IssuedGrantRecord, nowMs: number): IfcGrantState {
     if (record.revoked_at) return 'REVOKED';
-    if (Date.parse(record.expires_at) <= nowMs) return 'EXPIRED';
-    if (record.uses >= record.max_uses) return 'EXHAUSTED';
+    if (Date.parse(record.grant.expires_at) <= nowMs) return 'EXPIRED';
+    if (record.uses >= record.grant.permissions.max_uses) return 'EXHAUSTED';
     return 'ACTIVE';
   }
 
@@ -393,7 +435,7 @@ export class IfcService {
   private noteExpiries(store: GrantStoreFileV1, nowMs: number): boolean {
     let changed = false;
     for (const record of Object.values(store.issued)) {
-      if (!record.expiry_logged && !record.revoked_at && Date.parse(record.expires_at) <= nowMs) {
+      if (!record.expiry_logged && !record.revoked_at && Date.parse(record.grant.expires_at) <= nowMs) {
         record.expiry_logged = true;
         this.audit('EXPIRE', { grant_id: record.grant_id, audience: record.audience });
         changed = true;
@@ -437,6 +479,11 @@ export class IfcService {
     const held = findHeldReceipt(this.agentId, args.receipt_id, this.stateDir);
     if (!held) {
       throw new Error('no held receipt with this receipt_id: grants are issued only for sessions this agent completed');
+    }
+    if (!held.receipt_verified) {
+      throw new Error(
+        'the held receipt was not verified against a pinned relay key (set SELKEY_RELAY_VERIFYING_KEY_HEX)',
+      );
     }
     if (normalizeAgentId(held.counterparty) !== audience) {
       throw new Error('grant audience was not the counterparty in the referenced session');
@@ -516,15 +563,23 @@ export class IfcService {
       const data = parsed?.data as { accepted?: boolean; error?: string } | undefined;
       return data?.accepted === true
         ? { delivered: true }
-        : { delivered: false, error: data?.error ?? `delivery failed (${response.status})` };
+        : {
+            delivered: false,
+            error: data?.error !== undefined
+              ? `audience refused the grant: ${peerText(data.error)}`
+              : `delivery failed (HTTP ${response.status})`,
+          };
     } catch (err) {
       return { delivered: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
 
   revokeGrant(args: RevokeIfcGrantArgs): { grant_id: string; revoked_at: string } {
+    if (typeof args.grant_id !== 'string' || !HEX64_RE.test(args.grant_id)) {
+      throw new Error('grant_id must be 64 lowercase hex characters');
+    }
     const store = this.loadStore();
-    const record = store.issued[args.grant_id];
+    const record = Object.hasOwn(store.issued, args.grant_id) ? store.issued[args.grant_id] : undefined;
     if (!record) throw new Error('unknown grant_id');
     if (!record.revoked_at) {
       record.revoked_at = new Date().toISOString();
@@ -589,6 +644,17 @@ export class IfcService {
       const grant = this.verifyReceivedGrant(input.grant);
       const store = this.loadStore();
       store.received[grant.grant_id] = grant;
+      // Bound the received-grants store: drop expired grants, then the oldest.
+      const nowMs = Date.now();
+      const entries = Object.values(store.received).sort((a, b) => a.issued_at.localeCompare(b.issued_at));
+      for (const g of entries) {
+        if (Date.parse(g.expires_at) <= nowMs && g.grant_id !== grant.grant_id) delete store.received[g.grant_id];
+      }
+      const remaining = Object.values(store.received).sort((a, b) => a.issued_at.localeCompare(b.issued_at));
+      while (remaining.length > MAX_RECEIVED_GRANTS) {
+        const oldest = remaining.shift();
+        if (oldest) delete store.received[oldest.grant_id];
+      }
       this.saveStore(store);
       this.audit('RECEIVE_GRANT', { grant_id: grant.grant_id, issuer: grant.issuer });
       return { accepted: true, grant_id: grant.grant_id };
@@ -604,8 +670,9 @@ export class IfcService {
     }
     let grantInput: unknown = args.grant;
     if (grantInput === undefined) {
-      if (!args.grant_id) throw new Error('grant or grant_id is required');
-      grantInput = this.loadStore().received[args.grant_id];
+      if (!args.grant_id || !HEX64_RE.test(args.grant_id)) throw new Error('grant or a 64-hex grant_id is required');
+      const received = this.loadStore().received;
+      grantInput = Object.hasOwn(received, args.grant_id) ? received[args.grant_id] : undefined;
       if (!grantInput) throw new Error('no received grant with this grant_id');
     }
     const grant = this.verifyReceivedGrant(grantInput);
@@ -681,71 +748,99 @@ export class IfcService {
    */
   receiveEnvelope(input: { envelope: IfcEnvelope; grant?: unknown }): IfcDeliveryResult {
     const envelope = input.envelope;
-    const blocked = (reason: string): IfcDeliveryResult => {
+    const result = (reason: string): IfcDeliveryResult => ({
+      decision: 'BLOCK',
+      message_id: typeof envelope?.message_id === 'string' ? clip(envelope.message_id) : '',
+      related_receipt_id: typeof envelope?.related_receipt_id === 'string' ? clip(envelope.related_receipt_id) : '',
+      related_session_id: typeof envelope?.related_session_id === 'string' ? clip(envelope.related_session_id) : '',
+      error: reason,
+    });
+    // Before the sender is authenticated, refusals are not written to the
+    // audit log (only counted), so unauthenticated traffic cannot grow it.
+    const refused = (reason: string): IfcDeliveryResult => {
+      this.unauthenticatedDenials += 1;
+      return result(reason);
+    };
+    // After authentication, every refusal is audited.
+    const blocked = (reason: string, grantId: string, sender: string): IfcDeliveryResult => {
       try {
         this.audit('DENY', {
-          grant_id: typeof envelope?.grant_id === 'string' ? envelope.grant_id : null,
-          message_id: typeof envelope?.message_id === 'string' ? envelope.message_id : null,
-          sender: typeof envelope?.sender === 'string' ? envelope.sender : null,
+          grant_id: grantId,
+          message_id: typeof envelope.message_id === 'string' ? envelope.message_id : null,
+          sender,
           reason,
         });
       } catch (err) {
         console.error(`IFC audit failed: ${err instanceof Error ? err.message : String(err)}`);
       }
-      return {
-        decision: 'BLOCK',
-        message_id: envelope?.message_id,
-        related_receipt_id: envelope?.related_receipt_id,
-        related_session_id: envelope?.related_session_id,
-        error: reason,
-      };
+      return result(reason);
     };
     try {
-      if (!envelope || typeof envelope !== 'object') return blocked('envelope must be an object');
+      if (!envelope || typeof envelope !== 'object') return refused('envelope must be an object');
       if (input.grant !== undefined) {
         // Senders reference grants by id; a grant object in the message is
         // never authoritative. Reject anything that is not a V2 grant.
         const version = (input.grant as Record<string, unknown> | null)?.['version'];
-        if (version !== IFC_GRANT_VERSION) return blocked(`unsupported grant version: ${String(version)}`);
+        if (version !== IFC_GRANT_VERSION) return refused(`unsupported grant version: ${clip(String(version))}`);
       }
-      if (envelope.version !== 'AV-IFC-MSG-V1') return blocked('unsupported envelope version');
+      if (envelope.version !== 'AV-IFC-MSG-V1') return refused('unsupported envelope version');
       if (typeof envelope.message_id !== 'string' || !UUID_LOWER_RE.test(envelope.message_id)) {
-        return blocked('message_id must be a lowercase UUID');
+        return refused('message_id must be a lowercase UUID');
       }
-      if (normalizeAgentId(String(envelope.recipient)) !== this.agentId) return blocked('recipient mismatch');
+      if (typeof envelope.grant_id !== 'string' || !HEX64_RE.test(envelope.grant_id)) {
+        return refused('grant_id must be 64 lowercase hex characters');
+      }
+      if (normalizeAgentId(String(envelope.recipient)) !== this.agentId) return refused('recipient mismatch');
 
       const nowMs = Date.now();
       const store = this.loadStore();
       const expiriesChanged = this.noteExpiries(store, nowMs);
-      const record = store.issued[envelope.grant_id];
+      const saveExpiries = () => {
+        if (expiriesChanged) this.saveStore(store);
+      };
+      const record = Object.hasOwn(store.issued, envelope.grant_id) ? store.issued[envelope.grant_id] : undefined;
       if (!record) {
-        if (expiriesChanged) this.saveStore(store);
-        return blocked('unknown grant_id');
+        saveExpiries();
+        return refused('unknown grant_id');
       }
-      // The stored grant must still be ours (file integrity).
-      if (!verifyMessage(DOMAIN_PREFIXES.IFC_GRANT, record.grant as unknown as Record<string, unknown>, this.verifyingKeyHex)) {
-        return blocked('stored grant does not verify under this agent key');
+      // Enforce from the signed grant, which must still verify under this
+      // agent's key; the unsigned copies in the record must agree with it.
+      const grant = record.grant;
+      if (!verifyMessage(DOMAIN_PREFIXES.IFC_GRANT, grant as unknown as Record<string, unknown>, this.verifyingKeyHex)) {
+        saveExpiries();
+        return refused('stored grant does not verify under this agent key');
       }
+      if (!recordMatchesGrant(record)) {
+        saveExpiries();
+        return refused('stored grant record is inconsistent');
+      }
+      const audience = normalizeAgentId(grant.audience);
+      if (normalizeAgentId(String(envelope.sender)) !== audience) {
+        saveExpiries();
+        return refused('sender is not the grant audience');
+      }
+      const senderKey = this.pins.pinnedKeyFor(audience);
+      if (!senderKey || keyFingerprint(senderKey) !== grant.audience_key_fpr) {
+        saveExpiries();
+        return refused(senderKey ? 'grant audience key changed since issuance' : 'grant audience is not pinned');
+      }
+      if (!verifyMessage(DOMAIN_PREFIXES.IFC_ENVELOPE, envelope as unknown as Record<string, unknown>, senderKey)) {
+        saveExpiries();
+        return refused('envelope signature does not verify under the audience pin');
+      }
+
+      // The sender is authenticated from here on.
       const deny = (reason: string): IfcDeliveryResult => {
-        if (expiriesChanged) this.saveStore(store);
-        return blocked(reason);
+        saveExpiries();
+        return blocked(reason, grant.grant_id, audience);
       };
       const state = this.stateOf(record, nowMs);
       if (state !== 'ACTIVE') return deny(`grant ${state.toLowerCase()}`);
-      if (normalizeAgentId(String(envelope.sender)) !== record.audience) return deny('sender is not the grant audience');
-      const senderKey = this.pins.pinnedKeyFor(record.audience);
-      if (!senderKey) return deny('grant audience is not pinned');
-      if (keyFingerprint(senderKey) !== record.audience_key_fpr) {
-        return deny('grant audience key changed since issuance');
-      }
-      if (!verifyMessage(DOMAIN_PREFIXES.IFC_ENVELOPE, envelope as unknown as Record<string, unknown>, senderKey)) {
-        return deny('envelope signature does not verify under the audience pin');
-      }
-      if (!record.scope.message_classes.includes(envelope.message_class)) return deny('grant scope mismatch');
+      if (!grant.scope.message_classes.includes(envelope.message_class)) return deny('grant scope mismatch');
       if (envelope.session_relation !== 'POST_SESSION') return deny('unsupported session_relation');
       if (envelope.ifc_policy_hash !== POST_SESSION_POLICY_HASH) return deny('ifc_policy_hash mismatch');
-      if (envelope.related_receipt_id !== record.provenance.receipt_id) return deny('receipt provenance mismatch');
-      if (envelope.related_session_id !== record.provenance.session_id) return deny('session provenance mismatch');
+      if (envelope.related_receipt_id !== grant.provenance.receipt_id) return deny('receipt provenance mismatch');
+      if (envelope.related_session_id !== grant.provenance.session_id) return deny('session provenance mismatch');
       if (typeof envelope.payload !== 'string' || envelope.payload.length > MAX_PAYLOAD_CHARS) {
         return deny('payload too large');
       }
@@ -758,18 +853,18 @@ export class IfcService {
       record.seen_message_ids.push(envelope.message_id);
       this.saveStore(store);
       this.audit('USE', {
-        grant_id: record.grant_id,
+        grant_id: grant.grant_id,
         message_id: envelope.message_id,
-        sender: record.audience,
+        sender: audience,
         message_class: envelope.message_class,
         uses: record.uses,
-        max_uses: record.max_uses,
+        max_uses: grant.permissions.max_uses,
       });
 
       const decision = classifyDecision(envelope.message_class);
       const stored: IfcStoredMessage = {
         message_id: envelope.message_id,
-        sender: record.audience,
+        sender: audience,
         recipient: this.agentId,
         message_class: envelope.message_class,
         decision,
@@ -791,7 +886,7 @@ export class IfcService {
           reason_code: 'REFERENCE_NEEDS_SESSION',
           source_message_id: envelope.message_id,
           grant_context: {
-            grant_id: record.grant_id,
+            grant_id: grant.grant_id,
             related_receipt_id: envelope.related_receipt_id,
             related_session_id: envelope.related_session_id,
           },
@@ -808,8 +903,13 @@ export class IfcService {
         ...(stored.escalation_stub ? { escalation_stub: stored.escalation_stub } : {}),
       };
     } catch (error) {
-      return blocked(error instanceof Error ? error.message : String(error));
+      return result(clip(error instanceof Error ? error.message : String(error)));
     }
+  }
+
+  /** Refusals before the sender was authenticated (not written to the audit log). */
+  get unauthenticatedDenialCount(): number {
+    return this.unauthenticatedDenials;
   }
 
   readMessages(args: ReadIfcMessagesArgs = {}): { pending_count: number; messages: Array<Record<string, unknown>> } {

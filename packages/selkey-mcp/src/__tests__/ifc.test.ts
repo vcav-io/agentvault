@@ -5,7 +5,7 @@
  * holds, keeps the grant state, and enforces it when Alice's envelopes arrive.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -17,6 +17,7 @@ import { IfcService, type IfcEnvelope, type IfcGrant, type IfcMessageClass } fro
 import { recordHeldReceipt } from '../held-receipts.js';
 import { keyFingerprint } from '../pin-store.js';
 import { InsecureStateFileError } from '../secure-fs.js';
+import { SELKEY_IFC_RESULT_MEDIA_TYPE, buildA2ATaskResponse } from '../a2a-messages.js';
 import grantVector from './vectors/ifc-grant-v2.json';
 
 const ALICE_SEED = '01'.repeat(32);
@@ -73,7 +74,7 @@ function aliceService(): IfcService {
 }
 
 /** Bob completed a session with `counterparty` and holds its receipt. */
-function bobHoldsReceipt(counterparty = 'alice-test', receiptId = RECEIPT_ID): void {
+function bobHoldsReceipt(counterparty = 'alice-test', receiptId = RECEIPT_ID, verified = true): void {
   recordHeldReceipt(
     {
       agent_id: 'bob-test',
@@ -81,7 +82,7 @@ function bobHoldsReceipt(counterparty = 'alice-test', receiptId = RECEIPT_ID): v
       session_id: SESSION_ID,
       counterparty,
       role: 'RESPONDER',
-      receipt_verified: true,
+      receipt_verified: verified,
       recorded_at: new Date().toISOString(),
     },
     bobDir,
@@ -347,6 +348,97 @@ describe('receiving envelopes (recipient enforces its own store)', () => {
     bob.receiveEnvelope({ envelope: envelopeFrom(ALICE_SEED, grant.grant_id) });
     bob.revokeGrant({ grant_id: grant.grant_id });
     expect(auditEvents(bobDir).map((e) => e['event'])).toEqual(['ISSUE', 'USE', 'DENY', 'REVOKE']);
+  });
+});
+
+describe('recipient store hardening', () => {
+  it('refuses to issue a grant for a receipt not verified against a pinned relay key', () => {
+    bobHoldsReceipt('alice-test', RECEIPT_ID, false);
+    expect(() => issueToAlice(bobService())).toThrow(/not verified against a pinned relay key/);
+  });
+
+  it('does not write unauthenticated envelopes to the audit log', () => {
+    bobHoldsReceipt();
+    const bob = bobService();
+    const grant = issueToAlice(bob);
+    const before = auditEvents(bobDir).length;
+    for (let i = 0; i < 20; i++) {
+      bob.receiveEnvelope({ envelope: envelopeFrom(MALLORY_SEED, grant.grant_id) });
+      bob.receiveEnvelope({ envelope: envelopeFrom(MALLORY_SEED, 'f'.repeat(64)) });
+    }
+    expect(auditEvents(bobDir).length).toBe(before);
+    expect(bob.unauthenticatedDenialCount).toBe(40);
+  });
+
+  it('rejects non-hex grant ids such as __proto__', () => {
+    bobHoldsReceipt();
+    const bob = bobService();
+    issueToAlice(bob);
+    expect(() => bob.revokeGrant({ grant_id: '__proto__' })).toThrow(/64 lowercase hex/);
+    const delivery = bob.receiveEnvelope({ envelope: envelopeFrom(ALICE_SEED, '__proto__') });
+    expect(delivery.decision).toBe('BLOCK');
+    expect(({} as Record<string, unknown>)['revoked_at']).toBeUndefined();
+  });
+
+  it('enforces the signed grant, not edited copies in the store', () => {
+    bobHoldsReceipt();
+    const bob = bobService();
+    const grant = issueToAlice(bob, { max_uses: 1 });
+    const storePath = path.join(bobDir, 'ifc-grants.json');
+    const store = JSON.parse(fs.readFileSync(storePath, 'utf8')) as {
+      issued: Record<string, { max_uses: number }>;
+    };
+    store.issued[grant.grant_id]!.max_uses = 100;
+    fs.writeFileSync(storePath, JSON.stringify(store), { mode: 0o600 });
+    const delivery = bob.receiveEnvelope({ envelope: envelopeFrom(ALICE_SEED, grant.grant_id) });
+    expect(delivery.error).toBe('stored grant record is inconsistent');
+  });
+
+  it('bounds the received-grants store', () => {
+    bobHoldsReceipt();
+    const bob = bobService();
+    const alice = aliceService();
+    for (let i = 0; i < 260; i++) {
+      expect(alice.receiveGrant({ grant: issueToAlice(bob) }).accepted).toBe(true);
+    }
+    expect(alice.listGrants().received).toHaveLength(256);
+  });
+
+  it('marks a refusal message from the audience as peer-supplied text', async () => {
+    bobHoldsReceipt();
+    const bob = new IfcService({
+      agentId: 'bob-test',
+      seedHex: BOB_SEED,
+      verifyingKeyHex: BOB_PUB,
+      knownAgents: [
+        { agent_id: 'alice-test', aliases: [], public_key_hex: ALICE_PUB, a2a_send_message_url: 'http://alice.example/a2a' },
+      ],
+      stateDir: bobDir,
+    });
+    const grant = issueToAlice(bob);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve({
+          status: 400,
+          json: () =>
+            Promise.resolve(
+              buildA2ATaskResponse({
+                mediaType: SELKEY_IFC_RESULT_MEDIA_TYPE,
+                data: { accepted: false, error: 'x'.repeat(500) },
+              }),
+            ),
+        }),
+      ),
+    );
+    try {
+      const delivery = await bob.deliverGrant(grant);
+      expect(delivery.delivered).toBe(false);
+      expect(delivery.error).toContain('(peer-supplied text)');
+      expect(delivery.error!.length).toBeLessThan(200);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

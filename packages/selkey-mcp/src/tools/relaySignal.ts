@@ -1085,23 +1085,21 @@ function localSessionData(handle: RelayHandle): LocalSessionData {
  */
 function recordCompletedReceipt(
   handle: RelayHandle,
+  localSessionId: string | undefined,
   output: SessionOutputResponse,
   verified: boolean,
 ): void {
-  const candidates = [output.receipt, (output as { receipt_v2?: unknown }).receipt_v2];
-  const receipt = candidates.find(
-    (r): r is Record<string, unknown> =>
-      !!r && typeof r === 'object' && typeof (r as Record<string, unknown>)['receipt_id'] === 'string',
-  );
-  const sessionId =
-    (receipt && typeof receipt['session_id'] === 'string' ? receipt['session_id'] : undefined) ??
-    handle.sessionId;
-  if (!receipt || !sessionId) return;
+  // Only the v3 receipt the session check covered; the session id comes from
+  // this agent's own handle, never from the receipt.
+  const receipt = output.receipt as Record<string, unknown> | null | undefined;
+  if (!receipt || typeof receipt !== 'object' || typeof receipt['receipt_id'] !== 'string' || !localSessionId) {
+    return;
+  }
   try {
     recordHeldReceipt({
       agent_id: handle.agentId,
-      receipt_id: receipt['receipt_id'] as string,
-      session_id: sessionId,
+      receipt_id: receipt['receipt_id'],
+      session_id: localSessionId,
       counterparty: handle.counterparty,
       role: handle.role,
       receipt_verified: verified,
@@ -1124,12 +1122,13 @@ function completedResponse(
     return failedResponse(handle, 'RECEIPT_VERIFICATION_FAILED', receiptCheck.detail);
   }
   handle.phase = 'COMPLETED';
+  const localSessionId = handle.sessionId;
   const effectiveSessionId = getEffectiveCompletedSessionId(handle, output);
   if (effectiveSessionId) {
     handle.sessionId = effectiveSessionId;
   }
   removeSessionStateFile(handle);
-  recordCompletedReceipt(handle, output, receiptCheck.status === 'VERIFIED');
+  recordCompletedReceipt(handle, localSessionId, output, receiptCheck.status === 'VERIFIED');
   return buildSuccess('COMPLETE', {
     mode: handle.role === 'INITIATOR' ? 'INITIATE' : 'RESPOND',
     state: 'COMPLETED',

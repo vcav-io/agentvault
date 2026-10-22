@@ -260,7 +260,7 @@ describe('session state files', () => {
     expect(index.length).toBe(0);
   });
 
-  it('records the receipt of a completed session with the local counterparty', async () => {
+  it('records the receipt of a completed session with the local counterparty and session id', async () => {
     const transport = createMockAfalTransport();
     const { resumeToken } = await initiateSession(transport);
     mockGetStatus.mockResolvedValueOnce({ state: 'COMPLETED' });
@@ -273,7 +273,14 @@ describe('session state files', () => {
     await handleRelaySignal({ resume_token: resumeToken }, transport);
 
     const held = findHeldReceipt('alice-demo', 'c0ffee00-0000-4000-8000-000000000009', path.join(tmpDir, '.selkey'));
-    expect(held).toMatchObject({ counterparty: 'bob-demo', session_id: 'b'.repeat(64), role: 'INITIATOR' });
+    // The session id comes from the local handle, not from the receipt; with
+    // no pinned relay key the receipt is recorded as unverified.
+    expect(held).toMatchObject({
+      counterparty: 'bob-demo',
+      session_id: 'sess-mock',
+      role: 'INITIATOR',
+      receipt_verified: false,
+    });
   });
 
   it('removes per-session file on FAILED response', async () => {
