@@ -162,3 +162,31 @@ fn test_dev_relay_refuses_public_bind_without_operator_token() {
         "refusing to start: relay is bound to a non-loopback address",
     );
 }
+
+#[test]
+fn test_relay_refuses_schema_registry_with_nested_draft_declaration() {
+    let dir = std::env::temp_dir().join(format!(
+        "selkey-startup-nested-draft-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let schema = serde_json::json!({
+        "type": "object",
+        "$defs": {
+            "signal": { "$schema": "http://json-schema.org/draft-04/schema#", "const": "OK" }
+        },
+        "properties": { "signal": { "$ref": "#/$defs/signal" } },
+        "required": ["signal"],
+        "additionalProperties": false
+    });
+    std::fs::write(dir.join("nested_draft.json"), schema.to_string()).unwrap();
+    assert_refuses(
+        &[
+            ("SELKEY_ENV", "dev"),
+            ("SELKEY_INBOX_AUTH", "off"),
+            ("SELKEY_SCHEMA_DIR", dir.to_str().unwrap()),
+        ],
+        "Failed to load schema registry",
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

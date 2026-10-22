@@ -22,7 +22,7 @@ Complete reference for all environment variables used by the Selkey relay and MC
 | `SELKEY_MODEL_ID` | `claude-sonnet-4-6` | Anthropic model ID |
 | `SELKEY_SIGNING_KEY_HEX` | required outside dev | 64-char hex Ed25519 signing key for receipt signing (e.g. `openssl rand -hex 32`). Outside `SELKEY_ENV=dev` the relay refuses to start without it. In dev, if unset, a random key is generated on each start and receipts won't verify across restarts. The key id logged at startup and reported by `/health` is `ed25519:` + hex(SHA-256(public key)) |
 | `SELKEY_PROMPT_PROGRAM_DIR` | `prompt_programs` | Directory containing prompt programs, model profile lockfile, and enforcement policy lockfile |
-| `SELKEY_SCHEMA_DIR` | `<prompt dir>/../schemas/output` | Directory of content-addressed output schemas (the schema registry). Set it to the repo's `schemas/output` when running from a checkout; the Docker image sets it |
+| `SELKEY_SCHEMA_DIR` | `<prompt dir>/../schemas/output` | Directory of content-addressed output schemas (the schema registry). Set it to the repo's `schemas/output` when running from a checkout; the Docker image sets it. The relay refuses to start if the directory cannot be read or a schema in it declares a JSON Schema draft other than draft 7 (see [Output schema acceptance](#output-schema-acceptance)) |
 | `SELKEY_SESSION_TTL_SECS` | `600` | Maximum session lifetime in seconds. A contract's `session_ttl_secs` can shorten it for that session. Background reaper cleans up expired sessions. A session still processing one TTL after inference started is aborted with `TIMEOUT` |
 | `OPENAI_API_KEY` | — | Enables the OpenAI provider when set |
 | `SELKEY_OPENAI_MODEL_ID` | `gpt-4o` | OpenAI model ID (only used if `OPENAI_API_KEY` is set) |
@@ -70,8 +70,13 @@ these schemas the relay computes the entropy bound from the structure and ignore
 (`SELKEY_MAX_ENTROPY_BITS_PER_SESSION`, default 64 bits) applies to inline schemas too, so a
 free-text field of more than a few characters needs the operator to raise it.
 
-Model output is validated against the output schema as JSON Schema draft 7, whatever draft a
-schema's `$schema` names, so a registry schema cannot change what its keywords mean.
+Model output is validated against the output schema as JSON Schema draft 7. A schema may name
+draft 7 in a root `$schema` keyword; any other `$schema` (another draft at the root, or `$schema`
+anywhere below the root, such as in a `$ref` target) is rejected, because the validator would
+otherwise switch drafts for that part of the schema. A registry directory containing such a schema
+stops the relay at startup, and contracts using one are rejected. Every output schema is also
+compiled when the contract is accepted, so a schema the validator cannot compile (for example an
+invalid `pattern`) is rejected before any provider call.
 
 Before release, integral numbers in the model output are rewritten as JSON integers (`2.0`,
 `2e0` → `2`), so a value has one representation.

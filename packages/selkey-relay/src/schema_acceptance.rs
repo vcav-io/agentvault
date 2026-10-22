@@ -19,8 +19,8 @@ use entropy_core::{calculate_schema_entropy_upper_bound, enum_entropy_bits};
 use serde_json::Value;
 
 use crate::error::RelayError;
-use crate::relay::compute_output_schema_hash;
-use crate::schema_registry::SchemaRegistry;
+use crate::relay::{compile_output_schema, compute_output_schema_hash};
+use crate::schema_registry::{check_declared_draft, SchemaRegistry};
 use crate::types::Contract;
 
 /// An output schema the relay has accepted for a contract.
@@ -88,6 +88,7 @@ pub fn resolve_output_schema(
     let bits = strict_schema_upper_bound(&contract.output_schema).map_err(|reason| {
         RelayError::ContractValidation(format!("inline output schema rejected: {reason}"))
     })?;
+    ensure_compiles(&contract.output_schema)?;
     Ok(ResolvedOutputSchema {
         schema: contract.output_schema.clone(),
         hash: candidate_hash,
@@ -97,6 +98,10 @@ pub fn resolve_output_schema(
 }
 
 fn accept_registry_schema(schema: Value, hash: String) -> Result<ResolvedOutputSchema, RelayError> {
+    check_declared_draft(&schema).map_err(|e| {
+        RelayError::ContractValidation(format!("registry output schema rejected: {e}"))
+    })?;
+    ensure_compiles(&schema)?;
     let bits = calculate_schema_entropy_upper_bound(&schema).map_err(|e| {
         RelayError::ContractValidation(format!(
             "entropy upper bound could not be computed for output schema: {e}"
@@ -108,6 +113,14 @@ fn accept_registry_schema(schema: Value, hash: String) -> Result<ResolvedOutputS
         entropy_bits: u32::from(bits),
         from_registry: true,
     })
+}
+
+/// Reject a schema the output validator cannot compile (for example, an
+/// invalid `pattern`), so the contract fails before any provider call.
+fn ensure_compiles(schema: &Value) -> Result<(), RelayError> {
+    compile_output_schema(schema)
+        .map(|_| ())
+        .map_err(|e| RelayError::ContractValidation(format!("output schema does not compile: {e}")))
 }
 
 /// Bits used to bound one Unicode scalar value in a length-bounded string.
@@ -154,7 +167,7 @@ const ALLOWED_KEYWORDS: &[&str] = &[
 /// - is a JSON object at every node (no `true`/`false` schemas) and every node
 ///   declares a single `type`, an `enum`, or a `const`;
 /// - uses only [`ALLOWED_KEYWORDS`] (no `$schema`, composition, references,
-///   pattern or dynamic properties);
+///   `patternProperties` or other dynamic properties);
 /// - sets `additionalProperties: false` on every object and lists every
 ///   property in `required`;
 /// - bounds every string with `enum` or `maxLength`, every array with
@@ -577,6 +590,45 @@ mod tests {
                 "schema {schema} should be rejected"
             );
         }
+    }
+
+    #[test]
+    fn test_uncompilable_schema_rejected_at_admission() {
+        let schema = json!({
+            "type": "object",
+            "properties": { "a": { "type": "string", "maxLength": 3, "pattern": "(" } },
+            "required": ["a"],
+            "additionalProperties": false
+        });
+        let contract = contract_with(schema.clone(), None);
+        let err = resolve_output_schema(&contract, &SchemaRegistry::empty(), true).unwrap_err();
+        assert!(err.to_string().contains("does not compile"), "{err}");
+
+        let (registry, hash) = registry_with(&schema);
+        let contract = contract_with(json!({}), Some(hash));
+        let err = resolve_output_schema(&contract, &registry, false).unwrap_err();
+        assert!(err.to_string().contains("does not compile"), "{err}");
+    }
+
+    #[test]
+    fn test_registry_schema_with_ref_target_declaring_a_draft_rejected() {
+        let schema = json!({
+            "type": "object",
+            "$defs": {
+                "signal": { "$schema": "http://json-schema.org/draft-04/schema#", "const": "OK" }
+            },
+            "properties": { "signal": { "$ref": "#/$defs/signal" } },
+            "required": ["signal"],
+            "additionalProperties": false
+        });
+        let (registry, hash) = registry_with(&schema);
+        let contract = contract_with(json!({}), Some(hash));
+        let err = resolve_output_schema(&contract, &registry, false).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("$schema is only allowed at the root"),
+            "{err}"
+        );
     }
 
     #[test]

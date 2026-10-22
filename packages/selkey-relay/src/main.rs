@@ -374,6 +374,10 @@ async fn main() {
     // Load schema registry — from admission if available, otherwise from directory
     let schema_registry = if let Some(ref admitted) = registry_admission {
         let reg = selkey_relay::schema_registry::SchemaRegistry::from_map(admitted.schemas.clone());
+        if let Err(e) = reg.check_declared_drafts() {
+            tracing::error!(error = %e, "Schema registry rejected — refusing to start");
+            std::process::exit(1);
+        }
         tracing::info!(
             schema_count = reg.len(),
             "Schema registry loaded (from registry admission)"
@@ -401,8 +405,8 @@ async fn main() {
                     reg
                 }
                 Err(e) => {
-                    tracing::warn!(error = %e, "Failed to load schema registry — using empty registry");
-                    selkey_relay::schema_registry::SchemaRegistry::empty()
+                    tracing::error!(error = %e, "Failed to load schema registry — refusing to start");
+                    std::process::exit(1);
                 }
             }
         } else {
