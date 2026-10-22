@@ -18,6 +18,8 @@ import {
   _setRelayPollConfigForTesting,
 } from '../tools/relaySignal.js';
 import { _resetHandlesForTesting } from '../tools/relayHandles.js';
+import { RelayInboxTransport } from '../relay-inbox-transport.js';
+import { buildRelayInboxTransportFromEnv } from '../index.js';
 import type { AfalTransport, AfalInviteMessage } from '../afal-transport.js';
 import type { RelaySignalOutput } from '../tools/relaySignal.js';
 import {
@@ -51,7 +53,9 @@ const ENV_KEYS = [
   'SELKEY_RELAY_URL',
   'SELKEY_RELAY_ALLOWLIST',
   'SELKEY_RELAY_VERIFYING_KEY_HEX',
-  'SELKEY_RELAY_ALLOW_INSECURE_HTTP',
+  'SELKEY_RELAY_INSECURE_HTTP_HOSTS',
+  'SELKEY_INBOX_TRANSPORT',
+  'SELKEY_INBOX_TOKEN',
   'SELKEY_AFAL_ALLOWED_PURPOSES',
   'SELKEY_AGENT_ID',
   'SELKEY_WORKDIR',
@@ -274,10 +278,48 @@ describe('relay transport', () => {
     );
   });
 
-  it('SELKEY_RELAY_ALLOW_INSECURE_HTTP=true allows plain http', () => {
+  it('SELKEY_RELAY_INSECURE_HTTP_HOSTS allows plain http only to the listed hosts', () => {
     process.env['SELKEY_RELAY_URL'] = 'http://relay:3100';
-    process.env['SELKEY_RELAY_ALLOW_INSECURE_HTTP'] = 'true';
+    process.env['SELKEY_RELAY_INSECURE_HTTP_HOSTS'] = 'relay';
     expect(resolveLocalRelayUrl()).toBe('http://relay:3100');
     expect(isRelayUrlAllowed('http://relay:3100')).toBe(true);
+    expect(isRelayTransportAllowed('http://other-relay:3100')).toBe(false);
+  });
+
+  it('treats only exact localhost as loopback, not its subdomains', () => {
+    expect(isRelayTransportAllowed('http://localhost:3100')).toBe(true);
+    expect(isRelayTransportAllowed('http://relay.localhost:3100')).toBe(false);
+  });
+});
+
+describe('relay inbox lane', () => {
+  it('binds inbox invites to the pinned relay key', async () => {
+    process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'] = PINNED;
+    process.env['SELKEY_AGENT_ID'] = ALICE;
+    const transport = new RelayInboxTransport({ agentId: ALICE, inboxToken: 'tok', relayUrl: RELAY });
+    const createInvite = vi
+      .spyOn(transport, 'createRelayInvite')
+      .mockResolvedValue({ invite_id: 'inv-1', contract_hash: 'h' } as never);
+    vi.spyOn(transport, 'peekInbox').mockResolvedValue({ invites: [] });
+    vi.spyOn(transport, 'checkInbox').mockResolvedValue({ invites: [] });
+    stubHealth(PINNED);
+    const result = await handleRelaySignal(
+      { mode: 'INITIATE', counterparty: BOB, purpose: 'MEDIATION', my_input: 'hello' },
+      transport,
+    );
+    expect(result.error).toBeNull();
+    expect(createInvite).toHaveBeenCalledOnce();
+    const sent = createInvite.mock.calls[0][0].contract as Record<string, unknown>;
+    expect(sent['relay_verifying_key_hex']).toBe(PINNED);
+  });
+
+  it('refuses to start the inbox transport on a plain http non-loopback relay', () => {
+    process.env['SELKEY_INBOX_TRANSPORT'] = 'relay';
+    process.env['SELKEY_INBOX_TOKEN'] = 'tok';
+    process.env['SELKEY_AGENT_ID'] = ALICE;
+    process.env['SELKEY_RELAY_URL'] = 'http://relay.example.com';
+    expect(() => buildRelayInboxTransportFromEnv()).toThrow(/plain http/);
+    process.env['SELKEY_RELAY_URL'] = 'https://relay.example.com';
+    expect(buildRelayInboxTransportFromEnv()).toBeInstanceOf(RelayInboxTransport);
   });
 });

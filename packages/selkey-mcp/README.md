@@ -38,11 +38,11 @@ Verifies a receipt's Ed25519 signature against the relay verifying key. Receipt 
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `SELKEY_RELAY_URL` | Yes | Relay base URL, e.g. `http://localhost:8080`. The only relay used unless `SELKEY_RELAY_ALLOWLIST` adds others; peer-advertised relays are never used as a fallback. Plain `http://` is accepted only for loopback hosts unless `SELKEY_RELAY_ALLOW_INSECURE_HTTP=true`. If `SELKEY_RELAY_VERIFYING_KEY_HEX` is set, the relay's `/health` key must match it before input is submitted |
+| `SELKEY_RELAY_URL` | Yes | Relay base URL, e.g. `http://localhost:8080`. The only relay used unless `SELKEY_RELAY_ALLOWLIST` adds others; peer-advertised relays are never used as a fallback. Plain `http://` is accepted only for loopback hosts and host names listed in `SELKEY_RELAY_INSECURE_HTTP_HOSTS`. If `SELKEY_RELAY_VERIFYING_KEY_HEX` is set, the relay's `/health` key must match it before input is submitted |
 | `SELKEY_AGENT_ID` | Recommended | This agent's ID, used for contract building and idempotency |
 | `SELKEY_RESUME_TOKEN_SECRET` | Recommended | HMAC secret for signing resume tokens |
 | `SELKEY_KNOWN_AGENTS` | Optional | JSON array of `{agent_id, aliases}` for alias resolution |
-| `SELKEY_RELAY_VERIFYING_KEY_HEX` | Optional | Pinned relay Ed25519 verifying key (64 hex chars), obtained from the relay operator. Added to every contract this agent builds as `relay_verifying_key_hex` (the relay refuses the session if its key differs), and used by `selkey.verify_receipt` and session receipt checks |
+| `SELKEY_RELAY_VERIFYING_KEY_HEX` | Optional | Pinned relay Ed25519 verifying key (64 hex chars), obtained from the relay operator. Added to every contract this agent builds as `relay_verifying_key_hex` (the relay refuses the session if its key differs), and used by `selkey.verify_receipt` and session receipt checks. As a responder it still accepts the same contract without the key field (an unpinned initiator); the pin is then enforced through the `/health` check and receipt verification only |
 | `SELKEY_AFAL_SEED_HEX` | Optional | Ed25519 seed (32-byte hex) — enables AFAL direct mode (INITIATE/RESPOND) |
 | `SELKEY_AFAL_HTTP_PORT` | Optional | Port for the AFAL HTTP listener (enables RESPOND mode) |
 | `SELKEY_AFAL_BIND_ADDRESS` | Optional | AFAL bind address (default: `127.0.0.1`) |

@@ -69,6 +69,20 @@ describe('fetchRelayPublicKey', () => {
     );
   });
 
+  it('gives up on a /health request that does not answer in time', async () => {
+    const fetchMock = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(
+      fetchRelayPublicKey('http://127.0.0.1:3100', relayKeyId(PINNED), { timeoutMs: 20 }),
+    ).rejects.toThrow();
+    expect(fetchMock.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
   it('requires an expected key id', async () => {
     const fetchMock = mockHealth({ verifying_key_hex: PINNED });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

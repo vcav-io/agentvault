@@ -13,9 +13,10 @@
  * - the relay's /health verifying_key_hex must match it before any input is
  *   submitted.
  *
- * Plain http:// relays are accepted only on loopback hosts, unless
- * SELKEY_RELAY_ALLOW_INSECURE_HTTP=true (for example a private compose
- * network in the local demo).
+ * Plain http:// relays are accepted only on loopback hosts (localhost,
+ * 127.0.0.0/8, [::1]) and on host names listed in
+ * SELKEY_RELAY_INSECURE_HTTP_HOSTS (comma-separated, for example "relay" on
+ * a private compose network in the local demo).
  */
 
 import { fetchRelayPublicKey, relayKeyId, verifyReceipt } from 'selkey/verify';
@@ -24,7 +25,7 @@ import type { OwnInputArtefact, VerifyArtefacts } from 'selkey/verify';
 export const RELAY_URL_ENV = 'SELKEY_RELAY_URL';
 export const RELAY_ALLOWLIST_ENV = 'SELKEY_RELAY_ALLOWLIST';
 export const RELAY_VERIFYING_KEY_ENV = 'SELKEY_RELAY_VERIFYING_KEY_HEX';
-export const RELAY_ALLOW_INSECURE_HTTP_ENV = 'SELKEY_RELAY_ALLOW_INSECURE_HTTP';
+export const RELAY_INSECURE_HTTP_HOSTS_ENV = 'SELKEY_RELAY_INSECURE_HTTP_HOSTS';
 
 const KEY_HEX_RE = /^[0-9a-fA-F]{64}$/;
 
@@ -51,15 +52,23 @@ export function normalizeRelayUrl(url: string): string | null {
 
 function isLoopbackHost(hostname: string): boolean {
   const host = hostname.toLowerCase();
-  if (host === 'localhost' || host.endsWith('.localhost')) return true;
+  if (host === 'localhost') return true;
   if (host === '[::1]') return true;
   return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
 }
 
+function insecureHttpHosts(): Set<string> {
+  return new Set(
+    (process.env[RELAY_INSECURE_HTTP_HOSTS_ENV] ?? '')
+      .split(',')
+      .map((h) => h.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
 /**
  * Whether the relay URL uses an acceptable transport: https, or http on a
- * loopback host. SELKEY_RELAY_ALLOW_INSECURE_HTTP=true also allows other
- * http hosts.
+ * loopback host or a host listed in SELKEY_RELAY_INSECURE_HTTP_HOSTS.
  */
 export function isRelayTransportAllowed(url: string): boolean {
   let parsed: URL;
@@ -71,7 +80,7 @@ export function isRelayTransportAllowed(url: string): boolean {
   if (parsed.protocol === 'https:') return true;
   if (parsed.protocol !== 'http:') return false;
   if (isLoopbackHost(parsed.hostname)) return true;
-  return process.env[RELAY_ALLOW_INSECURE_HTTP_ENV] === 'true';
+  return insecureHttpHosts().has(parsed.hostname.toLowerCase());
 }
 
 /** Locally configured relay URLs (normalised). Non-loopback http:// entries are dropped. */
@@ -127,8 +136,8 @@ export function resolveLocalRelayUrl(argsUrl?: string): string {
 
 function insecureRelayMessage(url: string): string {
   return (
-    `Relay "${url}" uses plain http on a non-loopback host. Use https, or set ` +
-    `${RELAY_ALLOW_INSECURE_HTTP_ENV}=true for a private network.`
+    `Relay "${url}" uses plain http on a non-loopback host. Use https, or add its host name to ` +
+    `${RELAY_INSECURE_HTTP_HOSTS_ENV} for a private network.`
   );
 }
 

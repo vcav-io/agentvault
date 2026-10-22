@@ -664,6 +664,9 @@ export function relayKeyId(publicKeyHex: string): string {
   return `ed25519:${bytesToHex(sha256(hexToBytes(publicKeyHex.toLowerCase())))}`;
 }
 
+/** Default time limit for the /health request in fetchRelayPublicKey. */
+export const RELAY_HEALTH_TIMEOUT_MS = 10_000;
+
 /**
  * Read the relay's verifying key from its /health endpoint and check it
  * against a key the caller already trusts.
@@ -676,6 +679,7 @@ export function relayKeyId(publicKeyHex: string): string {
 export async function fetchRelayPublicKey(
   relayUrl: string,
   expectedKeyId: string,
+  opts: { timeoutMs?: number } = {},
 ): Promise<string> {
   if (typeof expectedKeyId !== 'string' || !expectedKeyId) {
     throw new Error('fetchRelayPublicKey requires the expected relay key id');
@@ -689,7 +693,9 @@ export async function fetchRelayPublicKey(
     );
   }
   const healthUrl = relayUrl.replace(/\/$/, '') + '/health';
-  const resp = await fetch(healthUrl);
+  const resp = await fetch(healthUrl, {
+    signal: AbortSignal.timeout(opts.timeoutMs ?? RELAY_HEALTH_TIMEOUT_MS),
+  });
   if (!resp.ok) {
     throw new Error(`Relay /health returned ${resp.status}`);
   }

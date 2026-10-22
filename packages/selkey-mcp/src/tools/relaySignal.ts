@@ -1354,6 +1354,13 @@ async function phaseInvite(
         'acceptable_purposes with more than one purpose requires direct bilateral transport and pre-contract negotiation.',
       );
     }
+    // Bind the contract to the pinned relay key (if configured), as on
+    // every other INITIATE path.
+    try {
+      contract = withPinnedRelayKey(contract);
+    } catch (e) {
+      return buildError('INVALID_INPUT', (e as Error).message);
+    }
     const resp = await transport.createRelayInvite({
       to_agent_id: counterparty,
       contract,
