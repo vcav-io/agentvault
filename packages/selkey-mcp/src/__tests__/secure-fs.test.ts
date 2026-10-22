@@ -5,7 +5,9 @@ import * as path from 'node:path';
 
 import {
   InsecureStateFileError,
+  acquireFileLock,
   appendPrivateLine,
+  removeLockIfUnchanged,
   readPrivateJson,
   writePrivateJson,
 } from '../secure-fs.js';
@@ -98,5 +100,45 @@ describe.skipIf(!posix)('secure-fs', () => {
     const link = path.join(tmp, 'state', 'link.jsonl');
     fs.symlinkSync(log, link);
     expect(() => appendPrivateLine(link, 'x')).toThrow();
+  });
+});
+
+describe('lock files', () => {
+  const opts = { staleMs: 10_000, timeoutMs: 1_000 };
+  const age = (file: string) => {
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(file, old, old);
+  };
+
+  it('takes over a stale lock and leaves the new holder\'s lock when the old holder releases', () => {
+    const lock = path.join(tmp, 'state', 'x.lock');
+    const releaseA = acquireFileLock(lock, opts);
+    age(lock); // holder A looks abandoned
+    const releaseB = acquireFileLock(lock, opts);
+    releaseA(); // A finishes late: must not remove B's lock
+    expect(fs.existsSync(lock)).toBe(true);
+    expect(() => acquireFileLock(lock, { staleMs: 10_000, timeoutMs: 50 })).toThrow(/timed out/);
+    releaseB();
+    expect(fs.existsSync(lock)).toBe(false);
+  });
+
+  it('does not remove a fresh lock that replaced the stale one it observed', () => {
+    const lock = path.join(tmp, 'y.lock');
+    fs.writeFileSync(lock, 'old');
+    const observed = fs.statSync(lock);
+    // Another process takes the lock over before this one acts.
+    const fresh = path.join(tmp, 'y.fresh');
+    fs.writeFileSync(fresh, 'new');
+    fs.renameSync(fresh, lock);
+    expect(removeLockIfUnchanged(lock, observed)).toBe(false);
+    expect(fs.readFileSync(lock, 'utf8')).toBe('new');
+    expect(fs.readdirSync(tmp).sort()).toEqual(['y.lock']);
+  });
+
+  it('removes the stale lock it observed', () => {
+    const lock = path.join(tmp, 'z.lock');
+    fs.writeFileSync(lock, 'old');
+    expect(removeLockIfUnchanged(lock, fs.statSync(lock))).toBe(true);
+    expect(fs.readdirSync(tmp)).toEqual([]);
   });
 });

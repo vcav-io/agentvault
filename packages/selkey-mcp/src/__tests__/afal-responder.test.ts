@@ -414,6 +414,15 @@ describe('AfalResponder', () => {
       expect(result.ok).toBe(true);
     });
 
+    it('answers a re-sent COMMIT with the structured unknown-admission code', () => {
+      const { tokenId, proposalId } = admitAndGetIds();
+      const commit = makeSignedCommit(tokenId, proposalId);
+      expect(responder.handleCommit(commit).ok).toBe(true);
+      const again = responder.handleCommit(commit);
+      expect(again.ok).toBe(false);
+      expect(again.code).toBe('UNKNOWN_ADMIT_TOKEN');
+    });
+
     it('removes admit token after successful COMMIT', () => {
       const { tokenId, proposalId } = admitAndGetIds();
       const commit = makeSignedCommit(tokenId, proposalId);
@@ -551,9 +560,19 @@ describe('NonceCache', () => {
 
   it('evicts old nonces on check', () => {
     const cache = new NonceCache({ windowMs: 5000 });
-    cache.check('agent-1', 'nonce-1', 1000);
-    // 10 seconds later — nonce-1 should be evicted
-    expect(cache.check('agent-1', 'nonce-1', 11000)).toBe(true);
+    cache.check('agent-1', 'nonce-1', 1000, 1000);
+    // 10 seconds later on the local clock — nonce-1 should be evicted
+    expect(cache.check('agent-1', 'nonce-1', 11000, 11000)).toBe(true);
+  });
+
+  it('keeps recent nonces when a request claims a far-future timestamp', () => {
+    const cache = new NonceCache({ windowMs: 5000 });
+    const now = Date.now();
+    expect(cache.check('agent-1', 'nonce-1', now, now)).toBe(true);
+    // A request whose own timestamp is an hour ahead must not age out
+    // entries recorded moments ago on the local clock.
+    expect(cache.check('agent-1', 'nonce-2', now + 3_600_000, now + 10)).toBe(true);
+    expect(cache.check('agent-1', 'nonce-1', now, now + 20)).toBe(false);
   });
 
   it('rejects when max per agent reached', () => {

@@ -30,6 +30,7 @@ import {
   SELKEY_CONTRACT_OFFER_PROPOSAL_MEDIA_TYPE,
   SELKEY_CONTRACT_OFFER_SELECTION_MEDIA_TYPE,
   buildA2ASendMessageRequest,
+  parseA2ATaskPart,
 } from '../a2a-messages.js';
 
 // ── Test keypairs ────────────────────────────────────────────────────────────
@@ -461,6 +462,8 @@ describe('A2A task lifecycle (#311b)', () => {
       const body = (await res.json()) as Record<string, unknown>;
       expect(body['id']).toBe(bogusTaskId);
       expect((body['status'] as Record<string, unknown>)['state']).toBe('failed');
+      const part = parseA2ATaskPart(body, [SELKEY_SESSION_TOKENS_MEDIA_TYPE]);
+      expect((part?.data as Record<string, unknown>)['code']).toBe('UNKNOWN_ADMIT_TOKEN');
     });
 
     it('allows session-tokens without task_id (old client backward compat)', async () => {

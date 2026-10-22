@@ -37,7 +37,8 @@ import { PURPOSE_TO_TEMPLATE, isAcceptResult } from '../afal-transport.js';
 import { RelayInboxTransport, RELAY_INBOX_PAYLOAD_TYPE } from '../relay-inbox-transport.js';
 import { computeProposalId, generateNonce } from '../afal-types.js';
 import type { AfalPropose, RelayInvitePayload, RelaySessionBinding } from '../afal-types.js';
-import { DirectAfalTransport } from '../direct-afal-transport.js';
+import { CommitRejectedError, DirectAfalTransport } from '../direct-afal-transport.js';
+import { COMMIT_ERROR_UNKNOWN_ADMIT } from '../afal-responder.js';
 import { listKnownModelProfiles, resolveModelProfileRefs, type ModelProfileRef } from '../model-profiles.js';
 import {
   purposeToContractOfferIds,
@@ -2155,7 +2156,19 @@ async function phaseRetryPropose(
     if (params.committedSession) {
       // The session exists and holds this agent's input: only re-send COMMIT.
       if (transport.commitAdmit) {
-        await transport.commitAdmit(params.proposeParams.propose.proposal_id, params.committedSession);
+        try {
+          await transport.commitAdmit(params.proposeParams.propose.proposal_id, params.committedSession);
+        } catch (err) {
+          // The first COMMIT may have reached the responder and only its
+          // response was lost: the responder then no longer holds the
+          // admission and says so with a structured code. Continue to poll
+          // the relay; the session completes if the responder submitted.
+          if (!(err instanceof CommitRejectedError && err.code === COMMIT_ERROR_UNKNOWN_ADMIT)) throw err;
+          console.error(
+            `relay_signal: re-sent COMMIT for proposal ${params.proposeParams.propose.proposal_id} found no ` +
+              'admission at the responder; treating the first COMMIT as delivered',
+          );
+        }
       }
       handle.phase = 'POLL_RELAY';
       handle.retryState = undefined;
@@ -2642,12 +2655,10 @@ async function phaseJoin(
       );
     } catch (submitErr) {
       const msg = submitErr instanceof Error ? submitErr.message : String(submitErr);
-      // 401/UNAUTHORIZED means the session is stale (already submitted or aborted).
-      // Fail gracefully so the FSM can retry with a fresh invite.
-      // Match the RelayHttpError format ("Relay HTTP 401: ...") to avoid false positives
-      // from unrelated strings that happen to contain "401" (e.g., "returned 4013 bytes").
-      const is401 = msg.includes('Relay HTTP 401') || msg.includes('401 Unauthorized') || msg.includes('Unauthorized');
-      if (is401) {
+      // A relay 401 means the session is stale (already submitted or aborted).
+      // Fail gracefully so the FSM can retry with a fresh invite. Decided by
+      // the relay client's status code, never by message text.
+      if (relayHttpStatus(submitErr) === 401) {
         return failedResponse(
           handle,
           'SESSION_ERROR',

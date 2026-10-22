@@ -25,6 +25,7 @@ not yet published on npm.
 | `selkey/commitment` | `generateCommitmentNonce`, `computeInputCommitmentV3`, `verifyInputCommitmentV3` |
 | `selkey/contract-hash` | Contract hash v2: `computeContractHashV2`, `normalizeContractV2` |
 | `selkey/jcs` | RFC 8785 canonicalisation with the receipt v3 profile, strict JSON parser |
+| `selkey/ed25519` | `verifyEd25519Strict` (`s < L`, canonical prime-order `R` and key, RFC 8032 verification), `isPrimeOrderKey` |
 
 ## Usage
 

@@ -1,0 +1,570 @@
+{
+  "cases": [
+    {
+      "expected_error": "INVALID_GRANT_ID",
+      "grant": {
+        "audience": "alice-test",
+        "audience_key_fpr": "ed25519:34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+        "expires_at": "2026-10-23T12:00:00.000Z",
+        "grant_id": "4e11b6ffde5268932bfe0f03cc900654353db6d602d197e826bb1c3892237504",
+        "issued_at": "2026-10-22T12:00:00.000Z",
+        "issuer": "bob-test",
+        "issuer_public_key_hex": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
+        "label_ceiling": "POST_SESSION_BOUND",
+        "permissions": {
+          "max_uses": 4
+        },
+        "provenance": {
+          "receipt_id": "c0ffee00-0000-4000-8000-000000000003",
+          "session_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "scope": {
+          "message_classes": [
+            "LOGISTICS",
+            "CONSENT"
+          ],
+          "session_relation": "POST_SESSION"
+        },
+        "signature": "c59da60822a2faa86924db7b257aaa5016169bb03ec213b392bd4f37e532a7050fd7de6c3e00263661f2b4f3d71492ce15778dc7d7d2f266e3f70976b9fdbb0a",
+        "version": "VCAV-IFC-GRANT-V2"
+      },
+      "name": "tampered_max_uses"
+    },
+    {
+      "expected_error": "INVALID_GRANT_ID",
+      "grant": {
+        "audience": "carol-test",
+        "audience_key_fpr": "ed25519:34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+        "expires_at": "2026-10-23T12:00:00.000Z",
+        "grant_id": "4e11b6ffde5268932bfe0f03cc900654353db6d602d197e826bb1c3892237504",
+        "issued_at": "2026-10-22T12:00:00.000Z",
+        "issuer": "bob-test",
+        "issuer_public_key_hex": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
+        "label_ceiling": "POST_SESSION_BOUND",
+        "permissions": {
+          "max_uses": 3
+        },
+        "provenance": {
+          "receipt_id": "c0ffee00-0000-4000-8000-000000000003",
+          "session_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "scope": {
+          "message_classes": [
+            "LOGISTICS",
+            "CONSENT"
+          ],
+          "session_relation": "POST_SESSION"
+        },
+        "signature": "c59da60822a2faa86924db7b257aaa5016169bb03ec213b392bd4f37e532a7050fd7de6c3e00263661f2b4f3d71492ce15778dc7d7d2f266e3f70976b9fdbb0a",
+        "version": "VCAV-IFC-GRANT-V2"
+      },
+      "name": "tampered_audience"
+    },
+    {
+      "expected_error": "SIGNATURE_INVALID",
+      "grant": {
+        "audience": "alice-test",
+        "audience_key_fpr": "ed25519:34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+        "expires_at": "2026-10-23T12:00:00.000Z",
+        "grant_id": "4e11b6ffde5268932bfe0f03cc900654353db6d602d197e826bb1c3892237504",
+        "issued_at": "2026-10-22T12:00:00.000Z",
+        "issuer": "bob-test",
+        "issuer_public_key_hex": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
+        "label_ceiling": "POST_SESSION_BOUND",
+        "permissions": {
+          "max_uses": 3
+        },
+        "provenance": {
+          "receipt_id": "c0ffee00-0000-4000-8000-000000000003",
+          "session_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "scope": {
+          "message_classes": [
+            "LOGISTICS",
+            "CONSENT"
+          ],
+          "session_relation": "POST_SESSION"
+        },
+        "signature": "c59da60822a2faa86924db7b257aaa5016169bb03ec213b392bd4f37e532a7050fd7de6c3e00263661f2b4f3d71492ce15778dc7d7d2f266e3f70976b9fdbb00",
+        "version": "VCAV-IFC-GRANT-V2"
+      },
+      "name": "tampered_signature"
+    },
+    {
+      "expected_error": "SIGNATURE_FORMAT",
+      "grant": {
+        "audience": "alice-test",
+        "audience_key_fpr": "ed25519:34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+        "expires_at": "2026-10-23T12:00:00.000Z",
+        "grant_id": "4e11b6ffde5268932bfe0f03cc900654353db6d602d197e826bb1c3892237504",
+        "issued_at": "2026-10-22T12:00:00.000Z",
+        "issuer": "bob-test",
+        "issuer_public_key_hex": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
+        "label_ceiling": "POST_SESSION_BOUND",
+        "permissions": {
+          "max_uses": 3
+        },
+        "provenance": {
+          "receipt_id": "c0ffee00-0000-4000-8000-000000000003",
+          "session_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "scope": {
+          "message_classes": [
+            "LOGISTICS",
+            "CONSENT"
+          ],
+          "session_relation": "POST_SESSION"
+        },
+        "signature": "C59DA60822A2FAA86924DB7B257AAA5016169BB03EC213B392BD4F37E532A7050FD7DE6C3E00263661F2B4F3D71492CE15778DC7D7D2F266E3F70976B9FDBB0A",
+        "version": "VCAV-IFC-GRANT-V2"
+      },
+      "name": "uppercase_signature"
+    },
+    {
+      "expected_error": "UNSUPPORTED_VERSION",
+      "grant": {
+        "audience": "alice-test",
+        "audience_key_fpr": "ed25519:34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+        "expires_at": "2026-10-23T12:00:00.000Z",
+        "grant_id": "4e11b6ffde5268932bfe0f03cc900654353db6d602d197e826bb1c3892237504",
+        "issued_at": "2026-10-22T12:00:00.000Z",
+        "issuer": "bob-test",
+        "issuer_public_key_hex": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
+        "label_ceiling": "POST_SESSION_BOUND",
+        "permissions": {
+          "max_uses": 3
+        },
+        "provenance": {
+          "receipt_id": "c0ffee00-0000-4000-8000-000000000003",
+          "session_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "scope": {
+          "message_classes": [
+            "LOGISTICS",
+            "CONSENT"
+          ],
+          "session_relation": "POST_SESSION"
+        },
+        "signature": "c59da60822a2faa86924db7b257aaa5016169bb03ec213b392bd4f37e532a7050fd7de6c3e00263661f2b4f3d71492ce15778dc7d7d2f266e3f70976b9fdbb0a",
+        "version": "AV-IFC-GRANT-V1"
+      },
+      "name": "v1_version"
+    },
+    {
+      "expected_error": "UNKNOWN_FIELD",
+      "grant": {
+        "audience": "alice-test",
+        "audience_key_fpr": "ed25519:34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+        "expires_at": "2026-10-23T12:00:00.000Z",
+        "grant_id": "4e11b6ffde5268932bfe0f03cc900654353db6d602d197e826bb1c3892237504",
+        "issued_at": "2026-10-22T12:00:00.000Z",
+        "issuer": "bob-test",
+        "issuer_public_key_hex": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
+        "label_ceiling": "POST_SESSION_BOUND",
+        "note": "x",
+        "permissions": {
+          "max_uses": 3
+        },
+        "provenance": {
+          "receipt_id": "c0ffee00-0000-4000-8000-000000000003",
+          "session_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "scope": {
+          "message_classes": [
+            "LOGISTICS",
+            "CONSENT"
+          ],
+          "session_relation": "POST_SESSION"
+        },
+        "signature": "c59da60822a2faa86924db7b257aaa5016169bb03ec213b392bd4f37e532a7050fd7de6c3e00263661f2b4f3d71492ce15778dc7d7d2f266e3f70976b9fdbb0a",
+        "version": "VCAV-IFC-GRANT-V2"
+      },
+      "name": "unknown_field"
+    },
+    {
+      "expected_error": "MISSING_FIELD",
+      "grant": {
+        "audience": "alice-test",
+        "audience_key_fpr": "ed25519:34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+        "expires_at": "2026-10-23T12:00:00.000Z",
+        "grant_id": "4e11b6ffde5268932bfe0f03cc900654353db6d602d197e826bb1c3892237504",
+        "issued_at": "2026-10-22T12:00:00.000Z",
+        "issuer": "bob-test",
+        "issuer_public_key_hex": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
+        "label_ceiling": "POST_SESSION_BOUND",
+        "permissions": {
+          "max_uses": 3
+        },
+        "scope": {
+          "message_classes": [
+            "LOGISTICS",
+            "CONSENT"
+          ],
+          "session_relation": "POST_SESSION"
+        },
+        "signature": "c59da60822a2faa86924db7b257aaa5016169bb03ec213b392bd4f37e532a7050fd7de6c3e00263661f2b4f3d71492ce15778dc7d7d2f266e3f70976b9fdbb0a",
+        "version": "VCAV-IFC-GRANT-V2"
+      },
+      "name": "missing_provenance"
+    },
+    {
+      "expected_error": "UNSUPPORTED_VERSION",
+      "grant": {
+        "audience": "alice-test",
+        "audience_key_fpr": "ed25519:34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+        "expires_at": "2026-10-23T12:00:00.000Z",
+        "grant_id": "a1203f8426714771683dd1836f940ea7b10bd0b09626b95eb1075e3a331800d4",
+        "issued_at": "2026-10-22T12:00:00.000Z",
+        "issuer": "bob-test",
+        "issuer_public_key_hex": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
+        "label_ceiling": "POST_SESSION_BOUND",
+        "permissions": {
+          "max_uses": 3
+        },
+        "provenance": {
+          "receipt_id": "c0ffee00-0000-4000-8000-000000000003",
+          "session_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "scope": {
+          "message_classes": [
+            "LOGISTICS",
+            "CONSENT"
+          ],
+          "session_relation": "POST_SESSION"
+        },
+        "signature": "ec4a4df33d80702125ad3e51785c295011e4bd48a02e9215ce6be02470b251449989479a7696124b3a1c1cb5a325cc2a0b78adf44862a4866eae09c7adc85602",
+        "version": "AV-IFC-GRANT-V1"
+      },
+      "name": "signed_v1_version"
+    },
+    {
+      "expected_error": "INVALID_FIELD",
+      "grant": {
+        "audience": "alice-test",
+        "audience_key_fpr": "ed25519:34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+        "expires_at": "2026-10-23T12:00:00.000Z",
+        "grant_id": "fb34905363455f8394b727bb1727ce7aafb89a3df98de3f62fafd912fb9f21e4",
+        "issued_at": "2026-10-22T12:00:00.000Z",
+        "issuer": "bob-test",
+        "issuer_public_key_hex": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
+        "label_ceiling": "POST_SESSION_BOUND",
+        "permissions": {
+          "max_uses": 3
+        },
+        "provenance": {
+          "receipt_id": "c0ffee00-0000-4000-8000-000000000003",
+          "session_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "scope": {
+          "message_classes": [
+            "LOGISTICS",
+            "PAYMENT"
+          ],
+          "session_relation": "POST_SESSION"
+        },
+        "signature": "7973148560c0e568f9f06121f1ee663ab500c055743a08b7a50714ea969441beedd6a27c99f1fcf992af321f279801897a35f02bf04de6b0a84edce013519d0b",
+        "version": "VCAV-IFC-GRANT-V2"
+      },
+      "name": "signed_unknown_message_class"
+    },
+    {
+      "expected_error": "INVALID_FIELD",
+      "grant": {
+        "audience": "alice-test",
+        "audience_key_fpr": "ed25519:34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+        "expires_at": "2026-10-23T12:00:00.000Z",
+        "grant_id": "1ff302704ecb4135e98fa732ff9ebdf24d2badaf76ce2d7a61eb1626c173e65a",
+        "issued_at": "2026-10-22T12:00:00.000Z",
+        "issuer": "bob-test",
+        "issuer_public_key_hex": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
+        "label_ceiling": "POST_SESSION_BOUND",
+        "permissions": {
+          "max_uses": 3
+        },
+        "provenance": {
+          "receipt_id": "c0ffee00-0000-4000-8000-000000000003",
+          "session_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "scope": {
+          "message_classes": [],
+          "session_relation": "POST_SESSION"
+        },
+        "signature": "04ec45ef9f489b75854e6ec150592d17e74323308805a964495238da39f0182c51afd17fb6c75f50e4dec8a810e5d562fa0168c1a9c46d2c299ae4712d0dcc00",
+        "version": "VCAV-IFC-GRANT-V2"
+      },
+      "name": "signed_empty_message_classes"
+    },
+    {
+      "expected_error": "INVALID_FIELD",
+      "grant": {
+        "audience": "alice-test",
+        "audience_key_fpr": "ed25519:34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+        "expires_at": "2026-10-23T12:00:00.000Z",
+        "grant_id": "f70581425dbe0b24f35c18f5ebac650e10ae071a1a39daf4142d64f0a3053cf9",
+        "issued_at": "2026-10-22T12:00:00.000Z",
+        "issuer": "bob-test",
+        "issuer_public_key_hex": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
+        "label_ceiling": "SESSION_BOUND",
+        "permissions": {
+          "max_uses": 3
+        },
+        "provenance": {
+          "receipt_id": "c0ffee00-0000-4000-8000-000000000003",
+          "session_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "scope": {
+          "message_classes": [
+            "LOGISTICS",
+            "CONSENT"
+          ],
+          "session_relation": "POST_SESSION"
+        },
+        "signature": "56fd66c0f5d28b51fb0daed132a02fa778226345a9aa06dc2718ae9a7a2621173b0f373bed7b9e3212805f269df769f374287c28aac8b1287dbbc13a985d4109",
+        "version": "VCAV-IFC-GRANT-V2"
+      },
+      "name": "signed_wrong_label_ceiling"
+    },
+    {
+      "expected_error": "INVALID_FIELD",
+      "grant": {
+        "audience": "alice-test",
+        "audience_key_fpr": "ed25519:34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+        "expires_at": "2026-10-23T12:00:00.000Z",
+        "grant_id": "b46003b00f9927cfeb8ffeb73984719bf94c56b7884cf6cdec2186a298db29af",
+        "issued_at": "2026-10-22T12:00:00.000Z",
+        "issuer": "bob-test",
+        "issuer_public_key_hex": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
+        "label_ceiling": "POST_SESSION_BOUND",
+        "permissions": {
+          "max_uses": 3
+        },
+        "provenance": {
+          "receipt_id": "c0ffee00-0000-4000-8000-000000000003",
+          "session_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "scope": {
+          "message_classes": [
+            "LOGISTICS",
+            "CONSENT"
+          ],
+          "session_relation": "IN_SESSION"
+        },
+        "signature": "4df4fedf5f92cd4004106dfdb7803e5aba5cb67221c9f33c15cbd4d46f592096f912411941746b42692907f1c42eacab8a73769a7cab70de0509f36d508f440f",
+        "version": "VCAV-IFC-GRANT-V2"
+      },
+      "name": "signed_wrong_session_relation"
+    },
+    {
+      "expected_error": "INVALID_FIELD",
+      "grant": {
+        "audience": "alice-test",
+        "audience_key_fpr": "ed25519:34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+        "expires_at": "2026-10-23T12:00:00.000Z",
+        "grant_id": "aea17a0b62b91fdbb78c5312347a5115e73a9ae6b9cfc7b50a77a01710d5ee23",
+        "issued_at": "2026-10-22T12:00:00.000Z",
+        "issuer": "bob-test",
+        "issuer_public_key_hex": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
+        "label_ceiling": "POST_SESSION_BOUND",
+        "permissions": {
+          "max_uses": 0
+        },
+        "provenance": {
+          "receipt_id": "c0ffee00-0000-4000-8000-000000000003",
+          "session_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "scope": {
+          "message_classes": [
+            "LOGISTICS",
+            "CONSENT"
+          ],
+          "session_relation": "POST_SESSION"
+        },
+        "signature": "3978b83e4a86dee02e3dad88c590c3c01d9bc92ca49f327865ec98d9d6bb48820a70d40a08470fb6e759f6196917c51cc8fd954c84efdd971fd6d2570087b106",
+        "version": "VCAV-IFC-GRANT-V2"
+      },
+      "name": "signed_zero_max_uses"
+    },
+    {
+      "expected_error": "INVALID_FIELD",
+      "grant": {
+        "audience": "alice-test",
+        "audience_key_fpr": "ed25519:34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+        "expires_at": "2026-10-23T12:00:00.000Z",
+        "grant_id": "ca83493846cd18e390753ea286157556e26ed490713e9cb5a00f8c28d4eabaa5",
+        "issued_at": "2026-10-22T12:00:00.000Z",
+        "issuer": "bob-test",
+        "issuer_public_key_hex": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
+        "label_ceiling": "POST_SESSION_BOUND",
+        "permissions": {
+          "max_uses": 1.5
+        },
+        "provenance": {
+          "receipt_id": "c0ffee00-0000-4000-8000-000000000003",
+          "session_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "scope": {
+          "message_classes": [
+            "LOGISTICS",
+            "CONSENT"
+          ],
+          "session_relation": "POST_SESSION"
+        },
+        "signature": "68f56546bbc4746836daea3b4e48e7b8294b2ea16c9e719e829b15adfc1921c43289a9e950ae5a2ee09e99967af75d3e8e1c14c158e79a0ac3ea615ebd0e340f",
+        "version": "VCAV-IFC-GRANT-V2"
+      },
+      "name": "signed_fractional_max_uses"
+    },
+    {
+      "expected_error": "INVALID_FIELD",
+      "grant": {
+        "audience": "alice-test",
+        "audience_key_fpr": "ed25519:34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+        "expires_at": "2026-10-23T12:00:00.000Z",
+        "grant_id": "15cf1fe5fced40307c7c35fe5a42b0c7d9f7b3061e017557d1417d5480c23823",
+        "issued_at": "2026-10-22T12:00:00.000Z",
+        "issuer": "bob-test",
+        "issuer_public_key_hex": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
+        "label_ceiling": "POST_SESSION_BOUND",
+        "permissions": {
+          "max_uses": 3
+        },
+        "provenance": {
+          "receipt_id": "C0FFEE00-0000-4000-8000-000000000003",
+          "session_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "scope": {
+          "message_classes": [
+            "LOGISTICS",
+            "CONSENT"
+          ],
+          "session_relation": "POST_SESSION"
+        },
+        "signature": "393e8f22052eb06307a942625f10544d989b667b6e1cc5607e0e988b9f741a233e789d3c44480c31b0b34efa91aaf5862c24c775846efd5d00e9966a0bf7380b",
+        "version": "VCAV-IFC-GRANT-V2"
+      },
+      "name": "signed_uppercase_receipt_id"
+    },
+    {
+      "expected_error": "INVALID_FIELD",
+      "grant": {
+        "audience": "alice-test",
+        "audience_key_fpr": "34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+        "expires_at": "2026-10-23T12:00:00.000Z",
+        "grant_id": "7557736cdc365a59ea73144262b8acbef6518fd207ae04fe82f30b24f483e55c",
+        "issued_at": "2026-10-22T12:00:00.000Z",
+        "issuer": "bob-test",
+        "issuer_public_key_hex": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
+        "label_ceiling": "POST_SESSION_BOUND",
+        "permissions": {
+          "max_uses": 3
+        },
+        "provenance": {
+          "receipt_id": "c0ffee00-0000-4000-8000-000000000003",
+          "session_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "scope": {
+          "message_classes": [
+            "LOGISTICS",
+            "CONSENT"
+          ],
+          "session_relation": "POST_SESSION"
+        },
+        "signature": "24ed2705245439c742b78449d7e17ed625206ab4ab17079aebab5f9039616e94c4fe068d2969210e3e2beaecfa1afb2e56e95d3937ad723d8975cf0a6d175008",
+        "version": "VCAV-IFC-GRANT-V2"
+      },
+      "name": "signed_bare_audience_fingerprint"
+    },
+    {
+      "expected_error": "INVALID_FIELD",
+      "grant": {
+        "audience": "alice-test",
+        "audience_key_fpr": "ed25519:34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+        "expires_at": "2026-10-21T12:00:00.000Z",
+        "grant_id": "24cb4bf8e6b9fcc4a11b33e65985586c19bb44d4aa0713eac5329983878f4c8b",
+        "issued_at": "2026-10-22T12:00:00.000Z",
+        "issuer": "bob-test",
+        "issuer_public_key_hex": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
+        "label_ceiling": "POST_SESSION_BOUND",
+        "permissions": {
+          "max_uses": 3
+        },
+        "provenance": {
+          "receipt_id": "c0ffee00-0000-4000-8000-000000000003",
+          "session_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "scope": {
+          "message_classes": [
+            "LOGISTICS",
+            "CONSENT"
+          ],
+          "session_relation": "POST_SESSION"
+        },
+        "signature": "9f7339ce2de4933eb390b866c7977c854f8822e14d6f5e15ff7e38e14b898c88b299a40191f1118cc5edf134c99e217e7e0e540212831a93c2d485b1d7ee520c",
+        "version": "VCAV-IFC-GRANT-V2"
+      },
+      "name": "signed_expires_before_issued"
+    },
+    {
+      "expected_error": "SIGNATURE_INVALID",
+      "grant": {
+        "audience": "alice-test",
+        "audience_key_fpr": "ed25519:34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+        "expires_at": "2026-10-23T12:00:00.000Z",
+        "grant_id": "f1b7ba4d267cc89b0ee702bb902d515b7efd9783188d384879295b936c39dcef",
+        "issued_at": "2026-10-22T12:00:00.000Z",
+        "issuer": "bob-test",
+        "issuer_public_key_hex": "ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1",
+        "label_ceiling": "POST_SESSION_BOUND",
+        "permissions": {
+          "max_uses": 3
+        },
+        "provenance": {
+          "receipt_id": "c0ffee00-0000-4000-8000-000000000003",
+          "session_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "scope": {
+          "message_classes": [
+            "LOGISTICS",
+            "CONSENT"
+          ],
+          "session_relation": "POST_SESSION"
+        },
+        "signature": "9faee2e5e054969855ea174af603717e44be41cc217709866a557146aa316b4c43b569eb74574e6489f9d317e2397da1f097cd63efc90cb5f96d15ffb2870b01",
+        "version": "VCAV-IFC-GRANT-V2"
+      },
+      "name": "signed_by_other_key"
+    },
+    {
+      "expected_error": "SIGNATURE_INVALID",
+      "grant": {
+        "audience": "alice-test",
+        "audience_key_fpr": "ed25519:34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+        "expires_at": "2026-12-01T00:00:00.000Z",
+        "grant_id": "1aa7f916cc58647dc83b527552b1a256011ea400d4b3a851e1ddc7379a1f0ea3",
+        "issued_at": "2026-10-22T12:00:00.000Z",
+        "issuer": "bob-test",
+        "issuer_public_key_hex": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
+        "label_ceiling": "POST_SESSION_BOUND",
+        "permissions": {
+          "max_uses": 3
+        },
+        "provenance": {
+          "receipt_id": "c0ffee00-0000-4000-8000-000000000003",
+          "session_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "scope": {
+          "message_classes": [
+            "LOGISTICS",
+            "CONSENT"
+          ],
+          "session_relation": "POST_SESSION"
+        },
+        "signature": "c59da60822a2faa86924db7b257aaa5016169bb03ec213b392bd4f37e532a7050fd7de6c3e00263661f2b4f3d71492ce15778dc7d7d2f266e3f70976b9fdbb0a",
+        "version": "VCAV-IFC-GRANT-V2"
+      },
+      "name": "recomputed_grant_id_original_signature"
+    }
+  ],
+  "description": "VCAV-IFC-GRANT-V2 grants that must be rejected when verified under issuer_public_key_hex (the issuer's own or pinned key). Each case is built from ifc_grant_v2_positive_01.json. expected_error is informative.",
+  "issuer_public_key_hex": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394"
+}

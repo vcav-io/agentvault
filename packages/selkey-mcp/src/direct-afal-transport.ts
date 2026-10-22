@@ -156,6 +156,35 @@ export interface DirectAfalTransportConfig {
   };
 }
 
+/**
+ * A COMMIT the responder answered with an HTTP error. `code` is the
+ * responder's structured error code (e.g. UNKNOWN_ADMIT_TOKEN), if it sent
+ * one; it is read from a JSON field, never from message text.
+ */
+export class CommitRejectedError extends Error {
+  readonly status: number;
+  readonly code: string | undefined;
+
+  constructor(status: number, code: string | undefined, message: string) {
+    super(message);
+    this.name = 'CommitRejectedError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
+function commitErrorCode(body: string, a2a: boolean): string | undefined {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  const data = a2a ? parseA2ATaskPart(payload, [SELKEY_SESSION_TOKENS_MEDIA_TYPE])?.data : payload;
+  const code = data && typeof data === 'object' ? (data as Record<string, unknown>)['code'] : undefined;
+  return typeof code === 'string' && /^[A-Z_]{1,64}$/.test(code) ? code : undefined;
+}
+
 export class DirectAfalTransport implements AfalTransport {
   private readonly config: DirectAfalTransportConfig;
   private peerDescriptor: AgentDescriptor | null = null;
@@ -611,7 +640,11 @@ export class DirectAfalTransport implements AfalTransport {
 
     if (!response.ok) {
       const body = await response.text();
-      throw new Error(`COMMIT rejected: ${response.status} ${clipUntrustedText(body)}`);
+      throw new CommitRejectedError(
+        response.status,
+        commitErrorCode(body, transportTarget.useA2ANative),
+        `COMMIT rejected: ${response.status} ${clipUntrustedText(body)}`,
+      );
     }
 
     if (transportTarget.useA2ANative) {

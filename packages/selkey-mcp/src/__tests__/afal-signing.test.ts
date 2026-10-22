@@ -210,3 +210,37 @@ describe('round-trip sign/verify', () => {
     expect(result).toBe(false);
   });
 });
+
+describe('strict signature verification', () => {
+  const payload = { from: 'alice-test-agent', nonce: 'n-1' };
+  // Encoding of the identity point (small order) and a point of order 8.
+  const IDENTITY_HEX = '01' + '00'.repeat(31);
+  const ORDER8_HEX = 'c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a';
+
+  it('accepts an honest lowercase signature', () => {
+    const sig = sign(DOMAIN_PREFIXES.PROPOSE, payload, VECTOR.seed_hex);
+    expect(verify(DOMAIN_PREFIXES.PROPOSE, payload, sig, VECTOR.verifying_key_hex)).toBe(true);
+  });
+
+  it('rejects a signature in uppercase hex', () => {
+    const sig = sign(DOMAIN_PREFIXES.PROPOSE, payload, VECTOR.seed_hex);
+    expect(verify(DOMAIN_PREFIXES.PROPOSE, payload, sig.toUpperCase(), VECTOR.verifying_key_hex)).toBe(false);
+    expect(
+      verifyMessage(DOMAIN_PREFIXES.PROPOSE, { ...payload, signature: sig.toUpperCase() }, VECTOR.verifying_key_hex),
+    ).toBe(false);
+  });
+
+  it('rejects a signature under a small-order public key', () => {
+    // R = identity, s = 0 satisfies the cofactored equation for any message
+    // under a small-order key; strict verification refuses the key.
+    const sig = IDENTITY_HEX + '00'.repeat(32);
+    expect(verify(DOMAIN_PREFIXES.PROPOSE, payload, sig, IDENTITY_HEX)).toBe(false);
+    expect(verify(DOMAIN_PREFIXES.PROPOSE, { other: 'message' }, sig, IDENTITY_HEX)).toBe(false);
+  });
+
+  it('rejects a signature whose R has a small-order component', () => {
+    // Same equation with R of order 8 and s = 0 under a small-order key.
+    const sig = ORDER8_HEX + '00'.repeat(32);
+    expect(verify(DOMAIN_PREFIXES.PROPOSE, payload, sig, ORDER8_HEX)).toBe(false);
+  });
+});

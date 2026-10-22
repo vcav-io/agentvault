@@ -153,3 +153,86 @@ export function appendPrivateLine(filePath: string, line: string): void {
     fs.closeSync(fd);
   }
 }
+
+// ── Lock files ────────────────────────────────────────────────────────────
+
+export interface FileLockOptions {
+  /** A lock whose mtime is older than this is treated as abandoned. */
+  staleMs: number;
+  /** Give up after this long. */
+  timeoutMs: number;
+}
+
+/**
+ * Move `lockPath` aside if it is still the file `observed` describes (same
+ * device and inode); true if it was removed. A different file found there is
+ * put back.
+ */
+export function removeLockIfUnchanged(lockPath: string, observed: fs.Stats): boolean {
+  const aside = `${lockPath}.${process.pid}.${randomBytes(6).toString('hex')}.old`;
+  try {
+    fs.renameSync(lockPath, aside);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw err;
+  }
+  let moved: fs.Stats | undefined;
+  try {
+    moved = fs.lstatSync(aside);
+  } catch {
+    moved = undefined;
+  }
+  if (moved && (moved.ino !== observed.ino || moved.dev !== observed.dev)) {
+    // Another process replaced the file in the meantime: put its lock back.
+    try {
+      fs.linkSync(aside, lockPath);
+    } catch {
+      // A third process took the path; its lock stands.
+    }
+    fs.rmSync(aside, { force: true });
+    return false;
+  }
+  fs.rmSync(aside, { force: true });
+  return true;
+}
+
+/**
+ * Take an exclusive lock file (O_EXCL, 0600). A lock older than `staleMs` is
+ * taken over by renaming it aside and checking that the file moved is the one
+ * found stale, so two processes cannot both remove a lock and a fresh lock is
+ * never removed as stale. Release removes the lock only while it is still this
+ * process's file. Returns the release function.
+ */
+export function acquireFileLock(lockPath: string, opts: FileLockOptions): () => void {
+  const deadline = Date.now() + opts.timeoutMs;
+  ensurePrivateDir(path.dirname(lockPath));
+  for (;;) {
+    try {
+      const fd = fs.openSync(lockPath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, FILE_MODE);
+      let mine: fs.Stats;
+      try {
+        fs.writeSync(fd, String(process.pid));
+        mine = fs.fstatSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+      return () => {
+        removeLockIfUnchanged(lockPath, mine);
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      let current: fs.Stats;
+      try {
+        current = fs.lstatSync(lockPath);
+      } catch {
+        continue;
+      }
+      if (Date.now() - current.mtimeMs > opts.staleMs) {
+        removeLockIfUnchanged(lockPath, current);
+        continue;
+      }
+      if (Date.now() > deadline) throw new Error(`timed out waiting for ${lockPath}`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    }
+  }
+}

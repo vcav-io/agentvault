@@ -34,7 +34,12 @@ function load(name: string): any {
 }
 
 const EXPECTED_FILES = [
+  'afal-key-rotation-ts-01.json',
+  'afal-key-rotation-v1.json',
   'contract_hash_v2.json',
+  'ifc_grant_v2_negative.json',
+  'ifc_grant_v2_positive_01.json',
+  'ifc_grant_v2_positive_02.json',
   'input_commitment_v3.json',
   'jcs_rfc8785_numbers.json',
   'jcs_rfc8785_testdata.json',
@@ -45,7 +50,7 @@ const EXPECTED_FILES = [
 ];
 
 describe('VFC vector set', () => {
-  it('contains every receipt v3 vector file', () => {
+  it('contains every synced vector file', () => {
     const present = fs
       .readdirSync(VECTOR_DIR)
       .filter((f) => f.endsWith('.json'))

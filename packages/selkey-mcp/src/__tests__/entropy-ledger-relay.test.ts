@@ -29,7 +29,7 @@ import {
   _setDiscoverPollConfigForTesting,
   _setRelayPollConfigForTesting,
 } from '../tools/relaySignal.js';
-import { _resetHandlesForTesting } from '../tools/relayHandles.js';
+import { _resetHandlesForTesting, decodeRelayToken } from '../tools/relayHandles.js';
 import type { AfalTransport } from '../afal-transport.js';
 import { ed25519 } from '@noble/curves/ed25519';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
@@ -314,6 +314,130 @@ describe('direct AFAL sessions and the disclosure budget', () => {
     expect(ledgerEntries()).toHaveLength(1);
   });
 
+  it('continues to poll the relay when a re-sent COMMIT finds the admission already used', async () => {
+    let attempt = 0;
+    const { commits } = stubPeer(async () => {
+      attempt += 1;
+      // The first COMMIT is processed but its response is lost.
+      if (attempt === 1) throw new TypeError('fetch failed');
+      return {
+        ok: false,
+        status: 400,
+        text: async () =>
+          JSON.stringify({ ok: false, error: 'Unknown or expired admit_token_id', code: 'UNKNOWN_ADMIT_TOKEN' }),
+      };
+    });
+    const transport = alice();
+    const first = await handleRelaySignal(
+      { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'hello' },
+      transport,
+    );
+    const token = (first.data as { resume_token: string }).resume_token;
+    const second = await handleRelaySignal({ resume_token: token }, transport);
+    expect(second.ok).toBe(true);
+    expect((second.data as { state: string; phase: string }).state).not.toBe('FAILED');
+    expect((second.data as { phase: string }).phase).toBe('POLL_RELAY');
+    expect(commits).toHaveLength(2);
+    expect(mockCreateAndSubmit).toHaveBeenCalledTimes(1);
+    expect(ledgerEntries()).toHaveLength(1);
+  });
+
+  it('fails a re-sent COMMIT rejected without the structured code', async () => {
+    let attempt = 0;
+    stubPeer(async () => {
+      attempt += 1;
+      if (attempt === 1) throw new TypeError('fetch failed');
+      // Same words, but no structured code: not read as already committed.
+      return { ok: false, status: 400, text: async () => 'Unknown or expired admit_token_id UNKNOWN_ADMIT_TOKEN' };
+    });
+    const transport = alice();
+    const first = await handleRelaySignal(
+      { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'hello' },
+      transport,
+    );
+    const token = (first.data as { resume_token: string }).resume_token;
+    const second = await handleRelaySignal({ resume_token: token }, transport);
+    expect((second.data as { state: string }).state).toBe('FAILED');
+  });
+
+  it('fails a first COMMIT answered with the unknown-admission code', async () => {
+    stubPeer(async () => ({
+      ok: false,
+      status: 400,
+      text: async () => JSON.stringify({ ok: false, error: 'x', code: 'UNKNOWN_ADMIT_TOKEN' }),
+    }));
+    const result = await handleRelaySignal(
+      { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'hello' },
+      alice(),
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  /** Run INITIATE against a real loopback responder, then RESPOND and JOIN; returns the JOIN result. */
+  async function directRoundTripJoin() {
+    mockCreateAndSubmit.mockImplementation(async (_config: unknown, contract: object) => ({
+      sessionId: 'sess-rt',
+      contractHash: computeRelayContractHash(contract),
+      initiatorReadToken: 'ir',
+      responderSubmitToken: 'rs',
+      responderReadToken: 'rr',
+    }));
+    const bob = new DirectAfalTransport({
+      agentId: 'bob-demo',
+      seedHex: BOB_SEED,
+      localDescriptor: signedDescriptor('bob-demo', BOB_SEED),
+      relayUrl: 'https://relay.test',
+      respondMode: {
+        httpPort: 0,
+        bindAddress: '127.0.0.1',
+        policy: {
+          trustedAgents: [{ agentId: 'alice-demo', publicKeyHex: pubOf(ALICE_SEED) }],
+          allowedPurposeCodes: ['MEDIATION'],
+          allowedLaneIds: ['API_MEDIATED'],
+          maxEntropyBits: 256,
+          defaultTier: 'DENY',
+        },
+      },
+    });
+    await bob.start();
+    try {
+      const port = (bob as unknown as { httpServer: { port: number } }).httpServer.port;
+      const initiator = new DirectAfalTransport({
+        agentId: 'alice-demo',
+        seedHex: ALICE_SEED,
+        localDescriptor: signedDescriptor('alice-demo', ALICE_SEED),
+        relayUrl: 'https://relay.test',
+        peerDescriptorUrl: `http://127.0.0.1:${port}/afal/descriptor`,
+        pinStore: PinStore.inMemory([{ agentId: 'bob-demo', publicKeyHex: pubOf(BOB_SEED) }]),
+      });
+      await handleRelaySignal({ mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'a' }, initiator);
+      const responded = await handleRelaySignal({ mode: 'RESPOND', from: 'alice-demo', my_input: 'b' }, bob);
+      const token = (responded.data as { resume_token: string }).resume_token;
+      return await handleRelaySignal({ resume_token: token }, bob);
+    } finally {
+      await bob.stop();
+    }
+  }
+
+  const relayError = (status: number, message: string) =>
+    Object.assign(new Error(message), { name: 'RelayHttpError', status });
+
+  it('treats a relay 401 on submit as a stale session, by status code', async () => {
+    vi.mocked(submitInput).mockRejectedValueOnce(relayError(401, 'session token rejected'));
+    const joined = await directRoundTripJoin();
+    const data = joined.data as { state: string; error_code: string; user_message: string };
+    expect(data.state).toBe('FAILED');
+    expect(data.error_code).toBe('SESSION_ERROR');
+    expect(data.user_message).toMatch(/session may be stale/);
+  });
+
+  it('does not treat other relay errors that mention Unauthorized as a stale session', async () => {
+    vi.mocked(submitInput).mockRejectedValueOnce(relayError(400, 'Relay HTTP 400: Unauthorized field'));
+    const joined = await directRoundTripJoin();
+    expect(joined.ok).toBe(false);
+    expect(JSON.stringify(joined)).not.toMatch(/session may be stale/);
+  });
+
   it('charges both sides of a direct round trip with the locally built contract', async () => {
     mockCreateAndSubmit.mockImplementation(async (_config: unknown, contract: object) => ({
       sessionId: 'sess-rt',
@@ -361,6 +485,95 @@ describe('direct AFAL sessions and the disclosure budget', () => {
       const joined = await handleRelaySignal({ resume_token: token }, bob);
       expect(joined.ok).toBe(true);
       expect(vi.mocked(submitInput)).toHaveBeenCalledTimes(1);
+      expect(ledgerEntries()).toEqual([
+        expect.objectContaining({ counterparty: 'bob-demo', bits: 12 }),
+        expect.objectContaining({ counterparty: 'alice-demo', bits: 12 }),
+      ]);
+    } finally {
+      await bob.stop();
+    }
+  });
+
+  it('completes a direct round trip with the relay key pinned on both sides and the ledger enforced', async () => {
+    const RELAY_SEED = '0a'.repeat(32);
+    const relayKey = pubOf(RELAY_SEED);
+    process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'] = relayKey;
+    expect(process.env['SELKEY_ENTROPY_LEDGER']).toBe('enforce');
+    // The relay's /health serves the pinned key; everything else goes to the
+    // real responder on loopback.
+    const realFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', async (url: string | URL, init?: RequestInit) => {
+      if (String(url) === 'https://relay.test/health') {
+        return new Response(JSON.stringify({ status: 'ok', verifying_key_hex: relayKey }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return realFetch(url, init);
+    });
+    let created: Record<string, unknown> | undefined;
+    mockCreateAndSubmit.mockImplementation(async (_config: unknown, contract: Record<string, unknown>) => {
+      created = contract;
+      return {
+        sessionId: 'sess-pinned',
+        contractHash: computeRelayContractHash(contract),
+        initiatorReadToken: 'ir',
+        responderSubmitToken: 'rs',
+        responderReadToken: 'rr',
+      };
+    });
+    const bob = new DirectAfalTransport({
+      agentId: 'bob-demo',
+      seedHex: BOB_SEED,
+      localDescriptor: signedDescriptor('bob-demo', BOB_SEED),
+      relayUrl: 'https://relay.test',
+      respondMode: {
+        httpPort: 0,
+        bindAddress: '127.0.0.1',
+        policy: {
+          trustedAgents: [{ agentId: 'alice-demo', publicKeyHex: pubOf(ALICE_SEED) }],
+          allowedPurposeCodes: ['MEDIATION'],
+          allowedLaneIds: ['API_MEDIATED'],
+          maxEntropyBits: 256,
+          defaultTier: 'DENY',
+        },
+      },
+    });
+    await bob.start();
+    try {
+      const port = (bob as unknown as { httpServer: { port: number } }).httpServer.port;
+      const initiator = new DirectAfalTransport({
+        agentId: 'alice-demo',
+        seedHex: ALICE_SEED,
+        localDescriptor: signedDescriptor('alice-demo', ALICE_SEED),
+        relayUrl: 'https://relay.test',
+        peerDescriptorUrl: `http://127.0.0.1:${port}/afal/descriptor`,
+        pinStore: PinStore.inMemory([{ agentId: 'bob-demo', publicKeyHex: pubOf(BOB_SEED) }]),
+      });
+      const initiated = await handleRelaySignal(
+        { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'a' },
+        initiator,
+      );
+      expect(initiated.ok).toBe(true);
+      expect(created?.['relay_verifying_key_hex']).toBe(relayKey);
+      const inviteHash = computeRelayContractHash(created!);
+
+      const responded = await handleRelaySignal({ mode: 'RESPOND', from: 'alice-demo', my_input: 'b' }, bob);
+      expect(responded.ok).toBe(true);
+      const token = (responded.data as { resume_token: string }).resume_token;
+      const joined = await handleRelaySignal({ resume_token: token }, bob);
+      expect(joined.ok).toBe(true);
+
+      // The responder bound the session to its own locally built contract,
+      // which carries the pinned relay key and hashes to the invite hash.
+      const handle = decodeRelayToken(token, 'bob-demo', null);
+      expect(handle?.contract).toBeDefined();
+      expect(handle!.contract!['relay_verifying_key_hex']).toBe(relayKey);
+      expect(computeRelayContractHash(handle!.contract!)).toBe(inviteHash);
+      expect(handle!.contractHash).toBe(inviteHash);
+      expect(vi.mocked(submitInput)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(submitInput).mock.calls[0][6]).toBe(inviteHash);
+      // One charge per side, each for the contract's bound.
       expect(ledgerEntries()).toEqual([
         expect.objectContaining({ counterparty: 'bob-demo', bits: 12 }),
         expect.objectContaining({ counterparty: 'alice-demo', bits: 12 }),
