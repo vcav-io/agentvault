@@ -163,6 +163,10 @@ export class AfalHttpServer {
     return this._localDescriptor;
   }
 
+  /**
+   * The served agent card. It is signed on each request, so a long-running
+   * server never serves an expired card.
+   */
   get agentCard() {
     const supportedContractOffers = parseSupportedContractOffers(
       this._localDescriptor.capabilities['supported_contract_offers'],

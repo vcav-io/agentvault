@@ -23,7 +23,7 @@ import { AfalResponder } from './afal-responder.js';
 import type { AdmissionPolicy, AdmittedProposal } from './afal-responder.js';
 import { AfalHttpServer } from './afal-http-server.js';
 import { fetchPeer } from './transport-errors.js';
-import { SELKEY_A2A_EXTENSION_URI, verifyAgentCardSignature } from './a2a-agent-card.js';
+import { SELKEY_A2A_EXTENSION_URI, agentCardValidityError, verifyAgentCardSignature } from './a2a-agent-card.js';
 import type { SelkeyA2AExtensionParams } from './a2a-agent-card.js';
 import type { ModelProfileRef } from './model-profiles.js';
 import type { IfcService } from './ifc.js';
@@ -917,6 +917,8 @@ export class DirectAfalTransport implements AfalTransport {
       if (params['supports_bespoke_contract_negotiation'] === true) {
         verifyParams.supports_bespoke_contract_negotiation = true;
       }
+      if (typeof params['issued_at'] === 'string') verifyParams.issued_at = params['issued_at'];
+      if (typeof params['expires_at'] === 'string') verifyParams.expires_at = params['expires_at'];
 
       // Use the agent_id from the signed payload reconstruction (card.name)
       const cardAgentId = typeof card.name === 'string' ? card.name : undefined;
@@ -935,7 +937,9 @@ export class DirectAfalTransport implements AfalTransport {
       if (!valid) {
         // Invalid signature — fall back to AFAL descriptor resolution rather
         // than making a dual-stack peer unreachable due to a stale card.
-        console.warn('Agent card signature verification failed — falling back to descriptor resolution');
+        console.warn(
+          `Agent card not accepted (${agentCardValidityError(verifyParams) ?? 'signature verification failed'}) — falling back to descriptor resolution`,
+        );
         return null;
       }
 
@@ -982,7 +986,10 @@ export class DirectAfalTransport implements AfalTransport {
         descriptor_version: '1',
         agent_id: agentId,
         issued_at: new Date().toISOString(),
-        expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+        // Cached at most 5 minutes, and never past the card's own expiry.
+        expires_at: new Date(
+          Math.min(Date.now() + 5 * 60 * 1000, Date.parse(String(params['expires_at']))),
+        ).toISOString(),
         identity_key: {
           algorithm: 'ed25519',
           public_key_hex: publicKeyHex,

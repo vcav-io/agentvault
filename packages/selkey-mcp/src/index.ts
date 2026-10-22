@@ -507,7 +507,17 @@ export { listKnownModelProfiles, resolveModelProfileRefs } from './model-profile
 export type { ModelProfileRef } from './model-profiles.js';
 export { listSupportedTopicCodes, supportsTopicAlignment } from './topic-codes.js';
 export { listSupportedContractOffers } from './contract-offers.js';
-export { buildAgentCard, buildCardSignedPayload, signAgentCard, verifyAgentCardSignature, SELKEY_A2A_EXTENSION_URI } from './a2a-agent-card.js';
+export {
+  AGENT_CARD_LIFETIME_MS,
+  AGENT_CARD_MAX_FUTURE_SKEW_MS,
+  AGENT_CARD_MAX_LIFETIME_MS,
+  agentCardValidityError,
+  buildAgentCard,
+  buildCardSignedPayload,
+  signAgentCard,
+  verifyAgentCardSignature,
+  SELKEY_A2A_EXTENSION_URI,
+} from './a2a-agent-card.js';
 export type { AgentCard, AgentCardSignedPayload, SelkeyA2AExtensionParams } from './a2a-agent-card.js';
 export {
   advertisesBespokeContractNegotiation,

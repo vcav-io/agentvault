@@ -15,7 +15,45 @@ export interface SelkeyA2AExtensionParams {
   supports_precontract_negotiation?: boolean;
   supports_bespoke_contract_negotiation?: boolean;
   supported_contract_offers?: SupportedContractOffer[];
+  /** RFC 3339 UTC time the card was signed (signed field). */
+  issued_at?: string;
+  /** RFC 3339 UTC time after which the card must not be used (signed field). */
+  expires_at?: string;
   card_signature?: string;
+}
+
+/** Lifetime of the cards this agent signs. Served cards are signed per request. */
+export const AGENT_CARD_LIFETIME_MS = 24 * 60 * 60 * 1000;
+/** Longest card lifetime (expires_at - issued_at) a verifier accepts. */
+export const AGENT_CARD_MAX_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
+/** How far in the future a card's issued_at may be (clock skew). */
+export const AGENT_CARD_MAX_FUTURE_SKEW_MS = 60 * 1000;
+
+const RFC3339_UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$/;
+
+function parseUtc(value: unknown): number {
+  return typeof value === 'string' && RFC3339_UTC_RE.test(value) ? Date.parse(value) : NaN;
+}
+
+/**
+ * Check a card's validity window: issued_at and expires_at present as RFC
+ * 3339 UTC, issued_at not more than AGENT_CARD_MAX_FUTURE_SKEW_MS ahead of
+ * `nowMs`, expires_at after issued_at and after `nowMs`, and a lifetime of
+ * at most AGENT_CARD_MAX_LIFETIME_MS. Returns the reason it is not valid, or
+ * null.
+ */
+export function agentCardValidityError(
+  extensionParams: Pick<SelkeyA2AExtensionParams, 'issued_at' | 'expires_at'>,
+  nowMs: number = Date.now(),
+): string | null {
+  const issued = parseUtc(extensionParams.issued_at);
+  const expires = parseUtc(extensionParams.expires_at);
+  if (Number.isNaN(issued) || Number.isNaN(expires)) return 'issued_at and expires_at must be RFC 3339 UTC timestamps';
+  if (issued > nowMs + AGENT_CARD_MAX_FUTURE_SKEW_MS) return 'issued_at is in the future';
+  if (expires <= issued) return 'expires_at must be after issued_at';
+  if (expires - issued > AGENT_CARD_MAX_LIFETIME_MS) return 'card lifetime exceeds the maximum';
+  if (expires <= nowMs) return 'card has expired';
+  return null;
 }
 
 export interface AgentCardExtension {
@@ -65,6 +103,8 @@ export interface AgentCardSignedPayload {
   supports_bespoke_contract_negotiation?: boolean;
   supports_precontract_negotiation?: boolean;
   supports_topic_alignment?: boolean;
+  issued_at: string;
+  expires_at: string;
 }
 
 /**
@@ -78,6 +118,8 @@ export function buildCardSignedPayload(
   extensionParams: SelkeyA2AExtensionParams,
 ): AgentCardSignedPayload {
   const payload: AgentCardSignedPayload = {
+    issued_at: extensionParams.issued_at ?? '',
+    expires_at: extensionParams.expires_at ?? '',
     agent_id: agentId,
     extension_uri: SELKEY_A2A_EXTENSION_URI,
     extension_version: '1',
@@ -122,6 +164,9 @@ export function signAgentCard(
   extensionParams: SelkeyA2AExtensionParams,
   seedHex: string,
 ): string {
+  if (agentCardValidityError(extensionParams, parseUtc(extensionParams.issued_at)) !== null) {
+    throw new Error('agent card needs a valid issued_at and expires_at to be signed');
+  }
   const payload = buildCardSignedPayload(agentId, extensionParams);
   return sign(
     DOMAIN_PREFIXES.AGENT_CARD,
@@ -131,16 +176,18 @@ export function signAgentCard(
 }
 
 /**
- * Verify an agent card signature.
- *
- * Returns true if the signature is valid for the given canonical payload.
+ * Verify an agent card: its validity window (see agentCardValidityError) at
+ * `nowMs`, then the signature over the canonical payload (domain
+ * VCAV-AGENT-CARD-V2:). Returns true only if both hold.
  */
 export function verifyAgentCardSignature(
   agentId: string,
   extensionParams: SelkeyA2AExtensionParams,
   signatureHex: string,
   publicKeyHex: string,
+  nowMs: number = Date.now(),
 ): boolean {
+  if (agentCardValidityError(extensionParams, nowMs) !== null) return false;
   const payload = buildCardSignedPayload(agentId, extensionParams);
   return verify(
     DOMAIN_PREFIXES.AGENT_CARD,
@@ -160,7 +207,10 @@ export function buildAgentCard(params: {
   supportedContractOffers?: SupportedContractOffer[];
   seedHex?: string;
   supportsBespokeContractNegotiation?: boolean;
+  /** Signing time (defaults to now); the card expires AGENT_CARD_LIFETIME_MS later. */
+  nowMs?: number;
 }): AgentCard {
+  const nowMs = params.nowMs ?? Date.now();
   const extensionParams: SelkeyA2AExtensionParams = {
     public_key_hex: params.descriptor.identity_key.public_key_hex,
     supported_purposes: params.supportedPurposes,
@@ -184,6 +234,8 @@ export function buildAgentCard(params: {
           supports_bespoke_contract_negotiation: true,
         }
       : {}),
+    issued_at: new Date(nowMs).toISOString(),
+    expires_at: new Date(nowMs + AGENT_CARD_LIFETIME_MS).toISOString(),
   };
 
   if (params.seedHex) {
