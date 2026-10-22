@@ -198,7 +198,8 @@ Apply these rules in order and reject the receipt at the first failure
 
 ```
 1. Dispatch: read receipt_schema_version from the strictly parsed document.
-   "3.0.0" -> v3. Any other "3.x" -> reject. "2.x" -> v2 rules. "1.0.0" -> v1.
+   "3.0.0" -> v3. Any other "3.x" -> reject. "2.x" -> v2 rules. No
+   receipt_schema_version and schema_version "1.0.0" -> legacy v1 rules.
    Anything else -> reject.
 2. Parse and shape:
    - parse the JSON text strictly: reject repeated member names at any depth,
@@ -357,13 +358,19 @@ Relays no longer issue v1 or v2 receipts. Verifiers keep these paths so that
 receipts issued earlier stay verifiable. v1 and v2 input commitments are
 unsalted hashes of the inputs.
 
+v1 and v2 receipts are canonicalised with the frozen legacy canonicaliser, identified
+as `JCS_V1` (`receipt_core::canonicalize`). Despite the name, it is not RFC 8785: the
+two agree on typical receipts but differ for some inputs (see
+[Common Pitfalls](#8-common-pitfalls)). The RFC 8785 libraries in the examples
+below should verify typical legacy receipts; `receipt_core::canonicalize` is the reference.
+
 ### v1 step-by-step
 
 ```
 1. Parse the receipt JSON into a document object.
 2. Extract the `signature` field (hex string). If absent, reject.
 3. Remove the `signature` field from the document.
-4. JCS-canonicalize the remaining document (RFC 8785).
+4. Canonicalize the remaining document with the legacy canonicaliser (JCS_V1).
 5. Build the signing message:
       message = "VCAV-RECEIPT-V1:" + canonical_json_string
 6. Compute: digest = SHA-256(message)
@@ -450,7 +457,7 @@ def verify_receipt_v1(receipt: dict, public_key_hex: str) -> bool:
 3. Extract the `signature` object. If absent or not an object, reject.
 4. Read signature.alg. Currently only "Ed25519" is supported.
 5. Remove the entire `signature` object from the document.
-6. JCS-canonicalize the remaining document (RFC 8785).
+6. Canonicalize the remaining document with the legacy canonicaliser (JCS_V1).
 7. Build the signing message:
       message = "VCAV-RECEIPT-V2:" + canonical_json_string
 8. Compute: digest = SHA-256(message)
@@ -710,7 +717,7 @@ object is a top-level receipt field alongside `commitments` and `claims`.
 
 | Field | Meaning |
 |---|---|
-| `tee_type` | `Simulated` (testing) or `SevSnp` (AMD SEV-SNP hardware) |
+| `tee_type` | `Simulated` (testing) or `SEV-SNP` (AMD SEV-SNP hardware) |
 | `attestation_hash` | SHA-256 of the platform attestation report |
 | `receipt_signing_pubkey_hex` | Ed25519 public key bound into the TEE attestation |
 | `transcript_hash_hex` | SHA-512 of the canonical session transcript (embedded in SEV-SNP `user_data`) |
@@ -807,6 +814,20 @@ relayKeyId(pinnedKeyHex); // "ed25519:<64 hex>"
 
 v3 verifiers must reject a receipt whose `operator_key_fingerprint` does not equal
 `hex(SHA-256(pinned key bytes))`. `verifyReceipt` does this.
+
+#### Legacy key labels
+
+Two older identifiers hash the hex text of a key rather than its raw bytes:
+
+- `receipt_key_id` in v1 receipts: `"kid-"` + hex(SHA-256(UTF-8 bytes of the verifying
+  key hex));
+- `operator_key_id` in `VCAV-MANIFEST-V1` publication manifests: `"opkey-"` +
+  hex(SHA-256(UTF-8 bytes of `operator_public_key_hex`)).
+
+They are kept so existing receipts, manifests and test vectors stay reproducible. Treat
+them as legacy lookup labels only, never as trust anchors: they depend on the case of
+the hex text, differ from the `ed25519:` key id, and don't supply or authenticate a key.
+Identify keys by the `ed25519:` key id and verify against a key you pinned.
 
 ### Checking a relay's served key
 

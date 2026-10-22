@@ -35,8 +35,8 @@ the relay binary, you still have to trust the operator.
 |-------|--------------|-------------------|
 | Relay operator | Trusted | Trusted for now (goal: operator-blind) |
 | LLM provider | Sees prompts/outputs | Sees prompts/outputs |
-| Initiator | Encrypted in transit | Encrypted in transit + at rest |
-| Responder | Encrypted in transit | Encrypted in transit + at rest |
+| Participant inputs in transit | TLS where the deployment provides it (the relay serves plain HTTP) | Encrypted to a per-session key held by the relay in the CVM (clients don't yet verify attestation first) |
+| Participant inputs at the relay | Plaintext in relay process memory | Plaintext in CVM memory (encrypted by the hardware on SEV-SNP; no isolation in the simulated runtime) |
 | Hardware platform | N/A | Trusted (SEV-SNP) |
 
 ## Important Limitations
@@ -54,6 +54,11 @@ Even in confidential mode:
 
 3. **Metadata is visible.** Session timing, message sizes, and connection
    patterns are observable by the operator even in TEE mode.
+
+4. **The TEE lane implements only part of the protocol.** It applies no guardian
+   policy, accepts any inline output schema, doesn't enforce entropy limits, and has
+   its own input API that the Selkey client and MCP server don't implement. See
+   [protocol-spec.md, Section 11.5](protocol-spec.md#115-differences-from-the-software-lane).
 
 ## Choosing a Lane
 
