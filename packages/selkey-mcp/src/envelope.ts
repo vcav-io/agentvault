@@ -3,6 +3,8 @@
  * All fields are always present; unused fields are set to null.
  */
 
+import type { UntrustedContentLabel } from './untrusted-content.js';
+
 export type StatusCode =
   | 'SUCCESS'
   | 'PENDING'
@@ -47,6 +49,11 @@ export interface ToolResponse<T = unknown> {
   status: StatusCode;
   data: T | null;
   error: ToolError | null;
+  /**
+   * Present when the response carries text produced by the counterparty or
+   * the relay; lists those fields so callers treat them as untrusted data.
+   */
+  untrusted_content?: UntrustedContentLabel;
 }
 
 /**

@@ -16,6 +16,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { buildSuccess, buildError, type ToolResponse, type ErrorCode } from '../envelope.js';
+import { labelUntrustedContent, relaySignalUntrustedPaths } from '../untrusted-content.js';
 import { createAndSubmit, pollUntilDone, joinAndWait } from 'selkey';
 import { generateCommitmentNonce } from 'selkey/commitment';
 import {
@@ -2636,6 +2637,16 @@ function hasExtraArgs(args: RelaySignalArgs): boolean {
 }
 
 export async function handleRelaySignal(
+  args: RelaySignalArgs,
+  transport?: AfalTransport,
+  knownAgents: NormalizedKnownAgent[] = [],
+  relayProfileId?: string,
+): Promise<ToolResponse<RelaySignalData>> {
+  const response = await handleRelaySignalUnlabelled(args, transport, knownAgents, relayProfileId);
+  return labelUntrustedContent(response, relaySignalUntrustedPaths(response));
+}
+
+async function handleRelaySignalUnlabelled(
   args: RelaySignalArgs,
   transport?: AfalTransport,
   knownAgents: NormalizedKnownAgent[] = [],
