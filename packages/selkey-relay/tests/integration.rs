@@ -109,6 +109,7 @@ fn test_app_state(mock_base_url: &str, prompt_dir: &str) -> AppState {
         admitted_programs: None,
         admitted_profiles: None,
         operator_token: Some(TEST_OPERATOR_TOKEN.to_string()),
+        limits: Default::default(),
     }
 }
 
@@ -162,6 +163,40 @@ fn setup_prompt_program(test_name: &str) -> (String, String) {
     std::fs::write(&path, serde_json::to_string(&program).unwrap()).unwrap();
 
     (dir.to_str().unwrap().to_string(), hash)
+}
+
+/// The standard test prompt program (the one `setup_prompt_program` writes).
+fn test_prompt_program() -> selkey_relay::prompt_program::PromptProgram {
+    selkey_relay::prompt_program::PromptProgram {
+        version: "1.0.0".to_string(),
+        system_instruction: "You are a structured data classifier.".to_string(),
+        input_format: selkey_relay::prompt_program::InputFormat::Structured,
+    }
+}
+
+/// Content hash of [`test_prompt_program`].
+fn test_prompt_hash() -> String {
+    test_prompt_program().content_hash().unwrap()
+}
+
+/// A prompt program directory shared by tests that only need a valid
+/// contract (written once per test process).
+fn shared_prompt_dir() -> String {
+    static DIR: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!(
+            "selkey-relay-shared-programs-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(format!("{}.json", test_prompt_hash())),
+            serde_json::to_string(&test_prompt_program()).unwrap(),
+        )
+        .unwrap();
+        dir.to_str().unwrap().to_string()
+    })
+    .clone()
 }
 
 // ============================================================================
@@ -480,7 +515,7 @@ fn test_receipt_roundtrip_serialization() {
 
 #[tokio::test]
 async fn test_health_endpoint() {
-    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+    let state = Arc::new(test_app_state("http://unused", &shared_prompt_dir()));
     let app = build_router(state);
 
     let response = app
@@ -509,7 +544,7 @@ async fn test_health_endpoint() {
 
 #[tokio::test]
 async fn test_capabilities_endpoint() {
-    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+    let state = Arc::new(test_app_state("http://unused", &shared_prompt_dir()));
     let app = build_router(state);
 
     let response = app
@@ -530,7 +565,7 @@ async fn test_capabilities_endpoint() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
     assert_eq!(json["execution_lane"], "API_MEDIATED");
-    assert_eq!(json["entropy_enforcement"], "ADVISORY");
+    assert_eq!(json["entropy_enforcement"], "GATE");
     assert!(json["providers"]
         .as_array()
         .unwrap()
@@ -849,7 +884,7 @@ async fn test_relay_rejects_wrong_model_profile() {
 
 #[tokio::test]
 async fn test_create_session_returns_tokens_and_contract_hash() {
-    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+    let state = Arc::new(test_app_state("http://unused", &shared_prompt_dir()));
     let app = build_router(state);
 
     let create_request = serde_json::json!({
@@ -858,7 +893,7 @@ async fn test_create_session_returns_tokens_and_contract_hash() {
             "output_schema_id": "test_schema",
             "output_schema": mediation_schema(),
             "participants": ["alice", "bob"],
-            "prompt_template_hash": "a".repeat(64)
+            "prompt_template_hash": test_prompt_hash()
         }
     });
 
@@ -920,7 +955,7 @@ async fn test_create_session_returns_tokens_and_contract_hash() {
 
 #[tokio::test]
 async fn test_session_status_requires_valid_token() {
-    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+    let state = Arc::new(test_app_state("http://unused", &shared_prompt_dir()));
 
     // Create a session first
     let (session_id, _tokens) = state
@@ -931,7 +966,7 @@ async fn test_session_status_requires_valid_token() {
                 "output_schema_id": "test",
                 "output_schema": {"type": "object"},
                 "participants": ["alice", "bob"],
-                "prompt_template_hash": "a".repeat(64)
+                "prompt_template_hash": test_prompt_hash()
             }))
             .unwrap(),
             "hash".to_string(),
@@ -957,7 +992,7 @@ async fn test_session_status_requires_valid_token() {
 
 #[tokio::test]
 async fn test_session_status_with_valid_token() {
-    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+    let state = Arc::new(test_app_state("http://unused", &shared_prompt_dir()));
 
     let (session_id, tokens) = state
         .session_store
@@ -967,7 +1002,7 @@ async fn test_session_status_with_valid_token() {
                 "output_schema_id": "test",
                 "output_schema": {"type": "object"},
                 "participants": ["alice", "bob"],
-                "prompt_template_hash": "a".repeat(64)
+                "prompt_template_hash": test_prompt_hash()
             }))
             .unwrap(),
             "hash".to_string(),
@@ -1004,7 +1039,7 @@ async fn test_session_status_with_valid_token() {
 
 #[tokio::test]
 async fn test_submit_input_transitions_to_partial() {
-    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+    let state = Arc::new(test_app_state("http://unused", &shared_prompt_dir()));
 
     let (session_id, tokens) = state
         .session_store
@@ -1014,7 +1049,7 @@ async fn test_submit_input_transitions_to_partial() {
                 "output_schema_id": "test",
                 "output_schema": {"type": "object"},
                 "participants": ["alice", "bob"],
-                "prompt_template_hash": "a".repeat(64)
+                "prompt_template_hash": test_prompt_hash()
             }))
             .unwrap(),
             "hash".to_string(),
@@ -1057,7 +1092,7 @@ async fn test_submit_input_transitions_to_partial() {
 
 #[tokio::test]
 async fn test_submit_token_is_one_time_use() {
-    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+    let state = Arc::new(test_app_state("http://unused", &shared_prompt_dir()));
 
     let (session_id, tokens) = state
         .session_store
@@ -1067,7 +1102,7 @@ async fn test_submit_token_is_one_time_use() {
                 "output_schema_id": "test",
                 "output_schema": {"type": "object"},
                 "participants": ["alice", "bob"],
-                "prompt_template_hash": "a".repeat(64)
+                "prompt_template_hash": test_prompt_hash()
             }))
             .unwrap(),
             "hash".to_string(),
@@ -1075,7 +1110,7 @@ async fn test_submit_token_is_one_time_use() {
         )
         .await;
 
-    let state_arc = Arc::new(test_app_state("http://unused", "/tmp"));
+    let state_arc = Arc::new(test_app_state("http://unused", &shared_prompt_dir()));
     // Manually insert session into this app state's store
     // We need to use the same store, so let's use the original state
     drop(state_arc);
@@ -1130,6 +1165,7 @@ async fn test_submit_token_is_one_time_use() {
         admitted_programs: None,
         admitted_profiles: None,
         operator_token: None,
+        limits: Default::default(),
     }));
 
     let response = app
@@ -1154,7 +1190,7 @@ async fn test_submit_token_is_one_time_use() {
 
 #[tokio::test]
 async fn test_output_requires_read_token() {
-    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+    let state = Arc::new(test_app_state("http://unused", &shared_prompt_dir()));
 
     let (session_id, tokens) = state
         .session_store
@@ -1164,7 +1200,7 @@ async fn test_output_requires_read_token() {
                 "output_schema_id": "test",
                 "output_schema": {"type": "object"},
                 "participants": ["alice", "bob"],
-                "prompt_template_hash": "a".repeat(64)
+                "prompt_template_hash": test_prompt_hash()
             }))
             .unwrap(),
             "hash".to_string(),
@@ -1194,7 +1230,7 @@ async fn test_output_requires_read_token() {
 
 #[tokio::test]
 async fn test_output_with_read_token_before_completion() {
-    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+    let state = Arc::new(test_app_state("http://unused", &shared_prompt_dir()));
 
     let (session_id, tokens) = state
         .session_store
@@ -1204,7 +1240,7 @@ async fn test_output_with_read_token_before_completion() {
                 "output_schema_id": "test",
                 "output_schema": {"type": "object"},
                 "participants": ["alice", "bob"],
-                "prompt_template_hash": "a".repeat(64)
+                "prompt_template_hash": test_prompt_hash()
             }))
             .unwrap(),
             "hash".to_string(),
@@ -1241,7 +1277,7 @@ async fn test_output_with_read_token_before_completion() {
 
 #[tokio::test]
 async fn test_unknown_session_returns_unauthorized() {
-    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+    let state = Arc::new(test_app_state("http://unused", &shared_prompt_dir()));
     let app = build_router(state);
 
     // Status of unknown session
@@ -1319,6 +1355,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         admitted_programs: None,
         admitted_profiles: None,
         operator_token: None,
+        limits: Default::default(),
     }));
 
     let response = app
@@ -1376,6 +1413,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         admitted_programs: None,
         admitted_profiles: None,
         operator_token: None,
+        limits: Default::default(),
     }));
 
     let response = app
@@ -1446,6 +1484,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         admitted_programs: None,
         admitted_profiles: None,
         operator_token: None,
+        limits: Default::default(),
     }));
 
     let response = app
@@ -1489,7 +1528,7 @@ async fn test_bilateral_session_e2e_with_mock() {
 #[tokio::test]
 async fn test_submit_with_correct_contract_hash_succeeds() {
     let real_hash = "correct_hash_abc";
-    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+    let state = Arc::new(test_app_state("http://unused", &shared_prompt_dir()));
 
     let (session_id, tokens) = state
         .session_store
@@ -1499,7 +1538,7 @@ async fn test_submit_with_correct_contract_hash_succeeds() {
                 "output_schema_id": "test",
                 "output_schema": {"type": "object"},
                 "participants": ["alice", "bob"],
-                "prompt_template_hash": "a".repeat(64)
+                "prompt_template_hash": test_prompt_hash()
             }))
             .unwrap(),
             real_hash.to_string(),
@@ -1532,6 +1571,7 @@ async fn test_submit_with_correct_contract_hash_succeeds() {
         admitted_programs: None,
         admitted_profiles: None,
         operator_token: None,
+        limits: Default::default(),
     }));
 
     let input_request = serde_json::json!({
@@ -1561,7 +1601,7 @@ async fn test_submit_with_correct_contract_hash_succeeds() {
 
 #[tokio::test]
 async fn test_submit_with_wrong_contract_hash_rejected() {
-    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+    let state = Arc::new(test_app_state("http://unused", &shared_prompt_dir()));
 
     let (session_id, tokens) = state
         .session_store
@@ -1571,7 +1611,7 @@ async fn test_submit_with_wrong_contract_hash_rejected() {
                 "output_schema_id": "test",
                 "output_schema": {"type": "object"},
                 "participants": ["alice", "bob"],
-                "prompt_template_hash": "a".repeat(64)
+                "prompt_template_hash": test_prompt_hash()
             }))
             .unwrap(),
             "real_hash".to_string(),
@@ -1604,6 +1644,7 @@ async fn test_submit_with_wrong_contract_hash_rejected() {
         admitted_programs: None,
         admitted_profiles: None,
         operator_token: None,
+        limits: Default::default(),
     }));
 
     let input_request = serde_json::json!({
@@ -1634,7 +1675,7 @@ async fn test_submit_with_wrong_contract_hash_rejected() {
 
 #[tokio::test]
 async fn test_submit_without_contract_hash_still_works() {
-    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+    let state = Arc::new(test_app_state("http://unused", &shared_prompt_dir()));
 
     let (session_id, tokens) = state
         .session_store
@@ -1644,7 +1685,7 @@ async fn test_submit_without_contract_hash_still_works() {
                 "output_schema_id": "test",
                 "output_schema": {"type": "object"},
                 "participants": ["alice", "bob"],
-                "prompt_template_hash": "a".repeat(64)
+                "prompt_template_hash": test_prompt_hash()
             }))
             .unwrap(),
             "hash".to_string(),
@@ -1677,6 +1718,7 @@ async fn test_submit_without_contract_hash_still_works() {
         admitted_programs: None,
         admitted_profiles: None,
         operator_token: None,
+        limits: Default::default(),
     }));
 
     // No expected_contract_hash field — backward compat
@@ -1713,7 +1755,7 @@ const BOB_INBOX_TOKEN: &str = "c4e8b2a6f0d93715e2b8a4c6d0f19e375a0d1c8e93b7f264a
 
 /// Build an AppState with agent registry populated for inbox testing.
 fn inbox_test_app_state() -> AppState {
-    let (prompt_dir, _) = setup_prompt_program("inbox_test");
+    let prompt_dir = shared_prompt_dir();
     let registry = AgentRegistry::from_agents(vec![
         RegisteredAgent {
             agent_id: "alice".to_string(),
@@ -1746,12 +1788,13 @@ fn inbox_test_app_state() -> AppState {
         max_completion_tokens: 4096,
         session_ttl_secs: 600,
         invite_ttl_secs: 604800,
-        schema_registry: selkey_relay::schema_registry::SchemaRegistry::empty(),
+        schema_registry: test_schema_registry(),
         is_dev: false,
         health_expose_model: false,
         admitted_programs: None,
         admitted_profiles: None,
         operator_token: None,
+        limits: Default::default(),
     }
 }
 
@@ -1761,9 +1804,9 @@ fn inbox_create_body() -> String {
         "contract": {
             "purpose_code": "COMPATIBILITY",
             "output_schema_id": "test",
-            "output_schema": {"type": "object"},
+            "output_schema": mediation_schema(),
             "participants": ["alice", "bob"],
-            "prompt_template_hash": "a".repeat(64),
+            "prompt_template_hash": test_prompt_hash(),
             "metadata": null
         },
         "provider": "anthropic",
@@ -1920,9 +1963,9 @@ async fn test_inbox_cross_agent_isolation() {
         contract: serde_json::to_value(selkey_relay::types::Contract {
             purpose_code: vault_family_types::Purpose::Compatibility,
             output_schema_id: "test".to_string(),
-            output_schema: serde_json::json!({"type": "object"}),
+            output_schema: mediation_schema(),
             participants: vec!["alice".to_string(), "bob".to_string()],
-            prompt_template_hash: "a".repeat(64),
+            prompt_template_hash: test_prompt_hash(),
             entropy_budget_bits: None,
             timing_class: None,
             metadata: serde_json::Value::Null,
@@ -1986,9 +2029,9 @@ async fn test_inbox_accept_creates_session() {
         contract: serde_json::to_value(selkey_relay::types::Contract {
             purpose_code: vault_family_types::Purpose::Compatibility,
             output_schema_id: "test".to_string(),
-            output_schema: serde_json::json!({"type": "object"}),
+            output_schema: mediation_schema(),
             participants: vec!["alice".to_string(), "bob".to_string()],
-            prompt_template_hash: "a".repeat(64),
+            prompt_template_hash: test_prompt_hash(),
             entropy_budget_bits: None,
             timing_class: None,
             metadata: serde_json::Value::Null,
@@ -2051,9 +2094,9 @@ async fn create_test_invite(state: &AppState) -> String {
         contract: serde_json::to_value(selkey_relay::types::Contract {
             purpose_code: vault_family_types::Purpose::Compatibility,
             output_schema_id: "test".to_string(),
-            output_schema: serde_json::json!({"type": "object"}),
+            output_schema: mediation_schema(),
             participants: vec!["alice".to_string(), "bob".to_string()],
-            prompt_template_hash: "a".repeat(64),
+            prompt_template_hash: test_prompt_hash(),
             entropy_budget_bits: None,
             timing_class: None,
             metadata: serde_json::Value::Null,
@@ -2242,7 +2285,7 @@ fn entropy_core_smoke_test() {
 
 #[tokio::test]
 async fn test_metadata_endpoint_returns_401_in_prod() {
-    let state = test_app_state("http://unused", "/tmp");
+    let state = test_app_state("http://unused", &shared_prompt_dir());
     // is_dev defaults to false in test_app_state
     let (session_id, tokens) = state
         .session_store
@@ -2252,7 +2295,7 @@ async fn test_metadata_endpoint_returns_401_in_prod() {
                 "output_schema_id": "test",
                 "output_schema": {"type": "object"},
                 "participants": ["alice", "bob"],
-                "prompt_template_hash": "a".repeat(64)
+                "prompt_template_hash": test_prompt_hash()
             }))
             .unwrap(),
             "hash".to_string(),
@@ -2291,7 +2334,7 @@ async fn test_metadata_endpoint_returns_data_in_dev() {
                 "output_schema_id": "test",
                 "output_schema": {"type": "object"},
                 "participants": ["alice", "bob"],
-                "prompt_template_hash": "a".repeat(64)
+                "prompt_template_hash": test_prompt_hash()
             }))
             .unwrap(),
             "hash".to_string(),
@@ -2355,7 +2398,7 @@ async fn test_metadata_endpoint_rejects_submit_token() {
                 "output_schema_id": "test",
                 "output_schema": {"type": "object"},
                 "participants": ["alice", "bob"],
-                "prompt_template_hash": "a".repeat(64)
+                "prompt_template_hash": test_prompt_hash()
             }))
             .unwrap(),
             "hash".to_string(),
@@ -2409,7 +2452,7 @@ async fn test_metadata_returns_empty_when_not_populated() {
                 "output_schema_id": "test",
                 "output_schema": {"type": "object"},
                 "participants": ["alice", "bob"],
-                "prompt_template_hash": "a".repeat(64)
+                "prompt_template_hash": test_prompt_hash()
             }))
             .unwrap(),
             "hash".to_string(),
@@ -2463,7 +2506,7 @@ async fn test_metadata_endpoint_accepts_responder_read_token() {
                 "output_schema_id": "test",
                 "output_schema": {"type": "object"},
                 "participants": ["alice", "bob"],
-                "prompt_template_hash": "a".repeat(64)
+                "prompt_template_hash": test_prompt_hash()
             }))
             .unwrap(),
             "hash".to_string(),
@@ -2846,6 +2889,7 @@ async fn test_health_redacts_provider_by_default() {
         admitted_programs: None,
         admitted_profiles: None,
         operator_token: None,
+        limits: Default::default(),
     });
     let app = build_router(state);
 
@@ -2902,6 +2946,7 @@ async fn test_health_exposes_provider_when_enabled() {
         admitted_programs: None,
         admitted_profiles: None,
         operator_token: None,
+        limits: Default::default(),
     });
     let app = build_router(state);
 
@@ -3031,7 +3076,7 @@ async fn test_contract_relay_key_pinning_correct_key_accepted() {
 
 #[tokio::test]
 async fn test_submit_with_wrong_role_uses_contract_role() {
-    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+    let state = Arc::new(test_app_state("http://unused", &shared_prompt_dir()));
 
     let (session_id, tokens) = state
         .session_store
@@ -3041,7 +3086,7 @@ async fn test_submit_with_wrong_role_uses_contract_role() {
                 "output_schema_id": "test",
                 "output_schema": {"type": "object"},
                 "participants": ["alice", "bob"],
-                "prompt_template_hash": "a".repeat(64)
+                "prompt_template_hash": test_prompt_hash()
             }))
             .unwrap(),
             "hash".to_string(),
@@ -3162,6 +3207,7 @@ async fn test_failure_receipt_uses_resolved_schema_hash() {
         admitted_programs: None,
         admitted_profiles: None,
         operator_token: None,
+        limits: Default::default(),
     });
 
     // 5. Create session with hash-only contract (stub schema + output_schema_hash)
@@ -3528,7 +3574,7 @@ async fn test_relay_key_pinning_accepts_uppercase_hex() {
 
 #[tokio::test]
 async fn test_create_session_rejects_malformed_relay_verifying_key() {
-    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+    let state = Arc::new(test_app_state("http://unused", &shared_prompt_dir()));
 
     for key in malformed_relay_keys() {
         let body = serde_json::json!({
@@ -3537,7 +3583,7 @@ async fn test_create_session_rejects_malformed_relay_verifying_key() {
                 "output_schema_id": "vault_result_mediation",
                 "output_schema": mediation_schema(),
                 "participants": ["alice", "bob"],
-                "prompt_template_hash": "a".repeat(64),
+                "prompt_template_hash": test_prompt_hash(),
                 "relay_verifying_key_hex": key
             },
             "provider": "anthropic"
@@ -3887,6 +3933,11 @@ async fn test_relay_ignores_schema_declared_bound_for_inline_schema() {
     let mock_base_url = start_mock_anthropic(serde_json::json!({"note": "OK"})).await;
     let mut state = test_app_state(&mock_base_url, &prompt_dir);
     state.is_dev = true;
+    // Above the default per-session cap, so this test sees the computed bound.
+    state.limits = selkey_relay::limits::Limits::new(selkey_relay::limits::LimitConfig {
+        max_entropy_bits_per_session: 1024,
+        ..Default::default()
+    });
 
     let schema = serde_json::json!({
         "type": "object",
@@ -3951,7 +4002,7 @@ fn create_session_body() -> serde_json::Value {
             "output_schema_id": "vault_result_mediation",
             "output_schema": mediation_schema(),
             "participants": ["alice", "bob"],
-            "prompt_template_hash": "a".repeat(64)
+            "prompt_template_hash": test_prompt_hash()
         },
         "provider": "anthropic"
     })
@@ -4040,7 +4091,7 @@ async fn test_relay_endpoint_requires_operator_token_when_configured() {
 
 #[tokio::test]
 async fn test_create_session_requires_operator_token_when_configured() {
-    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+    let state = Arc::new(test_app_state("http://unused", &shared_prompt_dir()));
     assert_eq!(
         post_json(state.clone(), "/sessions", None, create_session_body()).await,
         StatusCode::UNAUTHORIZED
@@ -4069,7 +4120,7 @@ async fn test_create_session_requires_operator_token_when_configured() {
 
 #[tokio::test]
 async fn test_create_session_open_without_operator_token() {
-    let mut state = test_app_state("http://unused", "/tmp");
+    let mut state = test_app_state("http://unused", &shared_prompt_dir());
     state.operator_token = None;
     assert_eq!(
         post_json(Arc::new(state), "/sessions", None, create_session_body()).await,
@@ -4105,7 +4156,7 @@ async fn test_unauthenticated_requests_rejected_before_body_is_parsed() {
                 "output_schema_id": "test",
                 "output_schema": {},
                 "participants": ["alice", "bob"],
-                "prompt_template_hash": "a".repeat(64)
+                "prompt_template_hash": test_prompt_hash()
             }))
             .unwrap(),
             "hash".to_string(),
@@ -4149,7 +4200,7 @@ async fn test_unauthenticated_requests_rejected_before_body_is_parsed() {
 
 #[tokio::test]
 async fn test_health_reports_signing_key_id() {
-    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+    let state = Arc::new(test_app_state("http://unused", &shared_prompt_dir()));
     let verifying_key = state.signing_key.verifying_key();
     let app = build_router(state);
     let response = app
@@ -4242,6 +4293,321 @@ async fn test_invite_sender_key_cannot_differ_from_registry_key() {
     assert_eq!(status, StatusCode::OK, "{json}");
 }
 
+// ============================================================================
+// Contract checks before inputs; operator limits
+// ============================================================================
+
+/// A contract the test relay accepts (registry schema, known program).
+fn valid_contract() -> serde_json::Value {
+    serde_json::json!({
+        "purpose_code": "MEDIATION",
+        "output_schema_id": "vault_result_mediation",
+        "output_schema": mediation_schema(),
+        "participants": ["alice", "bob"],
+        "prompt_template_hash": test_prompt_hash()
+    })
+}
+
+/// Contracts that pass parsing but would fail at inference, each labelled.
+/// The mediation schema's upper bound is 6 bits.
+fn contracts_failing_preflight() -> Vec<(&'static str, serde_json::Value)> {
+    let with = |key: &str, value: serde_json::Value| {
+        let mut c = valid_contract();
+        c[key] = value;
+        c
+    };
+    let mut over_operator_cap = valid_contract();
+    over_operator_cap["entropy_budget_bits"] = serde_json::json!(1024);
+    over_operator_cap["entropy_enforcement"] = serde_json::json!("Advisory");
+    let mut unknown_schema_hash = valid_contract();
+    unknown_schema_hash["output_schema"] = serde_json::json!({});
+    unknown_schema_hash["output_schema_hash"] = serde_json::json!("e".repeat(64));
+    vec![
+        (
+            "unknown policy",
+            with("enforcement_policy_hash", serde_json::json!("b".repeat(64))),
+        ),
+        (
+            "unknown prompt program",
+            with("prompt_template_hash", serde_json::json!("c".repeat(64))),
+        ),
+        (
+            "unknown model profile",
+            with("model_profile_id", serde_json::json!("no-such-profile")),
+        ),
+        (
+            "relay key pin mismatch",
+            with("relay_verifying_key_hex", serde_json::json!("d".repeat(64))),
+        ),
+        ("unknown schema hash", unknown_schema_hash),
+        (
+            "over contract budget (default Gate)",
+            with("entropy_budget_bits", serde_json::json!(2)),
+        ),
+        (
+            "session TTL above relay max",
+            with("session_ttl_secs", serde_json::json!(100_000)),
+        ),
+        (
+            "provider not allowed",
+            with(
+                "model_constraints",
+                serde_json::json!({"allowed_providers": ["openai"], "allowed_models": []}),
+            ),
+        ),
+        ("over operator cap", over_operator_cap),
+    ]
+}
+
+fn state_with_operator_cap(cap: u32) -> AppState {
+    let mut state = test_app_state("http://unused", &shared_prompt_dir());
+    state.limits = selkey_relay::limits::Limits::new(selkey_relay::limits::LimitConfig {
+        max_entropy_bits_per_session: cap,
+        ..Default::default()
+    });
+    state
+}
+
+#[tokio::test]
+async fn test_session_creation_runs_contract_checks_before_inputs() {
+    // Operator cap 5 bits: below the schema's 6 bits only for the cap case,
+    // which declares a large Advisory budget.
+    for (label, contract) in contracts_failing_preflight() {
+        let cap = if label == "over operator cap" { 5 } else { 64 };
+        let state = Arc::new(state_with_operator_cap(cap));
+        let status = post_json(
+            state.clone(),
+            "/sessions",
+            Some(TEST_OPERATOR_TOKEN),
+            serde_json::json!({ "contract": contract, "provider": "anthropic" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{label}");
+        assert!(
+            state.session_store.is_empty().await,
+            "{label}: no session may be created"
+        );
+    }
+
+    // The valid contract is accepted.
+    let state = Arc::new(state_with_operator_cap(64));
+    let status = post_json(
+        state.clone(),
+        "/sessions",
+        Some(TEST_OPERATOR_TOKEN),
+        serde_json::json!({ "contract": valid_contract(), "provider": "anthropic" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_invite_creation_runs_contract_checks() {
+    for (label, mut contract) in contracts_failing_preflight() {
+        if label == "over operator cap" {
+            continue;
+        }
+        contract["purpose_code"] = serde_json::json!("MEDIATION");
+        let state = Arc::new(inbox_test_app_state());
+        let app = build_router(state.clone());
+        let body = serde_json::json!({
+            "to_agent_id": "bob",
+            "contract": contract,
+            "provider": "anthropic",
+            "purpose_code": "MEDIATION"
+        });
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/invites")
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {ALICE_INBOX_TOKEN}"))
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let (status, json) = status_and_json(response).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{label}: {json}");
+        assert!(state.inbox_store.is_empty().await, "{label}");
+    }
+}
+
+#[tokio::test]
+async fn test_invite_acceptance_runs_contract_checks() {
+    let state = Arc::new(inbox_test_app_state());
+    // Store an invite directly (without the create-time checks) whose
+    // contract names an unknown prompt program.
+    let mut contract = valid_contract();
+    contract["prompt_template_hash"] = serde_json::json!("c".repeat(64));
+    let request = selkey_relay::inbox_types::CreateInviteRequest {
+        to_agent_id: "bob".to_string(),
+        contract,
+        provider: "anthropic".to_string(),
+        purpose_code: "MEDIATION".to_string(),
+        from_agent_pubkey: None,
+    };
+    let invite = state
+        .inbox_store
+        .create_invite("alice", &request, None)
+        .await
+        .unwrap();
+
+    let response = build_router(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/invites/{}/accept", invite.invite_id))
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {BOB_INBOX_TOKEN}"))
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = status_and_json(response).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{json}");
+    assert!(state.session_store.is_empty().await);
+    let detail = state
+        .inbox_store
+        .get_invite(&invite.invite_id, "bob")
+        .await
+        .unwrap();
+    assert_eq!(serde_json::to_value(detail).unwrap()["status"], "PENDING");
+}
+
+#[tokio::test]
+async fn test_invite_to_unregistered_agent_rejected() {
+    let state = Arc::new(inbox_test_app_state());
+    let mut body: serde_json::Value = serde_json::from_str(&inbox_create_body()).unwrap();
+    body["to_agent_id"] = serde_json::json!("carol");
+    body["contract"]["participants"] = serde_json::json!(["alice", "carol"]);
+    let response = build_router(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/invites")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {ALICE_INBOX_TOKEN}"))
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, json) = status_and_json(response).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{json}");
+    assert!(state.inbox_store.is_empty().await);
+}
+
+#[tokio::test]
+async fn test_session_creation_rate_limited_per_client() {
+    let mut state = test_app_state("http://unused", &shared_prompt_dir());
+    state.limits = selkey_relay::limits::Limits::new(selkey_relay::limits::LimitConfig {
+        session_create_rate_per_min: 2,
+        ..Default::default()
+    });
+    let state = Arc::new(state);
+    let body = serde_json::json!({ "contract": valid_contract(), "provider": "anthropic" });
+    for _ in 0..2 {
+        let status = post_json(
+            state.clone(),
+            "/sessions",
+            Some(TEST_OPERATOR_TOKEN),
+            body.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    let status = post_json(state.clone(), "/sessions", Some(TEST_OPERATOR_TOKEN), body).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn test_session_store_capacity_enforced() {
+    let mut state = test_app_state("http://unused", &shared_prompt_dir());
+    state.session_store = SessionStore::new(Duration::from_secs(600)).with_max_sessions(1);
+    let state = Arc::new(state);
+    let body = serde_json::json!({ "contract": valid_contract(), "provider": "anthropic" });
+    let status = post_json(
+        state.clone(),
+        "/sessions",
+        Some(TEST_OPERATOR_TOKEN),
+        body.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let status = post_json(state.clone(), "/sessions", Some(TEST_OPERATOR_TOKEN), body).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(state.session_store.len().await, 1);
+}
+
+#[tokio::test]
+async fn test_default_request_body_limit() {
+    let state = Arc::new(test_app_state("http://unused", &shared_prompt_dir()));
+    // A valid contract whose metadata pushes the body past 256 KiB.
+    let mut contract = valid_contract();
+    contract["metadata"] = serde_json::json!({ "note": "x".repeat(300 * 1024) });
+    let status = post_json(
+        state.clone(),
+        "/sessions",
+        Some(TEST_OPERATOR_TOKEN),
+        serde_json::json!({ "contract": contract, "provider": "anthropic" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(state.session_store.is_empty().await);
+}
+
+#[tokio::test]
+async fn test_pending_invites_per_agent_capped() {
+    let mut state = inbox_test_app_state();
+    state.inbox_store = InboxStore::new(Duration::from_secs(600)).with_limits(100, 1);
+    let app = build_router(Arc::new(state));
+    let send = || async {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/invites")
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {ALICE_INBOX_TOKEN}"))
+                    .body(Body::from(inbox_create_body()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        response.status()
+    };
+    assert_eq!(send().await, StatusCode::OK);
+    assert_eq!(send().await, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn test_receipt_budget_limit_reflects_operator_cap() {
+    let (prompt_dir, prompt_hash) = setup_prompt_program("budget-limit-cap");
+    let mock_output = serde_json::json!({
+        "decision": "PROCEED",
+        "confidence_bucket": "HIGH",
+        "reason_code": "ALIGNED"
+    });
+    let mock_base_url = start_mock_anthropic(mock_output).await;
+    let state = Arc::new(test_app_state(&mock_base_url, &prompt_dir));
+    // No contract budget: the receipt's limit is the operator cap.
+    let (status, json) = post_relay(state, single_shot_body(&prompt_hash)).await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+    assert_eq!(
+        json["receipt"]["claims"]["budget_usage"]["budget_limit"],
+        selkey_relay::limits::DEFAULT_MAX_ENTROPY_BITS_PER_SESSION
+    );
+    assert_eq!(
+        json["receipt"]["claims"]["budget_enforcement_mode"],
+        "enforced"
+    );
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}
+
 #[tokio::test]
 async fn test_invite_accept_rechecks_stored_sender_key() {
     let state = Arc::new(inbox_test_app_state());
@@ -4283,4 +4649,42 @@ async fn test_invite_accept_rechecks_stored_sender_key() {
         .unwrap();
     let (status, json) = accept(ok.invite_id).await;
     assert_eq!(status, StatusCode::OK, "{json}");
+}
+
+#[tokio::test]
+async fn test_session_rate_limit_groups_ipv6_prefix() {
+    let mut state = test_app_state("http://unused", &shared_prompt_dir());
+    state.limits = selkey_relay::limits::Limits::new(selkey_relay::limits::LimitConfig {
+        session_create_rate_per_min: 1,
+        ..Default::default()
+    });
+    let app = build_router(Arc::new(state));
+    let body = serde_json::json!({ "contract": valid_contract(), "provider": "anthropic" });
+    let send = |addr: &str| {
+        let mut request = Request::builder()
+            .method("POST")
+            .uri("/sessions")
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {TEST_OPERATOR_TOKEN}"))
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        request.extensions_mut().insert(axum::extract::ConnectInfo(
+            addr.parse::<std::net::SocketAddr>().unwrap(),
+        ));
+        app.clone().oneshot(request)
+    };
+    assert_eq!(
+        send("[2001:db8:1:2::1]:4000").await.unwrap().status(),
+        StatusCode::OK
+    );
+    // Same /64, different address: shares the allowance.
+    assert_eq!(
+        send("[2001:db8:1:2::2]:4001").await.unwrap().status(),
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    // A different /64 has its own allowance.
+    assert_eq!(
+        send("[2001:db8:1:3::1]:4002").await.unwrap().status(),
+        StatusCode::OK
+    );
 }

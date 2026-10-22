@@ -22,7 +22,7 @@ Complete reference for all environment variables used by the Selkey relay and MC
 | `SELKEY_SIGNING_KEY_HEX` | required outside dev | 64-char hex Ed25519 signing key for receipt signing (e.g. `openssl rand -hex 32`). Outside `SELKEY_ENV=dev` the relay refuses to start without it. In dev, if unset, a random key is generated on each start and receipts won't verify across restarts. The key id logged at startup and reported by `/health` is `ed25519:` + hex(SHA-256(public key)) |
 | `SELKEY_PROMPT_PROGRAM_DIR` | `prompt_programs` | Directory containing prompt programs, model profile lockfile, and enforcement policy lockfile |
 | `SELKEY_SCHEMA_DIR` | `<prompt dir>/../schemas/output` | Directory of content-addressed output schemas (the schema registry). Set it to the repo's `schemas/output` when running from a checkout; the Docker image sets it |
-| `SELKEY_SESSION_TTL_SECS` | `600` | Session expiry in seconds. Background reaper cleans up expired sessions. A session still processing one TTL after inference started is aborted with `TIMEOUT` |
+| `SELKEY_SESSION_TTL_SECS` | `600` | Maximum session lifetime in seconds. A contract's `session_ttl_secs` can shorten it for that session. Background reaper cleans up expired sessions. A session still processing one TTL after inference started is aborted with `TIMEOUT` |
 | `OPENAI_API_KEY` | — | Enables the OpenAI provider when set |
 | `SELKEY_OPENAI_MODEL_ID` | `gpt-4o` | OpenAI model ID (only used if `OPENAI_API_KEY` is set) |
 | `ANTHROPIC_BASE_URL` | — | Override Anthropic API base URL (for proxies or mock servers) |
@@ -85,6 +85,21 @@ cargo build --features persistence
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SELKEY_INBOX_DB_PATH` | — | Path to the SQLite database file for inbox persistence. Required when running with `--features persistence`. If unset, the relay falls back to in-memory storage |
+
+### Limits
+
+Unset variables use the default. A set value must be a positive integer, or the relay refuses to start.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SELKEY_MAX_ENTROPY_BITS_PER_SESSION` | `64` | Per-session cap on the output schema's entropy upper bound. Applies to every contract, whatever its `entropy_budget_bits` or `entropy_enforcement`; a contract above it is rejected at session or invite creation |
+| `SELKEY_MAX_BODY_BYTES` | `262144` | Maximum request body size (`413` above it) |
+| `SELKEY_MAX_SESSIONS` | `10000` | Sessions held in memory at once (`503` when full) |
+| `SELKEY_MAX_INVITES` | `10000` | Invites held in memory at once. Accepted, declined, canceled and expired invites are removed 1 hour after they reach that state; when the store is full, the oldest finished invite (declined, canceled or expired before accepted) is removed to make room. `503` only when every held invite is pending |
+| `SELKEY_MAX_INVITES_PER_AGENT` | `1000` | Invites in any state held per sending agent. At the limit the sender's oldest finished invite is removed; `429` if all of them are pending |
+| `SELKEY_MAX_PENDING_INVITES_PER_AGENT` | `100` | Pending invites per sending agent (`429` above it) |
+| `SELKEY_SESSION_CREATE_RATE_PER_MIN` | `60` | `POST /sessions` plus `POST /relay` per client address per minute (`429` above it). IPv6 clients are grouped by /64. Behind a reverse proxy all clients share the proxy's address |
+| `SELKEY_INVITE_CREATE_RATE_PER_MIN` | `30` | `POST /invites` per sending agent per minute (`429` above it) |
 
 ### Agent registry (inbox authentication)
 

@@ -43,6 +43,9 @@ pub enum RelayError {
     #[error("Invite state conflict: {0}")]
     InviteStateConflict(String),
 
+    #[error("Rate limit exceeded")]
+    RateLimited,
+
     #[error("Service unavailable: {0}")]
     ServiceUnavailable(String),
 
@@ -78,6 +81,7 @@ impl RelayError {
             RelayError::Forbidden(_) => StatusCode::FORBIDDEN,
             RelayError::InviteStateConflict(_) => StatusCode::CONFLICT,
             RelayError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            RelayError::RateLimited => StatusCode::TOO_MANY_REQUESTS,
             RelayError::ProfileNotFound { .. } => StatusCode::BAD_REQUEST,
             RelayError::ProfileNotAdmitted { .. } => StatusCode::BAD_REQUEST,
             RelayError::PolicyNotAvailable { .. } => StatusCode::BAD_REQUEST,
@@ -96,6 +100,7 @@ impl IntoResponse for RelayError {
             }
             RelayError::PolicyGate(_) => "OUTPUT_POLICY_VIOLATION".to_string(),
             RelayError::ServiceUnavailable(_) => "SERVICE_UNAVAILABLE".to_string(),
+            RelayError::RateLimited => "RATE_LIMITED".to_string(),
             other => other.to_string(),
         };
         let body = serde_json::json!({

@@ -58,7 +58,7 @@ Relay capabilities. No authentication required.
   "execution_lane": "API_MEDIATED",
   "providers": ["anthropic", "openai", "gemini"],
   "purposes": ["COMPATIBILITY", "MEDIATION", "SCHEDULING", ...],
-  "entropy_enforcement": "ADVISORY",
+  "entropy_enforcement": "GATE",
   "receipt_schema_version": "3.0.0",
   "enforcement_capabilities": ["..."],
   "available_schema_hashes": ["...content-addressed output schema hashes..."],
@@ -143,6 +143,26 @@ members outside the contract member set (including a `contract_hash` member) are
 rejected with `400`, absent or `null` optional members are omitted, and the
 result is canonicalised with RFC 8785. Numbers anywhere in the contract must be
 within ±(2^53−1).
+
+The relay runs every contract check at creation, before any input is submitted:
+participants, enforcement policy, model profile and allowlist, relay key pin, model
+constraints, TTLs, output schema acceptance, the entropy limits below, the prompt
+program, and that the provider is configured. A contract that would fail at
+inference is rejected here with `400` and no session is created. The same checks
+run again when inference starts. They read only artefacts fixed at startup, so a
+contract accepted at creation passes them again; if one ever failed there, the
+session would abort without a receipt (the failure is logged).
+
+**Entropy limits.** The output schema's entropy upper bound must not exceed the
+relay's per-session cap (`SELKEY_MAX_ENTROPY_BITS_PER_SESSION`, default 64 bits),
+whatever the contract says. If the contract sets `entropy_budget_bits`, the bound
+must also fit the budget unless the contract sets `entropy_enforcement: "Advisory"`;
+`Gate` is the default. The receipt's `budget_usage.budget_limit` is the contract
+budget capped by the operator limit (the operator limit when there is no budget).
+
+**Limits.** Session creation (`POST /sessions` and `POST /relay`) is rate limited per
+client address (`429`), the number of live sessions is capped (`503`), and request
+bodies are limited to `SELKEY_MAX_BODY_BYTES` (default 256 KiB, `413`).
 
 **Response** `200 OK`
 ```json
@@ -326,7 +346,7 @@ Create a new invite to another agent.
 }
 ```
 
-`provider` defaults to the first configured provider if empty. The invite's `from_agent_pubkey` is always the sender's `public_key_hex` from the agent registry (or absent if none is registered). A request `from_agent_pubkey` is optional; if present it must equal the registered key, otherwise the request is rejected with `400`.
+`provider` defaults to the first configured provider if empty. `to_agent_id` must be a registered agent. The contract checks described under `POST /sessions` run before the invite is stored, and again on accept. Invite creation is rate limited per sending agent, and each agent may have a limited number of pending invites (`429`); the total number of invites is capped (`503`). The invite expires after the contract's `invite_ttl_secs` if set (never above `SELKEY_INVITE_TTL_SECS`). The invite's `from_agent_pubkey` is always the sender's `public_key_hex` from the agent registry (or absent if none is registered). A request `from_agent_pubkey` is optional; if present it must equal the registered key, otherwise the request is rejected with `400`.
 
 **Response** `200 OK`
 ```json
@@ -407,7 +427,7 @@ When status is `ACCEPTED`, `session_id`, `submit_token`, and `read_token` are po
 
 ### `POST /invites/:id/accept`
 
-Accept a pending invite. Creates a bilateral session and returns role-scoped tokens.
+Accept a pending invite. Creates a bilateral session and returns role-scoped tokens. The contract checks run again first; if they fail the invite stays `PENDING` and no session is created.
 
 **Request**
 ```json
@@ -489,10 +509,13 @@ All errors return a JSON body with an `error` field:
 |--------|---------|
 | `400 Bad Request` | Invalid contract or prompt program |
 | `401 Unauthorized` | Invalid token, unknown session, or wrong role (constant-shape — no distinction) |
+| `413 Payload Too Large` | Request body above `SELKEY_MAX_BODY_BYTES` |
+| `429 Too Many Requests` | Creation rate limit or pending-invite limit reached (`{"error": "RATE_LIMITED"}`) |
+| `503 Service Unavailable` | Session or invite capacity reached (`{"error": "SERVICE_UNAVAILABLE"}`) |
 | `422 Unprocessable Entity` | Output failed schema validation or guardian policy gate |
 | `502 Bad Gateway` | Upstream provider error |
 | `500 Internal Server Error` | Receipt signing failure or internal error |
 
 ## Session lifecycle
 
-Sessions expire after `SELKEY_SESSION_TTL_SECS` (default: 600 seconds). A background reaper cleans up expired sessions. Tokens for expired sessions return `401 Unauthorized`.
+Sessions expire after the contract's `session_ttl_secs` if set, otherwise `SELKEY_SESSION_TTL_SECS` (default: 600 seconds); a contract TTL above the relay TTL is rejected. A background reaper cleans up expired sessions. A session still processing one TTL after inference started is aborted with `TIMEOUT` and its inference task is cancelled. Tokens for expired sessions return `401 Unauthorized`.

@@ -312,7 +312,29 @@ Whether a session completes or aborts, and the abort reason code, can leak infor
 Constant-shape error responses for auth and policy gate cases mitigate but do not
 eliminate this channel.
 
-### 6.4 Schema Shape as a Disclosure Decision
+### 6.4 Probing Across Sessions
+
+The entropy limits bound what **one** session can release: the schema's upper bound
+must fit the contract budget (enforced by default) and the relay's per-session cap
+(`SELKEY_MAX_ENTROPY_BITS_PER_SESSION`). The relay does not track disclosure across
+sessions:
+
+- **Bits add up.** A counterparty who can run many sessions against the same input
+  learns up to the per-session bound each time. Ten 6-bit sessions can reveal 60 bits.
+  Receipts mark budget figures as `scope: "SESSION"` for this reason.
+- **Prefer low-bit, enumerated schemas.** A small enum releases little per session and
+  is easy to reason about; free-text and wide numeric fields are not.
+- **Refusals leak.** Whether a party declines, aborts or lets a session fail reveals
+  about one bit per session.
+- **Identities are cheap.** On unauthenticated lanes participant ids are strings the
+  creator chooses, so per-pair limits are defeated by renaming (sybils). Even the inbox
+  lane is only as sybil-resistant as registry onboarding.
+
+Session creation rate limits and store caps are denial-of-service controls, not a
+disclosure ledger. The party who decides whether to submit an input is the natural
+place to enforce a cumulative budget.
+
+### 6.5 Schema Shape as a Disclosure Decision
 
 The output schema is visible to both parties (it is embedded in the contract). The
 choice of what fields to include, what enum values are available, and what array
@@ -385,6 +407,17 @@ characters, have few distinct characters or repeat a shorter sequence. Outside d
 mode the relay refuses to start without a configured signing key, so receipts are
 always signed by a stable key that verifiers can pin. An invite carries the sender
 key from the agent registry, never a key supplied by the sender in the request.
+
+**Contract checks before inputs; operator limits**
+
+Every contract check (policy, profile, schema acceptance, entropy limits, relay key
+pin, prompt program, provider) runs when a session or invite is created, before any
+party submits input, and again when inference starts. Entropy enforcement defaults
+to `Gate`. An operator cap on bits per session applies whatever the contract says.
+Session and invite creation are rate limited, in-memory stores are capped, and
+request bodies are limited (see `docs/environment-variables.md`). Inference runs in
+its own task: a client disconnect cannot interrupt it, a timed-out session cancels
+its inference, and the reapers restart if they fail.
 
 **Constant-shape error responses**
 
