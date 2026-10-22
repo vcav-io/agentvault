@@ -61,9 +61,14 @@ A valid receipt signature proves:
 - **Input privacy from the relay.** The relay receives participant inputs in
   plaintext. Inputs are not encrypted end-to-end. The relay discards raw inputs
   (and their commitment nonces) after receipt construction, retaining only the
-  commitments. The commitments are salted with a secret per-submission nonce
-  chosen by each participant, so the counterparty cannot test guesses of your
-  input against your commitment.
+  commitments.
+- **Input privacy in the receipt.** Values derived from a participant's input appear
+  in a v3 receipt only through the salted input commitments: no field holds an
+  unsalted hash of an input, of the assembled prompt or of output that was not
+  released (receipt v3 specification, section 8). Each commitment is salted with a
+  secret per-submission nonce chosen by that participant, so a party holding the
+  receipt cannot test guesses of the other party's input against it. The released
+  output itself is derived from both inputs, as the contract intends.
 - **Simultaneous delivery.** Receipts do not prove both parties received the output
   at the same time.
 
@@ -651,7 +656,9 @@ function verifyInputCommitment(
 ### Commitments section
 
 Fields in `commitments` can be recomputed by whoever holds the corresponding
-artefact. `JCS` below is RFC 8785 with the v3 number limit.
+artefact. `JCS` below is RFC 8785 with the v3 number limit. Receipt v3 has no
+`assembled_prompt_hash` or `rejected_output_hash` (both were v2 fields), and a
+verifier rejects a v3 receipt that carries either.
 
 | Field | How to verify |
 |---|---|
@@ -660,10 +667,8 @@ artefact. `JCS` below is RFC 8785 with the v3 number limit.
 | `schema_hash` | SHA-256(JCS(output_schema)) of the schema the relay enforced |
 | `output_hash` | SHA-256(JCS(output)); SHA-256 of zero bytes on failure receipts |
 | `input_commitments[]` | Each participant recomputes its own entry with its nonce (see [Own-input check](#own-input-check)); entries are in `contract.participants` order |
-| `assembled_prompt_hash` | SHA-256(JCS({"system", "user_message"})) — requires the relay's prompt assembly implementation |
 | `prompt_template_hash` | Equals `contract.prompt_template_hash` |
 | `effective_config_hash` | SHA-256(JCS(preflight_bundle)) |
-| `rejected_output_hash` | SHA-256(JCS(rejected output)), failure receipts only (optional) |
 | `preflight_bundle.*` | Hash each constituent artefact independently |
 
 The `output` field inside `commitments` is an inline convenience copy of the
@@ -901,7 +906,6 @@ caller's own input and nonce, the received output, or the contract.
           { "participant_id": "alice", "input_commitment": "...", "scheme": "SHA256_N32_JCS_V3" },
           { "participant_id": "bob", "input_commitment": "...", "scheme": "SHA256_N32_JCS_V3" }
         ],
-        "assembled_prompt_hash": "...",
         "prompt_assembly_version": "1.0.0"
       },
       "claims": {},

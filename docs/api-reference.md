@@ -195,7 +195,9 @@ clears it together with the inputs. Keep the nonce and the exact `context`
 locally: together they let you check your own entry in the receipt (see
 [receipt-verification-guide.md](receipt-verification-guide.md#own-input-check)).
 The counterparty never sees your nonce, so it cannot test guesses of your input
-against the commitment.
+against the commitment. Inputs appear in receipts only through these salted
+commitments: no receipt field holds an unsalted hash of an input or of the
+assembled prompt.
 
 `context` must also be canonicalisable under the receipt v3 profile: numbers
 must be within ±(2^53−1) (encode larger values as strings).
@@ -272,7 +274,6 @@ Retrieve the bounded output and signed receipt. Requires a read token.
         { "participant_id": "alice", "input_commitment": "...", "scheme": "SHA256_N32_JCS_V3" },
         { "participant_id": "bob", "input_commitment": "...", "scheme": "SHA256_N32_JCS_V3" }
       ],
-      "assembled_prompt_hash": "...",
       "prompt_assembly_version": "1.0.0",
       "output": { "..." },
       "prompt_template_hash": "...",

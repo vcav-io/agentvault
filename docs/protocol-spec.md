@@ -192,12 +192,16 @@ RFC 8785 with numbers limited to ±(2^53−1)):
 | `output_hash` | string (64 hex) | SHA-256(JCS(output)); SHA-256 of zero bytes when no output was accepted. |
 | `output` | any JSON, optional | Inline bounded output (convenience). Absent on failure receipts. |
 | `input_commitments` | array | One `{participant_id, input_commitment, scheme: "SHA256_N32_JCS_V3"}` per participant, in `contract.participants` order, where `input_commitment = SHA-256("VCAV-INPUT-COMMIT-V3:" ‖ nonce (32 raw bytes) ‖ JCS(context))`. Only the participant holding the nonce can open its entry. |
-| `assembled_prompt_hash` | string (64 hex) | SHA-256(JCS({"system", "user_message"})) of the assembled prompt. |
 | `prompt_assembly_version` | string | Prompt assembler version (e.g., `"1.0.0"`). |
 | `prompt_template_hash` | string (64 hex), optional | Equals `contract.prompt_template_hash`. |
 | `effective_config_hash` | string (64 hex), optional | SHA-256(JCS(preflight_bundle)). |
 | `preflight_bundle` | object, optional | `{policy_hash, prompt_template_hash, model_profile_hash, schema_hash, enforcement_parameters}`. |
-| `rejected_output_hash` | string (64 hex), optional | SHA-256(JCS(rejected output)) on failure receipts. |
+
+Receipt field privacy (receipt v3 specification, section 8): values derived from a
+participant's input appear in a receipt only through `input_commitments`. No field
+holds an unsalted hash of an input, of the assembled prompt or of output that was not
+released; `output_hash` covers only released output. v3 therefore has no
+`assembled_prompt_hash` or `rejected_output_hash` (v2 fields).
 
 **Claims** (relay assertions — believed but not cryptographically verifiable):
 

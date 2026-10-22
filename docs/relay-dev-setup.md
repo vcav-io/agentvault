@@ -159,4 +159,4 @@ Response:
 }
 ```
 
-The v3 receipt commits to the contract (contract hash v2), the enforced output schema, the output, each participant's salted input commitment, the assembled prompt, the prompt template and the preflight bundle (policy, model profile, enforcement parameters), and records relay claims such as the model identity and channel capacity. See the [API Reference](api-reference.md) and the [Receipt Verification Guide](receipt-verification-guide.md) for full details.
+The v3 receipt commits to the contract (contract hash v2), the enforced output schema, the output, each participant's salted input commitment, the prompt template and the preflight bundle (policy, model profile, enforcement parameters), and records relay claims such as the model identity and channel capacity. See the [API Reference](api-reference.md) and the [Receipt Verification Guide](receipt-verification-guide.md) for full details.

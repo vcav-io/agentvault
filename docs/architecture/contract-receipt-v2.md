@@ -3,6 +3,7 @@
 > **Status:** Implemented (PRs #173, #174)
 > **Canonical schema:** `selkey-receipt-schema-v2.1.0.revised.json`
 > **Issues:** #155 (receipt hardening), #151 (contract completeness), #147 (enforcement policy)
+> **Superseded for current relays by receipt v3** (vault-family-core `docs/receipt-v3.md`). Receipt v3 removes `assembled_prompt_hash` and `rejected_output_hash`, salts input commitments and uses contract hash v2. This document describes v2 only.
 
 ## Design Principles
 
