@@ -3,7 +3,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.relay
-    image: selkey-relay:local
+    image: ghcr.io/vcav-io/selkey-relay:latest
     ports:
       - "3100:3100"
     environment:
@@ -26,7 +26,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.demo
-    image: selkey-demo:local
+    image: ghcr.io/vcav-io/selkey-demo:latest
     ports:
       - "3200:3200"
     depends_on:

@@ -42,11 +42,13 @@ echo "GEMINI_API_KEY=AIza..." > .env
 # echo "OPENAI_API_KEY=sk-..." >> .env
 # echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env
 
-# 2. Start the relay and demo UI
-docker compose -f docker/docker-compose.demo.yml --env-file .env up --build
+# 2. Start the relay and demo UI (pulls prebuilt images from ghcr.io)
+docker compose -f docker/docker-compose.demo.yml --env-file .env up
 
 # 3. Open http://localhost:3200 and click "Start Protocol"
 ```
+
+If the images can't be pulled, Compose builds them from your checkout. Add `--build` to always build from source (about 10 minutes cold).
 
 To stop:
 
