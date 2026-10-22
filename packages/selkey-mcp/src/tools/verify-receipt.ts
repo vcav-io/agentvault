@@ -13,6 +13,7 @@ import {
   type VerifyResult,
 } from 'selkey/verify';
 import { buildError, buildSuccess } from '../envelope.js';
+import { labelUntrustedContent, VERIFY_RECEIPT_UNTRUSTED_PATHS } from '../untrusted-content.js';
 import type { ToolResponse } from '../envelope.js';
 
 // ---------------------------------------------------------------------------
@@ -74,5 +75,5 @@ export async function handleVerifyReceipt(
   }
 
   const result = verifyReceipt(args.receipt, key);
-  return buildSuccess('SUCCESS', result);
+  return labelUntrustedContent(buildSuccess('SUCCESS', result), VERIFY_RECEIPT_UNTRUSTED_PATHS);
 }

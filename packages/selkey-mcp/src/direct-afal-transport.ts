@@ -9,6 +9,7 @@
  * evaluates admission policy, and enqueues admitted proposals for checkInbox().
  */
 
+import { clipUntrustedText } from './untrusted-content.js';
 import type { AfalTransport, AfalInviteMessage, AcceptResult } from './afal-transport.js';
 import type {
   AfalAdmit,
@@ -364,7 +365,7 @@ export class DirectAfalTransport implements AfalTransport {
 
     if (!response.ok) {
       const body = await response.text();
-      throw new Error(`PROPOSE rejected: ${response.status} ${body}`);
+      throw new Error(`PROPOSE rejected: ${response.status} ${clipUntrustedText(body)}`);
     }
 
     let admitOrDeny: Record<string, unknown>;
@@ -586,7 +587,7 @@ export class DirectAfalTransport implements AfalTransport {
 
     if (!response.ok) {
       const body = await response.text();
-      throw new Error(`COMMIT rejected: ${response.status} ${body}`);
+      throw new Error(`COMMIT rejected: ${response.status} ${clipUntrustedText(body)}`);
     }
 
     if (transportTarget.useA2ANative) {

@@ -1190,9 +1190,16 @@ describe('INITIATE relay preference ordering', () => {
     });
   }
 
+  // Use https relays here so the tests do not depend on whether plain http
+  // relay URLs are accepted for non-loopback hosts.
+  beforeEach(() => {
+    process.env['SELKEY_RELAY_URL'] = 'https://relay.test';
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
     delete process.env['SELKEY_RELAY_ALLOWLIST'];
+    process.env['SELKEY_RELAY_URL'] = 'http://relay.test';
   });
 
   it('creates the session on a REQUIRED, locally allowlisted responder relay and commits that same relay', async () => {
@@ -1201,7 +1208,7 @@ describe('INITIATE relay preference ordering', () => {
 
     await handleRelaySignal(
       { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'hello' },
-      makeInitiator('http://relay.test'),
+      makeInitiator('https://relay.test'),
     );
 
     expect(vi.mocked(createAndSubmit)).toHaveBeenCalledTimes(1);
@@ -1217,7 +1224,7 @@ describe('INITIATE relay preference ordering', () => {
 
     const result = await handleRelaySignal(
       { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'hello' },
-      makeInitiator('http://relay.test'),
+      makeInitiator('https://relay.test'),
     );
 
     expect(result.status).toBe('ERROR');
@@ -1231,14 +1238,14 @@ describe('INITIATE relay preference ordering', () => {
 
     await handleRelaySignal(
       { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'hello' },
-      makeInitiator('http://relay.test'),
+      makeInitiator('https://relay.test'),
     );
 
-    expect(vi.mocked(createAndSubmit).mock.calls[0]![0]).toEqual({ relay_url: 'http://relay.test' });
+    expect(vi.mocked(createAndSubmit).mock.calls[0]![0]).toEqual({ relay_url: 'https://relay.test' });
     expect(commits).toHaveLength(1);
     const relaySession = commits[0]!['relay_session'] as Record<string, unknown>;
-    expect(relaySession['relay_url']).toBe('http://relay.test');
-    expect(commits[0]!['chosen_relay_url']).toBe('http://relay.test');
+    expect(relaySession['relay_url']).toBe('https://relay.test');
+    expect(commits[0]!['chosen_relay_url']).toBe('https://relay.test');
   });
 });
 
