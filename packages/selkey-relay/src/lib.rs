@@ -271,6 +271,7 @@ async fn create_session_handler(
             "contract must have exactly 2 participants".to_string(),
         ));
     }
+    relay::validate_contract_key_fields(&request.contract)?;
 
     // Compute contract hash deterministically
     let contract_hash = compute_contract_hash(&request.contract)?;
@@ -427,20 +428,37 @@ async fn submit_input_handler(
     }))
 }
 
-/// Spawn the background inference task for a session.
-async fn spawn_inference(state: Arc<AppState>, session_id: String) {
-    // Clone what we need from the session before spawning
-    let session_data = state
-        .session_store
-        .with_session(&session_id, |session| {
+/// Move both raw inputs out of a session as inference begins.
+///
+/// The session never holds raw inputs while inference is running, so no
+/// failure mode of the inference task (error, panic, cancellation) can leave
+/// them behind in the store. Also records when processing started, which the
+/// reaper uses to time out sessions that never reach a terminal state.
+async fn take_inputs_for_inference(
+    store: &SessionStore,
+    session_id: &str,
+) -> Option<(
+    types::Contract,
+    Option<RelayInput>,
+    Option<RelayInput>,
+    String,
+)> {
+    store
+        .with_session(session_id, |session| {
+            session.processing_started_at = Some(chrono::Utc::now());
             (
                 session.contract.clone(),
-                session.initiator_input.clone(),
-                session.responder_input.clone(),
+                session.initiator_input.take(),
+                session.responder_input.take(),
                 session.provider.clone(),
             )
         })
-        .await;
+        .await
+}
+
+/// Spawn the background inference task for a session.
+async fn spawn_inference(state: Arc<AppState>, session_id: String) {
+    let session_data = take_inputs_for_inference(&state.session_store, &session_id).await;
 
     let Some((contract, Some(input_a), Some(input_b), provider)) = session_data else {
         tracing::error!(session_id = %session_id, "session vanished or missing inputs before inference could start");
@@ -574,113 +592,170 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
         })
     })();
 
+    let inference = {
+        let state = state.clone();
+        let provider = provider.clone();
+        async move { relay::relay_core(&contract, &input_a, &input_b, &provider, &state).await }
+    };
+    tokio::spawn(complete_inference(
+        state,
+        session_id,
+        provider,
+        failure_ctx,
+        inference,
+    ));
+}
+
+/// Drive an inference future to completion and record the outcome on the session.
+///
+/// The inference runs in its own task so that a panic inside it surfaces here
+/// as a `JoinError` instead of silently ending the session's lifecycle. Every
+/// outcome (success, error, panic) moves the session to a terminal state.
+/// Results are only written while the session is still `Processing`, so a
+/// session that the reaper has already timed out is not overwritten.
+async fn complete_inference<F>(
+    state: Arc<AppState>,
+    session_id: String,
+    provider: String,
+    failure_ctx: Option<FailureReceiptContext>,
+    inference: F,
+) where
+    F: std::future::Future<
+            Output = Result<(relay::RelayResult, relay::InferenceTiming), RelayError>,
+        > + Send
+        + 'static,
+{
+    let outcome = match tokio::spawn(inference).await {
+        Ok(result) => result,
+        Err(join_err) => {
+            tracing::error!(
+                session_id = %session_id,
+                panicked = join_err.is_panic(),
+                "inference task terminated unexpectedly"
+            );
+            Err(RelayError::Internal(
+                "inference task terminated unexpectedly".to_string(),
+            ))
+        }
+    };
+
     let is_dev = state.is_dev;
     let store = state.session_store.clone();
-    tokio::spawn(async move {
-        match relay::relay_core(&contract, &input_a, &input_b, &provider, &state).await {
-            Ok((result, timing)) => {
-                let output_bytes = serde_json::to_string(&result.output)
-                    .map(|s| s.len())
-                    .map_err(|e| tracing::warn!("failed to serialize output for metadata: {e}"))
-                    .ok();
-                let receipt_bytes = serde_json::to_string(&result.receipt)
-                    .map(|s| s.len())
-                    .map_err(|e| tracing::warn!("failed to serialize receipt for metadata: {e}"))
-                    .ok();
-                store
-                    .with_session(&session_id, |session| {
-                        session.output = Some(result.output);
-                        session.receipt = Some(result.receipt);
-                        session.receipt_signature = Some(result.receipt_signature);
-                        session.receipt_v2 = Some(result.receipt_v2);
-                        session.state = SessionState::Completed;
+    match outcome {
+        Ok((result, timing)) => {
+            let output_bytes = serde_json::to_string(&result.output)
+                .map(|s| s.len())
+                .map_err(|e| tracing::warn!("failed to serialize output for metadata: {e}"))
+                .ok();
+            let receipt_bytes = serde_json::to_string(&result.receipt)
+                .map(|s| s.len())
+                .map_err(|e| tracing::warn!("failed to serialize receipt for metadata: {e}"))
+                .ok();
+            store
+                .with_session(&session_id, |session| {
+                    // Raw inputs were moved out when inference began; clear
+                    // again defensively.
+                    session.initiator_input = None;
+                    session.responder_input = None;
 
-                        if is_dev {
-                            let mut meta = session.metadata.take().unwrap_or_else(|| {
-                                tracing::warn!(
-                                    session_id = %session.id,
-                                    "metadata absent at inference completion; input timestamps will be missing"
-                                );
-                                SessionMetadata::new(session.id.clone(), session.created_at)
-                            });
-                            meta.timing.inference_start_at = Some(timing.inference_start_at);
-                            meta.timing.inference_end_at = Some(timing.inference_end_at);
-                            meta.timing.output_ready_at = Some(chrono::Utc::now());
-                            meta.sizes.output_bytes = output_bytes;
-                            meta.sizes.receipt_bytes = receipt_bytes;
-                            session.metadata = Some(meta);
-                        }
-
-                        // Clear raw inputs — commitment hashes are already computed
-                        // inside relay_core, so inputs are no longer needed.
-                        session.initiator_input = None;
-                        session.responder_input = None;
-                    })
-                    .await;
-            }
-            Err(e) => {
-                let abort_reason = relay::error_to_abort_reason(&e);
-                tracing::error!(
-                    session_id = %session_id,
-                    error = %e,
-                    "session inference failed"
-                );
-
-                // Build failure receipt if context was pre-computed
-                let failure_receipt_v2 = if let Some(ref ctx) = failure_ctx {
-                    match relay::build_failure_receipt_v2(
-                        abort_reason,
-                        &session_id,
-                        &ctx.contract_hash,
-                        &ctx.output_schema_hash,
-                        ctx.input_commitments.clone(),
-                        ctx.assembled_prompt_hash.clone(),
-                        &ctx.prompt_template_hash,
-                        ctx.model_profile_hash.as_deref(),
-                        &ctx.effective_model_id,
-                        &provider,
-                        &ctx.runtime_hash,
-                        &ctx.policy_hash,
-                        &state,
-                        None, // inference_start not captured yet
-                        None, // inference_end not captured yet
-                        ctx.effective_max_tokens,
-                        ctx.entropy_bits as u32,
-                        ctx.entropy_budget_bits,
-                        None, // rejected_output_bytes
-                    ) {
-                        Ok(receipt) => Some(receipt),
-                        Err(re) => {
-                            tracing::warn!(
-                                session_id = %session_id,
-                                error = %re,
-                                "failed to build failure receipt"
-                            );
-                            None
-                        }
+                    if session.state != SessionState::Processing {
+                        tracing::warn!(
+                            session_id = %session.id,
+                            state = ?session.state,
+                            "discarding inference result for session no longer processing"
+                        );
+                        return;
                     }
-                } else {
-                    tracing::warn!(
-                        session_id = %session_id,
-                        "failure receipt context not available; skipping failure receipt"
-                    );
-                    None
-                };
 
-                store
-                    .with_session(&session_id, |session| {
-                        session.state = SessionState::Aborted;
-                        session.abort_reason = Some(abort_reason);
-                        session.receipt_v2 = failure_receipt_v2;
+                    session.output = Some(result.output);
+                    session.receipt = Some(result.receipt);
+                    session.receipt_signature = Some(result.receipt_signature);
+                    session.receipt_v2 = Some(result.receipt_v2);
+                    session.state = SessionState::Completed;
 
-                        // Clear raw inputs on error too.
-                        session.initiator_input = None;
-                        session.responder_input = None;
-                    })
-                    .await;
-            }
+                    if is_dev {
+                        let mut meta = session.metadata.take().unwrap_or_else(|| {
+                            tracing::warn!(
+                                session_id = %session.id,
+                                "metadata absent at inference completion; input timestamps will be missing"
+                            );
+                            SessionMetadata::new(session.id.clone(), session.created_at)
+                        });
+                        meta.timing.inference_start_at = Some(timing.inference_start_at);
+                        meta.timing.inference_end_at = Some(timing.inference_end_at);
+                        meta.timing.output_ready_at = Some(chrono::Utc::now());
+                        meta.sizes.output_bytes = output_bytes;
+                        meta.sizes.receipt_bytes = receipt_bytes;
+                        session.metadata = Some(meta);
+                    }
+                })
+                .await;
         }
-    });
+        Err(e) => {
+            let abort_reason = relay::error_to_abort_reason(&e);
+            tracing::error!(
+                session_id = %session_id,
+                error = %e,
+                "session inference failed"
+            );
+
+            // Build failure receipt if context was pre-computed
+            let failure_receipt_v2 = if let Some(ref ctx) = failure_ctx {
+                match relay::build_failure_receipt_v2(
+                    abort_reason,
+                    &session_id,
+                    &ctx.contract_hash,
+                    &ctx.output_schema_hash,
+                    ctx.input_commitments.clone(),
+                    ctx.assembled_prompt_hash.clone(),
+                    &ctx.prompt_template_hash,
+                    ctx.model_profile_hash.as_deref(),
+                    &ctx.effective_model_id,
+                    &provider,
+                    &ctx.runtime_hash,
+                    &ctx.policy_hash,
+                    &state,
+                    None, // inference_start not captured yet
+                    None, // inference_end not captured yet
+                    ctx.effective_max_tokens,
+                    ctx.entropy_bits as u32,
+                    ctx.entropy_budget_bits,
+                    None, // rejected_output_bytes
+                ) {
+                    Ok(receipt) => Some(receipt),
+                    Err(re) => {
+                        tracing::warn!(
+                            session_id = %session_id,
+                            error = %re,
+                            "failed to build failure receipt"
+                        );
+                        None
+                    }
+                }
+            } else {
+                tracing::warn!(
+                    session_id = %session_id,
+                    "failure receipt context not available; skipping failure receipt"
+                );
+                None
+            };
+
+            store
+                .with_session(&session_id, |session| {
+                    // Clear raw inputs on error too.
+                    session.initiator_input = None;
+                    session.responder_input = None;
+
+                    if session.state != SessionState::Processing {
+                        return;
+                    }
+                    session.state = SessionState::Aborted;
+                    session.abort_reason = Some(abort_reason);
+                    session.receipt_v2 = failure_receipt_v2;
+                })
+                .await;
+        }
+    }
 }
 
 /// GET /sessions/:id/status — poll session status.
@@ -820,4 +895,115 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/inbox/events", get(inbox_handlers::inbox_events_handler))
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn test_state() -> Arc<AppState> {
+        Arc::new(AppState {
+            signing_key: SigningKey::from_bytes(&[7u8; 32]),
+            anthropic_api_key: None,
+            anthropic_model_id: "test-model".to_string(),
+            anthropic_base_url: None,
+            openai_api_key: None,
+            openai_model_id: String::new(),
+            openai_base_url: None,
+            gemini_api_key: None,
+            gemini_model_id: String::new(),
+            gemini_base_url: None,
+            prompt_program_dir: "/tmp/nonexistent".to_string(),
+            session_store: SessionStore::new(Duration::from_secs(600)),
+            policy_registry: PolicyRegistry::dev_skip(),
+            agent_registry: AgentRegistry::empty(),
+            inbox_store: InboxStore::new(Duration::from_secs(600)),
+            max_completion_tokens: 4096,
+            session_ttl_secs: 600,
+            invite_ttl_secs: 600,
+            schema_registry: SchemaRegistry::empty(),
+            is_dev: false,
+            health_expose_model: false,
+            admitted_programs: None,
+            admitted_profiles: None,
+        })
+    }
+
+    fn test_contract() -> types::Contract {
+        serde_json::from_value(serde_json::json!({
+            "purpose_code": "MEDIATION",
+            "output_schema_id": "test",
+            "output_schema": {},
+            "participants": ["alice", "bob"],
+            "prompt_template_hash": "a".repeat(64)
+        }))
+        .unwrap()
+    }
+
+    async fn panicking_inference(
+        _a: Option<RelayInput>,
+        _b: Option<RelayInput>,
+    ) -> Result<(relay::RelayResult, relay::InferenceTiming), RelayError> {
+        panic!("simulated provider panic");
+    }
+
+    #[tokio::test]
+    async fn test_inference_panic_aborts_session_and_clears_inputs() {
+        let state = test_state();
+        let (session_id, _) = state
+            .session_store
+            .create(test_contract(), "hash".to_string(), "anthropic".to_string())
+            .await;
+        state
+            .session_store
+            .with_session(&session_id, |session| {
+                session.initiator_input = Some(RelayInput {
+                    role: "alice".to_string(),
+                    context: serde_json::json!({"text": "initiator input"}),
+                });
+                session.responder_input = Some(RelayInput {
+                    role: "bob".to_string(),
+                    context: serde_json::json!({"text": "responder input"}),
+                });
+                session.initiator_submitted = true;
+                session.responder_submitted = true;
+                session.state = SessionState::Processing;
+            })
+            .await;
+
+        let (_, input_a, input_b, provider) =
+            take_inputs_for_inference(&state.session_store, &session_id)
+                .await
+                .unwrap();
+        assert!(input_a.is_some() && input_b.is_some());
+
+        // Inputs are no longer held by the session while inference runs.
+        let held = state
+            .session_store
+            .with_session(&session_id, |s| {
+                s.initiator_input.is_some() || s.responder_input.is_some()
+            })
+            .await
+            .unwrap();
+        assert!(!held, "session must not hold raw inputs during inference");
+
+        let inference = panicking_inference(input_a, input_b);
+        complete_inference(state.clone(), session_id.clone(), provider, None, inference).await;
+
+        let (st, reason, cleared) = state
+            .session_store
+            .with_session(&session_id, |s| {
+                (
+                    s.state,
+                    s.abort_reason,
+                    s.initiator_input.is_none() && s.responder_input.is_none(),
+                )
+            })
+            .await
+            .unwrap();
+        assert_eq!(st, SessionState::Aborted);
+        assert_eq!(reason, Some(AbortReason::ProviderError));
+        assert!(cleared);
+    }
 }

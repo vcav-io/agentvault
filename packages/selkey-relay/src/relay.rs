@@ -223,6 +223,30 @@ pub struct RelayResult {
     pub receipt_v2: ReceiptV2,
 }
 
+/// Length of a hex-encoded Ed25519 public key.
+const ED25519_PUBLIC_KEY_HEX_LEN: usize = 64;
+
+/// Returns true if `s` is exactly 64 ASCII hex characters (either case).
+fn is_ed25519_public_key_hex(s: &str) -> bool {
+    s.len() == ED25519_PUBLIC_KEY_HEX_LEN && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Validate the format of caller-supplied key fields in a contract.
+///
+/// Called on every path that accepts a contract (POST /relay, POST /sessions,
+/// POST /invites) so malformed values are rejected with a 400 before any
+/// further processing.
+pub fn validate_contract_key_fields(contract: &Contract) -> Result<(), RelayError> {
+    if let Some(ref key) = contract.relay_verifying_key_hex {
+        if !is_ed25519_public_key_hex(key) {
+            return Err(RelayError::ContractValidation(format!(
+                "relay_verifying_key_hex must be exactly {ED25519_PUBLIC_KEY_HEX_LEN} hex characters"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn allowlist_matches_profile(entry: &str, profile_id: &str, profile_hash: &str) -> bool {
     entry == profile_id
         || entry == profile_hash
@@ -321,12 +345,14 @@ pub async fn relay_core(
     };
 
     // 2b2. Validate relay verifying key pinning (#184)
+    validate_contract_key_fields(contract)?;
     if let Some(ref pinned_key) = contract.relay_verifying_key_hex {
         let our_key = receipt_core::public_key_to_hex(&state.signing_key.verifying_key());
-        if *pinned_key != our_key {
+        // Format was validated above, so the pinned key is ASCII and slicing is safe.
+        if !pinned_key.eq_ignore_ascii_case(&our_key) {
             return Err(RelayError::ContractValidation(format!(
                 "contract pins relay key '{}...' but this relay's key is '{}...'",
-                &pinned_key[..12.min(pinned_key.len())],
+                &pinned_key[..12],
                 &our_key[..12],
             )));
         }

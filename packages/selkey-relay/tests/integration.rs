@@ -3331,3 +3331,218 @@ async fn test_invite_detail_contract_json_hash_matches() {
         "contract_json must hash to contract_hash"
     );
 }
+
+// ============================================================================
+// Relay verifying key format validation
+// ============================================================================
+
+fn malformed_relay_keys() -> Vec<String> {
+    vec![
+        // Multi-byte UTF-8 characters
+        "a\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}"
+            .to_string(),
+        "\u{00e9}".repeat(32),
+        // Too short / too long / not hex
+        "abc".to_string(),
+        String::new(),
+        "a".repeat(65),
+        "g".repeat(64),
+    ]
+}
+
+#[tokio::test]
+async fn test_relay_rejects_malformed_relay_verifying_key() {
+    let (prompt_dir, prompt_hash) = setup_prompt_program("malformed-relay-key");
+    let state = Arc::new(test_app_state("http://unused", &prompt_dir));
+
+    for key in malformed_relay_keys() {
+        let relay_request = serde_json::json!({
+            "contract": {
+                "purpose_code": "MEDIATION",
+                "output_schema_id": "vault_result_mediation",
+                "output_schema": mediation_schema(),
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": prompt_hash,
+                "relay_verifying_key_hex": key
+            },
+            "input_a": { "role": "alice", "context": {} },
+            "input_b": { "role": "bob", "context": {} },
+            "provider": "anthropic"
+        });
+        let response = build_router(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/relay")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&relay_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "key {key:?}");
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let error_msg = json["error"].as_str().unwrap_or("");
+        assert!(
+            error_msg.contains("relay_verifying_key_hex must be exactly 64 hex characters"),
+            "unexpected error for key {key:?}: {error_msg}"
+        );
+    }
+
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}
+
+#[tokio::test]
+async fn test_relay_key_pinning_accepts_uppercase_hex() {
+    let (prompt_dir, prompt_hash) = setup_prompt_program("relay-key-uppercase");
+    let state = Arc::new(test_app_state("http://unused", &prompt_dir));
+    let key =
+        receipt_core::public_key_to_hex(&test_signing_key().verifying_key()).to_ascii_uppercase();
+
+    let relay_request = serde_json::json!({
+        "contract": {
+            "purpose_code": "MEDIATION",
+            "output_schema_id": "vault_result_mediation",
+            "output_schema": mediation_schema(),
+            "participants": ["alice", "bob"],
+            "prompt_template_hash": prompt_hash,
+            "relay_verifying_key_hex": key
+        },
+        "input_a": { "role": "alice", "context": {} },
+        "input_b": { "role": "bob", "context": {} },
+        "provider": "anthropic"
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/relay")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&relay_request).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let error_msg = json["error"].as_str().unwrap_or("");
+    assert!(
+        !error_msg.contains("relay key") && !error_msg.contains("relay_verifying_key_hex"),
+        "uppercase form of the relay's own key should be accepted, got: {error_msg}"
+    );
+
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}
+
+#[tokio::test]
+async fn test_create_session_rejects_malformed_relay_verifying_key() {
+    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+
+    for key in malformed_relay_keys() {
+        let body = serde_json::json!({
+            "contract": {
+                "purpose_code": "MEDIATION",
+                "output_schema_id": "vault_result_mediation",
+                "output_schema": mediation_schema(),
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": "a".repeat(64),
+                "relay_verifying_key_hex": key
+            },
+            "provider": "anthropic"
+        });
+        let response = build_router(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "key {key:?}");
+    }
+}
+
+#[tokio::test]
+async fn test_session_with_malformed_relay_key_reaches_terminal_state() {
+    // A session whose contract carries a malformed pinned key (inserted directly
+    // into the store without going through request validation) must still end in a
+    // terminal state with raw inputs cleared once both inputs are submitted.
+    let (prompt_dir, prompt_hash) = setup_prompt_program("malformed-key-session");
+    let state = Arc::new(test_app_state("http://unused", &prompt_dir));
+
+    let (session_id, tokens) = state
+        .session_store
+        .create(
+            serde_json::from_value(serde_json::json!({
+                "purpose_code": "MEDIATION",
+                "output_schema_id": "vault_result_mediation",
+                "output_schema": mediation_schema(),
+                "participants": ["alice", "bob"],
+                "prompt_template_hash": prompt_hash,
+                "relay_verifying_key_hex": "a\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}"
+            }))
+            .unwrap(),
+            "hash".to_string(),
+            "anthropic".to_string(),
+        )
+        .await;
+
+    for (token, role) in [
+        (&tokens.initiator_submit, "alice"),
+        (&tokens.responder_submit, "bob"),
+    ] {
+        let response = build_router(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/sessions/{session_id}/input"))
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::to_vec(&serde_json::json!({
+                            "role": role,
+                            "context": { "preference": "private value" }
+                        }))
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    let mut final_state = None;
+    for _ in 0..50 {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let (s, reason) = state.session_store.get_state(&session_id).await.unwrap();
+        if s == selkey_relay::session::SessionState::Aborted {
+            final_state = Some((s, reason));
+            break;
+        }
+    }
+    let (_, reason) = final_state.expect("session should reach ABORTED");
+    assert_eq!(
+        reason,
+        Some(selkey_relay::session::AbortReason::ContractMismatch)
+    );
+
+    let inputs_cleared = state
+        .session_store
+        .with_session(&session_id, |s| {
+            s.initiator_input.is_none() && s.responder_input.is_none()
+        })
+        .await
+        .unwrap();
+    assert!(inputs_cleared, "raw inputs must be cleared");
+
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}
