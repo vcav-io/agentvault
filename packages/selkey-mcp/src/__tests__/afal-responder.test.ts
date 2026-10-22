@@ -565,6 +565,18 @@ describe('NonceCache', () => {
     expect(cache.check('agent-1', 'nonce-1', 11000, 11000)).toBe(true);
   });
 
+  it('keeps a future-dated nonce until its claimed time plus the window', () => {
+    const W = 10 * 60_000;
+    const cache = new NonceCache({ windowMs: W });
+    const t0 = 1_800_000_000_000;
+    const claimed = t0 + W - 1000; // ahead of the local clock, within the staleness gate
+    expect(cache.check('agent-1', 'nonce-1', claimed, t0)).toBe(true);
+    // Past the local window, but the claimed timestamp is still fresh.
+    expect(cache.check('agent-1', 'nonce-1', claimed, t0 + W + 1000)).toBe(false);
+    // After the claimed timestamp has also left the window, the entry may go.
+    expect(cache.check('agent-1', 'nonce-1', claimed, claimed + W + 1)).toBe(true);
+  });
+
   it('keeps recent nonces when a request claims a far-future timestamp', () => {
     const cache = new NonceCache({ windowMs: 5000 });
     const now = Date.now();

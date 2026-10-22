@@ -73,28 +73,29 @@ export class NonceCache {
   }
 
   /**
-   * Record `nonce` for `agentId`; false if it was seen within the window or
-   * the agent's cache is full. Entries are kept for the window measured on the
-   * local clock from when they were first seen, so a request's own timestamp
-   * cannot age entries out. `timestampMs` is the request's claimed time and is
-   * kept for compatibility; staleness is checked by the callers.
+   * Record `nonce` for `agentId`; false if it is still held or the agent's
+   * cache is full. An entry is held until max(first seen on the local clock,
+   * the request's claimed time) plus the window, so neither a far-future
+   * timestamp on another request nor local expiry ahead of a future-dated
+   * request's own freshness lets a nonce be reused. Staleness of
+   * `timestampMs` is checked by the callers.
    */
-  check(agentId: string, nonce: string, _timestampMs: number, nowMs: number = Date.now()): boolean {
+  check(agentId: string, nonce: string, timestampMs: number, nowMs: number = Date.now()): boolean {
     let agentCache = this.caches.get(agentId);
     if (!agentCache) {
       agentCache = new Map();
       this.caches.set(agentId, agentCache);
     }
 
-    const cutoff = nowMs - this.windowMs;
-    for (const [n, seenAt] of agentCache) {
-      if (seenAt < cutoff) agentCache.delete(n);
+    for (const [n, expiresAt] of agentCache) {
+      if (expiresAt < nowMs) agentCache.delete(n);
     }
 
     if (agentCache.size >= this.maxPerAgent) return false;
     if (agentCache.has(nonce)) return false;
 
-    agentCache.set(nonce, nowMs);
+    const claimed = Number.isFinite(timestampMs) ? timestampMs : nowMs;
+    agentCache.set(nonce, Math.max(nowMs, claimed) + this.windowMs);
     return true;
   }
 
