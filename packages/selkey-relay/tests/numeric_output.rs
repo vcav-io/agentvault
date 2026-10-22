@@ -240,29 +240,16 @@ struct Released {
     receipt_output: Option<serde_json::Value>,
 }
 
-/// Extract the raw text of the top-level `"output":` member (serialised before
-/// the receipt) from a compact JSON response body, so the delivered bytes can
-/// be compared directly.
+/// The raw text of the top-level `output` member of a response body, so the
+/// delivered bytes can be compared directly.
 fn raw_output_member(body: &str) -> Option<String> {
-    let start = body.find("\"output\":")? + "\"output\":".len();
-    let rest = &body[start..];
-    if rest.starts_with("null") {
-        return None;
+    #[derive(serde::Deserialize)]
+    struct Response<'a> {
+        #[serde(borrow)]
+        output: Option<&'a serde_json::value::RawValue>,
     }
-    let mut depth = 0usize;
-    for (i, c) in rest.char_indices() {
-        match c {
-            '{' | '[' => depth += 1,
-            '}' | ']' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(rest[..=i].to_string());
-                }
-            }
-            _ => {}
-        }
-    }
-    None
+    let response: Response<'_> = serde_json::from_str(body).unwrap();
+    response.output.map(|raw| raw.get().to_string())
 }
 
 /// Run a bilateral session whose provider returns `model_text` verbatim.
@@ -519,4 +506,44 @@ async fn test_relay_delivers_output_keys_in_canonical_order() {
         ],
     )
     .await;
+}
+
+#[tokio::test]
+async fn test_single_shot_relay_delivers_output_keys_in_canonical_order() {
+    let canonical = "{\"\u{1F600}\":\"A\",\"\u{FB33}\":\"B\"}";
+    let schema = mixed_plane_keys_schema();
+    let (prompt_dir, prompt_hash) = setup_prompt_program("single-shot-mixed-plane-keys");
+    let mock = start_mock_provider("{\"\u{FB33}\":\"B\",\"\u{1F600}\":\"A\"}").await;
+    let state = app_state(&mock, &prompt_dir, &schema, false);
+    let request = serde_json::json!({
+        "contract": {
+            "purpose_code": "MEDIATION",
+            "output_schema_id": "numeric_output_test",
+            "output_schema": schema,
+            "participants": ["alice", "bob"],
+            "prompt_template_hash": prompt_hash,
+            "entropy_budget_bits": 128
+        },
+        "input_a": {"role": "alice", "context": {"a": 1}, "commitment_nonce": NONCE_A},
+        "input_b": {"role": "bob", "context": {"b": 2}, "commitment_nonce": NONCE_B},
+        "provider": "anthropic"
+    });
+    let (status, bytes) = send(&state, "POST", "/relay", OPERATOR_TOKEN, Some(request)).await;
+    std::fs::remove_dir_all(&prompt_dir).ok();
+    let body = String::from_utf8(bytes).unwrap();
+    assert_eq!(status, StatusCode::OK, "relay: {body}");
+
+    let delivered = raw_output_member(&body).expect("output is delivered");
+    assert_eq!(delivered, canonical);
+    let response: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let receipt = receipt_core::verify_receipt_v3_json(
+        &response["receipt"].to_string(),
+        &signing_key().verifying_key(),
+    )
+    .unwrap_or_else(|e| panic!("receipt must verify: {e}; response: {body}"));
+    assert_eq!(
+        receipt.commitments.output_hash,
+        receipt_core::jcs::sha256_hex(delivered.as_bytes()),
+        "the output hash must be over the delivered bytes"
+    );
 }
