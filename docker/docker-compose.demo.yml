@@ -4,9 +4,13 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.relay
     image: ghcr.io/vcav-io/selkey-relay:latest
+    # Published on host loopback only. The relay listens on all interfaces
+    # inside the container so the demo service can reach it over the compose
+    # network.
     ports:
-      - "3100:3100"
+      - "127.0.0.1:3100:3100"
     environment:
+      - SELKEY_BIND_ADDR=0.0.0.0
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
@@ -27,8 +31,9 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.demo
     image: ghcr.io/vcav-io/selkey-demo:latest
+    # Published on host loopback only (the UI streams both agents' sessions).
     ports:
-      - "3200:3200"
+      - "127.0.0.1:3200:3200"
     depends_on:
       relay:
         condition: service_healthy

@@ -15,6 +15,9 @@ Complete reference for all environment variables used by the Selkey relay and MC
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SELKEY_PORT` | `3100` | Port the relay listens on |
+| `SELKEY_ALLOW_UNAUTHENTICATED` | unset | Set to `1` to let a non-dev relay start on a non-loopback address without `SELKEY_OPERATOR_TOKEN` (only when access is controlled elsewhere) |
+| `SELKEY_BIND_ADDR` | `127.0.0.1` | IP address the relay listens on. Loopback by default; set `0.0.0.0` (or a specific interface) to accept remote connections, e.g. inside a container |
+| `SELKEY_OPERATOR_TOKEN` | — | Operator bearer token. When set, `POST /relay` and `POST /sessions` require `Authorization: Bearer <token>` |
 | `SELKEY_MODEL_ID` | `claude-sonnet-4-6` | Anthropic model ID |
 | `SELKEY_SIGNING_KEY_HEX` | ephemeral | 64-char hex Ed25519 signing key for receipt signing. If unset, a random key is generated on each start — receipts won't verify across restarts |
 | `SELKEY_PROMPT_PROGRAM_DIR` | `prompt_programs` | Directory containing prompt programs, model profile lockfile, and enforcement policy lockfile |
@@ -25,6 +28,27 @@ Complete reference for all environment variables used by the Selkey relay and MC
 | `ANTHROPIC_BASE_URL` | — | Override Anthropic API base URL (for proxies or mock servers) |
 | `OPENAI_BASE_URL` | — | Override OpenAI API base URL |
 | `RUST_LOG` | — | Standard `tracing` log filter (e.g. `info`, `selkey_relay=debug`) |
+
+### Network binding and operator access
+
+The relay listens on `127.0.0.1` unless `SELKEY_BIND_ADDR` says otherwise. In Docker, set
+`SELKEY_BIND_ADDR=0.0.0.0` inside the container and choose exposure when publishing the port
+(the demo compose file publishes `127.0.0.1:3100:3100`).
+
+Outside dev, the relay refuses to start on a non-loopback address unless `SELKEY_OPERATOR_TOKEN`
+is set. If access is controlled some other way (for example an authenticating reverse proxy),
+set `SELKEY_ALLOW_UNAUTHENTICATED=1` to start anyway.
+
+| Endpoint | `SELKEY_ENV=dev`, no token | Non-dev, no token | `SELKEY_OPERATOR_TOKEN` set |
+|---|---|---|---|
+| `POST /relay` (one caller supplies both inputs) | open | **disabled** (403) | token required |
+| `POST /sessions` | open | open | token required |
+| Session input/status/output | per-session tokens | per-session tokens | per-session tokens |
+| `POST /invites` and inbox | agent registry tokens | agent registry tokens | agent registry tokens |
+
+When the relay is reachable beyond localhost, set `SELKEY_OPERATOR_TOKEN` (and use the agent
+registry for invites). The relay logs a warning at startup if it binds to a non-loopback address
+without an operator token.
 
 ### Output schema acceptance
 

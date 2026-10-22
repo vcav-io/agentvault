@@ -33,8 +33,10 @@ echo "GEMINI_API_KEY=AIza..." > .env
 # 2. Run the demo (pulls prebuilt images from ghcr.io)
 docker compose -f docker/docker-compose.demo.yml --env-file .env up
 
-# 3. Open http://localhost:3200 and click "Start Protocol"
+# 3. Open http://127.0.0.1:3200 and click "Start Protocol"
 ```
+
+The demo publishes the relay (3100) and UI (3200) on `127.0.0.1` only. It runs the relay with `SELKEY_ENV=dev` and no inbox auth, and the UI streams both agents' sessions, so don't expose these ports beyond your machine. To run a relay for other people, see [docs/environment-variables.md](docs/environment-variables.md#network-binding-and-operator-access) (`SELKEY_BIND_ADDR`, `SELKEY_OPERATOR_TOKEN`).
 
 With prebuilt images you should be running in under five minutes. If the images can't be pulled, Compose builds them from your checkout instead. To update later, run `docker compose -f docker/docker-compose.demo.yml pull`.
 

@@ -76,6 +76,9 @@ fn test_signing_key() -> SigningKey {
     SigningKey::from_bytes(&[0x42u8; 32])
 }
 
+/// Operator token configured on `test_app_state`.
+const TEST_OPERATOR_TOKEN: &str = "test-operator-token";
+
 /// Build a test AppState pointing at a mock Anthropic server.
 fn test_app_state(mock_base_url: &str, prompt_dir: &str) -> AppState {
     AppState {
@@ -102,6 +105,7 @@ fn test_app_state(mock_base_url: &str, prompt_dir: &str) -> AppState {
         health_expose_model: false,
         admitted_programs: None,
         admitted_profiles: None,
+        operator_token: Some(TEST_OPERATOR_TOKEN.to_string()),
     }
 }
 
@@ -616,6 +620,7 @@ async fn test_relay_endpoint_end_to_end() {
             Request::builder()
                 .method("POST")
                 .uri("/relay")
+                .header("authorization", format!("Bearer {TEST_OPERATOR_TOKEN}"))
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(&relay_request).unwrap()))
                 .unwrap(),
@@ -685,6 +690,7 @@ async fn test_relay_endpoint_rejects_invalid_provider() {
             Request::builder()
                 .method("POST")
                 .uri("/relay")
+                .header("authorization", format!("Bearer {TEST_OPERATOR_TOKEN}"))
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(&relay_request).unwrap()))
                 .unwrap(),
@@ -732,6 +738,7 @@ async fn test_relay_rejects_missing_model_profile_when_allowlist_set() {
             Request::builder()
                 .method("POST")
                 .uri("/relay")
+                .header("authorization", format!("Bearer {TEST_OPERATOR_TOKEN}"))
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(&relay_request).unwrap()))
                 .unwrap(),
@@ -804,6 +811,7 @@ async fn test_relay_rejects_wrong_model_profile() {
             Request::builder()
                 .method("POST")
                 .uri("/relay")
+                .header("authorization", format!("Bearer {TEST_OPERATOR_TOKEN}"))
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(&relay_request).unwrap()))
                 .unwrap(),
@@ -849,6 +857,7 @@ async fn test_create_session_returns_tokens_and_contract_hash() {
             Request::builder()
                 .method("POST")
                 .uri("/sessions")
+                .header("authorization", format!("Bearer {TEST_OPERATOR_TOKEN}"))
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(&create_request).unwrap()))
                 .unwrap(),
@@ -1108,6 +1117,7 @@ async fn test_submit_token_is_one_time_use() {
         health_expose_model: false,
         admitted_programs: None,
         admitted_profiles: None,
+        operator_token: None,
     }));
 
     let response = app
@@ -1296,6 +1306,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         health_expose_model: false,
         admitted_programs: None,
         admitted_profiles: None,
+        operator_token: None,
     }));
 
     let response = app
@@ -1352,6 +1363,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         health_expose_model: false,
         admitted_programs: None,
         admitted_profiles: None,
+        operator_token: None,
     }));
 
     let response = app
@@ -1422,6 +1434,7 @@ async fn test_bilateral_session_e2e_with_mock() {
         health_expose_model: false,
         admitted_programs: None,
         admitted_profiles: None,
+        operator_token: None,
     }));
 
     let response = app
@@ -1511,6 +1524,7 @@ async fn test_submit_with_correct_contract_hash_succeeds() {
         health_expose_model: false,
         admitted_programs: None,
         admitted_profiles: None,
+        operator_token: None,
     }));
 
     let input_request = serde_json::json!({
@@ -1582,6 +1596,7 @@ async fn test_submit_with_wrong_contract_hash_rejected() {
         health_expose_model: false,
         admitted_programs: None,
         admitted_profiles: None,
+        operator_token: None,
     }));
 
     let input_request = serde_json::json!({
@@ -1654,6 +1669,7 @@ async fn test_submit_without_contract_hash_still_works() {
         health_expose_model: false,
         admitted_programs: None,
         admitted_profiles: None,
+        operator_token: None,
     }));
 
     // No expected_contract_hash field — backward compat
@@ -1725,6 +1741,7 @@ fn inbox_test_app_state() -> AppState {
         health_expose_model: false,
         admitted_programs: None,
         admitted_profiles: None,
+        operator_token: None,
     }
 }
 
@@ -2487,6 +2504,7 @@ async fn test_contract_enforcement_policy_hash_mismatch_rejected() {
             Request::builder()
                 .method("POST")
                 .uri("/relay")
+                .header("authorization", format!("Bearer {TEST_OPERATOR_TOKEN}"))
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(&relay_request).unwrap()))
                 .unwrap(),
@@ -2537,6 +2555,7 @@ async fn test_contract_model_constraints_provider_rejected() {
             Request::builder()
                 .method("POST")
                 .uri("/relay")
+                .header("authorization", format!("Bearer {TEST_OPERATOR_TOKEN}"))
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(&relay_request).unwrap()))
                 .unwrap(),
@@ -2587,6 +2606,7 @@ async fn test_contract_model_constraints_model_rejected() {
             Request::builder()
                 .method("POST")
                 .uri("/relay")
+                .header("authorization", format!("Bearer {TEST_OPERATOR_TOKEN}"))
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(&relay_request).unwrap()))
                 .unwrap(),
@@ -2634,6 +2654,7 @@ async fn test_contract_session_ttl_exceeds_relay_max_rejected() {
             Request::builder()
                 .method("POST")
                 .uri("/relay")
+                .header("authorization", format!("Bearer {TEST_OPERATOR_TOKEN}"))
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(&relay_request).unwrap()))
                 .unwrap(),
@@ -2682,6 +2703,7 @@ async fn test_contract_schema_hash_mismatch_rejected() {
             Request::builder()
                 .method("POST")
                 .uri("/relay")
+                .header("authorization", format!("Bearer {TEST_OPERATOR_TOKEN}"))
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(&relay_request).unwrap()))
                 .unwrap(),
@@ -2730,6 +2752,7 @@ async fn test_contract_schema_hash_not_in_registry_rejected() {
             Request::builder()
                 .method("POST")
                 .uri("/relay")
+                .header("authorization", format!("Bearer {TEST_OPERATOR_TOKEN}"))
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(&relay_request).unwrap()))
                 .unwrap(),
@@ -2782,6 +2805,7 @@ async fn test_health_redacts_provider_by_default() {
         health_expose_model: false,
         admitted_programs: None,
         admitted_profiles: None,
+        operator_token: None,
     });
     let app = build_router(state);
 
@@ -2837,6 +2861,7 @@ async fn test_health_exposes_provider_when_enabled() {
         health_expose_model: true,
         admitted_programs: None,
         admitted_profiles: None,
+        operator_token: None,
     });
     let app = build_router(state);
 
@@ -2888,6 +2913,7 @@ async fn test_contract_relay_key_pinning_wrong_key_rejected() {
             Request::builder()
                 .method("POST")
                 .uri("/relay")
+                .header("authorization", format!("Bearer {TEST_OPERATOR_TOKEN}"))
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(&relay_request).unwrap()))
                 .unwrap(),
@@ -2936,6 +2962,7 @@ async fn test_contract_relay_key_pinning_correct_key_accepted() {
             Request::builder()
                 .method("POST")
                 .uri("/relay")
+                .header("authorization", format!("Bearer {TEST_OPERATOR_TOKEN}"))
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(&relay_request).unwrap()))
                 .unwrap(),
@@ -3094,6 +3121,7 @@ async fn test_failure_receipt_uses_resolved_schema_hash() {
         health_expose_model: false,
         admitted_programs: None,
         admitted_profiles: None,
+        operator_token: None,
     });
 
     // 5. Create session with hash-only contract (stub schema + output_schema_hash)
@@ -3383,6 +3411,7 @@ async fn test_relay_rejects_malformed_relay_verifying_key() {
                 Request::builder()
                     .method("POST")
                     .uri("/relay")
+                    .header("authorization", format!("Bearer {TEST_OPERATOR_TOKEN}"))
                     .header("content-type", "application/json")
                     .body(Body::from(serde_json::to_vec(&relay_request).unwrap()))
                     .unwrap(),
@@ -3429,6 +3458,7 @@ async fn test_relay_key_pinning_accepts_uppercase_hex() {
             Request::builder()
                 .method("POST")
                 .uri("/relay")
+                .header("authorization", format!("Bearer {TEST_OPERATOR_TOKEN}"))
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(&relay_request).unwrap()))
                 .unwrap(),
@@ -3469,6 +3499,7 @@ async fn test_create_session_rejects_malformed_relay_verifying_key() {
                 Request::builder()
                     .method("POST")
                     .uri("/sessions")
+                    .header("authorization", format!("Bearer {TEST_OPERATOR_TOKEN}"))
                     .header("content-type", "application/json")
                     .body(Body::from(serde_json::to_vec(&body).unwrap()))
                     .unwrap(),
@@ -3609,6 +3640,7 @@ async fn test_relay_schema_error_response_omits_output_values() {
             Request::builder()
                 .method("POST")
                 .uri("/relay")
+                .header("authorization", format!("Bearer {TEST_OPERATOR_TOKEN}"))
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(&relay_request).unwrap()))
                 .unwrap(),
@@ -3637,6 +3669,7 @@ async fn post_relay(
             Request::builder()
                 .method("POST")
                 .uri("/relay")
+                .header("authorization", format!("Bearer {TEST_OPERATOR_TOKEN}"))
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(&request).unwrap()))
                 .unwrap(),
@@ -3823,4 +3856,169 @@ async fn test_relay_ignores_schema_declared_bound_for_inline_schema() {
     assert_eq!(json["receipt"]["output_entropy_bits"], 214);
 
     std::fs::remove_dir_all(&prompt_dir).ok();
+}
+
+// ============================================================================
+// Operator access to POST /relay and POST /sessions
+// ============================================================================
+
+async fn post_json(
+    state: Arc<AppState>,
+    uri: &str,
+    bearer: Option<&str>,
+    body: serde_json::Value,
+) -> StatusCode {
+    let mut builder = Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header("content-type", "application/json");
+    if let Some(token) = bearer {
+        builder = builder.header("authorization", format!("Bearer {token}"));
+    }
+    build_router(state)
+        .oneshot(
+            builder
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+}
+
+fn single_shot_body(prompt_hash: &str) -> serde_json::Value {
+    relay_request_with_schema(prompt_hash, mediation_schema())
+}
+
+fn create_session_body() -> serde_json::Value {
+    serde_json::json!({
+        "contract": {
+            "purpose_code": "MEDIATION",
+            "output_schema_id": "vault_result_mediation",
+            "output_schema": mediation_schema(),
+            "participants": ["alice", "bob"],
+            "prompt_template_hash": "a".repeat(64)
+        },
+        "provider": "anthropic"
+    })
+}
+
+#[tokio::test]
+async fn test_relay_endpoint_disabled_outside_dev_without_operator_token() {
+    let (prompt_dir, prompt_hash) = setup_prompt_program("relay-disabled-non-dev");
+    let mock_base_url = start_mock_anthropic(serde_json::json!({
+        "decision": "PROCEED",
+        "confidence_bucket": "HIGH",
+        "reason_code": "ALIGNED"
+    }))
+    .await;
+    let mut state = test_app_state(&mock_base_url, &prompt_dir);
+    state.operator_token = None;
+    state.is_dev = false;
+
+    let status = post_json(
+        Arc::new(state),
+        "/relay",
+        None,
+        single_shot_body(&prompt_hash),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}
+
+#[tokio::test]
+async fn test_relay_endpoint_open_in_dev_without_operator_token() {
+    let (prompt_dir, prompt_hash) = setup_prompt_program("relay-open-dev");
+    let mock_base_url = start_mock_anthropic(serde_json::json!({
+        "decision": "PROCEED",
+        "confidence_bucket": "HIGH",
+        "reason_code": "ALIGNED"
+    }))
+    .await;
+    let mut state = test_app_state(&mock_base_url, &prompt_dir);
+    state.operator_token = None;
+    state.is_dev = true;
+
+    let status = post_json(
+        Arc::new(state),
+        "/relay",
+        None,
+        single_shot_body(&prompt_hash),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}
+
+#[tokio::test]
+async fn test_relay_endpoint_requires_operator_token_when_configured() {
+    let (prompt_dir, prompt_hash) = setup_prompt_program("relay-operator-token");
+    let mock_base_url = start_mock_anthropic(serde_json::json!({
+        "decision": "PROCEED",
+        "confidence_bucket": "HIGH",
+        "reason_code": "ALIGNED"
+    }))
+    .await;
+    for is_dev in [false, true] {
+        let mut state = test_app_state(&mock_base_url, &prompt_dir);
+        state.is_dev = is_dev;
+        let state = Arc::new(state);
+        let body = single_shot_body(&prompt_hash);
+        assert_eq!(
+            post_json(state.clone(), "/relay", None, body.clone()).await,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            post_json(state.clone(), "/relay", Some("wrong-token"), body.clone()).await,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            post_json(state, "/relay", Some(TEST_OPERATOR_TOKEN), body).await,
+            StatusCode::OK
+        );
+    }
+
+    std::fs::remove_dir_all(&prompt_dir).ok();
+}
+
+#[tokio::test]
+async fn test_create_session_requires_operator_token_when_configured() {
+    let state = Arc::new(test_app_state("http://unused", "/tmp"));
+    assert_eq!(
+        post_json(state.clone(), "/sessions", None, create_session_body()).await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        post_json(
+            state.clone(),
+            "/sessions",
+            Some("wrong-token"),
+            create_session_body()
+        )
+        .await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        post_json(
+            state,
+            "/sessions",
+            Some(TEST_OPERATOR_TOKEN),
+            create_session_body()
+        )
+        .await,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn test_create_session_open_without_operator_token() {
+    let mut state = test_app_state("http://unused", "/tmp");
+    state.operator_token = None;
+    assert_eq!(
+        post_json(Arc::new(state), "/sessions", None, create_session_body()).await,
+        StatusCode::OK
+    );
 }

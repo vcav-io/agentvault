@@ -144,6 +144,7 @@ async fn test_session_schema_error_log_omits_output_values() {
         health_expose_model: false,
         admitted_programs: None,
         admitted_profiles: None,
+        operator_token: None,
     });
 
     let (session_id, tokens) = state
