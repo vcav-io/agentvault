@@ -36,6 +36,10 @@ import type { ContractOfferProposal, ContractOfferSelection, SupportedContractOf
 import { parseContractOfferSelection, parseSupportedContractOffers } from './contract-negotiation.js';
 import type { TopicAlignmentProposal, TopicAlignmentSelection } from './topic-alignment.js';
 import { parseTopicAlignmentSelection } from './topic-alignment.js';
+import { PinError, PinStore } from './pin-store.js';
+import { signNegotiationRequest } from './negotiation-auth.js';
+import { assertSelectionWithinProposal } from './contract-negotiation.js';
+import { assertTopicSelectionWithinProposal } from './topic-alignment.js';
 
 // ── AgentDescriptor ────────────────────────────────────────────────────────
 
@@ -127,7 +131,14 @@ export interface DirectAfalTransportConfig {
   localDescriptor: AgentDescriptor;
   relayUrl?: string;
   peerDescriptorUrl?: string;
+  /** @deprecated Unsigned agent cards are never used; this option has no effect. */
   requireSignedCards?: boolean;
+  /**
+   * Agent identity pins. Every peer signature is verified against the pinned
+   * key for the peer's agent_id. Defaults to an in-memory store seeded from
+   * respondMode.policy.trustedAgents.
+   */
+  pinStore?: PinStore;
   respondMode?: {
     httpPort: number;
     bindAddress?: string;
@@ -141,11 +152,21 @@ export class DirectAfalTransport implements AfalTransport {
   private peerDescriptor: AgentDescriptor | null = null;
   private peerDiscovery: SelkeyPeerDiscovery | null = null;
   private storedAdmits = new Map<string, AfalAdmit>();
+  private storedAdmitPeers = new Map<string, string>();
   private readonly responder: AfalResponder | null;
   private readonly httpServer: AfalHttpServer | null;
+  readonly pinStore: PinStore;
 
   constructor(config: DirectAfalTransportConfig) {
     this.config = config;
+    this.pinStore =
+      config.pinStore ??
+      PinStore.inMemory(
+        (config.respondMode?.policy.trustedAgents ?? []).map((a) => ({
+          agentId: a.agentId,
+          publicKeyHex: a.publicKeyHex,
+        })),
+      );
 
     if (config.respondMode) {
       this.responder = new AfalResponder({
@@ -153,6 +174,7 @@ export class DirectAfalTransport implements AfalTransport {
         seedHex: config.seedHex,
         policy: config.respondMode.policy,
         supportedModelProfiles: parseSupportedModelProfiles(config.localDescriptor),
+        pins: this.pinStore,
       });
 
       // Fill in descriptor endpoints based on HTTP server config and re-sign.
@@ -272,6 +294,8 @@ export class DirectAfalTransport implements AfalTransport {
     budgetTier: string;
   }): Promise<{ selectedModelProfile?: ModelProfileRef } | undefined> {
     const peer = await this.resolvePeerDescriptor(params.propose.to);
+    // ADMIT/DENY are verified under pins[propose.to], never a key the peer presented.
+    const peerKeyHex = this.pinStore.requirePinnedKey(params.propose.to);
     // Tool-level callers can preflight supported purposes earlier for better
     // user-facing errors, but keep the transport-level check as a fail-closed
     // backstop for direct callers and future reuse outside relay_signal.
@@ -309,6 +333,11 @@ export class DirectAfalTransport implements AfalTransport {
     }
     if (params.propose.model_profile_hash !== undefined) {
       proposeMessage['model_profile_hash'] = params.propose.model_profile_hash;
+    }
+    // acceptable_model_profiles is covered by proposal_id, so it must be sent
+    // whenever it was hashed.
+    if (params.propose.acceptable_model_profiles !== undefined) {
+      proposeMessage['acceptable_model_profiles'] = params.propose.acceptable_model_profiles;
     }
 
     if (params.propose.prev_receipt_hash !== undefined) {
@@ -407,11 +436,7 @@ export class DirectAfalTransport implements AfalTransport {
     const outcome = admitOrDeny['outcome'];
 
     if (outcome === 'ADMIT') {
-      const verified = verifyMessage(
-        DOMAIN_PREFIXES.ADMIT,
-        admitOrDeny,
-        peer.identity_key.public_key_hex,
-      );
+      const verified = verifyMessage(DOMAIN_PREFIXES.ADMIT, admitOrDeny, peerKeyHex);
       if (!verified) {
         throw new Error('ADMIT signature verification failed');
       }
@@ -420,15 +445,13 @@ export class DirectAfalTransport implements AfalTransport {
           `ADMIT response missing required admit_token_id for proposal: ${params.propose.proposal_id}`,
         );
       }
+      checkAdmitBinding(admitOrDeny, params.propose);
       const admit = admitOrDeny as unknown as AfalAdmit;
       this.storedAdmits.set(params.propose.proposal_id, admit);
+      this.storedAdmitPeers.set(params.propose.proposal_id, params.propose.to);
       return { selectedModelProfile: admit.selected_model_profile };
     } else if (outcome === 'DENY') {
-      const verified = verifyMessage(
-        DOMAIN_PREFIXES.DENY,
-        admitOrDeny,
-        peer.identity_key.public_key_hex,
-      );
+      const verified = verifyMessage(DOMAIN_PREFIXES.DENY, admitOrDeny, peerKeyHex);
       if (!verified) {
         throw new Error('DENY signature verification failed');
       }
@@ -528,7 +551,7 @@ export class DirectAfalTransport implements AfalTransport {
       }
     }
 
-    const peer = await this.resolvePeerDescriptor();
+    const peer = await this.resolvePeerDescriptor(this.storedAdmitPeers.get(inviteId));
 
     // Ensure the relay_session uses the arbitrated relay URL so the
     // committed session actually routes through the selected relay.
@@ -599,6 +622,7 @@ export class DirectAfalTransport implements AfalTransport {
     }
 
     this.storedAdmits.delete(inviteId);
+    this.storedAdmitPeers.delete(inviteId);
   }
 
   // ── Internal helpers ──────────────────────────────────────────────────────
@@ -626,6 +650,7 @@ export class DirectAfalTransport implements AfalTransport {
       expectedPeerAgentId,
     );
     if (a2aDescriptor) {
+      this.acceptPeerKey(a2aDescriptor.descriptor);
       this.peerDescriptor = a2aDescriptor.descriptor;
       this.peerDiscovery = a2aDescriptor.discovery;
       return {
@@ -639,6 +664,7 @@ export class DirectAfalTransport implements AfalTransport {
         this.config.peerDescriptorUrl,
         expectedPeerAgentId,
       );
+      this.acceptPeerKey(descriptor);
       const discovery = parseDescriptorPeerDiscovery(descriptor);
       this.peerDescriptor = descriptor;
       this.peerDiscovery = discovery;
@@ -648,9 +674,18 @@ export class DirectAfalTransport implements AfalTransport {
             supportedPurposes: [...discovery.supportedPurposes],
           }
         : null;
-    } catch {
+    } catch (err) {
+      if (err instanceof PinError) throw err;
       return null;
     }
+  }
+
+  /**
+   * A key presented by the peer (card or descriptor) must equal its pin.
+   * Unpinned peers are rejected, or recorded for human confirmation in TOFU mode.
+   */
+  private acceptPeerKey(descriptor: AgentDescriptor): void {
+    this.pinStore.checkPresentedKey(descriptor.agent_id, descriptor.identity_key.public_key_hex);
   }
 
   private resolvePeerTransportTarget(peer: AgentDescriptor): PeerTransportTarget {
@@ -741,6 +776,7 @@ export class DirectAfalTransport implements AfalTransport {
       expectedPeerAgentId,
     );
     if (a2aDescriptor) {
+      this.acceptPeerKey(a2aDescriptor.descriptor);
       this.peerDescriptor = a2aDescriptor.descriptor;
       this.peerDiscovery = a2aDescriptor.discovery;
       return a2aDescriptor.descriptor;
@@ -750,6 +786,7 @@ export class DirectAfalTransport implements AfalTransport {
       this.config.peerDescriptorUrl,
       expectedPeerAgentId,
     );
+    this.acceptPeerKey(descriptor);
     this.peerDescriptor = descriptor;
     this.peerDiscovery = parseDescriptorPeerDiscovery(descriptor);
     return descriptor;
@@ -791,10 +828,16 @@ export class DirectAfalTransport implements AfalTransport {
     const cardSignature =
       typeof params['card_signature'] === 'string' ? params['card_signature'] : undefined;
 
-    const strictMode = this.config.requireSignedCards === true;
-
-    // Verify card_signature if present; enforce in strict mode
-    if (cardSignature) {
+    // A card is used only if it carries a valid card_signature. The signature
+    // covers every field taken from the card (endpoints, relay hint,
+    // capabilities), and the signing key must equal the peer's pin
+    // (acceptPeerKey). An unsigned card is never used; discovery falls back
+    // to the signed AFAL descriptor.
+    if (!cardSignature) {
+      console.warn('Peer agent card is unsigned — ignoring it and using the signed descriptor');
+      return null;
+    }
+    {
       // Reconstruct the extension params for verification (without card_signature itself)
       const verifyParams: SelkeyA2AExtensionParams = {
         public_key_hex: publicKeyHex as string,
@@ -854,28 +897,12 @@ export class DirectAfalTransport implements AfalTransport {
       // agent_id verification: the signed payload's agent_id must equal card.name
       // (This is inherently true since we use card.name as the agent_id for verification,
       // but if expectedPeerAgentId differs, that's caught below.)
-    } else if (strictMode) {
-      // Strict mode: unsigned card is a hard reject with no fallback —
-      // the operator opted into requiring signatures.
-      console.warn('Agent card is unsigned but requireSignedCards is enabled — falling back to descriptor');
-      return null;
-    } else {
-      console.warn(
-        'Peer agent card is unsigned — proceeding in lenient mode. ' +
-        'Set requireSignedCards=true to enforce card signatures.',
-      );
     }
 
-    // In strict mode, a2a_send_message_url must be explicit in the signed payload —
-    // fallback derivation from card.url is forbidden.
+    // a2a_send_message_url must be explicit in the signed payload; it is
+    // never derived from the unsigned card.url.
     const a2aSendMessageUrl =
-      typeof params['a2a_send_message_url'] === 'string'
-        ? params['a2a_send_message_url']
-        : strictMode
-          ? null
-          : typeof card.url === 'string'
-            ? deriveA2ASendMessageUrl(card.url)
-            : null;
+      typeof params['a2a_send_message_url'] === 'string' ? params['a2a_send_message_url'] : null;
     if (typeof publicKeyHex !== 'string' || (!afalEndpoint && !a2aSendMessageUrl)) {
       return null;
     }
@@ -898,7 +925,7 @@ export class DirectAfalTransport implements AfalTransport {
     if (!agentId) return null;
     if (expectedPeerAgentId !== undefined && agentId !== expectedPeerAgentId) {
       throw new Error(
-        `Peer agent card identity mismatch: expected ${expectedPeerAgentId} but got ${agentId}`,
+        `Peer agent card identity mismatch: expected ${expectedPeerAgentId} but got ${peerText(agentId)}`,
       );
     }
 
@@ -966,6 +993,12 @@ export class DirectAfalTransport implements AfalTransport {
     }
     const target = this.resolvePeerNegotiationTarget(peer);
     if (!target) return null;
+    const signedProposal = signNegotiationRequest(
+      'CONTRACT_OFFER_PROPOSAL',
+      { ...proposal, expected_counterparty: proposal.expected_counterparty ?? peer.agent_id },
+      this.config.agentId,
+      this.config.seedHex,
+    );
 
     const negotiateTaskId = `task-negotiate-${proposal.negotiation_id}`;
     const response = await fetch(
@@ -977,7 +1010,7 @@ export class DirectAfalTransport implements AfalTransport {
             body: JSON.stringify(
               buildA2ASendMessageRequest({
                 mediaType: SELKEY_CONTRACT_OFFER_PROPOSAL_MEDIA_TYPE,
-                data: proposal,
+                data: signedProposal,
                 acceptedOutputModes: [SELKEY_CONTRACT_OFFER_SELECTION_MEDIA_TYPE],
                 taskId: negotiateTaskId,
               }),
@@ -986,7 +1019,7 @@ export class DirectAfalTransport implements AfalTransport {
         : {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(proposal),
+            body: JSON.stringify(signedProposal),
           },
     );
 
@@ -1019,6 +1052,7 @@ export class DirectAfalTransport implements AfalTransport {
           `expected=${proposal.negotiation_id} got=${selection.negotiation_id}`,
       );
     }
+    assertSelectionWithinProposal(proposal, selection);
     return selection;
   }
 
@@ -1029,6 +1063,12 @@ export class DirectAfalTransport implements AfalTransport {
     }
     const target = this.resolvePeerNegotiationTarget(peer);
     if (!target) return null;
+    const signedProposal = signNegotiationRequest(
+      'TOPIC_ALIGNMENT_PROPOSAL',
+      { ...proposal, expected_counterparty: proposal.expected_counterparty ?? peer.agent_id },
+      this.config.agentId,
+      this.config.seedHex,
+    );
 
     const response = await fetch(
       target.negotiateUrl,
@@ -1039,7 +1079,7 @@ export class DirectAfalTransport implements AfalTransport {
             body: JSON.stringify(
               buildA2ASendMessageRequest({
                 mediaType: SELKEY_TOPIC_ALIGNMENT_PROPOSAL_MEDIA_TYPE,
-                data: proposal,
+                data: signedProposal,
                 acceptedOutputModes: [SELKEY_TOPIC_ALIGNMENT_SELECTION_MEDIA_TYPE],
               }),
             ),
@@ -1047,7 +1087,7 @@ export class DirectAfalTransport implements AfalTransport {
         : {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(proposal),
+            body: JSON.stringify(signedProposal),
           },
     );
 
@@ -1075,6 +1115,7 @@ export class DirectAfalTransport implements AfalTransport {
           `expected=${proposal.alignment_id} got=${selection.alignment_id}`,
       );
     }
+    assertTopicSelectionWithinProposal(proposal, selection);
     return selection;
   }
 
@@ -1138,7 +1179,7 @@ export class DirectAfalTransport implements AfalTransport {
     }
     if (expectedPeerAgentId !== undefined && descriptor.agent_id !== expectedPeerAgentId) {
       throw new Error(
-        `Peer descriptor identity mismatch: expected ${expectedPeerAgentId} but got ${descriptor.agent_id}`,
+        `Peer descriptor identity mismatch: expected ${expectedPeerAgentId} but got ${peerText(descriptor.agent_id)}`,
       );
     }
 
@@ -1175,14 +1216,6 @@ function deriveAgentCardUrl(peerUrl: string): string | null {
       return url.toString();
     }
     return `${url.origin}/.well-known/agent-card.json`;
-  } catch {
-    return null;
-  }
-}
-
-function deriveA2ASendMessageUrl(baseUrl: string): string | null {
-  try {
-    return new URL(A2A_SEND_MESSAGE_PATH, baseUrl).toString();
   } catch {
     return null;
   }
@@ -1256,4 +1289,77 @@ function parseDescriptorPeerDiscovery(descriptor: AgentDescriptor): SelkeyPeerDi
       descriptor.capabilities['supports_bespoke_contract_negotiation'] === true,
     ...(supportedContractOffers ? { supportedContractOffers } : {}),
   };
+}
+
+/**
+ * Quote a peer-supplied string for inclusion in an error: JSON-quoted,
+ * truncated, and marked as coming from the peer (not an instruction).
+ */
+export function peerText(value: unknown): string {
+  const text = typeof value === 'string' ? value : String(value);
+  const clipped = text.length > 64 ? `${text.slice(0, 64)}…` : text;
+  return `${JSON.stringify(clipped)} (peer-supplied text)`;
+}
+
+/** An ADMIT may be valid for at most 10 minutes. */
+export const ADMIT_MAX_TTL_MS = 10 * 60 * 1000;
+/** Tolerated clock difference between the two agents when checking expiry. */
+const ADMIT_CLOCK_SKEW_MS = 60 * 1000;
+
+function sameProfile(a: ModelProfileRef, b: ModelProfileRef): boolean {
+  return a.id === b.id && a.version === b.version && a.hash === b.hash;
+}
+
+/**
+ * Bind a verified ADMIT to the PROPOSE it answers:
+ * - it echoes the proposal_id that was sent;
+ * - it has not expired and expires at most 10 minutes from now;
+ * - any selected_model_profile is one of the profiles the PROPOSE offered
+ *   (acceptable_model_profiles, or the single proposed profile).
+ */
+export function checkAdmitBinding(
+  admit: Record<string, unknown>,
+  propose: AfalPropose,
+  nowMs: number = Date.now(),
+): void {
+  if (admit['proposal_id'] !== propose.proposal_id) {
+    throw new Error(
+      `ADMIT proposal_id does not match the PROPOSE: expected=${propose.proposal_id} got=${String(admit['proposal_id'])}`,
+    );
+  }
+  const expiresMs = typeof admit['expires_at'] === 'string' ? Date.parse(admit['expires_at']) : NaN;
+  if (Number.isNaN(expiresMs)) {
+    throw new Error('ADMIT expires_at is missing or invalid');
+  }
+  if (expiresMs <= nowMs) {
+    throw new Error('ADMIT has expired');
+  }
+  if (expiresMs > nowMs + ADMIT_MAX_TTL_MS + ADMIT_CLOCK_SKEW_MS) {
+    throw new Error('ADMIT expires_at is more than 10 minutes in the future');
+  }
+  const selected = admit['selected_model_profile'];
+  if (selected === undefined) return;
+  if (
+    !selected ||
+    typeof selected !== 'object' ||
+    typeof (selected as Record<string, unknown>)['id'] !== 'string' ||
+    typeof (selected as Record<string, unknown>)['version'] !== 'string' ||
+    typeof (selected as Record<string, unknown>)['hash'] !== 'string'
+  ) {
+    throw new Error('ADMIT selected_model_profile is malformed');
+  }
+  const offered: ModelProfileRef[] = propose.acceptable_model_profiles?.length
+    ? propose.acceptable_model_profiles
+    : propose.model_profile_hash
+      ? [
+          {
+            id: propose.model_profile_id,
+            version: propose.model_profile_version,
+            hash: propose.model_profile_hash,
+          },
+        ]
+      : [];
+  if (!offered.some((profile) => sameProfile(profile, selected as ModelProfileRef))) {
+    throw new Error('ADMIT selected_model_profile was not among the profiles offered in the PROPOSE');
+  }
 }

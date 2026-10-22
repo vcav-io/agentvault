@@ -523,6 +523,27 @@ describe('SELKEY_WORKDIR', () => {
     expect(fs.existsSync(path.join(tmpDir, '.selkey', 'active_sessions.json'))).toBe(true);
   });
 
+  it.skipIf(process.platform === 'win32')(
+    'creates .selkey state directories 0700 and state files 0600',
+    async () => {
+      // A pre-existing, permissive .selkey directory is tightened.
+      fs.mkdirSync(path.join(tmpDir, '.selkey'), { mode: 0o755 });
+      fs.chmodSync(path.join(tmpDir, '.selkey'), 0o755);
+      const transport = createMockAfalTransport();
+      await initiateSession(transport);
+
+      const mode = (p: string) => fs.statSync(p).mode & 0o777;
+      const stateDir = path.join(tmpDir, '.selkey');
+      expect(mode(stateDir)).toBe(0o700);
+      expect(mode(path.join(stateDir, 'sessions'))).toBe(0o700);
+      expect(mode(path.join(stateDir, 'active_sessions.json'))).toBe(0o600);
+      const index = readSessionIndex();
+      expect(mode(path.join(stateDir, 'sessions', `${index[0].handle_id}.json`))).toBe(0o600);
+      // No temp files left behind.
+      expect(fs.readdirSync(stateDir).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+    },
+  );
+
   it('logs warning when SELKEY_WORKDIR is not set', async () => {
     delete process.env['SELKEY_WORKDIR'];
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});

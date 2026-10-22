@@ -8,6 +8,13 @@ import {
   parseA2ATaskPart,
 } from './a2a-messages.js';
 import type { NormalizedKnownAgent } from './tools/relaySignal.js';
+import {
+  PinStore,
+  normalizeAgentId,
+  normalizePublicKeyHex,
+  resolveAgentHint,
+  type PinResolver,
+} from './pin-store.js';
 
 export type IfcMessageClass = 'LOGISTICS' | 'CONSENT' | 'REFERENCE' | 'ARTIFACT_TRANSFER';
 export type IfcSessionRelation = 'POST_SESSION';
@@ -185,9 +192,17 @@ function classifyDecision(messageClass: IfcMessageClass): Exclude<IfcDecision, '
   }
 }
 
-function aliasesContain(agent: IfcKnownAgent, hint: string): boolean {
-  const lowered = hint.toLowerCase();
-  return agent.agent_id.toLowerCase() === lowered || agent.aliases.some((a) => a.toLowerCase() === lowered);
+function pinsFromKnownAgents(knownAgents: IfcKnownAgent[]): PinResolver {
+  const seeds = [];
+  for (const agent of knownAgents) {
+    if (typeof agent.public_key_hex !== 'string') continue;
+    try {
+      seeds.push({ agentId: agent.agent_id, publicKeyHex: normalizePublicKeyHex(agent.public_key_hex) });
+    } catch {
+      console.error(`IFC: ignoring known agent ${agent.agent_id} with an invalid public_key_hex`);
+    }
+  }
+  return PinStore.inMemory(seeds);
 }
 
 export class IfcService {
@@ -195,6 +210,8 @@ export class IfcService {
   private readonly seedHex: string;
   private readonly verifyingKeyHex: string;
   private knownAgents: IfcKnownAgent[];
+  private pins: PinResolver;
+  private readonly explicitPins: boolean;
   private readonly receivedGrantUses = new Map<string, ReceivedGrantState>();
   private readonly inbox: IfcStoredMessage[] = [];
   private hiddenCounter = 0;
@@ -204,27 +221,37 @@ export class IfcService {
     seedHex: string;
     knownAgents?: IfcKnownAgent[];
     verifyingKeyHex: string;
+    /** Agent identity pins; defaults to the public keys in knownAgents. */
+    pins?: PinResolver;
   }) {
     this.agentId = params.agentId;
     this.seedHex = params.seedHex;
     this.knownAgents = params.knownAgents ?? [];
     this.verifyingKeyHex = params.verifyingKeyHex;
+    this.explicitPins = params.pins !== undefined;
+    this.pins = params.pins ?? pinsFromKnownAgents(this.knownAgents);
   }
 
   setKnownAgents(knownAgents: IfcKnownAgent[]): void {
     this.knownAgents = knownAgents;
+    if (!this.explicitPins) this.pins = pinsFromKnownAgents(knownAgents);
   }
 
+  /** Exact (NFC) agent_id or alias match; an ambiguous alias throws. */
   private resolveKnownAgent(hint: string): IfcKnownAgent | undefined {
-    return this.knownAgents.find((agent) => aliasesContain(agent, hint));
+    const agentId = resolveAgentHint(hint, this.knownAgents);
+    return agentId === undefined
+      ? undefined
+      : this.knownAgents.find((agent) => normalizeAgentId(agent.agent_id) === agentId);
   }
 
+  /** The sender's pinned key, looked up by its exact agent_id (never an alias). */
   private resolveTrustedSenderKey(sender: string): string {
-    const knownAgent = this.resolveKnownAgent(sender);
-    if (!knownAgent?.public_key_hex) {
+    const key = this.pins.pinnedKeyFor(sender);
+    if (!key) {
       throw new Error(`no trusted public key for sender: ${sender}`);
     }
-    return knownAgent.public_key_hex;
+    return key;
   }
 
   pendingCount(): number {
@@ -298,10 +325,8 @@ export class IfcService {
     assertReceiptId(args.related_receipt_id);
     assertUuidLower(args.related_session_id, 'related_session_id');
     this.verifyGrant(args.grant);
-    if (
-      args.grant.audience !== args.counterparty &&
-      !this.knownAgents.find((a) => aliasesContain(a, args.counterparty) && a.agent_id === args.grant.audience)
-    ) {
+    const counterpartyId = resolveAgentHint(args.counterparty, this.knownAgents) ?? args.counterparty;
+    if (args.grant.audience !== counterpartyId) {
       throw new Error('grant audience does not match counterparty');
     }
     if (args.grant.provenance.receipt_id !== args.related_receipt_id) {

@@ -62,6 +62,8 @@ import {
   RelayTrustError,
 } from '../relay-trust.js';
 import { buildExpectedContractHashes, localAllowedPurposes } from '../responder-contracts.js';
+import { appendPrivateLine, ensurePrivateDir, selkeyStateDir, writePrivateJson } from '../secure-fs.js';
+import { PinError, normalizeAgentId, resolveAgentHint } from '../pin-store.js';
 import {
   encodeRelayToken,
   decodeRelayToken,
@@ -670,6 +672,15 @@ function responderAcceptablePurposes(handle: RelayHandle, transport: AfalTranspo
 }
 
 function mapRelayError(error: unknown): { code: ErrorCode; detail: string } {
+  if (error instanceof PinError) {
+    const code: ErrorCode =
+      error.code === 'NEEDS_CONFIRMATION'
+        ? 'NEEDS_CONFIRMATION'
+        : error.code === 'AMBIGUOUS_ALIAS'
+          ? 'INVALID_INPUT'
+          : 'PEER_IDENTITY_MISMATCH';
+    return { code, detail: error.message };
+  }
   if (error instanceof RelayTrustError) {
     return {
       code: error.message.startsWith('relay_url') ? 'INVALID_INPUT' : 'PRECONDITION_FAILED',
@@ -726,11 +737,7 @@ function writeLastSessionFile(
   relayUrl: string,
 ): void {
   try {
-    const workdir = process.env['SELKEY_WORKDIR'] ?? process.cwd();
-    const dir = path.join(workdir, '.selkey');
-    fs.mkdirSync(dir, { recursive: true });
-    const finalPath = path.join(dir, 'last_session.json');
-    const tmpPath = `${finalPath}.tmp`;
+    const finalPath = path.join(selkeyStateDir(), 'last_session.json');
     const record = {
       session_id: sessionId,
       role,
@@ -738,11 +745,7 @@ function writeLastSessionFile(
       relay_url: relayUrl,
       timestamp: new Date().toISOString(),
     };
-    fs.writeFileSync(tmpPath, JSON.stringify(record, null, 2) + '\n', {
-      encoding: 'utf8',
-      mode: 0o600,
-    });
-    fs.renameSync(tmpPath, finalPath);
+    writePrivateJson(finalPath, record);
   } catch (err) {
     // Non-fatal — log but do not fail the relay operation
     console.error(
@@ -751,14 +754,18 @@ function writeLastSessionFile(
   }
 }
 
-function resolveAgentAlias(hint: string, knownAgents: NormalizedKnownAgent[]): string {
-  const hintLower = hint.toLowerCase();
-  const match = knownAgents.find(
-    (entry) =>
-      entry.agent_id.toLowerCase() === hintLower ||
-      entry.aliases.some((alias) => alias.toLowerCase() === hintLower),
-  );
-  return match ? match.agent_id : hint;
+/**
+ * Resolve an agent_id or alias to an agent_id (exact NFC match, no case
+ * folding). Aliases come from known agents and from the transport's pin
+ * store. An alias naming more than one agent throws AMBIGUOUS_ALIAS.
+ */
+function resolveAgentAlias(
+  hint: string,
+  knownAgents: NormalizedKnownAgent[],
+  transport?: AfalTransport,
+): string {
+  const pinned = transport instanceof DirectAfalTransport ? transport.pinStore.listPins() : [];
+  return resolveAgentHint(hint, [...knownAgents, ...pinned]) ?? normalizeAgentId(hint);
 }
 
 function hashInput(input: string): string {
@@ -824,14 +831,8 @@ interface SessionStateFile {
 }
 
 function atomicWriteJson(filePath: string, data: unknown): void {
-  const dir = path.dirname(filePath);
-  fs.mkdirSync(dir, { recursive: true });
-  const tmpPath = `${filePath}.tmp`;
-  fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2) + '\n', {
-    encoding: 'utf8',
-    mode: 0o600,
-  });
-  fs.renameSync(tmpPath, filePath);
+  // Parent directory 0700; file 0600 via an O_EXCL temp file + rename.
+  writePrivateJson(filePath, data);
 }
 
 function rebuildSessionIndex(sessionsDir: string, indexPath: string): void {
@@ -906,6 +907,7 @@ function writeSessionStateFile(
     const workdir = resolveWorkdir();
     const sessionsDir = path.join(workdir, '.selkey', 'sessions');
     const indexPath = path.join(workdir, '.selkey', 'active_sessions.json');
+    ensurePrivateDir(path.join(workdir, '.selkey'));
 
     const now = new Date();
     const dueAt = new Date(now.getTime() + nextUpdateSeconds * 1000);
@@ -1261,7 +1263,7 @@ async function phaseInvite(
   knownAgents: NormalizedKnownAgent[],
   relayProfileId?: string,
 ): Promise<ToolResponse<RelaySignalOutput>> {
-  const counterparty = resolveAgentAlias(handle.counterparty, knownAgents);
+  const counterparty = resolveAgentAlias(handle.counterparty, knownAgents, transport);
   const acceptablePurposes = parseAcceptablePurposes(args.acceptable_purposes);
   if (args.purpose && acceptablePurposes.length) {
     return buildError(
@@ -2714,7 +2716,7 @@ export async function handleRelaySignal(
           return buildError('INVALID_INPUT', 'counterparty is required for INITIATE mode');
         }
 
-        const counterparty = resolveAgentAlias(args.counterparty, knownAgents);
+        const counterparty = resolveAgentAlias(args.counterparty, knownAgents, transport);
         const agentId = transport.agentId ?? process.env['SELKEY_AGENT_ID'] ?? '';
 
         // Compute contract hash early — needed for both collision path and idempotency key
@@ -2820,7 +2822,7 @@ export async function handleRelaySignal(
           );
         }
 
-        const from = resolveAgentAlias(args.from, knownAgents);
+        const from = resolveAgentAlias(args.from, knownAgents, transport);
         const agentId = transport.agentId ?? process.env['SELKEY_AGENT_ID'] ?? '';
 
         // Compute idempotency key
@@ -2896,11 +2898,8 @@ export async function handleRelaySignal(
     const { code, detail } = mapRelayError(error);
     // Diagnostic file log for debugging live test failures
     try {
-      const workdir = process.env['SELKEY_WORKDIR'] ?? process.cwd();
-      const debugDir = path.join(workdir, '.selkey');
-      fs.mkdirSync(debugDir, { recursive: true });
       const entry = `[${new Date().toISOString()}] error_code=${code} detail=${detail} raw=${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`;
-      fs.appendFileSync(path.join(debugDir, 'relay-debug.log'), entry, 'utf8');
+      appendPrivateLine(path.join(selkeyStateDir(), 'relay-debug.log'), entry);
     } catch (logErr) {
       console.error(
         `handleRelaySignal: failed to write diagnostic log: ${logErr instanceof Error ? logErr.message : String(logErr)}`,

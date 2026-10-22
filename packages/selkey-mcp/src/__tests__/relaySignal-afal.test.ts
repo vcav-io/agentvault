@@ -5,6 +5,8 @@
  * that INITIATE builds AfalPropose and RESPOND extracts it.
  */
 
+import { signCard } from './helpers/sign-card.js';
+import { PinStore } from '../pin-store.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { handleRelaySignal, _setDiscoverPollConfigForTesting } from '../tools/relaySignal.js';
 import { _resetHandlesForTesting } from '../tools/relayHandles.js';
@@ -128,11 +130,17 @@ function makeSignedAdmit(
       proposal_id: proposalId,
       admit_token_id: 'a'.repeat(64),
       admission_tier: 'DEFAULT',
-      expires_at: '2026-01-01T00:15:00Z',
+      expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
       ...(selectedModelProfile ? { selected_model_profile: selectedModelProfile } : {}),
     },
     PEER_SEED,
   );
+}
+
+/** The ADMIT must echo the proposal_id of the PROPOSE it answers. */
+function proposalIdFromRequest(init?: RequestInit): string {
+  const body = JSON.parse(String(init?.body ?? '{}')) as { propose?: { proposal_id?: string } };
+  return body.propose?.proposal_id ?? '';
 }
 
 beforeEach(() => {
@@ -216,6 +224,7 @@ describe('INITIATE with AFAL', () => {
 
     const transport = new DirectAfalTransport({
       agentId: 'alice-demo',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-demo', publicKeyHex: PEER_PUBKEY }]),
       seedHex: TEST_SEED,
       localDescriptor: makeLocalDescriptor(),
       peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
@@ -224,7 +233,7 @@ describe('INITIATE with AFAL', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () =>
-        Promise.resolve({
+        Promise.resolve(signCard({
           name: 'bob-demo',
           capabilities: {
             extensions: [
@@ -239,12 +248,14 @@ describe('INITIATE with AFAL', () => {
               },
             ],
           },
-        }),
+        }, PEER_SEED)),
     });
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve(makeSignedAdmit('d'.repeat(64))),
-    });
+    mockFetch.mockImplementationOnce((_url: string, init?: RequestInit) =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(makeSignedAdmit(proposalIdFromRequest(init))),
+      }),
+    );
     mockFetch.mockResolvedValueOnce({
       ok: true,
       text: () => Promise.resolve('ok'),
@@ -266,13 +277,14 @@ describe('INITIATE with AFAL', () => {
 
     const transport = new DirectAfalTransport({
       agentId: 'alice-demo',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-demo', publicKeyHex: PEER_PUBKEY }]),
       seedHex: TEST_SEED,
       localDescriptor: makeLocalDescriptor(),
       relayUrl: 'http://relay.test',
       peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
     });
 
-    const card = {
+    const card = signCard({
       name: 'bob-demo',
       capabilities: {
         extensions: [
@@ -287,10 +299,13 @@ describe('INITIATE with AFAL', () => {
           },
         ],
       },
-    };
-    mockFetch.mockImplementation((url: string) => {
+    }, PEER_SEED);
+    mockFetch.mockImplementation((url: string, init?: RequestInit) => {
       if (url.endsWith('/propose')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve(makeSignedAdmit('d'.repeat(64))) });
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(makeSignedAdmit(proposalIdFromRequest(init))),
+        });
       }
       if (url.endsWith('/commit')) {
         return Promise.resolve({ ok: true, text: () => Promise.resolve('ok') });
@@ -395,6 +410,7 @@ describe('INITIATE with AFAL', () => {
 
     const transport = new DirectAfalTransport({
       agentId: 'alice-demo',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-demo', publicKeyHex: PEER_PUBKEY }]),
       seedHex: TEST_SEED,
       localDescriptor: makeLocalDescriptor(),
       peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
@@ -403,7 +419,7 @@ describe('INITIATE with AFAL', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () =>
-        Promise.resolve({
+        Promise.resolve(signCard({
           name: 'bob-demo',
           capabilities: {
             extensions: [
@@ -432,7 +448,7 @@ describe('INITIATE with AFAL', () => {
               },
             ],
           },
-        }),
+        }, PEER_SEED)),
     });
     mockFetch.mockImplementationOnce(async (_url, init) => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
@@ -467,10 +483,12 @@ describe('INITIATE with AFAL', () => {
           }),
       };
     });
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve(makeSignedAdmit('d'.repeat(64))),
-    });
+    mockFetch.mockImplementationOnce((_url: string, init?: RequestInit) =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(makeSignedAdmit(proposalIdFromRequest(init))),
+      }),
+    );
     mockFetch.mockResolvedValueOnce({
       ok: true,
       text: () => Promise.resolve('ok'),
@@ -523,6 +541,7 @@ describe('INITIATE with AFAL', () => {
 
     const transport = new DirectAfalTransport({
       agentId: 'alice-demo',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-demo', publicKeyHex: PEER_PUBKEY }]),
       seedHex: TEST_SEED,
       localDescriptor: makeLocalDescriptor(),
       peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
@@ -531,7 +550,7 @@ describe('INITIATE with AFAL', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () =>
-        Promise.resolve({
+        Promise.resolve(signCard({
           name: 'bob-demo',
           capabilities: {
             extensions: [
@@ -570,7 +589,7 @@ describe('INITIATE with AFAL', () => {
               },
             ],
           },
-        }),
+        }, PEER_SEED)),
     });
     mockFetch.mockImplementationOnce(async (_url, init) => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
@@ -605,10 +624,12 @@ describe('INITIATE with AFAL', () => {
           }),
       };
     });
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve(makeSignedAdmit('d'.repeat(64))),
-    });
+    mockFetch.mockImplementationOnce((_url: string, init?: RequestInit) =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(makeSignedAdmit(proposalIdFromRequest(init))),
+      }),
+    );
     mockFetch.mockResolvedValueOnce({
       ok: true,
       text: () => Promise.resolve('ok'),
@@ -653,6 +674,7 @@ describe('INITIATE with AFAL', () => {
 
     const transport = new DirectAfalTransport({
       agentId: 'alice-demo',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-demo', publicKeyHex: PEER_PUBKEY }]),
       seedHex: TEST_SEED,
       localDescriptor: makeLocalDescriptor(),
       peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
@@ -661,7 +683,7 @@ describe('INITIATE with AFAL', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () =>
-        Promise.resolve({
+        Promise.resolve(signCard({
           name: 'bob-demo',
           capabilities: {
             extensions: [
@@ -692,7 +714,7 @@ describe('INITIATE with AFAL', () => {
               },
             ],
           },
-        }),
+        }, PEER_SEED)),
     });
     mockFetch.mockImplementationOnce(async (_url, init) => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
@@ -755,10 +777,12 @@ describe('INITIATE with AFAL', () => {
           }),
       };
     });
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve(makeSignedAdmit('d'.repeat(64))),
-    });
+    mockFetch.mockImplementationOnce((_url: string, init?: RequestInit) =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(makeSignedAdmit(proposalIdFromRequest(init))),
+      }),
+    );
     mockFetch.mockResolvedValueOnce({
       ok: true,
       text: () => Promise.resolve('ok'),
@@ -794,6 +818,7 @@ describe('INITIATE with AFAL', () => {
 
     const transport = new DirectAfalTransport({
       agentId: 'alice-demo',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-demo', publicKeyHex: PEER_PUBKEY }]),
       seedHex: TEST_SEED,
       localDescriptor: makeLocalDescriptor(),
       peerDescriptorUrl: 'http://peer.example.com/.well-known/agent-descriptor.json',
@@ -848,10 +873,12 @@ describe('INITIATE with AFAL', () => {
           }),
       };
     });
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve(makeSignedAdmit('d'.repeat(64))),
-    });
+    mockFetch.mockImplementationOnce((_url: string, init?: RequestInit) =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(makeSignedAdmit(proposalIdFromRequest(init))),
+      }),
+    );
     mockFetch.mockResolvedValueOnce({
       ok: true,
       text: () => Promise.resolve('ok'),
@@ -884,6 +911,7 @@ describe('INITIATE with AFAL', () => {
 
     const transport = new DirectAfalTransport({
       agentId: 'alice-demo',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-demo', publicKeyHex: PEER_PUBKEY }]),
       seedHex: TEST_SEED,
       localDescriptor: makeLocalDescriptor(),
       peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
@@ -892,7 +920,7 @@ describe('INITIATE with AFAL', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () =>
-        Promise.resolve({
+        Promise.resolve(signCard({
           name: 'bob-demo',
           capabilities: {
             extensions: [
@@ -915,7 +943,7 @@ describe('INITIATE with AFAL', () => {
               },
             ],
           },
-        }),
+        }, PEER_SEED)),
     });
     mockFetch.mockImplementationOnce(async (_url, init) => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
@@ -966,6 +994,7 @@ describe('INITIATE with AFAL', () => {
 
     const transport = new DirectAfalTransport({
       agentId: 'alice-demo',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-demo', publicKeyHex: PEER_PUBKEY }]),
       seedHex: TEST_SEED,
       localDescriptor: makeLocalDescriptor(),
       peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
@@ -974,7 +1003,7 @@ describe('INITIATE with AFAL', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () =>
-        Promise.resolve({
+        Promise.resolve(signCard({
           name: 'bob-demo',
           capabilities: {
             extensions: [
@@ -992,7 +1021,7 @@ describe('INITIATE with AFAL', () => {
               },
             ],
           },
-        }),
+        }, PEER_SEED)),
     });
     mockFetch.mockImplementationOnce(async (_url, init) => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
@@ -1049,6 +1078,7 @@ describe('INITIATE with AFAL', () => {
 
     const transport = new DirectAfalTransport({
       agentId: 'alice-demo',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-demo', publicKeyHex: PEER_PUBKEY }]),
       seedHex: TEST_SEED,
       localDescriptor: makeLocalDescriptor(),
       peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
@@ -1057,7 +1087,7 @@ describe('INITIATE with AFAL', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () =>
-        Promise.resolve({
+        Promise.resolve(signCard({
           name: 'bob-demo',
           capabilities: {
             extensions: [
@@ -1086,7 +1116,7 @@ describe('INITIATE with AFAL', () => {
               },
             ],
           },
-        }),
+        }, PEER_SEED)),
     });
     mockFetch.mockImplementationOnce(async (_url, init) => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
@@ -1314,5 +1344,78 @@ describe('RESPOND with AFAL', () => {
     expect(result.status).toBe('PENDING');
     const data = result.data as { phase: string };
     expect(data.phase).toBe('JOIN');
+  });
+});
+
+describe('counterparty aliases', () => {
+  it('matches aliases exactly, without case folding', async () => {
+    const transport = createMockAfalTransport();
+    await handleRelaySignal(
+      { mode: 'INITIATE', counterparty: 'BOB', purpose: 'MEDIATION', my_input: 'hello' },
+      transport,
+      [{ agent_id: 'bob-demo', aliases: ['Bob'] }],
+    );
+    const call = vi.mocked(transport.sendPropose).mock.calls[0]?.[0];
+    expect(call?.propose.to).toBe('BOB');
+  });
+
+  it('rejects an alias that names more than one agent', async () => {
+    const transport = createMockAfalTransport();
+    const result = await handleRelaySignal(
+      { mode: 'INITIATE', counterparty: 'Bob', purpose: 'MEDIATION', my_input: 'hello' },
+      transport,
+      [
+        { agent_id: 'bob-demo', aliases: ['Bob'] },
+        { agent_id: 'bob-other', aliases: ['Bob'] },
+      ],
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('INVALID_INPUT');
+    expect(result.error?.detail).toMatch(/more than one agent/);
+    expect(transport.sendPropose).not.toHaveBeenCalled();
+  });
+
+  it('reports first contact in tofu mode as needing human confirmation', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve(signCard({
+              name: 'bob-demo',
+              capabilities: {
+                extensions: [
+                  {
+                    uri: SELKEY_A2A_EXTENSION_URI,
+                    params: {
+                      public_key_hex: PEER_PUBKEY,
+                      supported_purposes: ['MEDIATION'],
+                      afal_endpoint: 'http://peer.example.com/afal',
+                    },
+                  },
+                ],
+              },
+            }, PEER_SEED)),
+        }),
+      ),
+    );
+    const transport = new DirectAfalTransport({
+      agentId: 'alice-demo',
+      pinStore: PinStore.inMemory([], 'tofu'),
+      seedHex: TEST_SEED,
+      localDescriptor: makeLocalDescriptor(),
+      relayUrl: 'http://relay.test',
+      peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
+    });
+    const result = await handleRelaySignal(
+      { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'hello' },
+      transport,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('NEEDS_CONFIRMATION');
+    expect(result.error?.detail).toContain('selkey-mcp pins confirm bob-demo');
+    expect(transport.pinStore.listPending()[0]?.agent_id).toBe('bob-demo');
+    expect(vi.mocked(createAndSubmit)).not.toHaveBeenCalled();
   });
 });

@@ -8,6 +8,7 @@
  * Verifies Ed25519 signatures at each step and COMMIT binding.
  */
 
+import { PinStore } from '../pin-store.js';
 import { describe, it, expect, afterEach } from 'vitest';
 import { ed25519 } from '@noble/curves/ed25519';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
@@ -130,6 +131,7 @@ describe('AFAL M4 E2E', () => {
 
     transportA = new DirectAfalTransport({
       agentId: 'alice-test',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-test', publicKeyHex: BOB_PUBKEY }]),
       seedHex: ALICE_SEED,
       localDescriptor: aliceDescriptor,
       peerDescriptorUrl: peerUrl,
@@ -208,6 +210,7 @@ describe('AFAL M4 E2E', () => {
 
     transportA = new DirectAfalTransport({
       agentId: 'alice-test',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-test', publicKeyHex: BOB_PUBKEY }]),
       seedHex: ALICE_SEED,
       localDescriptor: aliceDescriptor,
       peerDescriptorUrl: peerUrl,
@@ -243,6 +246,7 @@ describe('AFAL M4 E2E', () => {
 
     transportA = new DirectAfalTransport({
       agentId: 'alice-test',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-test', publicKeyHex: BOB_PUBKEY }]),
       seedHex: ALICE_SEED,
       localDescriptor: aliceDescriptor,
       peerDescriptorUrl: peerUrl,

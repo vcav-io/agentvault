@@ -24,6 +24,7 @@ import {
 } from 'selkey-mcp/tools';
 import {
   DirectAfalTransport,
+  PinStore,
   isAgentDescriptor,
   AfalHttpServer,
   listKnownModelProfiles,
@@ -303,9 +304,19 @@ async function setupAndStartHeartbeats(): Promise<void> {
     ...sharedPolicyFields,
   };
 
+  // Pinning step: each agent pins the other's public key before any contact.
+  // In a real deployment the key is exchanged out of band (or confirmed by a
+  // person with `selkey-mcp pins confirm`); the demo generates both identities
+  // in this process, so it can pin them directly.
+  const alicePins = PinStore.inMemory([{ agentId: 'bob', publicKeyHex: bob.pubKeyHex, aliases: ['Bob'] }]);
+  const bobPins = PinStore.inMemory([{ agentId: 'alice', publicKeyHex: alice.pubKeyHex, aliases: ['Alice'] }]);
+  events.emitSystem(`Alice pinned Bob's key ${alicePins.getPin('bob')?.fingerprint ?? ''}`);
+  events.emitSystem(`Bob pinned Alice's key ${bobPins.getPin('alice')?.fingerprint ?? ''}`);
+
   // Symmetric transport configs — both can initiate AND respond
   const bobTransportConfig: DirectAfalTransportConfig = {
     agentId: 'bob',
+    pinStore: bobPins,
     seedHex: bob.seedHex,
     localDescriptor: bobDescriptor,
     relayUrl: RELAY_URL,
@@ -314,6 +325,7 @@ async function setupAndStartHeartbeats(): Promise<void> {
   };
   const aliceTransportConfig: DirectAfalTransportConfig = {
     agentId: 'alice',
+    pinStore: alicePins,
     seedHex: alice.seedHex,
     localDescriptor: aliceDescriptor,
     relayUrl: RELAY_URL,

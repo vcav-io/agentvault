@@ -93,3 +93,17 @@ export function selectAlignedTopic(
     state: 'NOT_ALIGNED',
   };
 }
+
+/** An ALIGNED selection must name one of the proposal's acceptable topic codes. */
+export function assertTopicSelectionWithinProposal(
+  proposal: TopicAlignmentProposal,
+  selection: TopicAlignmentSelection,
+): void {
+  if (selection.state !== 'ALIGNED') return;
+  if (
+    !selection.selected_topic_code ||
+    !proposal.acceptable_topic_codes.includes(selection.selected_topic_code)
+  ) {
+    throw new Error('Topic alignment selection names a topic code that was not offered');
+  }
+}
