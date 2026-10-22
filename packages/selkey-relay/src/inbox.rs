@@ -61,8 +61,13 @@ pub struct InboxStore {
     inner: Arc<RwLock<InboxStoreInner>>,
     channels: Arc<Mutex<ChannelMap>>,
     invite_ttl: Duration,
-    /// Grace period after EXPIRED before garbage collection.
+    /// Grace period after an invite reaches a terminal state (expired,
+    /// accepted, declined, canceled) before garbage collection.
     gc_grace: Duration,
+    /// Maximum number of invites held at once.
+    max_invites: usize,
+    /// Maximum pending invites per sending agent.
+    max_pending_per_agent: usize,
     #[cfg(feature = "persistence")]
     db: Option<Arc<SqliteDb>>,
 }
@@ -77,10 +82,19 @@ impl InboxStore {
             })),
             channels: Arc::new(Mutex::new(HashMap::new())),
             invite_ttl,
-            gc_grace: Duration::from_secs(86400), // 24h grace after EXPIRED
+            gc_grace: Duration::from_secs(86400), // 24h grace after a terminal state
+            max_invites: crate::limits::DEFAULT_MAX_INVITES,
+            max_pending_per_agent: crate::limits::DEFAULT_MAX_PENDING_INVITES_PER_AGENT,
             #[cfg(feature = "persistence")]
             db: None,
         }
+    }
+
+    /// Set the invite capacity and the per-sender pending invite limit.
+    pub fn with_limits(mut self, max_invites: usize, max_pending_per_agent: usize) -> Self {
+        self.max_invites = max_invites;
+        self.max_pending_per_agent = max_pending_per_agent;
+        self
     }
 
     #[cfg(feature = "persistence")]
@@ -117,6 +131,8 @@ impl InboxStore {
             channels: Arc::new(Mutex::new(HashMap::new())),
             invite_ttl,
             gc_grace: Duration::from_secs(86400),
+            max_invites: crate::limits::DEFAULT_MAX_INVITES,
+            max_pending_per_agent: crate::limits::DEFAULT_MAX_PENDING_INVITES_PER_AGENT,
             db: Some(db),
         })
     }
@@ -186,7 +202,13 @@ impl InboxStore {
         let purpose_code = accepted.contract.purpose_code.to_string();
 
         let now = Utc::now();
-        let invite_ttl_chrono = chrono::Duration::from_std(self.invite_ttl).unwrap_or_else(|e| {
+        // The contract's invite_ttl_secs shortens the relay TTL, never extends it.
+        let invite_ttl = accepted
+            .contract
+            .invite_ttl_secs
+            .map(|secs| Duration::from_secs(u64::from(secs)).min(self.invite_ttl))
+            .unwrap_or(self.invite_ttl);
+        let invite_ttl_chrono = chrono::Duration::from_std(invite_ttl).unwrap_or_else(|e| {
             tracing::warn!(error = %e, "invite TTL conversion overflow, falling back to 7 days");
             chrono::Duration::days(7)
         });
@@ -212,6 +234,27 @@ impl InboxStore {
             session_tokens: None,
             decline_reason_code: None,
         };
+
+        // Capacity checks before anything is written.
+        {
+            let store = self.inner.read().await;
+            if store.invites.len() >= self.max_invites {
+                tracing::warn!(max_invites = self.max_invites, "invite store at capacity");
+                return Err(RelayError::ServiceUnavailable(
+                    "invite capacity reached".to_string(),
+                ));
+            }
+            let pending_from_sender = store
+                .invites
+                .values()
+                .filter(|inv| {
+                    inv.from_agent_id == from_agent_id && inv.status == InviteStatus::Pending
+                })
+                .count();
+            if pending_from_sender >= self.max_pending_per_agent {
+                return Err(RelayError::RateLimited);
+            }
+        }
 
         // SQLite write FIRST (before memory update)
         #[cfg(feature = "persistence")]
@@ -349,6 +392,27 @@ impl InboxStore {
         expected_contract_hash: Option<&str>,
         session_store: &SessionStore,
     ) -> Result<AcceptInviteResponse, RelayError> {
+        self.accept_invite_checked(
+            invite_id,
+            caller_agent_id,
+            expected_contract_hash,
+            session_store,
+            |_, _| Ok(()),
+        )
+        .await
+    }
+
+    /// As [`Self::accept_invite`], running `preflight(contract, provider)`
+    /// before the session is created. A failing check leaves the invite
+    /// pending and creates no session.
+    pub async fn accept_invite_checked(
+        &self,
+        invite_id: &str,
+        caller_agent_id: &str,
+        expected_contract_hash: Option<&str>,
+        session_store: &SessionStore,
+        preflight: impl FnOnce(&Contract, &str) -> Result<(), RelayError>,
+    ) -> Result<AcceptInviteResponse, RelayError> {
         // ── Phase 1: read lock ──────────────────────────────────────────
         let (contract, contract_hash, provider, from_agent_id) = {
             let store = self.inner.read().await;
@@ -405,10 +469,11 @@ impl InboxStore {
             // read lock released here
         };
 
-        // ── Phase 2: no lock — create session ──────────────────────────
+        // ── Phase 2: no lock — check the contract, create session ──────
+        preflight(&contract, &provider)?;
         let (session_id, tokens) = session_store
-            .create(contract, contract_hash.clone(), provider)
-            .await;
+            .try_create(contract, contract_hash.clone(), provider)
+            .await?;
 
         // ── Phase 3: write lock — re-validate and commit ────────────────
         let mut store = self.inner.write().await;
@@ -731,7 +796,7 @@ impl InboxStore {
 
     /// Reap expired invites. Two-phase:
     /// 1. PENDING → EXPIRED (emits INVITE_EXPIRED event, keeps invite visible)
-    /// 2. EXPIRED for > gc_grace → deleted
+    /// 2. terminal (EXPIRED, ACCEPTED, DECLINED, CANCELED) for > gc_grace → deleted
     pub async fn reap_expired(&self) -> usize {
         let now = Utc::now();
         let gc_grace_chrono = chrono::Duration::from_std(self.gc_grace).unwrap_or_else(|e| {
@@ -759,8 +824,15 @@ impl InboxStore {
                 ));
             }
 
-            // Phase 2: garbage-collect invites that have been EXPIRED for > gc_grace
-            if invite.status == InviteStatus::Expired {
+            // Phase 2: garbage-collect invites that have been in a terminal
+            // state (expired, accepted, declined, canceled) for > gc_grace
+            if matches!(
+                invite.status,
+                InviteStatus::Expired
+                    | InviteStatus::Accepted
+                    | InviteStatus::Declined
+                    | InviteStatus::Canceled
+            ) {
                 let expired_duration = now.signed_duration_since(invite.updated_at);
                 if expired_duration > gc_grace_chrono {
                     gc_ids.push(id.clone());
@@ -823,17 +895,31 @@ impl InboxStore {
     }
 
     /// Start the background reaper task.
+    /// Start the background reaper, restarted by a supervisor if it exits.
     pub fn start_reaper(self) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(60));
-            loop {
-                interval.tick().await;
-                let reaped = self.reap_expired().await;
-                if reaped > 0 {
-                    tracing::info!(reaped, "inbox reaper: expired/gc'd invites processed");
+        crate::supervise("inbox reaper", move || {
+            let store = self.clone();
+            async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(60));
+                loop {
+                    interval.tick().await;
+                    let reaped = store.reap_expired().await;
+                    if reaped > 0 {
+                        tracing::info!(reaped, "inbox reaper: expired/gc'd invites processed");
+                    }
                 }
             }
         })
+    }
+
+    /// Number of invites currently held.
+    pub async fn len(&self) -> usize {
+        self.inner.read().await.invites.len()
+    }
+
+    /// Whether the store holds no invites.
+    pub async fn is_empty(&self) -> bool {
+        self.inner.read().await.invites.is_empty()
     }
 
     // ── Internal helpers ──────────────────────────────────────────────────
@@ -1780,5 +1866,108 @@ mod tests {
         assert!(
             matches!(result, Err(RelayError::ContractValidation(ref msg)) if msg.contains("purpose_code must match"))
         );
+    }
+
+    // ── Bounded state and contract TTL ──────────────────────────────────
+
+    #[tokio::test]
+    async fn test_terminal_invites_are_garbage_collected() {
+        let store = InboxStore::new(Duration::from_secs(600));
+        let sessions = SessionStore::new(Duration::from_secs(600));
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            let created = store
+                .create_invite("alice", &test_create_request(), None)
+                .await
+                .unwrap();
+            ids.push(created.invite_id);
+        }
+        store
+            .accept_invite(&ids[0], "bob", None, &sessions)
+            .await
+            .unwrap();
+        store.decline_invite(&ids[1], "bob", None).await.unwrap();
+        store.cancel_invite(&ids[2], "alice").await.unwrap();
+
+        // Age every invite past the GC grace period.
+        {
+            let mut inner = store.inner.write().await;
+            for invite in inner.invites.values_mut() {
+                invite.updated_at -= chrono::Duration::days(2);
+            }
+        }
+        assert_eq!(store.reap_expired().await, 3);
+        assert!(store.is_empty().await);
+        let index_entries: usize = store
+            .inner
+            .read()
+            .await
+            .inbox_index
+            .values()
+            .map(Vec::len)
+            .sum();
+        assert_eq!(index_entries, 0);
+    }
+
+    #[tokio::test]
+    async fn test_invite_expiry_honours_contract_invite_ttl() {
+        let store = InboxStore::new(Duration::from_secs(604800));
+        let mut request = test_create_request();
+        request.contract["invite_ttl_secs"] = serde_json::json!(60);
+        let created = store.create_invite("alice", &request, None).await.unwrap();
+        let ttl = created.expires_at - Utc::now();
+        assert!(ttl <= chrono::Duration::seconds(60), "{ttl}");
+        assert!(ttl > chrono::Duration::seconds(50), "{ttl}");
+    }
+
+    #[tokio::test]
+    async fn test_invite_capacity_enforced() {
+        let store = InboxStore::new(Duration::from_secs(600)).with_limits(1, 10);
+        store
+            .create_invite("alice", &test_create_request(), None)
+            .await
+            .unwrap();
+        let err = store
+            .create_invite("alice", &test_create_request(), None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RelayError::ServiceUnavailable(_)));
+        assert_eq!(store.len().await, 1);
+    }
+
+    #[tokio::test]
+    async fn test_pending_invites_per_sender_capped() {
+        let store = InboxStore::new(Duration::from_secs(600)).with_limits(100, 2);
+        for _ in 0..2 {
+            store
+                .create_invite("alice", &test_create_request(), None)
+                .await
+                .unwrap();
+        }
+        let err = store
+            .create_invite("alice", &test_create_request(), None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RelayError::RateLimited));
+    }
+
+    #[tokio::test]
+    async fn test_accept_with_failing_check_creates_no_session() {
+        let store = InboxStore::new(Duration::from_secs(600));
+        let sessions = SessionStore::new(Duration::from_secs(600));
+        let created = store
+            .create_invite("alice", &test_create_request(), None)
+            .await
+            .unwrap();
+        let err = store
+            .accept_invite_checked(&created.invite_id, "bob", None, &sessions, |_, _| {
+                Err(RelayError::ContractValidation("check failed".to_string()))
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RelayError::ContractValidation(_)));
+        assert!(sessions.is_empty().await);
+        let detail = store.get_invite(&created.invite_id, "bob").await.unwrap();
+        assert_eq!(detail.status, InviteStatus::Pending);
     }
 }

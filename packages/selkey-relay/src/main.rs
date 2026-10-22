@@ -252,7 +252,16 @@ async fn main() {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(600);
-    let session_store = SessionStore::new(Duration::from_secs(session_ttl_secs));
+    let limit_config = match selkey_relay::limits::LimitConfig::from_env() {
+        Ok(config) => config,
+        Err(msg) => {
+            tracing::error!("{msg} — refusing to start");
+            std::process::exit(1);
+        }
+    };
+    tracing::info!(limits = ?limit_config, "relay limits");
+    let session_store = SessionStore::new(Duration::from_secs(session_ttl_secs))
+        .with_max_sessions(limit_config.max_sessions);
 
     // Start background session reaper
     session_store.clone().start_reaper();
@@ -324,10 +333,17 @@ async fn main() {
             }
         }
         Err(_) => InboxStore::new(Duration::from_secs(invite_ttl_secs)),
-    };
+    }
+    .with_limits(
+        limit_config.max_invites,
+        limit_config.max_pending_invites_per_agent,
+    );
 
     #[cfg(not(feature = "persistence"))]
-    let inbox_store = InboxStore::new(Duration::from_secs(invite_ttl_secs));
+    let inbox_store = InboxStore::new(Duration::from_secs(invite_ttl_secs)).with_limits(
+        limit_config.max_invites,
+        limit_config.max_pending_invites_per_agent,
+    );
 
     // Start background inbox reaper
     inbox_store.clone().start_reaper();
@@ -504,6 +520,7 @@ async fn main() {
         admitted_programs: registry_admission.as_ref().map(|a| a.programs.clone()),
         admitted_profiles: registry_admission.as_ref().map(|a| a.profiles.clone()),
         operator_token,
+        limits: selkey_relay::limits::Limits::new(limit_config),
     });
 
     let app = build_router(state);
@@ -511,5 +528,10 @@ async fn main() {
     let addr = std::net::SocketAddr::new(bind_addr, port);
     tracing::info!(%addr, session_ttl_secs, "Selkey relay starting");
     let listener = TcpListener::bind(&addr).await.expect("bind failed");
-    axum::serve(listener, app).await.expect("server error");
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await
+    .expect("server error");
 }

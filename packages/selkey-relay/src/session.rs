@@ -75,6 +75,11 @@ pub struct Session {
     /// When inference started (set as the session enters `Processing`).
     pub processing_started_at: Option<DateTime<Utc>>,
     pub metadata: Option<SessionMetadata>,
+    /// Session lifetime: the contract's `session_ttl_secs` if set (never
+    /// above the relay TTL), otherwise the relay TTL.
+    pub ttl: Duration,
+    /// Handle to the running inference task, aborted if the session times out.
+    pub inference_abort: Option<tokio::task::AbortHandle>,
 }
 
 impl Session {
@@ -117,6 +122,7 @@ pub fn generate_session_id() -> String {
 pub struct SessionStore {
     inner: Arc<Mutex<HashMap<String, Session>>>,
     ttl: Duration,
+    max_sessions: usize,
 }
 
 impl SessionStore {
@@ -124,16 +130,65 @@ impl SessionStore {
         Self {
             inner: Arc::new(Mutex::new(HashMap::new())),
             ttl,
+            max_sessions: crate::limits::DEFAULT_MAX_SESSIONS,
         }
     }
 
-    /// Create a new session with generated tokens. Returns session ID and tokens.
+    /// Set the maximum number of sessions held at once (see [`Self::try_create`]).
+    pub fn with_max_sessions(mut self, max_sessions: usize) -> Self {
+        self.max_sessions = max_sessions;
+        self
+    }
+
+    /// Create a session unless the store is at capacity.
+    ///
+    /// Request handlers use this; at capacity it returns
+    /// `ServiceUnavailable` and nothing is created.
+    pub async fn try_create(
+        &self,
+        contract: Contract,
+        contract_hash: String,
+        provider: String,
+    ) -> Result<(String, SessionTokens), crate::error::RelayError> {
+        let mut store = self.inner.lock().await;
+        if store.len() >= self.max_sessions {
+            tracing::warn!(
+                max_sessions = self.max_sessions,
+                "session store at capacity"
+            );
+            return Err(crate::error::RelayError::ServiceUnavailable(
+                "session capacity reached".to_string(),
+            ));
+        }
+        let (session_id, tokens, session) = self.new_session(contract, contract_hash, provider);
+        store.insert(session_id.clone(), session);
+        Ok((session_id, tokens))
+    }
+
+    /// Create a new session with generated tokens, without a capacity check.
+    /// Returns session ID and tokens.
     pub async fn create(
         &self,
         contract: Contract,
         contract_hash: String,
         provider: String,
     ) -> (String, SessionTokens) {
+        let (session_id, tokens, session) = self.new_session(contract, contract_hash, provider);
+        let mut store = self.inner.lock().await;
+        store.insert(session_id.clone(), session);
+        (session_id, tokens)
+    }
+
+    fn new_session(
+        &self,
+        contract: Contract,
+        contract_hash: String,
+        provider: String,
+    ) -> (String, SessionTokens, Session) {
+        let ttl = contract
+            .session_ttl_secs
+            .map(|secs| Duration::from_secs(u64::from(secs)).min(self.ttl))
+            .unwrap_or(self.ttl);
         let session_id = generate_session_id();
         let tokens = SessionTokens {
             initiator_submit: generate_token(),
@@ -159,12 +214,11 @@ impl SessionStore {
             created_at: Utc::now(),
             processing_started_at: None,
             metadata: None,
+            ttl,
+            inference_abort: None,
         };
 
-        let mut store = self.inner.lock().await;
-        store.insert(session_id.clone(), session);
-
-        (session_id, tokens)
+        (session_id, tokens, session)
     }
 
     /// Lock the store and apply a function to a session.
@@ -191,15 +245,18 @@ impl SessionStore {
 
     /// Reap expired sessions. Returns number of sessions removed.
     ///
+    /// Each session expires after its own TTL (see [`Session::ttl`]).
     /// Sessions with inference in flight are kept so the background task can
     /// write its result back. A session that stays in `Processing` for longer
-    /// than one TTL after inference started is treated as stuck: it moves to
-    /// `Aborted` with `Timeout`, its raw inputs are cleared, and it is removed
-    /// by a later pass once past its TTL.
+    /// than one TTL after inference started is treated as stuck: its
+    /// inference task is aborted, it moves to `Aborted` with `Timeout`, its
+    /// raw inputs are cleared, and it is removed by a later pass once past
+    /// its TTL.
     pub async fn reap_expired(&self) -> usize {
         let now = Utc::now();
-        let ttl_chrono =
-            chrono::Duration::from_std(self.ttl).unwrap_or(chrono::Duration::seconds(600));
+        let ttl_of = |session: &Session| {
+            chrono::Duration::from_std(session.ttl).unwrap_or(chrono::Duration::seconds(600))
+        };
         let mut store = self.inner.lock().await;
         let mut timed_out = std::collections::HashSet::new();
         for session in store.values_mut() {
@@ -207,8 +264,11 @@ impl SessionStore {
                 continue;
             }
             let started = session.processing_started_at.unwrap_or(session.created_at);
-            if now.signed_duration_since(started) >= ttl_chrono {
+            if now.signed_duration_since(started) >= ttl_of(session) {
                 tracing::warn!(session_id = %session.id, "session processing timed out");
+                if let Some(handle) = session.inference_abort.take() {
+                    handle.abort();
+                }
                 session.state = SessionState::Aborted;
                 session.abort_reason = Some(AbortReason::Timeout);
                 session.initiator_input = None;
@@ -222,20 +282,33 @@ impl SessionStore {
             // participants can observe the TIMEOUT status.
             timed_out.contains(id)
                 || session.state == SessionState::Processing
-                || now.signed_duration_since(session.created_at) < ttl_chrono
+                || now.signed_duration_since(session.created_at) < ttl_of(session)
         });
         before - store.len()
     }
 
-    /// Start the background reaper task.
+    /// Number of sessions currently held.
+    pub async fn len(&self) -> usize {
+        self.inner.lock().await.len()
+    }
+
+    /// Whether the store holds no sessions.
+    pub async fn is_empty(&self) -> bool {
+        self.inner.lock().await.is_empty()
+    }
+
+    /// Start the background reaper, restarted by a supervisor if it exits.
     pub fn start_reaper(self) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(60));
-            loop {
-                interval.tick().await;
-                let reaped = self.reap_expired().await;
-                if reaped > 0 {
-                    tracing::info!(reaped, "session reaper: expired sessions removed");
+        crate::supervise("session reaper", move || {
+            let store = self.clone();
+            async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(60));
+                loop {
+                    interval.tick().await;
+                    let reaped = store.reap_expired().await;
+                    if reaped > 0 {
+                        tracing::info!(reaped, "session reaper: expired sessions removed");
+                    }
                 }
             }
         })
@@ -548,5 +621,80 @@ mod tests {
             responder_cleared,
             "responder_input should be None after error"
         );
+    }
+
+    #[tokio::test]
+    async fn test_reaper_honours_contract_session_ttl() {
+        let store = SessionStore::new(Duration::from_secs(600));
+        let mut short = test_contract();
+        short.session_ttl_secs = Some(1);
+        let (short_id, _) = store
+            .create(short, "hash".to_string(), "anthropic".to_string())
+            .await;
+        let (default_id, _) = store
+            .create(test_contract(), "hash".to_string(), "anthropic".to_string())
+            .await;
+        store
+            .with_session(&short_id, |s| {
+                s.created_at -= chrono::Duration::seconds(2);
+            })
+            .await;
+        assert_eq!(store.reap_expired().await, 1);
+        assert!(store.get_state(&short_id).await.is_none());
+        assert!(store.get_state(&default_id).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_contract_session_ttl_never_exceeds_relay_ttl() {
+        let store = SessionStore::new(Duration::from_secs(60));
+        let mut long = test_contract();
+        long.session_ttl_secs = Some(3600);
+        let (id, _) = store
+            .create(long, "hash".to_string(), "anthropic".to_string())
+            .await;
+        let ttl = store.with_session(&id, |s| s.ttl).await.unwrap();
+        assert_eq!(ttl, Duration::from_secs(60));
+    }
+
+    #[tokio::test]
+    async fn test_try_create_refuses_at_capacity() {
+        let store = SessionStore::new(Duration::from_secs(600)).with_max_sessions(2);
+        for _ in 0..2 {
+            store
+                .try_create(test_contract(), "hash".to_string(), "anthropic".to_string())
+                .await
+                .unwrap();
+        }
+        let err = store
+            .try_create(test_contract(), "hash".to_string(), "anthropic".to_string())
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            crate::error::RelayError::ServiceUnavailable(_)
+        ));
+        assert_eq!(store.len().await, 2);
+    }
+
+    #[tokio::test]
+    async fn test_processing_timeout_aborts_inference_task() {
+        let store = SessionStore::new(Duration::from_millis(1));
+        let (session_id, _) = store
+            .create(test_contract(), "hash".to_string(), "anthropic".to_string())
+            .await;
+        let task = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+        });
+        let abort = task.abort_handle();
+        store
+            .with_session(&session_id, |s| {
+                s.state = SessionState::Processing;
+                s.inference_abort = Some(abort);
+            })
+            .await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        store.reap_expired().await;
+        let err = task.await.unwrap_err();
+        assert!(err.is_cancelled(), "inference task should be aborted");
     }
 }

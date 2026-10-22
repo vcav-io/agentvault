@@ -10,6 +10,7 @@ pub mod inbox_handlers;
 #[cfg(feature = "persistence")]
 pub mod inbox_sqlite;
 pub mod inbox_types;
+pub mod limits;
 pub mod profile_resolution;
 pub mod prompt_program;
 pub mod provider;
@@ -130,20 +131,50 @@ pub fn load_signing_key(
 
 const GIT_SHA: &str = env!("SELKEY_GIT_SHA");
 
-/// Pre-computed hashes needed to build a failure receipt when inference fails.
+/// Data needed to build a failure receipt when inference fails.
 /// Computed before `relay_core` so the data is available in the error arm.
 struct FailureReceiptContext {
     contract_hash: String,
-    output_schema_hash: String,
     input_commitments: Vec<receipt_core::InputCommitmentV3>,
-    prompt_template_hash: String,
-    model_profile_hash: Option<String>,
-    runtime_hash: String,
-    effective_model_id: String,
-    effective_max_tokens: u32,
-    entropy_bits: u32,
     entropy_budget_bits: Option<u32>,
-    policy_hash: String,
+    preflight: relay::ContractPreflight,
+}
+
+/// Run a background task under a supervisor that restarts it if it exits.
+///
+/// `make` builds the task future. If the task returns or panics, the
+/// supervisor logs it and starts a new one after a short delay, so a
+/// failure in one pass does not stop the background work for good.
+pub fn supervise<F, Fut>(name: &'static str, make: F) -> tokio::task::JoinHandle<()>
+where
+    F: Fn() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = ()> + Send + 'static,
+{
+    supervise_with_delay(name, std::time::Duration::from_secs(1), make)
+}
+
+fn supervise_with_delay<F, Fut>(
+    name: &'static str,
+    restart_delay: std::time::Duration,
+    make: F,
+) -> tokio::task::JoinHandle<()>
+where
+    F: Fn() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = ()> + Send + 'static,
+{
+    tokio::spawn(async move {
+        loop {
+            match tokio::spawn(make()).await {
+                Ok(()) => tracing::error!(task = name, "background task exited; restarting"),
+                Err(e) => tracing::error!(
+                    task = name,
+                    panicked = e.is_panic(),
+                    "background task failed; restarting"
+                ),
+            }
+            tokio::time::sleep(restart_delay).await;
+        }
+    })
 }
 
 pub struct AppState {
@@ -186,6 +217,8 @@ pub struct AppState {
     /// Operator bearer token (from SELKEY_OPERATOR_TOKEN). When set, it is
     /// required on POST /relay and POST /sessions.
     pub operator_token: Option<String>,
+    /// Operator limits and the rate limiters that enforce them.
+    pub limits: crate::limits::Limits,
 }
 
 // ============================================================================
@@ -311,7 +344,7 @@ async fn capabilities_handler(State(state): State<Arc<AppState>>) -> Json<Capabi
             .iter()
             .map(|p| p.to_string())
             .collect(),
-        entropy_enforcement: "ADVISORY",
+        entropy_enforcement: "GATE",
         receipt_schema_version: receipt_core::SCHEMA_VERSION_V3,
         enforcement_capabilities: enforcement_policy::supported_capability_strings(),
         available_schema_hashes,
@@ -325,8 +358,9 @@ async fn capabilities_handler(State(state): State<Arc<AppState>>) -> Json<Capabi
 
 async fn relay_handler(
     State(state): State<Arc<AppState>>,
-    // Authentication runs before the body is read.
+    // Authentication and rate limiting run before the body is read.
     _auth: auth::SingleShotAuth,
+    _rate: limits::SessionCreateAllowed,
     crate::strict_json::StrictJson(request): crate::strict_json::StrictJson<RelayRequest>,
 ) -> Result<Json<RelayResponse>, RelayError> {
     let response = relay::relay(request, &state).await?;
@@ -340,8 +374,9 @@ async fn relay_handler(
 /// POST /sessions — create a new bilateral session.
 async fn create_session_handler(
     State(state): State<Arc<AppState>>,
-    // Authentication runs before the body is read.
+    // Authentication and rate limiting run before the body is read.
     _auth: auth::OperatorAuth,
+    _rate: limits::SessionCreateAllowed,
     crate::strict_json::StrictJson(request): crate::strict_json::StrictJson<CreateSessionRequest>,
 ) -> Result<Json<CreateSessionResponse>, RelayError> {
     // Resolve and validate provider
@@ -350,20 +385,15 @@ async fn create_session_handler(
     // Validate the contract as received and compute its contract hash v2
     let accepted = relay::accept_contract(&request.contract)?;
 
-    // Validate contract has exactly 2 participants
-    if accepted.contract.participants.len() != 2 {
-        return Err(RelayError::ContractValidation(
-            "contract must have exactly 2 participants".to_string(),
-        ));
-    }
-    relay::validate_contract_key_fields(&accepted.contract)?;
+    // Run every contract check now, before any party submits input.
+    relay::preflight_contract(&accepted.contract, &provider, &state)?;
     let contract_hash = accepted.contract_hash;
 
     // Create session with tokens
     let (session_id, tokens) = state
         .session_store
-        .create(accepted.contract, contract_hash.clone(), provider)
-        .await;
+        .try_create(accepted.contract, contract_hash.clone(), provider)
+        .await?;
 
     Ok(Json(CreateSessionResponse {
         session_id,
@@ -487,9 +517,10 @@ async fn submit_input_handler(
         .await
         .ok_or(RelayError::Unauthorized)??;
 
-    // If both inputs received, spawn background inference task
+    // If both inputs received, start inference in its own task. Nothing
+    // after this point depends on the request staying connected.
     if both_ready {
-        spawn_inference(state.clone(), session_id.clone()).await;
+        start_inference(state.clone(), session_id.clone());
     }
 
     // Return current status
@@ -538,104 +569,97 @@ async fn take_inputs_for_inference(
         .await
 }
 
-/// Spawn the background inference task for a session.
-async fn spawn_inference(state: Arc<AppState>, session_id: String) {
+/// Start inference for a session whose inputs are both present.
+///
+/// The whole inference path (taking the inputs, preparing the failure
+/// receipt context, the provider call and recording the result) runs in a
+/// spawned task, so a client disconnect cannot interrupt it. If that task
+/// panics before recording a result, the session is moved to `Aborted`.
+fn start_inference(state: Arc<AppState>, session_id: String) -> tokio::task::JoinHandle<()> {
+    let store = state.session_store.clone();
+    spawn_guarded(store, session_id.clone(), run_inference(state, session_id))
+}
+
+/// Spawn a session task. If it panics or is cancelled before it records a
+/// result, a session still in `Processing` moves to `Aborted` with its
+/// inputs cleared.
+fn spawn_guarded<F>(store: SessionStore, session_id: String, task: F) -> tokio::task::JoinHandle<()>
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    tokio::spawn(async move {
+        if let Err(join_err) = tokio::spawn(task).await {
+            tracing::error!(
+                session_id = %session_id,
+                panicked = join_err.is_panic(),
+                "session task terminated unexpectedly"
+            );
+            abort_if_processing(&store, &session_id, AbortReason::ProviderError).await;
+        }
+    })
+}
+
+/// Move a session that is still `Processing` to `Aborted`, clearing inputs.
+async fn abort_if_processing(store: &SessionStore, session_id: &str, reason: AbortReason) {
+    store
+        .with_session(session_id, |session| {
+            session.initiator_input = None;
+            session.responder_input = None;
+            if session.state == SessionState::Processing {
+                session.state = SessionState::Aborted;
+                session.abort_reason = Some(reason);
+            }
+        })
+        .await;
+}
+
+/// Build the failure receipt context: the contract preflight plus the input
+/// commitments. `None` if either cannot be computed.
+fn failure_receipt_context(
+    state: &AppState,
+    contract: &types::Contract,
+    contract_hash: &str,
+    provider: &str,
+    input_a: &RelayInput,
+    input_b: &RelayInput,
+) -> Option<FailureReceiptContext> {
+    let preflight = relay::preflight_contract(contract, provider, state).ok()?;
+    let input_commitments = relay::compute_input_commitments(contract, input_a, input_b).ok()?;
+    Some(FailureReceiptContext {
+        contract_hash: contract_hash.to_string(),
+        input_commitments,
+        entropy_budget_bits: contract.entropy_budget_bits,
+        preflight,
+    })
+}
+
+/// Take the inputs and run inference for a session (see [`start_inference`]).
+async fn run_inference(state: Arc<AppState>, session_id: String) {
     let session_data = take_inputs_for_inference(&state.session_store, &session_id).await;
 
     let Some((contract, contract_hash, Some(input_a), Some(input_b), provider)) = session_data
     else {
         tracing::error!(session_id = %session_id, "session vanished or missing inputs before inference could start");
-        state
-            .session_store
-            .with_session(&session_id, |session| {
-                session.state = SessionState::Aborted;
-                session.abort_reason = Some(AbortReason::ProviderError);
-            })
-            .await;
+        abort_if_processing(
+            &state.session_store,
+            &session_id,
+            AbortReason::ProviderError,
+        )
+        .await;
         return;
     };
 
     // Pre-compute failure receipt context before relay_core — this data is
     // needed in the error arm to build a signed failure receipt, but some of
     // it (contract, inputs) will have been consumed by relay_core.
-    let failure_ctx = (|| -> Option<FailureReceiptContext> {
-        use sha2::{Digest as _, Sha256};
-
-        // Resolve the output schema with the same acceptance rules as relay_core
-        let resolved_schema = schema_acceptance::resolve_output_schema(
-            &contract,
-            &state.schema_registry,
-            state.is_dev,
-        )
-        .ok()?;
-        let output_schema_hash = resolved_schema.hash;
-
-        // Input commitments — same computation as relay_core
-        let input_commitments =
-            relay::compute_input_commitments(&contract, &input_a, &input_b).ok()?;
-
-        // Prompt template hash
-        let prompt_program = match &state.admitted_programs {
-            Some(programs) => programs.get(&contract.prompt_template_hash).cloned()?,
-            None => crate::prompt_program::load_prompt_program(
-                &state.prompt_program_dir,
-                &contract.prompt_template_hash,
-            )
-            .ok()?,
-        };
-        let prompt_template_hash = prompt_program.content_hash().ok()?;
-
-        // Model profile resolution (shared helper)
-        let resolved_profile = profile_resolution::resolve_runtime_profile(
-            &contract,
-            &state.admitted_profiles,
-            &state.prompt_program_dir,
-        )
-        .ok()?;
-        let model_profile_hash = resolved_profile.as_ref().map(|rt| rt.profile_hash.clone());
-
-        // Runtime hash
-        let git_sha = env!("SELKEY_GIT_SHA");
-        let runtime_hash = hex::encode(Sha256::digest(git_sha.as_bytes()));
-
-        let entropy_bits = resolved_schema.entropy_bits;
-
-        // Effective model ID and max tokens — profile-driven when available
-        let effective_model_id = match &resolved_profile {
-            Some(rt) => rt.model_id.clone(),
-            None => match provider.as_str() {
-                "anthropic" => state.anthropic_model_id.clone(),
-                "openai" => state.openai_model_id.clone(),
-                "gemini" => state.gemini_model_id.clone(),
-                _ => "unknown".to_string(),
-            },
-        };
-        let effective_max_tokens = match contract.max_completion_tokens {
-            Some(contract_max) => std::cmp::min(contract_max, state.max_completion_tokens),
-            None => state.max_completion_tokens,
-        };
-
-        // Resolve policy hash for the failure receipt
-        let resolved = state
-            .policy_registry
-            .resolve(contract.enforcement_policy_hash.as_deref())
-            .ok()?;
-        let policy_hash = resolved.hash.to_string();
-
-        Some(FailureReceiptContext {
-            contract_hash: contract_hash.clone(),
-            output_schema_hash,
-            input_commitments,
-            prompt_template_hash,
-            model_profile_hash,
-            runtime_hash,
-            effective_model_id,
-            effective_max_tokens,
-            entropy_bits,
-            entropy_budget_bits: contract.entropy_budget_bits,
-            policy_hash,
-        })
-    })();
+    let failure_ctx = failure_receipt_context(
+        &state,
+        &contract,
+        &contract_hash,
+        &provider,
+        &input_a,
+        &input_b,
+    );
 
     let inference = {
         let state = state.clone();
@@ -652,13 +676,7 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
             .await
         }
     };
-    tokio::spawn(complete_inference(
-        state,
-        session_id,
-        provider,
-        failure_ctx,
-        inference,
-    ));
+    complete_inference(state, session_id, failure_ctx, inference).await;
 }
 
 /// Drive an inference future to completion and record the outcome on the session.
@@ -671,7 +689,6 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
 async fn complete_inference<F>(
     state: Arc<AppState>,
     session_id: String,
-    provider: String,
     failure_ctx: Option<FailureReceiptContext>,
     inference: F,
 ) where
@@ -680,8 +697,21 @@ async fn complete_inference<F>(
         > + Send
         + 'static,
 {
-    let outcome = match tokio::spawn(inference).await {
+    let task = tokio::spawn(inference);
+    // Let the reaper abort the inference if the session times out.
+    let abort = task.abort_handle();
+    state
+        .session_store
+        .with_session(&session_id, |session| {
+            session.inference_abort = Some(abort);
+        })
+        .await;
+    let outcome = match task.await {
         Ok(result) => result,
+        Err(join_err) if join_err.is_cancelled() => {
+            tracing::warn!(session_id = %session_id, "inference task aborted");
+            Err(RelayError::Internal("inference task aborted".to_string()))
+        }
         Err(join_err) => {
             tracing::error!(
                 session_id = %session_id,
@@ -722,6 +752,7 @@ async fn complete_inference<F>(
                         return;
                     }
 
+                    session.inference_abort = None;
                     session.output = Some(result.output);
                     session.receipt = Some(result.receipt);
                     session.state = SessionState::Completed;
@@ -754,24 +785,27 @@ async fn complete_inference<F>(
 
             // Build failure receipt if context was pre-computed
             let failure_receipt = if let Some(ref ctx) = failure_ctx {
+                use sha2::{Digest as _, Sha256};
+                let runtime_hash = hex::encode(Sha256::digest(GIT_SHA.as_bytes()));
                 match relay::build_failure_receipt_v3(
                     abort_reason,
                     &session_id,
                     &ctx.contract_hash,
-                    &ctx.output_schema_hash,
+                    &ctx.preflight.schema.hash,
                     ctx.input_commitments.clone(),
-                    &ctx.prompt_template_hash,
-                    ctx.model_profile_hash.as_deref(),
-                    &ctx.effective_model_id,
-                    &provider,
-                    &ctx.runtime_hash,
-                    &ctx.policy_hash,
+                    &ctx.preflight.prompt_template_hash,
+                    ctx.preflight.model_profile_hash.as_deref(),
+                    &ctx.preflight.effective_model_id,
+                    &ctx.preflight.effective_provider,
+                    &runtime_hash,
+                    &ctx.preflight.policy_hash,
                     &state,
                     None, // inference_start not captured yet
                     None, // inference_end not captured yet
-                    ctx.effective_max_tokens,
-                    ctx.entropy_bits,
+                    ctx.preflight.effective_max_tokens,
+                    ctx.preflight.schema.entropy_bits,
                     ctx.entropy_budget_bits,
+                    ctx.preflight.budget_limit_bits,
                 ) {
                     Ok(receipt) => Some(receipt),
                     Err(re) => {
@@ -800,6 +834,7 @@ async fn complete_inference<F>(
                     if session.state != SessionState::Processing {
                         return;
                     }
+                    session.inference_abort = None;
                     session.state = SessionState::Aborted;
                     session.abort_reason = Some(abort_reason);
                     session.receipt = failure_receipt;
@@ -917,6 +952,7 @@ async fn session_metadata_handler(
 // ============================================================================
 
 pub fn build_router(state: Arc<AppState>) -> Router {
+    let max_body_bytes = state.limits.config.max_body_bytes;
     Router::new()
         .route("/health", get(health_handler))
         .route("/capabilities", get(capabilities_handler))
@@ -943,6 +979,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(inbox_handlers::cancel_invite_handler),
         )
         .route("/inbox/events", get(inbox_handlers::inbox_events_handler))
+        .layer(axum::extract::DefaultBodyLimit::max(max_body_bytes))
         .with_state(state)
 }
 
@@ -977,6 +1014,7 @@ mod tests {
             admitted_programs: None,
             admitted_profiles: None,
             operator_token: None,
+            limits: Default::default(),
         })
     }
 
@@ -996,6 +1034,146 @@ mod tests {
         _b: Option<RelayInput>,
     ) -> Result<(relay::RelayResult, relay::InferenceTiming), RelayError> {
         panic!("simulated provider panic");
+    }
+
+    async fn processing_session_with_inputs(state: &AppState) -> String {
+        let (session_id, _) = state
+            .session_store
+            .create(test_contract(), "hash".to_string(), "anthropic".to_string())
+            .await;
+        state
+            .session_store
+            .with_session(&session_id, |session| {
+                session.initiator_input = Some(RelayInput {
+                    role: "alice".to_string(),
+                    context: serde_json::json!({"text": "initiator input"}),
+                    commitment_nonce: crate::types::test_nonce(),
+                });
+                session.responder_input = Some(RelayInput {
+                    role: "bob".to_string(),
+                    context: serde_json::json!({"text": "responder input"}),
+                    commitment_nonce: crate::types::test_nonce(),
+                });
+                session.initiator_submitted = true;
+                session.responder_submitted = true;
+                session.state = SessionState::Processing;
+            })
+            .await;
+        session_id
+    }
+
+    async fn session_outcome(
+        state: &AppState,
+        session_id: &str,
+    ) -> (SessionState, Option<AbortReason>, bool) {
+        state
+            .session_store
+            .with_session(session_id, |s| {
+                (
+                    s.state,
+                    s.abort_reason,
+                    s.initiator_input.is_none() && s.responder_input.is_none(),
+                )
+            })
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_inference_runs_without_the_submitting_request() {
+        // The handler starts inference and returns; nothing awaits the task.
+        let state = test_state();
+        let session_id = processing_session_with_inputs(&state).await;
+        drop(start_inference(state.clone(), session_id.clone()));
+        let mut outcome = session_outcome(&state, &session_id).await;
+        for _ in 0..200 {
+            if outcome.0 != SessionState::Processing {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            outcome = session_outcome(&state, &session_id).await;
+        }
+        // The test contract cannot pass preflight, so inference fails: the
+        // session must still reach a terminal state with inputs cleared.
+        assert_eq!(outcome.0, SessionState::Aborted);
+        assert!(outcome.2, "inputs must be cleared");
+    }
+
+    #[tokio::test]
+    async fn test_panic_before_inference_aborts_session() {
+        let state = test_state();
+        let session_id = processing_session_with_inputs(&state).await;
+        let store = state.session_store.clone();
+        let sid = session_id.clone();
+        spawn_guarded(store.clone(), session_id.clone(), async move {
+            // Take the inputs (as inference setup does), then panic.
+            let _ = take_inputs_for_inference(&store, &sid).await;
+            panic!("simulated panic while preparing inference");
+        })
+        .await
+        .unwrap();
+        let (st, reason, cleared) = session_outcome(&state, &session_id).await;
+        assert_eq!(st, SessionState::Aborted);
+        assert_eq!(reason, Some(AbortReason::ProviderError));
+        assert!(cleared);
+    }
+
+    #[tokio::test]
+    async fn test_timed_out_session_aborts_running_inference() {
+        let state = Arc::new(AppState {
+            session_store: SessionStore::new(Duration::from_millis(20)),
+            ..Arc::try_unwrap(test_state()).ok().unwrap()
+        });
+        let session_id = processing_session_with_inputs(&state).await;
+        let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = finished.clone();
+        let inference = async move {
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            Err(RelayError::Internal("unreachable".to_string()))
+        };
+        let task = tokio::spawn(complete_inference(
+            state.clone(),
+            session_id.clone(),
+            None,
+            inference,
+        ));
+        // Let complete_inference register the abort handle, then time out.
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        state.session_store.reap_expired().await;
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("inference must be aborted, not left running")
+            .unwrap();
+        assert!(!finished.load(std::sync::atomic::Ordering::SeqCst));
+        let (st, reason, cleared) = session_outcome(&state, &session_id).await;
+        assert_eq!(st, SessionState::Aborted);
+        assert_eq!(reason, Some(AbortReason::Timeout));
+        assert!(cleared);
+    }
+
+    #[tokio::test]
+    async fn test_supervisor_restarts_failed_task() {
+        let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = runs.clone();
+        let handle = supervise_with_delay("test task", Duration::from_millis(1), move || {
+            let counter = counter.clone();
+            async move {
+                let n = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if n == 0 {
+                    panic!("first run fails");
+                }
+                std::future::pending::<()>().await;
+            }
+        });
+        for _ in 0..200 {
+            if runs.load(std::sync::atomic::Ordering::SeqCst) >= 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(runs.load(std::sync::atomic::Ordering::SeqCst) >= 2);
+        handle.abort();
     }
 
     #[test]
@@ -1100,7 +1278,7 @@ mod tests {
             })
             .await;
 
-        let (_, _, input_a, input_b, provider) =
+        let (_, _, input_a, input_b, _provider) =
             take_inputs_for_inference(&state.session_store, &session_id)
                 .await
                 .unwrap();
@@ -1117,7 +1295,7 @@ mod tests {
         assert!(!held, "session must not hold raw inputs during inference");
 
         let inference = panicking_inference(input_a, input_b);
-        complete_inference(state.clone(), session_id.clone(), provider, None, inference).await;
+        complete_inference(state.clone(), session_id.clone(), None, inference).await;
 
         let (st, reason, cleared) = state
             .session_store

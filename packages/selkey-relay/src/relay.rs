@@ -319,18 +319,57 @@ fn allowlist_matches_profile(entry: &str, profile_id: &str, profile_hash: &str) 
         || entry.strip_prefix("sha256:") == Some(profile_hash)
 }
 
-/// Core relay logic: validate → assemble → call → check → sign → return.
+/// Everything the relay resolves from a contract before any input is taken.
 ///
-/// Extracted from the single-shot `relay()` function so it can be reused by
-/// bilateral session processing.
-pub async fn relay_core(
+/// Produced by [`preflight_contract`], which runs every contract check the
+/// relay makes: participants, policy, model profile and allowlist, relay key
+/// pin, model constraints, TTLs, output schema acceptance, entropy limits,
+/// prompt program and provider availability. Session creation, invite
+/// creation and acceptance, and inference all run it, so a contract that
+/// would fail at inference is rejected before any party submits input.
+#[derive(Debug, Clone)]
+pub struct ContractPreflight {
+    /// Hash of the resolved enforcement policy.
+    pub policy_hash: String,
+    /// The resolved enforcement policy.
+    pub policy: crate::enforcement_policy::RelayEnforcementPolicy,
+    /// Provider that will run inference.
+    pub effective_provider: String,
+    /// Model that will run inference.
+    pub effective_model_id: String,
+    /// Content hash of the resolved model profile, if the contract binds one.
+    pub model_profile_hash: Option<String>,
+    /// Effective `max_completion_tokens`.
+    pub effective_max_tokens: u32,
+    /// The accepted output schema and its entropy upper bound.
+    pub schema: crate::schema_acceptance::ResolvedOutputSchema,
+    /// Entropy enforcement mode (contract value, `Gate` when absent).
+    pub entropy_mode: vault_family_types::EntropyEnforcementMode,
+    /// Per-session bit limit: the contract budget, capped by the operator limit.
+    pub budget_limit_bits: u32,
+    /// The prompt program and its content hash.
+    pub program: crate::prompt_program::PromptProgram,
+    pub prompt_template_hash: String,
+}
+
+fn provider_configured(state: &AppState, provider: &str) -> bool {
+    match provider {
+        "anthropic" => state.anthropic_api_key.is_some(),
+        "openai" => state.openai_api_key.is_some(),
+        "gemini" => state.gemini_api_key.is_some(),
+        _ => false,
+    }
+}
+
+/// Run every contract check that does not need the participants' inputs.
+///
+/// `provider_name` is the provider resolved from the request (see
+/// [`crate::resolve_provider`]); a model profile in the contract overrides it.
+pub fn preflight_contract(
     contract: &Contract,
-    contract_hash: &str,
-    input_a: &RelayInput,
-    input_b: &RelayInput,
     provider_name: &str,
     state: &AppState,
-) -> Result<(RelayResult, InferenceTiming), RelayError> {
+) -> Result<ContractPreflight, RelayError> {
     // 1. Validate contract has exactly 2 participants
     if contract.participants.len() != 2 {
         return Err(RelayError::ContractValidation(
@@ -343,7 +382,7 @@ pub async fn relay_core(
         .policy_registry
         .resolve(contract.enforcement_policy_hash.as_deref())?;
     let resolved_hash = resolved.hash.to_string();
-    let resolved_policy = resolved.policy;
+    let resolved_policy = resolved.policy.clone();
 
     // Warn if contract omits policy hash on a multi-policy relay
     if contract.enforcement_policy_hash.is_none() && state.policy_registry.len() > 1 {
@@ -384,30 +423,26 @@ pub async fn relay_core(
     }
 
     let (effective_provider, effective_model_id, model_profile_hash) = match &resolved_profile {
-        Some(rt) => {
-            tracing::info!(
-                profile_id = %rt.profile.profile_id,
-                provider = %rt.provider,
-                model_id = %rt.model_id,
-                "profile-driven dispatch"
-            );
-            (
-                rt.provider.as_str(),
-                rt.model_id.clone(),
-                Some(rt.profile_hash.clone()),
-            )
-        }
+        Some(rt) => (
+            rt.provider.clone(),
+            rt.model_id.clone(),
+            Some(rt.profile_hash.clone()),
+        ),
         None => {
-            tracing::warn!("session running in legacy unbound mode (no model_profile_id)");
             let model = match provider_name {
                 "anthropic" => state.anthropic_model_id.clone(),
                 "openai" => state.openai_model_id.clone(),
                 "gemini" => state.gemini_model_id.clone(),
                 _ => String::new(),
             };
-            (provider_name, model, None)
+            (provider_name.to_string(), model, None)
         }
     };
+    if !provider_configured(state, &effective_provider) {
+        return Err(RelayError::ContractValidation(format!(
+            "provider '{effective_provider}' is not configured on this relay"
+        )));
+    }
 
     // 2b2. Validate relay verifying key pinning (#184)
     validate_contract_key_fields(contract)?;
@@ -426,9 +461,7 @@ pub async fn relay_core(
     // 2c. Validate provider against contract allowed_providers (#151 gap 3, #261)
     if let Some(ref constraints) = contract.model_constraints {
         if !constraints.allowed_providers.is_empty()
-            && !constraints
-                .allowed_providers
-                .contains(&effective_provider.to_string())
+            && !constraints.allowed_providers.contains(&effective_provider)
         {
             return Err(RelayError::ContractValidation(format!(
                 "provider '{}' not in contract model_constraints.allowed_providers {:?}",
@@ -481,25 +514,28 @@ pub async fn relay_core(
         None => state.max_completion_tokens,
     };
 
-    // 3. Contract hash v2 was computed from the contract JSON as received.
-
-    // 3b. Resolve and accept the output schema (registry schemas; strict inline
-    //     schemas in dev only) and compute its entropy upper bound. Any failure
-    //     rejects the contract before the provider is called.
-    let resolved_schema = crate::schema_acceptance::resolve_output_schema(
+    // 3. Resolve and accept the output schema (registry schemas; strict inline
+    //    schemas in dev only) and compute its entropy upper bound.
+    let schema = crate::schema_acceptance::resolve_output_schema(
         contract,
         &state.schema_registry,
         state.is_dev,
     )?;
-    let effective_schema = resolved_schema.schema;
-    let output_schema_hash = resolved_schema.hash;
-    let entropy_bits = resolved_schema.entropy_bits;
+    let entropy_bits = schema.entropy_bits;
 
-    // 3c. Enforce the contract entropy budget per contract mode (#151 gap 6)
+    // 3a. The operator's per-session cap applies to every contract,
+    //     whatever its budget or enforcement mode.
+    let operator_cap = state.limits.config.max_entropy_bits_per_session;
+    if entropy_bits > operator_cap {
+        return Err(RelayError::ContractValidation(format!(
+            "schema entropy upper bound ({entropy_bits} bits) exceeds this relay's per-session maximum ({operator_cap} bits)"
+        )));
+    }
+
+    // 3b. Enforce the contract entropy budget. Gate is the default mode.
     let entropy_mode = contract
         .entropy_enforcement
-        .unwrap_or(vault_family_types::EntropyEnforcementMode::Advisory);
-
+        .unwrap_or(vault_family_types::EntropyEnforcementMode::Gate);
     if let Some(budget) = contract.entropy_budget_bits {
         if entropy_bits > budget {
             match entropy_mode {
@@ -519,6 +555,9 @@ pub async fn relay_core(
             }
         }
     }
+    let budget_limit_bits = contract
+        .entropy_budget_bits
+        .map_or(operator_cap, |budget| budget.min(operator_cap));
 
     // 4. Load and validate prompt program
     let program = match &state.admitted_programs {
@@ -533,6 +572,48 @@ pub async fn relay_core(
             })?,
         None => load_prompt_program(&state.prompt_program_dir, &contract.prompt_template_hash)?,
     };
+    let prompt_template_hash = program.content_hash()?;
+
+    Ok(ContractPreflight {
+        policy_hash: resolved_hash,
+        policy: resolved_policy,
+        effective_provider,
+        effective_model_id,
+        model_profile_hash,
+        effective_max_tokens,
+        schema,
+        entropy_mode,
+        budget_limit_bits,
+        program,
+        prompt_template_hash,
+    })
+}
+
+/// Core relay logic: validate → assemble → call → check → sign → return.
+///
+/// Extracted from the single-shot `relay()` function so it can be reused by
+/// bilateral session processing.
+pub async fn relay_core(
+    contract: &Contract,
+    contract_hash: &str,
+    input_a: &RelayInput,
+    input_b: &RelayInput,
+    provider_name: &str,
+    state: &AppState,
+) -> Result<(RelayResult, InferenceTiming), RelayError> {
+    // 1-4. The same contract checks as at session and invite creation.
+    let preflight = preflight_contract(contract, provider_name, state)?;
+    let effective_provider = preflight.effective_provider.as_str();
+    let effective_model_id = preflight.effective_model_id.clone();
+    let effective_max_tokens = preflight.effective_max_tokens;
+    let effective_schema = preflight.schema.schema.clone();
+    let output_schema_hash = preflight.schema.hash.clone();
+    let entropy_bits = preflight.schema.entropy_bits;
+    let entropy_mode = preflight.entropy_mode;
+    let program = &preflight.program;
+    if preflight.model_profile_hash.is_none() {
+        tracing::warn!("session running in legacy unbound mode (no model_profile_id)");
+    }
 
     // 5. Assemble provider request
     let assembled = program.assemble(contract, input_a, input_b)?;
@@ -600,13 +681,13 @@ pub async fn relay_core(
     validate_output_schema(&output, &effective_schema)?;
 
     // 8b. Enforcement rules: reject forbidden characters in string values
-    validate_output_enforcement_rules(&output, &resolved_policy.rules)?;
+    validate_output_enforcement_rules(&output, &preflight.policy.rules)?;
 
     // 10. Generate session ID
     let session_id = hex::encode(Sha256::digest(uuid::Uuid::new_v4().as_bytes()));
 
     // 11. Build and sign the v3 receipt
-    let prompt_template_hash = program.content_hash()?;
+    let prompt_template_hash = preflight.prompt_template_hash.as_str();
     // runtime_hash: real git SHA embedded at build time by build.rs
     let runtime_hash = hex::encode(Sha256::digest(GIT_SHA.as_bytes()));
 
@@ -621,12 +702,12 @@ pub async fn relay_core(
         &output_schema_hash,
         &output,
         input_commitments,
-        &prompt_template_hash,
-        model_profile_hash.as_deref(),
+        prompt_template_hash,
+        preflight.model_profile_hash.as_deref(),
         &effective_model_id,
         effective_provider,
         &runtime_hash,
-        &resolved_hash,
+        &preflight.policy_hash,
         state,
         inference_start,
         inference_end,
@@ -634,6 +715,7 @@ pub async fn relay_core(
         effective_max_tokens,
         entropy_bits,
         contract.entropy_budget_bits,
+        preflight.budget_limit_bits,
     )?;
 
     let timing = InferenceTiming {
@@ -704,6 +786,7 @@ fn build_receipt_v3(
     effective_max_tokens: u32,
     entropy_bits: u32,
     entropy_budget_bits: Option<u32>,
+    budget_limit_bits: u32,
 ) -> Result<ReceiptV3, RelayError> {
     let output_hash = hash_json_v3(output)
         .map_err(|e| RelayError::ReceiptSigning(format!("output canonicalization: {e}")))?;
@@ -770,7 +853,7 @@ fn build_receipt_v3(
                 scope: BudgetScope::Session,
                 bits_used_before: 0,
                 bits_used_after: entropy_bits,
-                budget_limit: entropy_budget_bits.unwrap_or(128),
+                budget_limit: budget_limit_bits,
             }),
         },
         provider_attestation: None,
@@ -826,6 +909,7 @@ pub fn build_failure_receipt_v3(
     effective_max_tokens: u32,
     entropy_bits: u32,
     entropy_budget_bits: Option<u32>,
+    budget_limit_bits: u32,
 ) -> Result<ReceiptV3, RelayError> {
     let (status, signal_class) = abort_reason_to_receipt_status(abort_reason);
 
@@ -895,7 +979,7 @@ pub fn build_failure_receipt_v3(
                 scope: BudgetScope::Session,
                 bits_used_before: 0,
                 bits_used_after: 0, // no capacity consumed on failure
-                budget_limit: entropy_budget_bits.unwrap_or(128),
+                budget_limit: budget_limit_bits,
             }),
         },
         provider_attestation: None,
@@ -1046,6 +1130,7 @@ mod tests {
             admitted_programs: None,
             admitted_profiles: None,
             operator_token: None,
+            limits: Default::default(),
         }
     }
 
@@ -1115,6 +1200,7 @@ mod tests {
             4096,
             6,
             Some(128),
+            64,
         )
         .expect("failure receipt should build");
 
@@ -1159,6 +1245,7 @@ mod tests {
             4096,
             10,
             None,
+            64,
         )
         .expect("failure receipt should build");
 
@@ -1943,6 +2030,7 @@ mod tests {
             4096,
             10,
             None,
+            64,
         )
         .expect("failure receipt should build");
 

@@ -752,11 +752,20 @@ The result is a conservative upper-bound estimate recorded in the receipt as
 ### 10.3 Contract Budget
 
 If `contract.entropy_budget_bits` is set, the relay compares the computed bound against
-it. In the current protocol version, this comparison is **advisory only** — a budget
-overrun is logged but does not abort the session.
+it when the session or invite is created, before any input is submitted. With
+`entropy_enforcement` `Gate` (the default when the field is absent) or `Strict`, a bound
+above the budget rejects the contract. With `Advisory`, an overrun is logged only.
 
-The `GET /capabilities` endpoint declares the enforcement level in
-`entropy_enforcement`: either `"ADVISORY"` or `"GATE"`.
+Independently of the contract, the relay rejects any schema whose bound exceeds its
+per-session cap (`SELKEY_MAX_ENTROPY_BITS_PER_SESSION`, default 64 bits). The contract
+cannot raise this cap. `budget_usage.budget_limit` in the receipt is the contract budget
+capped by the operator limit, or the operator limit when the contract has no budget.
+
+The `GET /capabilities` endpoint declares the default enforcement level in
+`entropy_enforcement` (`"GATE"`).
+
+These limits apply per session only; see the threat model's section on probing across
+sessions.
 
 ### 10.4 Budget Usage Record
 

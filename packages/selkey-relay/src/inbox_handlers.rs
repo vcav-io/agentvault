@@ -27,8 +27,26 @@ pub async fn create_invite_handler(
         CreateInviteRequest,
     >,
 ) -> Result<Json<CreateInviteResponse>, RelayError> {
+    state.limits.invite_creates.check(&agent_id)?;
+
     // Resolve provider (empty string → auto-select first configured)
     request.provider = resolve_provider(&request.provider, &state)?;
+
+    // Invites go only to registered agents, so per-recipient state stays
+    // bounded by the registry.
+    if state
+        .agent_registry
+        .get_agent(&request.to_agent_id)
+        .is_none()
+    {
+        return Err(RelayError::ContractValidation(
+            "to_agent_id is not a registered agent".to_string(),
+        ));
+    }
+
+    // Run every contract check now, before the invite is stored.
+    let accepted = crate::relay::accept_contract(&request.contract)?;
+    crate::relay::preflight_contract(&accepted.contract, &request.provider, &state)?;
 
     let pubkey = resolve_sender_pubkey(
         request.from_agent_pubkey.as_deref(),
@@ -102,11 +120,14 @@ pub async fn accept_invite_handler(
 ) -> Result<Json<AcceptInviteResponse>, RelayError> {
     let response = state
         .inbox_store
-        .accept_invite(
+        .accept_invite_checked(
             &invite_id,
             &agent_id,
             request.expected_contract_hash.as_deref(),
             &state.session_store,
+            |contract, provider| {
+                crate::relay::preflight_contract(contract, provider, &state).map(|_| ())
+            },
         )
         .await?;
     Ok(Json(response))
