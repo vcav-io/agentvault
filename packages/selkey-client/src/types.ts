@@ -13,7 +13,10 @@ export type AbortReason = 'TIMEOUT' | 'SCHEMA_VALIDATION' | 'PROVIDER_ERROR' | '
 
 export interface RelayClientConfig {
   relay_url: string;
+  /** Time limit for one request, including reading the response body (default 30 s). */
   timeout_ms?: number;
+  /** Largest response body accepted from the relay, in bytes (default 8 MiB). */
+  max_response_bytes?: number;
   /**
    * Operator bearer token for relays that run with SELKEY_OPERATOR_TOKEN.
    * Sent as `Authorization: Bearer <token>` on session creation

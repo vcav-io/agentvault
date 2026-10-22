@@ -58,7 +58,7 @@ export function normalizeRelayUrl(url: string): string | null {
   return `${parsed.protocol}//${parsed.host}${pathname}`;
 }
 
-function isLoopbackHost(hostname: string): boolean {
+export function isLoopbackHost(hostname: string): boolean {
   const host = hostname.toLowerCase();
   if (host === 'localhost') return true;
   if (host === '[::1]') return true;

@@ -11,6 +11,7 @@ import type {
   SessionOutputResponse,
 } from './types.js';
 import { isValidCommitmentNonce } from './commitment-v3.js';
+import { boundedFetch } from './bounded-fetch.js';
 
 class RelayHttpError extends Error {
   constructor(
@@ -38,19 +39,15 @@ async function relayFetch(
   options: RequestInit,
 ): Promise<Response> {
   const url = `${config.relay_url.replace(/\/$/, '')}${path}`;
-  const controller = new AbortController();
-  const timeoutMs = config.timeout_ms ?? 30_000;
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { ...options, signal: controller.signal });
-    if (!res.ok) {
-      const body = await res.text();
-      throw new RelayHttpError(res.status, body);
-    }
-    return res;
-  } finally {
-    clearTimeout(timer);
+  const res = await boundedFetch(url, options, {
+    timeoutMs: config.timeout_ms ?? 30_000,
+    maxBytes: config.max_response_bytes,
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new RelayHttpError(res.status, body);
   }
+  return res;
 }
 
 export async function createSession(

@@ -186,6 +186,7 @@ These enable the AFAL direct transport for INITIATE and RESPOND session modes (a
 | `SELKEY_AFAL_TRUSTED_AGENTS` | No | — | JSON array of trusted agents: `[{"agentId":"...","publicKeyHex":"..."}]`. Seeds the agent pin store (see below) |
 | `SELKEY_AFAL_ALLOWED_PURPOSES` | No | `MEDIATION` | Comma-separated list of allowed purpose codes (e.g. `MEDIATION,COMPATIBILITY`). Also the purposes RESPOND accepts when `expected_purpose` is omitted |
 | `SELKEY_AFAL_PEER_DESCRIPTOR_URL` | For INITIATE | — | URL of the peer agent's descriptor (used in INITIATE mode) |
+| `SELKEY_AFAL_PEER_ENDPOINT_ORIGINS` | No | — | Comma-separated origins (e.g. `https://bob.example.com:9443`) that the peer's PROPOSE, COMMIT, negotiate and A2A endpoints may use besides the origin of `SELKEY_AFAL_PEER_DESCRIPTOR_URL`. Endpoints on any other origin are refused. With `SELKEY_ENV=dev`, loopback endpoints are also accepted when the descriptor URL is on loopback |
 | `SELKEY_AFAL_ADVERTISE_AFAL_ENDPOINT` | No | `true` | Set to `false` to publish an A2A-only Agent Card (no AFAL endpoint) |
 | `SELKEY_AFAL_REQUIRE_SIGNED_CARDS` | No | — | No longer has an effect. An A2A agent card is used only if its `card_signature` verifies under the peer's pinned key; endpoints and relay hints are never taken from an unsigned card (discovery falls back to the signed AFAL descriptor) |
 | `SELKEY_AGENT_PIN_RESEED` | No | — | Lets configured keys replace stored pins that differ from them; see [Agent identity pins](#agent-identity-pins) |

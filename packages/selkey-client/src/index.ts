@@ -28,6 +28,15 @@ export {
   verifyInputCommitmentV3,
 } from './commitment-v3.js';
 export { computeContractHashV2, normalizeContractV2 } from './contract-hash-v2.js';
+export {
+  boundedFetch,
+  readBodyLimited,
+  ResponseTooLargeError,
+  UnexpectedRedirectError,
+  DEFAULT_FETCH_TIMEOUT_MS,
+  DEFAULT_MAX_RESPONSE_BYTES,
+} from './bounded-fetch.js';
+export type { BoundedFetchOptions } from './bounded-fetch.js';
 
 export type {
   ArtefactKind,
