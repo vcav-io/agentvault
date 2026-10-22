@@ -91,7 +91,7 @@ describe('demo ui smoke flow', () => {
   });
 
   it('refuses requests for other Host names and unmarked state-changing requests', async () => {
-    const byHost = await fetchStatus(`attacker.example:${PORT}`);
+    const byHost = await fetchStatus(`other-host.example:${PORT}`);
     expect(byHost).toBe(421);
     const unmarked = await fetch(`${BASE_URL}/api/reset`, {
       method: 'POST',
@@ -104,7 +104,7 @@ describe('demo ui smoke flow', () => {
       headers: {
         'Content-Type': 'application/json',
         'X-Selkey-Demo-Request': '1',
-        Origin: 'http://attacker.example',
+        Origin: 'http://other-host.example',
       },
       body: '{}',
     });

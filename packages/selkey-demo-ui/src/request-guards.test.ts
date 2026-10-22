@@ -69,7 +69,7 @@ describe('demo Host header validation', () => {
   });
 
   it('refuses other hosts, other ports and a missing Host', async () => {
-    expect(await request({ method: 'GET', path: '/api/status', headers: { Host: `attacker.example:${port}` } })).toBe(421);
+    expect(await request({ method: 'GET', path: '/api/status', headers: { Host: `other-host.example:${port}` } })).toBe(421);
     expect(await request({ method: 'GET', path: '/api/status', headers: { Host: 'localhost:1' } })).toBe(421);
     expect(await request({ method: 'GET', path: '/api/status', headers: { Host: 'localhost' } })).toBe(421);
     expect(isAllowedHost(undefined, buildAllowedHosts({ port }))).toBe(false);
@@ -77,7 +77,7 @@ describe('demo Host header validation', () => {
 
   it('refuses state-changing requests for other hosts even with the marker header', async () => {
     expect(
-      await request({ method: 'POST', path: '/api/reset', headers: json(`attacker.example:${port}`), body: '{}' }),
+      await request({ method: 'POST', path: '/api/reset', headers: json(`other-host.example:${port}`), body: '{}' }),
     ).toBe(421);
   });
 });
@@ -125,7 +125,7 @@ describe('demo same-origin checks on POST', () => {
       await request({
         method: 'POST',
         path: '/api/reset',
-        headers: json(host, { Origin: 'http://attacker.example' }),
+        headers: json(host, { Origin: 'http://other-host.example' }),
         body: '{}',
       }),
     ).toBe(403);
