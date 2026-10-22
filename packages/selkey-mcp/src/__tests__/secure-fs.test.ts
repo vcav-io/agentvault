@@ -125,7 +125,7 @@ describe('lock files', () => {
   it('does not remove a fresh lock that replaced the stale one it observed', () => {
     const lock = path.join(tmp, 'y.lock');
     fs.writeFileSync(lock, 'old');
-    const observed = fs.statSync(lock);
+    const observed = fs.readFileSync(lock, 'utf8');
     // Another process takes the lock over before this one acts.
     const fresh = path.join(tmp, 'y.fresh');
     fs.writeFileSync(fresh, 'new');
@@ -138,7 +138,7 @@ describe('lock files', () => {
   it('removes the stale lock it observed', () => {
     const lock = path.join(tmp, 'z.lock');
     fs.writeFileSync(lock, 'old');
-    expect(removeLockIfUnchanged(lock, fs.statSync(lock))).toBe(true);
+    expect(removeLockIfUnchanged(lock, 'old')).toBe(true);
     expect(fs.readdirSync(tmp)).toEqual([]);
   });
 });
