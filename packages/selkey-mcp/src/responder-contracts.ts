@@ -48,18 +48,27 @@ function tryBuild(fn: () => RelayContract | undefined): RelayContract | undefine
  * participants, and return their hashes.
  *
  * `participants` is [initiator, responder], matching the contract layout.
+ * `relayKeys` lists the `relay_verifying_key_hex` values to accept
+ * (`undefined` = no relay key in the contract); defaults to none.
  */
 export async function buildExpectedContractHashes(params: {
   purposes: string[];
   participants: [string, string];
+  relayKeys?: Array<string | undefined>;
 }): Promise<Set<string>> {
   const hashes = new Set<string>();
   const participants = [...params.participants];
   const profiles = listKnownModelProfiles();
   const purposes = new Set(params.purposes);
+  const relayKeys = params.relayKeys ?? [undefined];
 
   const add = (contract: RelayContract | undefined) => {
-    if (contract) hashes.add(computeRelayContractHash(contract));
+    if (!contract) return;
+    for (const key of relayKeys) {
+      hashes.add(
+        computeRelayContractHash(key ? { ...contract, relay_verifying_key_hex: key } : contract),
+      );
+    }
   };
 
   for (const purpose of purposes) {

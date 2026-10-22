@@ -88,7 +88,7 @@ beforeEach(() => {
   mockPollUntilDone.mockResolvedValue({ state: 'PROCESSING' });
   mockGetStatus.mockResolvedValue({ state: 'PROCESSING' });
   mockGetOutput.mockResolvedValue({ state: 'COMPLETED', output: {} });
-  process.env['SELKEY_RELAY_URL'] = 'http://relay.test';
+  process.env['SELKEY_RELAY_URL'] = 'https://relay.test';
   process.env['SELKEY_AGENT_ID'] = 'alice-demo';
   delete process.env['SELKEY_RESUME_TOKEN_SECRET'];
 });

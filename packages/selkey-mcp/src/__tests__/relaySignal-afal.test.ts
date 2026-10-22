@@ -139,7 +139,7 @@ beforeEach(() => {
   _resetHandlesForTesting();
   // Disable bounded polling — single check, no sleep
   _setDiscoverPollConfigForTesting(0, 0);
-  process.env['SELKEY_RELAY_URL'] = 'http://relay.test';
+  process.env['SELKEY_RELAY_URL'] = 'https://relay.test';
   process.env['SELKEY_AGENT_ID'] = 'alice-demo';
   vi.mocked(createAndSubmit).mockClear();
 });
@@ -232,7 +232,7 @@ describe('INITIATE with AFAL', () => {
                 uri: SELKEY_A2A_EXTENSION_URI,
                 params: {
                   public_key_hex: PEER_PUBKEY,
-                  relay_url: 'http://relay.from.card',
+                  relay_url: 'https://relay.from.card',
                   supported_purposes: ['MEDIATION'],
                   afal_endpoint: 'http://peer.example.com/afal',
                 },
@@ -268,7 +268,7 @@ describe('INITIATE with AFAL', () => {
       agentId: 'alice-demo',
       seedHex: TEST_SEED,
       localDescriptor: makeLocalDescriptor(),
-      relayUrl: 'http://relay.test',
+      relayUrl: 'https://relay.test',
       peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
     });
 
@@ -280,7 +280,7 @@ describe('INITIATE with AFAL', () => {
             uri: SELKEY_A2A_EXTENSION_URI,
             params: {
               public_key_hex: PEER_PUBKEY,
-              relay_url: 'http://relay.from.card',
+              relay_url: 'https://relay.from.card',
               supported_purposes: ['MEDIATION'],
               afal_endpoint: 'http://peer.example.com/afal',
             },
@@ -304,14 +304,14 @@ describe('INITIATE with AFAL', () => {
     );
 
     expect(vi.mocked(createAndSubmit)).toHaveBeenCalledWith(
-      { relay_url: 'http://relay.test' },
+      { relay_url: 'https://relay.test' },
       expect.any(Object),
       'hello',
       'initiator',
       expect.stringMatching(/^[0-9a-f]{64}$/),
     );
     expect(vi.mocked(createAndSubmit)).not.toHaveBeenCalledWith(
-      { relay_url: 'http://relay.from.card' },
+      { relay_url: 'https://relay.from.card' },
       expect.anything(),
       expect.anything(),
       expect.anything(),
@@ -333,7 +333,7 @@ describe('INITIATE with AFAL', () => {
           session_id: 'sess-123',
           responder_submit_token: 'resp-submit',
           responder_read_token: 'resp-read',
-          relay_url: 'http://relay.test',
+          relay_url: 'https://relay.test',
         },
         afalPropose: {
           purpose_code: 'MEDIATION',
@@ -365,7 +365,7 @@ describe('INITIATE with AFAL', () => {
           session_id: 'sess-456',
           responder_submit_token: 'resp-submit',
           responder_read_token: 'resp-read',
-          relay_url: 'http://relay.test',
+          relay_url: 'https://relay.test',
         },
         afalPropose: {
           purpose_code: 'MEDIATION',
@@ -411,7 +411,7 @@ describe('INITIATE with AFAL', () => {
                 uri: SELKEY_A2A_EXTENSION_URI,
                 params: {
                   public_key_hex: PEER_PUBKEY,
-                  relay_url: 'http://relay.from.card',
+                  relay_url: 'https://relay.from.card',
                   supported_purposes: ['MEDIATION'],
                   a2a_send_message_url: 'http://peer.example.com/a2a/send-message',
                   afal_endpoint: 'http://peer.example.com/afal',
@@ -494,7 +494,7 @@ describe('INITIATE with AFAL', () => {
     expect(proposal['acceptable_offers']).toBeDefined();
 
     expect(vi.mocked(createAndSubmit)).toHaveBeenCalledWith(
-      { relay_url: 'http://relay.test' },
+      { relay_url: 'https://relay.test' },
       expect.objectContaining({
         purpose_code: 'MEDIATION',
         model_profile_id: 'api-claude-sonnet-v1',
@@ -539,7 +539,7 @@ describe('INITIATE with AFAL', () => {
                 uri: SELKEY_A2A_EXTENSION_URI,
                 params: {
                   public_key_hex: PEER_PUBKEY,
-                  relay_url: 'http://relay.from.card',
+                  relay_url: 'https://relay.from.card',
                   supported_purposes: ['MEDIATION', 'COMPATIBILITY'],
                   a2a_send_message_url: 'http://peer.example.com/a2a/send-message',
                   afal_endpoint: 'http://peer.example.com/afal',
@@ -637,7 +637,7 @@ describe('INITIATE with AFAL', () => {
       'selkey.compatibility.v1.standard',
     ]);
     expect(vi.mocked(createAndSubmit)).toHaveBeenCalledWith(
-      { relay_url: 'http://relay.test' },
+      { relay_url: 'https://relay.test' },
       expect.objectContaining({
         purpose_code: 'MEDIATION',
       }),
@@ -669,7 +669,7 @@ describe('INITIATE with AFAL', () => {
                 uri: SELKEY_A2A_EXTENSION_URI,
                 params: {
                   public_key_hex: PEER_PUBKEY,
-                  relay_url: 'http://relay.from.card',
+                  relay_url: 'https://relay.from.card',
                   supported_purposes: ['MEDIATION'],
                   supported_topic_codes: ['salary_alignment', 'reference_check'],
                   supports_topic_alignment: true,
@@ -900,7 +900,7 @@ describe('INITIATE with AFAL', () => {
                 uri: SELKEY_A2A_EXTENSION_URI,
                 params: {
                   public_key_hex: PEER_PUBKEY,
-                  relay_url: 'http://relay.from.card',
+                  relay_url: 'https://relay.from.card',
                   supported_purposes: ['MEDIATION'],
                   a2a_send_message_url: 'http://peer.example.com/a2a/send-message',
                   afal_endpoint: 'http://peer.example.com/afal',
@@ -982,7 +982,7 @@ describe('INITIATE with AFAL', () => {
                 uri: SELKEY_A2A_EXTENSION_URI,
                 params: {
                   public_key_hex: PEER_PUBKEY,
-                  relay_url: 'http://relay.from.card',
+                  relay_url: 'https://relay.from.card',
                   supported_purposes: ['MEDIATION'],
                   supported_topic_codes: ['technical_architecture'],
                   supports_topic_alignment: true,
@@ -1065,7 +1065,7 @@ describe('INITIATE with AFAL', () => {
                 uri: SELKEY_A2A_EXTENSION_URI,
                 params: {
                   public_key_hex: PEER_PUBKEY,
-                  relay_url: 'http://relay.from.card',
+                  relay_url: 'https://relay.from.card',
                   supported_purposes: ['MEDIATION'],
                   a2a_send_message_url: 'http://peer.example.com/a2a/send-message',
                   afal_endpoint: 'http://peer.example.com/afal',
@@ -1145,7 +1145,7 @@ describe('legacy payload type guard (isRelayInvitePayload)', () => {
         session_id: true, // truthy but not string — passes pre-filter, fails type guard
         responder_submit_token: 'sub-tok',
         responder_read_token: 'read-tok',
-        relay_url: 'http://relay.test',
+        relay_url: 'https://relay.test',
       },
     };
 
@@ -1172,7 +1172,7 @@ describe('legacy payload type guard (isRelayInvitePayload)', () => {
         session_id: 42, // should be string
         responder_submit_token: 'sub-tok',
         responder_read_token: 'read-tok',
-        relay_url: 'http://relay.test',
+        relay_url: 'https://relay.test',
       },
     };
 
@@ -1219,7 +1219,7 @@ describe('RESPOND with AFAL', () => {
         session_id: 'sess-bob',
         responder_submit_token: 'sub-tok',
         responder_read_token: 'read-tok',
-        relay_url: 'http://relay.test',
+        relay_url: 'https://relay.test',
       },
       afalPropose,
     };
@@ -1269,7 +1269,7 @@ describe('RESPOND with AFAL', () => {
         session_id: 'sess-bob',
         responder_submit_token: 'sub-tok',
         responder_read_token: 'read-tok',
-        relay_url: 'http://relay.test',
+        relay_url: 'https://relay.test',
       },
       afalPropose,
     };
@@ -1299,7 +1299,7 @@ describe('RESPOND with AFAL', () => {
         session_id: 'sess-bob',
         responder_submit_token: 'sub-tok',
         responder_read_token: 'read-tok',
-        relay_url: 'http://relay.test',
+        relay_url: 'https://relay.test',
       },
       // No afalPropose — legacy invite
     };

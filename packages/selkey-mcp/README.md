@@ -32,17 +32,17 @@ Runs an Selkey relay session for bounded agent-to-agent signals. Supports four m
 
 ### `selkey.verify_receipt`
 
-Verifies a receipt's Ed25519 signature against the relay verifying key. Receipt v3 (`receipt_schema_version` `"3.0.0"`, emitted by current relays) is checked with the strict rules of the receipt v3 specification; v2 and v1 receipts are still accepted. A relay key is required: pass `public_key_hex`, or pin it with `SELKEY_RELAY_VERIFYING_KEY_HEX`. Without either, the tool returns an error. Keys embedded in the receipt (such as `tee_attestation.receipt_signing_pubkey_hex`) are never used as the verification key.
+Verifies a receipt's Ed25519 signature against the relay verifying key. Receipt v3 (`receipt_schema_version` `"3.0.0"`, emitted by current relays) is checked with the strict rules of the receipt v3 specification; v2 and v1 receipts are still accepted. A relay key is required: pass `public_key_hex`, or pin it with `SELKEY_RELAY_VERIFYING_KEY_HEX`. Without either, the tool returns an error. Keys embedded in the receipt (such as `tee_attestation.receipt_signing_pubkey_hex`) are never used as the verification key. `assurance_level` and `tee_info` in the result are asserted by the relay; the tool does not verify TEE attestation quotes, and says so in `assurance_note`.
 
 ## Configuration
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `SELKEY_RELAY_URL` | Yes | Relay base URL, e.g. `http://localhost:8080`. The only relay used unless `SELKEY_RELAY_ALLOWLIST` adds others; peer-advertised relays are never used as a fallback. If `SELKEY_RELAY_VERIFYING_KEY_HEX` is set, the relay's `/health` key must match it before input is submitted |
+| `SELKEY_RELAY_URL` | Yes | Relay base URL, e.g. `http://localhost:8080`. The only relay used unless `SELKEY_RELAY_ALLOWLIST` adds others; peer-advertised relays are never used as a fallback. Plain `http://` is accepted only for loopback hosts unless `SELKEY_RELAY_ALLOW_INSECURE_HTTP=true`. If `SELKEY_RELAY_VERIFYING_KEY_HEX` is set, the relay's `/health` key must match it before input is submitted |
 | `SELKEY_AGENT_ID` | Recommended | This agent's ID, used for contract building and idempotency |
 | `SELKEY_RESUME_TOKEN_SECRET` | Recommended | HMAC secret for signing resume tokens |
 | `SELKEY_KNOWN_AGENTS` | Optional | JSON array of `{agent_id, aliases}` for alias resolution |
-| `SELKEY_RELAY_VERIFYING_KEY_HEX` | Optional | Pinned relay Ed25519 verifying key (64 hex chars) used by `selkey.verify_receipt` |
+| `SELKEY_RELAY_VERIFYING_KEY_HEX` | Optional | Pinned relay Ed25519 verifying key (64 hex chars), obtained from the relay operator. Added to every contract this agent builds as `relay_verifying_key_hex` (the relay refuses the session if its key differs), and used by `selkey.verify_receipt` and session receipt checks |
 | `SELKEY_AFAL_SEED_HEX` | Optional | Ed25519 seed (32-byte hex) — enables AFAL direct mode (INITIATE/RESPOND) |
 | `SELKEY_AFAL_HTTP_PORT` | Optional | Port for the AFAL HTTP listener (enables RESPOND mode) |
 | `SELKEY_AFAL_BIND_ADDRESS` | Optional | AFAL bind address (default: `127.0.0.1`) |

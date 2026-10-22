@@ -92,11 +92,12 @@ cargo build --features persistence
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `SELKEY_RELAY_URL` | For all relay sessions | — | Relay base URL (e.g. `http://localhost:3100`). INITIATE and RESPOND only use locally configured relays: this URL plus `SELKEY_RELAY_ALLOWLIST`. Relay URLs from a peer's Agent Card or invite are never used unless they match. If `SELKEY_RELAY_VERIFYING_KEY_HEX` (64 hex chars) is set, the relay's `/health` `verifying_key_hex` must match it before any input is submitted |
-| `SELKEY_RELAY_ALLOWLIST` | No | — | Comma-separated additional relay URLs this agent will use (e.g. when a counterparty's session lives on a different relay you trust) |
+| `SELKEY_RELAY_URL` | For all relay sessions | — | Relay base URL (e.g. `http://localhost:3100`). INITIATE and RESPOND only use locally configured relays: this URL plus `SELKEY_RELAY_ALLOWLIST`. Relay URLs from a peer's Agent Card or invite are never used unless they match. Plain `http://` is accepted only for loopback hosts (`localhost`, `127.0.0.0/8`, `[::1]`); use `https://` otherwise. If `SELKEY_RELAY_VERIFYING_KEY_HEX` (64 hex chars) is set, the relay's `/health` `verifying_key_hex` must match it before any input is submitted |
+| `SELKEY_RELAY_ALLOWLIST` | No | — | Comma-separated additional relay URLs this agent will use (e.g. when a counterparty's session lives on a different relay you trust). Non-loopback `http://` entries are ignored |
+| `SELKEY_RELAY_ALLOW_INSECURE_HTTP` | No | `false` | Set to `true` to allow plain `http://` relays on non-loopback hosts (for example a private compose network in the local demo) |
 | `SELKEY_AGENT_ID` | No | — | This agent's ID, used for contract building |
 | `SELKEY_RESUME_TOKEN_SECRET` | No | — | Secret for HMAC-signing resume tokens. Recommended for production |
-| `SELKEY_RELAY_VERIFYING_KEY_HEX` | No | — | Pinned relay Ed25519 verifying key (64 hex chars). `selkey.verify_receipt` uses it when no `public_key_hex` argument is given, and rejects an argument that differs from it. Without this or an argument, the tool returns an error |
+| `SELKEY_RELAY_VERIFYING_KEY_HEX` | No | — | Pinned relay Ed25519 verifying key (64 hex chars), obtained from the relay operator. Contracts this agent builds carry it as `relay_verifying_key_hex`, so a relay with a different key refuses the session before input is submitted (a responder expects the same value, so both parties should pin the same key). Session receipts must verify against it. `selkey.verify_receipt` uses it when no `public_key_hex` argument is given, and rejects an argument that differs from it. Without this or an argument, the tool returns an error |
 
 ### AFAL Direct Transport
 

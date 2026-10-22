@@ -40,6 +40,8 @@ services:
     environment:
       - DEMO_BIND_ADDRESS=0.0.0.0
       - SELKEY_RELAY_URL=http://relay:3100
+      # The relay is reached over the private compose network, not loopback.
+      - SELKEY_RELAY_ALLOW_INSECURE_HTTP=true
       - SELKEY_WORKDIR=/app/packages/selkey-demo-ui
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}

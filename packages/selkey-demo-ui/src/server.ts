@@ -15,7 +15,7 @@ import { bytesToHex } from '@noble/hashes/utils';
 import { randomBytes } from 'node:crypto';
 import {
   verifyReceipt,
-  fetchRelayPublicKey,
+  relayKeyId,
 } from 'selkey/verify';
 
 import {
@@ -642,6 +642,21 @@ app.post('/api/message', async (req, res) => {
   });
 });
 
+/**
+ * Local demo only: read the relay's /health key without a pin. The result is
+ * labelled key_pinned: false in /api/verify-receipt responses.
+ */
+async function readUnpinnedDemoRelayKey(relayUrl: string): Promise<string> {
+  const resp = await fetch(relayUrl.replace(/\/$/, '') + '/health', { signal: AbortSignal.timeout(3000) });
+  if (!resp.ok) throw new Error(`Relay /health returned ${resp.status}`);
+  const body = (await resp.json()) as Record<string, unknown>;
+  const key = body['verifying_key_hex'];
+  if (typeof key !== 'string' || !/^[0-9a-fA-F]{64}$/.test(key)) {
+    throw new Error('Relay /health response missing a valid verifying_key_hex');
+  }
+  return key.toLowerCase();
+}
+
 // Verify receipt signature — v3, v2 and v1 receipts via the shared verifier
 app.post('/api/verify-receipt', async (req, res) => {
   try {
@@ -660,22 +675,24 @@ app.post('/api/verify-receipt', async (req, res) => {
     }
 
     // Verify against the pinned relay key when one is configured. Without a
-    // pin the demo falls back to the configured relay's /health key, which is
-    // convenient locally but is not a trust anchor.
+    // pin, this local demo reads the configured relay's /health key and says
+    // so in the response (key_pinned: false): that key comes from the relay
+    // being checked, so it is not a trust anchor.
     const pinnedKeyHex = process.env['SELKEY_RELAY_VERIFYING_KEY_HEX']?.trim().toLowerCase();
     let pubKeyHex: string;
-    try {
-      pubKeyHex = (await fetchRelayPublicKey(RELAY_URL)).toLowerCase();
-    } catch (err) {
-      res.json({ verified: false, error: `Could not fetch relay public key: ${err instanceof Error ? err.message : String(err)}` });
-      return;
-    }
     if (pinnedKeyHex) {
-      if (pubKeyHex !== pinnedKeyHex) {
-        res.json({ verified: false, error: 'Relay /health key differs from SELKEY_RELAY_VERIFYING_KEY_HEX' });
+      if (!/^[0-9a-f]{64}$/.test(pinnedKeyHex)) {
+        res.json({ verified: false, error: 'SELKEY_RELAY_VERIFYING_KEY_HEX must be 64 hex characters' });
         return;
       }
       pubKeyHex = pinnedKeyHex;
+    } else {
+      try {
+        pubKeyHex = await readUnpinnedDemoRelayKey(RELAY_URL);
+      } catch (err) {
+        res.json({ verified: false, error: `Could not fetch relay public key: ${err instanceof Error ? err.message : String(err)}` });
+        return;
+      }
     }
 
     const result = verifyReceipt(receipt, pubKeyHex);
@@ -684,8 +701,16 @@ app.post('/api/verify-receipt', async (req, res) => {
       schema_version: result.schema_version,
       assurance_level: result.assurance_level,
       operator_id: result.operator_id,
+      key_pinned: Boolean(pinnedKeyHex),
+      key_id: relayKeyId(pubKeyHex),
       errors: result.errors,
-      warnings: result.warnings,
+      warnings: pinnedKeyHex
+        ? result.warnings
+        : [
+            ...result.warnings,
+            'Relay key is not pinned: it was read from the relay /health endpoint (local demo only). ' +
+              'Set SELKEY_RELAY_VERIFYING_KEY_HEX to verify against a pinned key.',
+          ],
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

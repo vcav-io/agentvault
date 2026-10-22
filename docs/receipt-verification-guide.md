@@ -780,59 +780,58 @@ and decoders must reject padding and non-zero trailing bits.
 
 ## 6. Getting the Verification Key
 
-Get the relay's verifying key once, over a channel you trust (for example from the relay
-operator), and pin it: pass it to the verifier, or set `SELKEY_RELAY_VERIFYING_KEY_HEX`. The
-`/health` endpoint below is convenient for local development, but a key fetched from the relay
-you're checking is not a trust anchor on its own.
+Get the relay's verifying key from the relay operator over a channel you already
+trust, and pin it: pass it to the verifier, or set `SELKEY_RELAY_VERIFYING_KEY_HEX`.
+A key fetched from the relay you are checking (for example from its `/health`
+endpoint) is never a trust anchor, and must not be used to verify receipts unless
+it matches a key you pinned.
 
-### From the relay /health endpoint
+### Key id and fingerprint
 
-The relay exposes its Ed25519 verifying key at the `/health` endpoint:
+A relay key is identified by its key id:
 
 ```
-GET http://localhost:4840/health
+key_id = "ed25519:" + hex(SHA-256(raw 32-byte public key))
 ```
 
-```json
-{
-  "status": "ok",
-  "version": "0.8.0",
-  "verifying_key_hex": "a3f2...64-hex-chars...9d01"
-}
-```
-
-`verifying_key_hex` is 64 hex characters (32 bytes), the raw Ed25519 public key.
-
-### Key pinning considerations
-
-In the current `SELF_ASSERTED` implementation, the key in `/health` is the relay's
-self-reported key. There is no external certificate authority binding the key to
-the operator identity.
-
-For production use, consider:
-
-1. **Fetch the key once and pin it.** Do not re-fetch the key on each verification
-   — a compromised relay could swap keys mid-session.
-2. **Record the key alongside the receipt.** Store `verifying_key_hex` at session
-   time so you can verify the receipt offline later.
-3. **Check `operator_key_fingerprint`.** Compute SHA-256 of the 32-byte pinned
-   key and compare it to `receipt.operator.operator_key_fingerprint`. v3
-   verifiers must reject a mismatch.
+The hash is over the 32 raw key bytes, not over the hex string. The hex part is
+exactly the receipt's `operator.operator_key_fingerprint`, so a verifier can look a
+receipt up in its own set of pinned keys by fingerprint. The receipt names the key;
+it never supplies it.
 
 ```typescript
-import { sha256 } from '@noble/hashes/sha256';
-import { hexToBytes, bytesToHex } from '@noble/hashes/utils';
+import { relayKeyId } from 'selkey/verify';
 
-function checkKeyFingerprint(
-  publicKeyHex: string,
-  receipt: Record<string, unknown>,
-): boolean {
-  const keyBytes = hexToBytes(publicKeyHex);
-  const fingerprint = bytesToHex(sha256(keyBytes));
-  const operator = receipt['operator'] as Record<string, unknown>;
-  return fingerprint === operator['operator_key_fingerprint'];
-}
+relayKeyId(pinnedKeyHex); // "ed25519:<64 hex>"
 ```
+
+v3 verifiers must reject a receipt whose `operator_key_fingerprint` does not equal
+`hex(SHA-256(pinned key bytes))`. `verifyReceipt` does this.
+
+### Checking a relay's served key
+
+The relay serves its verifying key at `GET /health` (`verifying_key_hex`, 64 hex
+characters). Use it only to check that a relay serves the key you pinned, for
+example before submitting input:
+
+```typescript
+import { fetchRelayPublicKey, relayKeyId } from 'selkey/verify';
+
+// Throws if the relay serves a different key.
+await fetchRelayPublicKey(relayUrl, relayKeyId(pinnedKeyHex));
+```
+
+`fetchRelayPublicKey` requires the expected key id and throws on a mismatch; there
+is no form that accepts whatever key the relay serves.
+
+### Binding sessions to the pinned key
+
+A contract may carry `relay_verifying_key_hex`. The relay compares it with its own
+signing key when the session (or inbox invite) is created, and refuses the session
+on a mismatch, before any input is accepted. When `SELKEY_RELAY_VERIFYING_KEY_HEX`
+is set, `selkey-mcp` adds it to every contract it builds, and a responder expects
+the same value in the contract hash. Both parties should therefore pin the same
+key for the relay they share.
 
 ---
 
@@ -875,6 +874,11 @@ not from the receipt or the counterparty.
   "warnings": []
 }
 ```
+
+When the receipt carries `assurance_level` or `tee_info`, the output also has an
+`assurance_note`: these fields are asserted by the relay. The signature shows the
+relay wrote them, but this tool does not verify TEE attestation quotes,
+measurements or certificate chains.
 
 `valid: true` means the receipt passed the signature and format rules for its
 version. It does not mean the participant checks ran — those require the

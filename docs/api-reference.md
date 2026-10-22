@@ -43,7 +43,7 @@ Health check. No authentication required.
 }
 ```
 
-`provider` and `model_id` are `"redacted"` unless `SELKEY_HEALTH_EXPOSE_MODEL=true`. `verifying_key_hex` is the relay's Ed25519 public key for receipt signature verification.
+`provider` and `model_id` are `"redacted"` unless `SELKEY_HEALTH_EXPOSE_MODEL=true`. `verifying_key_hex` is the relay's Ed25519 public key. It is served by the relay itself, so it is not a trust anchor: verify receipts against a key pinned out of band, and use this field only to check that the relay serves that key.
 
 ---
 
