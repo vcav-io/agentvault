@@ -2,6 +2,7 @@
 
 pub mod admission;
 pub mod agent_registry;
+pub mod auth;
 pub mod enforcement_policy;
 pub mod error;
 pub mod inbox;
@@ -85,6 +86,48 @@ pub fn check_exposure(
     }
 }
 
+/// Key id of a relay signing key: `"ed25519:" + hex(SHA-256(raw 32-byte public key))`.
+///
+/// The digest part equals the receipt's `operator.operator_key_fingerprint`,
+/// so a verifier can look a receipt's key up in its own pin set by key id.
+pub fn relay_key_id(key: &ed25519_dalek::VerifyingKey) -> String {
+    format!(
+        "ed25519:{}",
+        receipt_core::receipt_v3::operator_key_fingerprint(key)
+    )
+}
+
+/// Load the receipt signing key from SELKEY_SIGNING_KEY_HEX.
+///
+/// Outside dev (`SELKEY_ENV=dev`) a configured key is required: receipts
+/// must verify against a stable, pinned key. In dev an unset key generates
+/// an ephemeral one. Returns the key and whether it is ephemeral. Errors
+/// never contain the configured value.
+pub fn load_signing_key(
+    configured_hex: Option<&str>,
+    is_dev: bool,
+) -> Result<(SigningKey, bool), String> {
+    match configured_hex.map(str::trim).filter(|v| !v.is_empty()) {
+        Some(hex_str) => {
+            let bytes: [u8; 32] = hex::decode(hex_str)
+                .ok()
+                .and_then(|b| b.try_into().ok())
+                .ok_or_else(|| {
+                    "SELKEY_SIGNING_KEY_HEX must be exactly 64 hex characters (32 bytes)"
+                        .to_string()
+                })?;
+            Ok((SigningKey::from_bytes(&bytes), false))
+        }
+        None if is_dev => Ok((SigningKey::generate(&mut rand::thread_rng()), true)),
+        None => Err(
+            "SELKEY_SIGNING_KEY_HEX is not set — refusing to start. Outside SELKEY_ENV=dev the relay \
+             needs a stable signing key so receipts verify against a pinned key. Generate one with \
+             `openssl rand -hex 32`"
+                .to_string(),
+        ),
+    }
+}
+
 const GIT_SHA: &str = env!("SELKEY_GIT_SHA");
 
 /// Pre-computed hashes needed to build a failure receipt when inference fails.
@@ -146,60 +189,6 @@ pub struct AppState {
 }
 
 // ============================================================================
-// Token extraction helper
-// ============================================================================
-
-/// Extract bearer token from Authorization header.
-fn extract_bearer_token(headers: &HeaderMap) -> Result<&str, RelayError> {
-    headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .ok_or(RelayError::Unauthorized)
-}
-
-/// Compare two secrets without short-circuiting on the first differing byte.
-fn secrets_equal(a: &str, b: &str) -> bool {
-    use sha2::{Digest, Sha256};
-    let da = Sha256::digest(a.as_bytes());
-    let db = Sha256::digest(b.as_bytes());
-    da.iter()
-        .zip(db.iter())
-        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
-        == 0
-}
-
-/// Require the operator token if one is configured.
-fn check_operator_token(state: &AppState, headers: &HeaderMap) -> Result<(), RelayError> {
-    match state.operator_token.as_deref() {
-        None => Ok(()),
-        Some(expected) => {
-            let presented = extract_bearer_token(headers)?;
-            if secrets_equal(presented, expected) {
-                Ok(())
-            } else {
-                Err(RelayError::Unauthorized)
-            }
-        }
-    }
-}
-
-/// Access rule for the single-shot POST /relay endpoint, where one caller
-/// supplies both inputs: available with SELKEY_ENV=dev, or to callers holding
-/// the operator token. Disabled otherwise.
-fn check_single_shot_relay_access(state: &AppState, headers: &HeaderMap) -> Result<(), RelayError> {
-    if state.operator_token.is_some() {
-        return check_operator_token(state, headers);
-    }
-    if state.is_dev {
-        return Ok(());
-    }
-    Err(RelayError::Forbidden(
-        "POST /relay is disabled: set SELKEY_OPERATOR_TOKEN (or SELKEY_ENV=dev)".to_string(),
-    ))
-}
-
-// ============================================================================
 // Provider resolution
 // ============================================================================
 
@@ -257,7 +246,9 @@ async fn health_handler(State(state): State<Arc<AppState>>) -> Json<HealthRespon
     } else {
         ("redacted".to_string(), "redacted".to_string())
     };
-    let verifying_key_hex = receipt_core::public_key_to_hex(&state.signing_key.verifying_key());
+    let verifying_key = state.signing_key.verifying_key();
+    let verifying_key_hex = receipt_core::public_key_to_hex(&verifying_key);
+    let verifying_key_id = relay_key_id(&verifying_key);
     let default = state.policy_registry.default_policy();
     let policy_summary = PolicySummary {
         policy_id: default.policy.policy_id.clone(),
@@ -284,6 +275,7 @@ async fn health_handler(State(state): State<Arc<AppState>>) -> Json<HealthRespon
         provider,
         model_id,
         verifying_key_hex,
+        verifying_key_id,
         policy_summary,
         loaded_policy_hashes,
     })
@@ -333,10 +325,10 @@ async fn capabilities_handler(State(state): State<Arc<AppState>>) -> Json<Capabi
 
 async fn relay_handler(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    // Authentication runs before the body is read.
+    _auth: auth::SingleShotAuth,
     crate::strict_json::StrictJson(request): crate::strict_json::StrictJson<RelayRequest>,
 ) -> Result<Json<RelayResponse>, RelayError> {
-    check_single_shot_relay_access(&state, &headers)?;
     let response = relay::relay(request, &state).await?;
     Ok(Json(response))
 }
@@ -348,11 +340,10 @@ async fn relay_handler(
 /// POST /sessions — create a new bilateral session.
 async fn create_session_handler(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    // Authentication runs before the body is read.
+    _auth: auth::OperatorAuth,
     crate::strict_json::StrictJson(request): crate::strict_json::StrictJson<CreateSessionRequest>,
 ) -> Result<Json<CreateSessionResponse>, RelayError> {
-    check_operator_token(&state, &headers)?;
-
     // Resolve and validate provider
     let provider = resolve_provider(&request.provider, &state)?;
 
@@ -387,19 +378,11 @@ async fn create_session_handler(
 /// POST /sessions/:id/input — submit one participant's input.
 async fn submit_input_handler(
     State(state): State<Arc<AppState>>,
-    Path(session_id): Path<String>,
-    headers: HeaderMap,
+    // Token validation runs before the body is read. Unknown sessions and
+    // invalid tokens are indistinguishable (constant-shape).
+    auth::SessionCaller { session_id, role }: auth::SessionCaller,
     crate::strict_json::StrictJson(request): crate::strict_json::StrictJson<SubmitInputRequest>,
 ) -> Result<Json<SessionStatusResponse>, RelayError> {
-    let token = extract_bearer_token(&headers)?;
-
-    // Validate token — returns None for unknown sessions (constant-shape).
-    let role = state
-        .session_store
-        .validate_token(&session_id, token)
-        .await
-        .ok_or(RelayError::Unauthorized)?;
-
     // Only submit tokens can submit input
     let is_initiator = match role {
         TokenRole::InitiatorSubmit => true,
@@ -832,7 +815,7 @@ async fn session_status_handler(
     Path(session_id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<SessionStatusResponse>, RelayError> {
-    let token = extract_bearer_token(&headers)?;
+    let token = auth::extract_bearer_token(&headers)?;
 
     // Any valid token (submit or read) can check status
     state
@@ -859,7 +842,7 @@ async fn session_output_handler(
     Path(session_id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<SessionOutputResponse>, RelayError> {
-    let token = extract_bearer_token(&headers)?;
+    let token = auth::extract_bearer_token(&headers)?;
 
     // Only read tokens can retrieve output
     let role = state
@@ -897,7 +880,7 @@ async fn session_metadata_handler(
         return Err(RelayError::Unauthorized);
     }
 
-    let token = extract_bearer_token(&headers)?;
+    let token = auth::extract_bearer_token(&headers)?;
 
     let role = state
         .session_store
@@ -1027,6 +1010,55 @@ mod tests {
     }
 
     #[test]
+    fn test_signing_key_required_outside_dev() {
+        let err = match load_signing_key(None, false) {
+            Ok(_) => panic!("relay must not generate a signing key outside dev"),
+            Err(e) => e,
+        };
+        assert!(err.contains("SELKEY_SIGNING_KEY_HEX"), "{err}");
+        assert!(load_signing_key(Some(""), false).is_err());
+        assert!(load_signing_key(Some("  "), false).is_err());
+
+        // Dev may use an ephemeral key.
+        let (_, ephemeral) = load_signing_key(None, true).unwrap();
+        assert!(ephemeral);
+
+        // A configured key is used as-is in either mode.
+        let hex_key = "42".repeat(32);
+        for is_dev in [false, true] {
+            let (key, ephemeral) = load_signing_key(Some(&hex_key), is_dev).unwrap();
+            assert!(!ephemeral);
+            assert_eq!(key.to_bytes(), [0x42u8; 32]);
+        }
+    }
+
+    #[test]
+    fn test_malformed_signing_key_is_an_error_without_echo() {
+        for bad in ["zz".repeat(32), "42".repeat(31), "42".repeat(33)] {
+            let err = match load_signing_key(Some(&bad), false) {
+                Ok(_) => panic!("accepted malformed key"),
+                Err(e) => e,
+            };
+            assert!(!err.contains(&bad), "{err}");
+        }
+    }
+
+    #[test]
+    fn test_relay_key_id_format() {
+        use sha2::{Digest, Sha256};
+        let key = SigningKey::from_bytes(&[7u8; 32]).verifying_key();
+        let expected = format!("ed25519:{}", hex::encode(Sha256::digest(key.as_bytes())));
+        assert_eq!(relay_key_id(&key), expected);
+        assert_eq!(
+            relay_key_id(&key),
+            format!(
+                "ed25519:{}",
+                receipt_core::receipt_v3::operator_key_fingerprint(&key)
+            )
+        );
+    }
+
+    #[test]
     fn test_default_bind_addr_is_loopback() {
         assert!(DEFAULT_BIND_ADDR.is_loopback());
         assert_eq!(resolve_bind_addr(None), DEFAULT_BIND_ADDR);
@@ -1040,14 +1072,6 @@ mod tests {
             resolve_bind_addr(Some("::1")),
             "::1".parse::<std::net::IpAddr>().unwrap()
         );
-    }
-
-    #[test]
-    fn test_secrets_equal() {
-        assert!(secrets_equal("token-a", "token-a"));
-        assert!(!secrets_equal("token-a", "token-b"));
-        assert!(!secrets_equal("token-a", "token-a-longer"));
-        assert!(!secrets_equal("", "token-a"));
     }
 
     #[tokio::test]
