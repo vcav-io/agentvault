@@ -11,7 +11,9 @@ export default tseslint.config(
     files: ['src/**/*.ts'],
     languageOptions: {
       parserOptions: {
-        projectService: true,
+        // tsconfig.json excludes src/__tests__ from the build; lint with a
+        // project that includes the tests so typed rules cover them too.
+        project: './tsconfig.eslint.json',
         tsconfigRootDir: import.meta.dirname,
       },
     },

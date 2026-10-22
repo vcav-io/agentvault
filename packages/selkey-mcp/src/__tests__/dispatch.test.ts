@@ -69,14 +69,15 @@ describe('handleRelaySignal input validation', () => {
     }
   });
 
-  it('strips extra args alongside resume_token and proceeds to decode', async () => {
+  it('falls back to fresh-call args when resume_token is invalid and extra args are present', async () => {
     const result = await handleRelaySignal({
       resume_token: 'some-token',
       mode: 'INITIATE',
     });
-    // Extra args are stripped; the fake token then fails decoding
+    // The fake token fails decoding, so the caller's non-resume args are
+    // restored and the fresh INITIATE path runs (which needs a transport).
     expect(result.ok).toBe(false);
-    expect(result.error?.code).toBe('INVALID_INPUT');
-    expect(result.error?.detail).toContain('Invalid or expired resume_token');
+    expect(result.error?.code).toBe('SESSION_ERROR');
+    expect(result.error?.detail).toContain('INITIATE mode requires AfalTransport');
   });
 });
