@@ -148,6 +148,7 @@ async fn test_session_schema_error_log_omits_output_values() {
         admitted_programs: None,
         admitted_profiles: None,
         operator_token: None,
+        limits: Default::default(),
     });
 
     let (session_id, tokens) = state

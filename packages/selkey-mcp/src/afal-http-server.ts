@@ -5,7 +5,7 @@
  *   GET  /afal/descriptor → agent descriptor
  *   POST /afal/propose    → AfalResponder.handlePropose
  *   POST /afal/commit     → AfalResponder.handleCommit
- *   POST /afal/negotiate  → bounded contract-offer selection
+ *   POST /afal/negotiate  → bounded contract-offer selection (signed by a pinned agent)
  *   POST /a2a/send-message → minimal A2A wrapper for propose/session tokens
  *
  * Guards:
@@ -18,6 +18,7 @@
 import { createServer } from 'node:http';
 import type { Server, IncomingMessage, ServerResponse } from 'node:http';
 import type { AfalResponder } from './afal-responder.js';
+import { NonceCache } from './afal-responder.js';
 import type { AgentDescriptor } from './direct-afal-transport.js';
 import type { IfcService } from './ifc.js';
 import { buildAgentCard } from './a2a-agent-card.js';
@@ -28,6 +29,7 @@ import {
   SELKEY_CONTRACT_OFFER_SELECTION_MEDIA_TYPE,
   SELKEY_DENY_MEDIA_TYPE,
   SELKEY_IFC_ENVELOPE_MEDIA_TYPE,
+  SELKEY_IFC_GRANT_MEDIA_TYPE,
   SELKEY_IFC_RESULT_MEDIA_TYPE,
   SELKEY_PROPOSE_MEDIA_TYPE,
   SELKEY_SESSION_TOKENS_MEDIA_TYPE,
@@ -47,6 +49,7 @@ import {
   validateBespokeContractSelection,
 } from './bespoke-contracts.js';
 import { listKnownModelProfiles } from './model-profiles.js';
+import { verifyNegotiationRequest, type NegotiationRequestType } from './negotiation-auth.js';
 import { listSupportedTopicCodes } from './topic-codes.js';
 import {
   parseTopicAlignmentProposal,
@@ -84,6 +87,7 @@ export class AfalHttpServer {
   private _localDescriptor: AgentDescriptor;
   private readonly _inFlightTasks = new Map<string, InFlightTask>();
   private ifcService?: IfcService;
+  private readonly negotiationNonces = new NonceCache();
 
   constructor(config: AfalHttpServerConfig) {
     this.config = config;
@@ -246,8 +250,16 @@ export class AfalHttpServer {
             // `acceptable_topic_codes`, while contract negotiation requires
             // `negotiation_id` + `acceptable_offers`. That invariant lets us
             // route by parsing without ambiguity.
+            // Negotiation requests must be signed by a pinned agent.
             const topicProposal = parseTopicAlignmentProposal(body);
-            if (topicProposal) {
+            const auth = this.authenticateNegotiation(
+              body,
+              topicProposal ? 'TOPIC_ALIGNMENT_PROPOSAL' : 'CONTRACT_OFFER_PROPOSAL',
+            );
+            if (!auth.ok) {
+              res.writeHead(401, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: auth.error }));
+            } else if (topicProposal) {
               const selection = selectAlignedTopic(
                 topicProposal,
                 listSupportedTopicCodes(),
@@ -287,7 +299,14 @@ export class AfalHttpServer {
               SELKEY_CONTRACT_OFFER_PROPOSAL_MEDIA_TYPE,
               SELKEY_TOPIC_ALIGNMENT_PROPOSAL_MEDIA_TYPE,
               SELKEY_IFC_ENVELOPE_MEDIA_TYPE,
+              SELKEY_IFC_GRANT_MEDIA_TYPE,
             ]);
+            const negotiationAuth =
+              parsed?.mediaType === SELKEY_TOPIC_ALIGNMENT_PROPOSAL_MEDIA_TYPE
+                ? this.authenticateNegotiation(parsed.data, 'TOPIC_ALIGNMENT_PROPOSAL')
+                : parsed?.mediaType === SELKEY_CONTRACT_OFFER_PROPOSAL_MEDIA_TYPE
+                  ? this.authenticateNegotiation(parsed.data, 'CONTRACT_OFFER_PROPOSAL')
+                  : null;
             if (!parsed) {
               res.writeHead(400, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({ error: 'Unsupported A2A message body' }));
@@ -327,6 +346,9 @@ export class AfalHttpServer {
                   }),
                 ),
               );
+            } else if (negotiationAuth && !negotiationAuth.ok) {
+              res.writeHead(401, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: negotiationAuth.error }));
             } else if (parsed.mediaType === SELKEY_TOPIC_ALIGNMENT_PROPOSAL_MEDIA_TYPE) {
               const proposal = parseTopicAlignmentProposal(parsed.data);
               if (!proposal) {
@@ -381,6 +403,26 @@ export class AfalHttpServer {
                   ),
                 );
               }
+            } else if (parsed.mediaType === SELKEY_IFC_GRANT_MEDIA_TYPE) {
+              // A grant issued to this agent by a pinned peer.
+              const data =
+                parsed.data && typeof parsed.data === 'object'
+                  ? (parsed.data as Record<string, unknown>)
+                  : {};
+              const result = this.ifcService
+                ? this.ifcService.receiveGrant({ grant: data['grant'] })
+                : { accepted: false, error: 'IFC service is not configured' };
+              res.writeHead(result.accepted ? 200 : 400, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify(
+                  buildA2ATaskResponse({
+                    mediaType: SELKEY_IFC_RESULT_MEDIA_TYPE,
+                    data: result,
+                    taskId: parsed.taskId,
+                    state: 'completed',
+                  }),
+                ),
+              );
             } else if (parsed.mediaType === SELKEY_IFC_ENVELOPE_MEDIA_TYPE) {
               if (!this.ifcService) {
                 res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -400,8 +442,7 @@ export class AfalHttpServer {
               } else if (
                 !parsed.data ||
                 typeof parsed.data !== 'object' ||
-                !('envelope' in (parsed.data as Record<string, unknown>)) ||
-                !('grant' in (parsed.data as Record<string, unknown>))
+                !('envelope' in (parsed.data as Record<string, unknown>))
               ) {
                 res.writeHead(400, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ error: 'Invalid IFC envelope body' }));
@@ -409,7 +450,7 @@ export class AfalHttpServer {
                 const result = this.ifcService.receiveEnvelope(
                   parsed.data as {
                     envelope: import('./ifc.js').IfcEnvelope;
-                    grant: import('./ifc.js').IfcGrant;
+                    grant?: unknown;
                   },
                 );
                 res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -508,6 +549,29 @@ export class AfalHttpServer {
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Not found' }));
     done();
+  }
+
+  /**
+   * A negotiation request must be signed by a pinned agent and addressed to
+   * this agent (see negotiation-auth.ts).
+   */
+  private authenticateNegotiation(
+    body: unknown,
+    requestType: NegotiationRequestType,
+  ): { ok: true } | { ok: false; error: string } {
+    const result = verifyNegotiationRequest(
+      body,
+      requestType,
+      this._localDescriptor.agent_id,
+      this.config.responder.pins,
+    );
+    if (!result.ok) return result;
+    // Each signed request is answered once.
+    const raw = body as Record<string, unknown>;
+    if (!this.negotiationNonces.check(result.from, String(raw['nonce']), Date.parse(String(raw['timestamp'])))) {
+      return { ok: false, error: 'Negotiation request nonce was already used' };
+    }
+    return { ok: true };
   }
 
   private readBody(

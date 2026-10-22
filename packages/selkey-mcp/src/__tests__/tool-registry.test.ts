@@ -65,7 +65,7 @@ function createMockTransport(invites: AfalInviteMessage[] = []): AfalTransport {
 beforeEach(() => {
   _resetHandlesForTesting();
   _setDiscoverPollConfigForTesting(0, 0);
-  process.env['SELKEY_RELAY_URL'] = 'http://relay.test';
+  process.env['SELKEY_RELAY_URL'] = 'https://relay.test';
   process.env['SELKEY_AGENT_ID'] = 'test-agent';
 });
 

@@ -13,6 +13,7 @@ import { handleRelaySignal, _setDiscoverPollConfigForTesting, _setRelayPollConfi
 import type { RelaySignalOutput, SessionStateEntry } from '../tools/relaySignal.js';
 import { _resetHandlesForTesting } from '../tools/relayHandles.js';
 import type { AfalTransport, AfalInviteMessage } from '../afal-transport.js';
+import { findHeldReceipt } from '../held-receipts.js';
 
 // This suite mocks `selkey/contracts` with schema-less contracts, which the
 // owner-side disclosure ledger (on by default) refuses. The ledger itself is
@@ -94,7 +95,7 @@ beforeEach(() => {
   // Use a temp directory for session state files
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vcav-heartbeat-test-'));
   process.env['SELKEY_WORKDIR'] = tmpDir;
-  process.env['SELKEY_RELAY_URL'] = 'http://relay.test';
+  process.env['SELKEY_RELAY_URL'] = 'https://relay.test';
   process.env['SELKEY_AGENT_ID'] = 'alice-demo';
   delete process.env['SELKEY_RESUME_TOKEN_SECRET'];
 });
@@ -191,7 +192,7 @@ describe('resume_strategy in responses', () => {
           session_id: 'sess-join',
           responder_submit_token: 'sub-tok',
           responder_read_token: 'read-tok',
-          relay_url: 'http://relay.test',
+          relay_url: 'https://relay.test',
         },
         contract_hash: 'compat-hash',
         template_id: 'dating.v1.d2',
@@ -269,6 +270,29 @@ describe('session state files', () => {
     expect(readSessionFile(handleId)).toBeNull();
     index = readSessionIndex();
     expect(index.length).toBe(0);
+  });
+
+  it('records the receipt of a completed session with the local counterparty and session id', async () => {
+    const transport = createMockAfalTransport();
+    const { resumeToken } = await initiateSession(transport);
+    mockGetStatus.mockResolvedValueOnce({ state: 'COMPLETED' });
+    mockGetOutput.mockResolvedValueOnce({
+      state: 'COMPLETED',
+      output: {},
+      receipt: { receipt_id: 'c0ffee00-0000-4000-8000-000000000009', session_id: 'b'.repeat(64) },
+    });
+
+    await handleRelaySignal({ resume_token: resumeToken }, transport);
+
+    const held = findHeldReceipt('alice-demo', 'c0ffee00-0000-4000-8000-000000000009', path.join(tmpDir, '.selkey'));
+    // The session id comes from the local handle, not from the receipt; with
+    // no pinned relay key the receipt is recorded as unverified.
+    expect(held).toMatchObject({
+      counterparty: 'bob-demo',
+      session_id: 'sess-mock',
+      role: 'INITIATOR',
+      receipt_verified: false,
+    });
   });
 
   it('removes per-session file on FAILED response', async () => {
@@ -352,7 +376,7 @@ describe('session state files', () => {
           session_id: 'sess-join',
           responder_submit_token: 'sub-tok',
           responder_read_token: 'read-tok',
-          relay_url: 'http://relay.test',
+          relay_url: 'https://relay.test',
         },
         contract_hash: 'relay-hash-mock',
         template_id: 'mediation-demo.v1.standard',
@@ -459,7 +483,7 @@ describe('stale resume-token fallback', () => {
           session_id: 'sess-fallback',
           responder_submit_token: 'resp-submit',
           responder_read_token: 'resp-read',
-          relay_url: 'http://relay.test',
+          relay_url: 'https://relay.test',
         },
       },
     ]);
@@ -654,7 +678,7 @@ describe('non-blocking phases', () => {
         session_id: 'sess-delayed',
         responder_submit_token: 'sub-tok',
         responder_read_token: 'read-tok',
-        relay_url: 'http://relay.test',
+        relay_url: 'https://relay.test',
       },
       contract_hash: 'relay-hash-mock',
       template_id: 'mediation-demo.v1.standard',
@@ -687,7 +711,7 @@ describe('non-blocking phases', () => {
           session_id: 'sess-join',
           responder_submit_token: 'sub-tok',
           responder_read_token: 'read-tok',
-          relay_url: 'http://relay.test',
+          relay_url: 'https://relay.test',
         },
         contract_hash: 'relay-hash-mock',
         template_id: 'mediation-demo.v1.standard',

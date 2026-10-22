@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { signNegotiationRequest } from '../negotiation-auth.js';
 import { ed25519 } from '@noble/curves/ed25519';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
 import { AfalHttpServer } from '../afal-http-server.js';
@@ -218,11 +219,11 @@ describe('AfalHttpServer', () => {
     const res = await fetch(`${baseUrl}/afal/negotiate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      body: JSON.stringify(signNegotiationRequest('TOPIC_ALIGNMENT_PROPOSAL', {
         alignment_id: 'align-123',
         acceptable_topic_codes: ['salary_alignment', 'reference_check'],
         expected_counterparty: 'bob-test',
-      }),
+      }, 'alice-test', PROPOSER_SEED)),
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
@@ -318,7 +319,7 @@ describe('AfalHttpServer', () => {
       body: JSON.stringify(
         buildA2ASendMessageRequest({
           mediaType: SELKEY_CONTRACT_OFFER_PROPOSAL_MEDIA_TYPE,
-          data: {
+          data: signNegotiationRequest('CONTRACT_OFFER_PROPOSAL', {
             negotiation_id: 'neg-123',
             acceptable_offers: [
               {
@@ -333,7 +334,7 @@ describe('AfalHttpServer', () => {
               },
             ],
             expected_counterparty: 'bob-test',
-          },
+          }, 'alice-test', PROPOSER_SEED),
           acceptedOutputModes: [SELKEY_CONTRACT_OFFER_SELECTION_MEDIA_TYPE],
         }),
       ),
@@ -353,11 +354,11 @@ describe('AfalHttpServer', () => {
       body: JSON.stringify(
         buildA2ASendMessageRequest({
           mediaType: SELKEY_TOPIC_ALIGNMENT_PROPOSAL_MEDIA_TYPE,
-          data: {
+          data: signNegotiationRequest('TOPIC_ALIGNMENT_PROPOSAL', {
             alignment_id: 'align-123',
             acceptable_topic_codes: ['salary_alignment', 'reference_check'],
             expected_counterparty: 'bob-test',
-          },
+          }, 'alice-test', PROPOSER_SEED),
           acceptedOutputModes: [SELKEY_TOPIC_ALIGNMENT_SELECTION_MEDIA_TYPE],
         }),
       ),
@@ -407,7 +408,7 @@ describe('AfalHttpServer', () => {
     const res = await fetch(`${baseUrl}/afal/negotiate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      body: JSON.stringify(signNegotiationRequest('CONTRACT_OFFER_PROPOSAL', {
         negotiation_id: 'neg-123',
         acceptable_offers: [
           {
@@ -422,7 +423,7 @@ describe('AfalHttpServer', () => {
           },
         ],
         expected_counterparty: 'bob-test',
-      }),
+      }, 'alice-test', PROPOSER_SEED)),
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;

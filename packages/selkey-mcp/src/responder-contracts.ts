@@ -49,20 +49,27 @@ function tryBuild(fn: () => RelayContract | undefined): RelayContract | undefine
  * use the local contract (never a peer-supplied one) for a matching hash.
  *
  * `participants` is [initiator, responder], matching the contract layout.
+ * `relayKeys` lists the `relay_verifying_key_hex` values to accept
+ * (`undefined` = no relay key in the contract); defaults to none.
  */
 export async function buildExpectedContractHashes(params: {
   purposes: string[];
   participants: [string, string];
+  relayKeys?: Array<string | undefined>;
 }): Promise<Map<string, RelayContract>> {
   const hashes = new Map<string, RelayContract>();
   const participants = [...params.participants];
   const profiles = listKnownModelProfiles();
   const purposes = new Set(params.purposes);
+  const relayKeys = params.relayKeys ?? [undefined];
 
   const add = (contract: RelayContract | undefined) => {
-    if (contract) {
-      const hash = computeRelayContractHash(contract);
-      if (!hashes.has(hash)) hashes.set(hash, contract);
+    if (!contract) return;
+    for (const key of relayKeys) {
+      // Store the bound variant, so the local contract hashes to the invite hash.
+      const bound = key ? { ...contract, relay_verifying_key_hex: key } : contract;
+      const hash = computeRelayContractHash(bound);
+      if (!hashes.has(hash)) hashes.set(hash, bound);
     }
   };
 

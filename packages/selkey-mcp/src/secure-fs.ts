@@ -39,9 +39,9 @@ export function selkeyStateDir(): string {
 export function ensurePrivateDir(dir: string): void {
   fs.mkdirSync(dir, { recursive: true, mode: DIR_MODE });
   if (!IS_POSIX) return;
-  const st = fs.statSync(dir);
-  if (!st.isDirectory()) {
-    throw new InsecureStateFileError(`${dir} exists and is not a directory`);
+  const st = fs.lstatSync(dir);
+  if (st.isSymbolicLink() || !st.isDirectory()) {
+    throw new InsecureStateFileError(`refusing to use ${dir}: not a directory (or a symlink)`);
   }
   if ((st.mode & 0o077) !== 0) {
     fs.chmodSync(dir, DIR_MODE);
@@ -120,7 +120,11 @@ export function readPrivateJson(filePath: string): unknown {
     throw new InsecureStateFileError(`refusing to use ${filePath}: not a regular file`);
   }
   assertNotWritableByOthers(filePath, st);
-  assertNotWritableByOthers(path.dirname(filePath), fs.statSync(path.dirname(filePath)));
+  const dirSt = fs.lstatSync(path.dirname(filePath));
+  if (dirSt.isSymbolicLink() || !dirSt.isDirectory()) {
+    throw new InsecureStateFileError(`refusing to use ${path.dirname(filePath)}: not a directory (or a symlink)`);
+  }
+  assertNotWritableByOthers(path.dirname(filePath), dirSt);
   return JSON.parse(fs.readFileSync(filePath, 'utf8')) as unknown;
 }
 
@@ -142,6 +146,8 @@ export function appendPrivateLine(filePath: string, line: string): void {
       throw new InsecureStateFileError(`refusing to use ${filePath}: not a regular file`);
     }
     assertNotWritableByOthers(filePath, st);
+    // Tighten a pre-existing file that others can read (e.g. 0644 -> 0600).
+    if (IS_POSIX && (st.mode & 0o077) !== 0) fs.fchmodSync(fd, FILE_MODE);
     fs.writeSync(fd, line.endsWith('\n') ? line : `${line}\n`);
   } finally {
     fs.closeSync(fd);

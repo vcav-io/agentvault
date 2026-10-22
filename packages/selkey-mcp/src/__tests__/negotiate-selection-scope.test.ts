@@ -1,8 +1,8 @@
 /**
  * Pre-contract negotiation must not change which contracts RESPOND accepts.
  *
- * /afal/negotiate is answered without authenticating the caller, so a
- * selection made there is not added to the responder's accepted set. Bespoke
+ * A selection made at /afal/negotiate (even for a pinned, authenticated
+ * caller) is not added to the responder's accepted set. Bespoke
  * contracts are accepted only via an explicit expected_contract_hash.
  */
 
@@ -44,10 +44,13 @@ import type { AgentDescriptor } from '../direct-afal-transport.js';
 import { signMessage, DOMAIN_PREFIXES } from '../afal-signing.js';
 import { listKnownModelProfiles } from '../model-profiles.js';
 import { buildExpectedContractHashes } from '../responder-contracts.js';
+import { signNegotiationRequest } from '../negotiation-auth.js';
 import { compileResolvedAgreement, resolvedAgreementFromBespoke } from '../resolved-agreement.js';
 
 const SEED = '02'.repeat(32);
 const PUB = bytesToHex(ed25519.getPublicKey(hexToBytes(SEED)));
+const CAROL_SEED = '03'.repeat(32);
+const CAROL_PUB = bytesToHex(ed25519.getPublicKey(hexToBytes(CAROL_SEED)));
 
 describe('negotiation selections and the responder contract set', () => {
   it('does not add a bespoke selection from /afal/negotiate to the contracts RESPOND accepts', async () => {
@@ -70,7 +73,7 @@ describe('negotiation selections and the responder contract set', () => {
       agentId: 'bob-test',
       seedHex: SEED,
       policy: {
-        trustedAgents: [],
+        trustedAgents: [{ agentId: 'carol-test', publicKeyHex: CAROL_PUB }],
         allowedPurposeCodes: ['MEDIATION'],
         allowedLaneIds: ['API_MEDIATED'],
         maxEntropyBits: 256,
@@ -98,10 +101,18 @@ describe('negotiation selections and the responder contract set', () => {
       const res = await fetch(`http://127.0.0.1:${server.port}/afal/negotiate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          negotiation_id: 'neg-1',
-          acceptable_offers: [{ kind: 'bespoke', ...bespoke, acceptable_model_profiles: [profile] }],
-        }),
+        body: JSON.stringify(
+          signNegotiationRequest(
+            'CONTRACT_OFFER_PROPOSAL',
+            {
+              negotiation_id: 'neg-1',
+              acceptable_offers: [{ kind: 'bespoke', ...bespoke, acceptable_model_profiles: [profile] }],
+              expected_counterparty: 'bob-test',
+            },
+            'carol-test',
+            CAROL_SEED,
+          ),
+        ),
       });
       selection = (await res.json()) as typeof selection;
     } finally {

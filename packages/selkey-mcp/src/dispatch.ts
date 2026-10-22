@@ -41,6 +41,14 @@ export async function dispatch(
       const { handleSendIfcMessage } = await import('./tools/send-ifc-message.js');
       return handleSendIfcMessage(args as unknown as Parameters<typeof handleSendIfcMessage>[0], ifcService);
     }
+    case 'selkey.revoke_ifc_grant': {
+      const { handleRevokeIfcGrant } = await import('./tools/manage-ifc-grants.js');
+      return handleRevokeIfcGrant(args as unknown as Parameters<typeof handleRevokeIfcGrant>[0], ifcService);
+    }
+    case 'selkey.list_ifc_grants': {
+      const { handleListIfcGrants } = await import('./tools/manage-ifc-grants.js');
+      return handleListIfcGrants(ifcService);
+    }
     case 'selkey.read_ifc_messages': {
       const { handleReadIfcMessages } = await import('./tools/read-ifc-messages.js');
       return handleReadIfcMessages(args as Parameters<typeof handleReadIfcMessages>[0], ifcService);

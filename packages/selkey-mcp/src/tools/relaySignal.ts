@@ -54,17 +54,21 @@ import {
 import {
   assertRelayTrusted,
   checkReceiptAgainstPinnedKey,
+  expectedRelayKeyVariants,
   type LocalSessionData,
   isRelayKeyPinned,
   isRelayUrlAllowed,
   normalizeRelayUrl,
   resolveLocalRelayUrl,
   RelayTrustError,
+  withPinnedRelayKey,
 } from '../relay-trust.js';
 import { buildExpectedContractHashes, localAllowedPurposes } from '../responder-contracts.js';
 import { chargeOwnDisclosure, EntropyLedgerError } from '../entropy-ledger.js';
 import { isRetryableTransportError, relayHttpStatus } from '../transport-errors.js';
 import { appendPrivateLine, ensurePrivateDir, selkeyStateDir, writePrivateJson } from '../secure-fs.js';
+import { PinError, normalizeAgentId, resolveAgentHint } from '../pin-store.js';
+import { recordHeldReceipt } from '../held-receipts.js';
 import {
   encodeRelayToken,
   decodeRelayToken,
@@ -678,6 +682,15 @@ function responderAcceptablePurposes(handle: RelayHandle, transport: AfalTranspo
 }
 
 function mapRelayError(error: unknown): { code: ErrorCode; detail: string } {
+  if (error instanceof PinError) {
+    const code: ErrorCode =
+      error.code === 'NEEDS_CONFIRMATION'
+        ? 'NEEDS_CONFIRMATION'
+        : error.code === 'AMBIGUOUS_ALIAS'
+          ? 'INVALID_INPUT'
+          : 'PEER_IDENTITY_MISMATCH';
+    return { code, detail: error.message };
+  }
   if (error instanceof EntropyLedgerError) {
     return { code: error.code, detail: error.message };
   }
@@ -751,14 +764,18 @@ function writeLastSessionFile(
   }
 }
 
-function resolveAgentAlias(hint: string, knownAgents: NormalizedKnownAgent[]): string {
-  const hintLower = hint.toLowerCase();
-  const match = knownAgents.find(
-    (entry) =>
-      entry.agent_id.toLowerCase() === hintLower ||
-      entry.aliases.some((alias) => alias.toLowerCase() === hintLower),
-  );
-  return match ? match.agent_id : hint;
+/**
+ * Resolve an agent_id or alias to an agent_id (exact NFC match, no case
+ * folding). Aliases come from known agents and from the transport's pin
+ * store. An alias naming more than one agent throws AMBIGUOUS_ALIAS.
+ */
+function resolveAgentAlias(
+  hint: string,
+  knownAgents: NormalizedKnownAgent[],
+  transport?: AfalTransport,
+): string {
+  const pinned = transport instanceof DirectAfalTransport ? transport.pinStore.listPins() : [];
+  return resolveAgentHint(hint, [...knownAgents, ...pinned]) ?? normalizeAgentId(hint);
 }
 
 /**
@@ -1095,6 +1112,40 @@ function localSessionData(handle: RelayHandle): LocalSessionData {
   };
 }
 
+/**
+ * Remember the receipt of a session this agent completed, with the
+ * counterparty from the local handle. IFC grants can only be issued for a
+ * held receipt.
+ */
+function recordCompletedReceipt(
+  handle: RelayHandle,
+  localSessionId: string | undefined,
+  output: SessionOutputResponse,
+  verified: boolean,
+): void {
+  // Only the v3 receipt the session check covered; the session id comes from
+  // this agent's own handle, never from the receipt.
+  const receipt = output.receipt as Record<string, unknown> | null | undefined;
+  if (!receipt || typeof receipt !== 'object' || typeof receipt['receipt_id'] !== 'string' || !localSessionId) {
+    return;
+  }
+  try {
+    recordHeldReceipt({
+      agent_id: handle.agentId,
+      receipt_id: receipt['receipt_id'],
+      session_id: localSessionId,
+      counterparty: handle.counterparty,
+      role: handle.role,
+      receipt_verified: verified,
+      recorded_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error(
+      `recordCompletedReceipt: failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 function completedResponse(
   handle: RelayHandle,
   output: SessionOutputResponse,
@@ -1105,11 +1156,13 @@ function completedResponse(
     return failedResponse(handle, 'RECEIPT_VERIFICATION_FAILED', receiptCheck.detail);
   }
   handle.phase = 'COMPLETED';
+  const localSessionId = handle.sessionId;
   const effectiveSessionId = getEffectiveCompletedSessionId(handle, output);
   if (effectiveSessionId) {
     handle.sessionId = effectiveSessionId;
   }
   removeSessionStateFile(handle);
+  recordCompletedReceipt(handle, localSessionId, output, receiptCheck.status === 'VERIFIED');
   return buildSuccess('COMPLETE', {
     mode: handle.role === 'INITIATOR' ? 'INITIATE' : 'RESPOND',
     state: 'COMPLETED',
@@ -1314,7 +1367,7 @@ async function phaseInvite(
   knownAgents: NormalizedKnownAgent[],
   relayProfileId?: string,
 ): Promise<ToolResponse<RelaySignalOutput>> {
-  const counterparty = resolveAgentAlias(handle.counterparty, knownAgents);
+  const counterparty = resolveAgentAlias(handle.counterparty, knownAgents, transport);
   const acceptablePurposes = parseAcceptablePurposes(args.acceptable_purposes);
   if (args.purpose && acceptablePurposes.length) {
     return buildError(
@@ -1404,6 +1457,13 @@ async function phaseInvite(
         'SESSION_ERROR',
         'acceptable_purposes with more than one purpose requires direct bilateral transport and pre-contract negotiation.',
       );
+    }
+    // Bind the contract to the pinned relay key (if configured), as on
+    // every other INITIATE path.
+    try {
+      contract = withPinnedRelayKey(contract);
+    } catch (e) {
+      return buildError('INVALID_INPUT', (e as Error).message);
     }
     const resp = await transport.createRelayInvite({
       to_agent_id: counterparty,
@@ -1622,6 +1682,14 @@ async function phaseInvite(
       'SESSION_ERROR',
       'No concrete contract could be resolved from the supplied acceptable_purposes.',
     );
+  }
+
+  // Bind the contract to the pinned relay key (if configured) so the relay
+  // refuses the session when its signing key differs.
+  try {
+    contract = withPinnedRelayKey(contract);
+  } catch (e) {
+    return buildError('INVALID_INPUT', (e as Error).message);
   }
 
   const relayUrl = resolveRelayUrl(args.relay_url);
@@ -2179,6 +2247,7 @@ async function phaseDiscover(
       : await buildExpectedContractHashes({
           purposes: responderAcceptablePurposes(handle, transport),
           participants: [handle.counterparty, handle.agentId],
+          relayKeys: expectedRelayKeyVariants(),
         });
 
     // Sleep between polls (not before the first check)
@@ -2678,21 +2747,23 @@ async function handleCreate(args: RelaySignalArgs): Promise<ToolResponse<RelaySi
   }
   const relayUrl = resolveRelayUrl(args.relay_url);
   await assertRelayTrusted(relayUrl);
+  // Bind the relay key before charging, so a pin mismatch never leaves a charge.
+  const contract = withPinnedRelayKey(args.contract);
   chargeSessionDisclosure({
     key: `create:${randomUUID()}`,
-    contract: args.contract,
-    selfId: localParticipantId(args.contract, 0),
+    contract,
+    selfId: localParticipantId(contract, 0),
   });
   const config = { relay_url: relayUrl };
 
   const myContext = args.my_input ?? '';
   const nonce = generateCommitmentNonce();
-  const created = await createAndSubmit(config, args.contract, myContext, 'initiator', nonce);
+  const created = await createAndSubmit(config, contract, myContext, 'initiator', nonce);
   const output = await pollUntilDone(config, created.sessionId, created.initiatorReadToken);
 
   const receiptCheck = checkReceiptAgainstPinnedKey(output, {
-    ownInput: ownInputFromContract(args.contract, 0, myContext, nonce),
-    contract: args.contract,
+    ownInput: ownInputFromContract(contract, 0, myContext, nonce),
+    contract,
     submittedInput: true,
   });
   if (receiptCheck.status === 'FAILED') {
@@ -2883,7 +2954,7 @@ export async function handleRelaySignal(
           return buildError('INVALID_INPUT', 'counterparty is required for INITIATE mode');
         }
 
-        const counterparty = resolveAgentAlias(args.counterparty, knownAgents);
+        const counterparty = resolveAgentAlias(args.counterparty, knownAgents, transport);
         const agentId = transport.agentId ?? process.env['SELKEY_AGENT_ID'] ?? '';
 
         // Compute contract hash early — needed for both collision path and idempotency key
@@ -2989,7 +3060,7 @@ export async function handleRelaySignal(
           );
         }
 
-        const from = resolveAgentAlias(args.from, knownAgents);
+        const from = resolveAgentAlias(args.from, knownAgents, transport);
         const agentId = transport.agentId ?? process.env['SELKEY_AGENT_ID'] ?? '';
 
         // Compute idempotency key

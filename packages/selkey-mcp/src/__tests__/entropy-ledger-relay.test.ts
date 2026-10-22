@@ -35,6 +35,7 @@ import { ed25519 } from '@noble/curves/ed25519';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
 import { submitInput } from 'selkey/http';
 import { DirectAfalTransport, type AgentDescriptor } from '../direct-afal-transport.js';
+import { PinStore } from '../pin-store.js';
 import { DOMAIN_PREFIXES, signMessage } from '../afal-signing.js';
 import { listKnownModelProfiles } from '../model-profiles.js';
 import { listSupportedContractOffers } from '../contract-offers.js';
@@ -264,6 +265,7 @@ describe('direct AFAL sessions and the disclosure budget', () => {
       localDescriptor: signedDescriptor('alice-demo', ALICE_SEED),
       relayUrl: 'https://relay.test',
       peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-demo', publicKeyHex: pubOf(BOB_SEED) }]),
     });
   }
 
@@ -346,6 +348,7 @@ describe('direct AFAL sessions and the disclosure budget', () => {
         localDescriptor: signedDescriptor('alice-demo', ALICE_SEED),
         relayUrl: 'https://relay.test',
         peerDescriptorUrl: `http://127.0.0.1:${port}/afal/descriptor`,
+        pinStore: PinStore.inMemory([{ agentId: 'bob-demo', publicKeyHex: pubOf(BOB_SEED) }]),
       });
       const initiated = await handleRelaySignal(
         { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'a' },

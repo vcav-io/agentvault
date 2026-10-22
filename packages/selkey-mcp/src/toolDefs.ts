@@ -39,7 +39,9 @@ export const VERIFY_TOOLS = [
       'A relay key is required: pass public_key_hex, or configure SELKEY_RELAY_VERIFYING_KEY_HEX. ' +
       'Obtain the key out of band from the relay operator (not from the receipt or the counterparty). ' +
       'Keys embedded in the receipt (e.g. tee_attestation.receipt_signing_pubkey_hex) are never trusted ' +
-      'on their own; a receipt whose embedded key differs from the relay key is invalid.',
+      'on their own; a receipt whose embedded key differs from the relay key is invalid. ' +
+      'assurance_level and tee_info in the result are asserted by the relay; this tool does not ' +
+      'verify TEE attestation quotes.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -63,57 +65,65 @@ export const IFC_TOOLS = [
   {
     name: 'selkey.create_ifc_grant',
     description:
-      'Create a short-lived IFC follow-up grant tied to an existing receipt and session. ' +
-      'Use this for post-session logistics, consent, references, and controlled artifact transfer.',
+      'Allow a counterparty to send THIS agent post-session IFC messages. The grant is issued by this ' +
+      'agent (the recipient) and is only possible for a receipt this agent holds from a completed session ' +
+      'in which the audience was the counterparty. The grant is delivered to the audience when its A2A ' +
+      'endpoint is known. Use selkey.revoke_ifc_grant to withdraw it.',
     inputSchema: {
       type: 'object' as const,
       properties: {
-        audience: { type: 'string', description: 'Receiving agent_id.' },
-        receipt_id: { type: 'string', description: 'Related receipt_id (64 lowercase hex).' },
-        session_id: { type: 'string', description: 'Related session_id (lowercase UUID).' },
+        audience: { type: 'string', description: 'Agent allowed to send messages to this agent (agent_id or alias).' },
+        receipt_id: { type: 'string', description: 'receipt_id of a completed session with the audience.' },
+        session_id: {
+          type: 'string',
+          description: 'Optional; must match the session of the receipt.',
+        },
         message_classes: {
           type: 'array',
           items: {
             type: 'string',
             enum: ['LOGISTICS', 'CONSENT', 'REFERENCE', 'ARTIFACT_TRANSFER'],
           },
-          description: 'Allowed IFC message classes for this grant.',
+          description: 'Message classes the audience may send.',
         },
-        max_uses: { type: 'number', description: 'Maximum permitted uses for this grant.' },
+        max_uses: { type: 'number', description: 'Maximum number of messages (1-100).' },
         expires_in_seconds: {
           type: 'number',
-          description: 'Grant validity duration in seconds (max 86400).',
+          description: 'Grant validity in seconds (at most SELKEY_IFC_MAX_GRANT_TTL_SECONDS, default 86400).',
         },
       },
-      required: ['audience', 'receipt_id', 'session_id', 'message_classes', 'max_uses', 'expires_in_seconds'],
+      required: ['audience', 'receipt_id', 'message_classes', 'max_uses', 'expires_in_seconds'],
     },
   },
   {
     name: 'selkey.send_ifc_message',
     description:
-      'Send one IFC-wrapped post-session message to a known peer over the Selkey A2A send-message path. ' +
+      'Send one IFC-wrapped post-session message to a known peer over the Selkey A2A send-message path, ' +
+      'under a grant that peer issued to this agent (received grants are listed by selkey.list_ifc_grants). ' +
       'Plain non-IFC messages are not allowed on this surface.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         counterparty: {
           type: 'string',
-          description: 'Known agent_id or alias of the counterparty.',
+          description: 'Known agent_id or alias of the counterparty that issued the grant.',
+        },
+        grant_id: {
+          type: 'string',
+          description: 'grant_id of a grant received from the counterparty.',
         },
         grant: {
           type: 'object',
-          description: 'Signed grant created by selkey.create_ifc_grant.',
+          description: 'Alternatively, the signed grant object received from the counterparty.',
         },
         message_class: {
           type: 'string',
           enum: ['LOGISTICS', 'CONSENT', 'REFERENCE', 'ARTIFACT_TRANSFER'],
           description: 'Post-session IFC message class.',
         },
-        payload: { type: 'string', description: 'Bounded message payload.' },
-        related_receipt_id: { type: 'string', description: 'Related receipt_id (64 lowercase hex).' },
-        related_session_id: { type: 'string', description: 'Related session_id (lowercase UUID).' },
+        payload: { type: 'string', description: 'Bounded message payload (at most 4096 characters).' },
       },
-      required: ['counterparty', 'grant', 'message_class', 'payload', 'related_receipt_id', 'related_session_id'],
+      required: ['counterparty', 'message_class', 'payload'],
     },
   },
   {
@@ -125,6 +135,29 @@ export const IFC_TOOLS = [
       properties: {
         limit: { type: 'number', description: 'Optional maximum number of pending messages to read.' },
       },
+      required: [],
+    },
+  },
+  {
+    name: 'selkey.revoke_ifc_grant',
+    description:
+      'Revoke a grant this agent issued. Takes effect immediately: further messages under it are blocked.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        grant_id: { type: 'string', description: 'grant_id of a grant this agent issued.' },
+        reason: { type: 'string', description: 'Optional reason, recorded in the audit log.' },
+      },
+      required: ['grant_id'],
+    },
+  },
+  {
+    name: 'selkey.list_ifc_grants',
+    description:
+      'List IFC grants this agent issued (with state, uses and expiry) and grants it received from peers.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {},
       required: [],
     },
   },

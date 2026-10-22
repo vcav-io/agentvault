@@ -5,6 +5,7 @@
  * responder's locally rebuilt contract is compared field-for-field.
  */
 
+import { PinStore } from '../pin-store.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -53,8 +54,8 @@ vi.mock('selkey/http', () => ({
 
 const RESPONDER = 'alice-demo';
 const INITIATOR = 'bob-demo';
-const LOCAL_RELAY = 'http://relay.test';
-const OTHER_RELAY = 'http://unlisted-relay.example';
+const LOCAL_RELAY = 'https://relay.test';
+const OTHER_RELAY = 'https://unlisted-relay.example';
 
 const ENV_KEYS = [
   'SELKEY_RELAY_URL',
@@ -417,6 +418,7 @@ describe('direct AFAL round trip with locally configured relays', () => {
 
     const alice = new DirectAfalTransport({
       agentId: 'alice-test',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-test', publicKeyHex: pub(BOB_SEED) }]),
       seedHex: ALICE_SEED,
       localDescriptor: descriptor('alice-test', ALICE_SEED),
       relayUrl: LOCAL_RELAY,

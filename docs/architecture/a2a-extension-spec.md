@@ -392,7 +392,7 @@ The AFAL HTTP server exposes the following routes:
 | `GET` | `/afal/descriptor` | Agent descriptor (AFAL legacy) |
 | `POST` | `/afal/propose` | Direct AFAL propose |
 | `POST` | `/afal/commit` | Direct AFAL commit |
-| `POST` | `/afal/negotiate` | Shared bounded negotiation endpoint (topic alignment or contract-offer negotiation) |
+| `POST` | `/afal/negotiate` | Shared bounded negotiation endpoint (topic alignment or contract-offer negotiation). Requests carry `request_type`, `from`, `timestamp`, `nonce` and a `signature` under `VCAV-REQUEST-V1:`, verified against the sender's pinned key; unsigned or unpinned requests get `401` |
 | `POST` | `/a2a/send-message` | A2A-native message endpoint (propose, session-tokens, topic-alignment-proposal, contract-offer-proposal) |
 
 Guards: 64 KB body limit, `Content-Type: application/json` enforcement on POST,

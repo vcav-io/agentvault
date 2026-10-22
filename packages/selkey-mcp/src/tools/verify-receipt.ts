@@ -24,7 +24,20 @@ export interface VerifyReceiptArgs {
   public_key_hex?: string;
 }
 
-export type VerifyReceiptOutput = VerifyResult;
+export type VerifyReceiptOutput = VerifyResult & {
+  /** Present when the receipt carries assurance_level or tee_info. */
+  assurance_note?: string;
+};
+
+/**
+ * assurance_level and tee_info are fields the relay writes into the receipt.
+ * The signature shows the relay asserted them; this tool does not verify a
+ * TEE attestation quote, measurement or certificate chain.
+ */
+export const ASSURANCE_NOTE =
+  'assurance_level and tee_info are asserted by the relay (covered by its signature) ' +
+  'and are not independently verified here: this tool does not check TEE attestation ' +
+  'quotes, measurements or certificate chains.';
 
 export const RELAY_VERIFYING_KEY_ENV = 'SELKEY_RELAY_VERIFYING_KEY_HEX';
 
@@ -73,6 +86,9 @@ export async function handleVerifyReceipt(
     );
   }
 
-  const result = verifyReceipt(args.receipt, key);
+  const result: VerifyReceiptOutput = verifyReceipt(args.receipt, key);
+  if (result.assurance_level !== undefined || result.tee_info !== undefined) {
+    result.assurance_note = ASSURANCE_NOTE;
+  }
   return buildSuccess('SUCCESS', result);
 }

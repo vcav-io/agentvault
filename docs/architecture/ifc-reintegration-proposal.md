@@ -207,6 +207,15 @@ A grant should be narrowly scoped and short-lived. Recommended fields:
 
 Bias strongly toward provenance-bound grants tied to an existing session or receipt. Avoid broad standing authority, which would recreate ambient trust through accumulated permissions.
 
+**Implemented model (`VCAV-IFC-GRANT-V2`): recipient-issued grants.**
+
+- The *recipient* R of future messages issues the grant (`issuer = R`, `audience = S`), and only for a v3 receipt R holds from a completed session in which S was the counterparty, verified against R's pinned relay key (`SELKEY_RELAY_VERIFYING_KEY_HEX`). The counterparty and session id come from R's own session state. R's maximum lifetime is `SELKEY_IFC_MAX_GRANT_TTL_SECONDS` (default and ceiling 86400); `max_uses` is at most 100. S's key must be pinned; its fingerprint is recorded as `audience_key_fpr`.
+- The grant is signed by R with the AFAL signing rules and the domain prefix `VCAV-IFC-GRANT-V2:`. `grant_id = hex(SHA-256(JCS(grant without grant_id and signature)))`. Fields: `version`, `grant_id`, `issuer`, `issuer_public_key_hex`, `audience`, `audience_key_fpr`, `label_ceiling`, `scope {message_classes, session_relation}`, `permissions {max_uses}`, `provenance {receipt_id, session_id}`, `issued_at`, `expires_at`, `signature`. A vector is in `packages/selkey-mcp/src/__tests__/vectors/ifc-grant-v2.json`.
+- R delivers the grant to S's A2A endpoint as `application/vnd.selkey.ifc-grant+json`. S verifies it under R's pin and stores it.
+- S sends envelopes that reference the `grant_id`. R accepts one only if the grant is in R's own store (`.selkey/ifc-grants.json`, `0600` in a `0700` directory), not revoked or expired by R's clock, the envelope is signed by the audience's pinned key (unchanged since issuance), the class is in scope, the `message_id` has not been seen, and `uses < max_uses`. Uses and seen ids are persisted before the message is accepted.
+- `selkey.revoke_ifc_grant` takes effect immediately; `selkey.list_ifc_grants` shows issued and received grants. Every issue, use, revocation, expiry and every denial for an authenticated sender (with reason) is appended to `.selkey/ifc-audit.jsonl`; envelopes refused before the sender is authenticated are only counted. Logged strings are truncated, and the log keeps one previous generation (`.1`) once it exceeds 4 MB.
+- V1 grants (sender-issued, `AV-IFC-GRANT-V1`) are rejected.
+
 ## 3. First Implementation Slice
 
 The first reintegration slice should be deliberately narrow. The goal is to prove the membrane concept in a place where IFC is obviously useful, not to revive the entire historical IFC surface at once.
@@ -237,7 +246,7 @@ This avoids speculative "general safe agent chat" and keeps the first slice grou
 Recommended first flow:
 
 1. Two agents complete a vault session and receive a receipt.
-2. One side mints a narrow capability grant for approved follow-up or logistics.
+2. The side that will receive follow-up mints a narrow grant for the other side (recipient-issued, see 2.6).
 3. Subsequent out-of-vault messages are sent as IFC envelopes referencing the related receipt or session.
 4. The receiver evaluates each message and gets `Allow`, `Hide`, `Escalate`, or `Block`.
 5. If `Escalate` occurs, the system returns a structured escalation seed that can later feed AFAL session formation.

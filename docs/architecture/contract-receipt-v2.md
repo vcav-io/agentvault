@@ -233,7 +233,7 @@ pub enum AssuranceLevel {
 ```rust
 pub struct Operator {
     pub operator_id: String,
-    pub operator_key_fingerprint: String,  // SHA-256 hex of signing pubkey
+    pub operator_key_fingerprint: String,  // hex(SHA-256(raw 32-byte signing pubkey)); key id = "ed25519:" + this
     pub operator_key_discovery: Option<String>,  // URI for key pinning
 }
 ```
