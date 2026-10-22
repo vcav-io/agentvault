@@ -569,7 +569,7 @@ async fn start_mock_anthropic(output: serde_json::Value) -> String {
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let base_url = format!("http://127.0.0.1:{}", addr.port());
+    let base_url = format!("http://127.0.0.1:{port}", port = addr.port());
 
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
@@ -1417,8 +1417,7 @@ async fn test_bilateral_session_e2e_with_mock() {
     assert_eq!(
         final_state,
         selkey_relay::session::SessionState::Completed,
-        "session should be completed, abort_reason: {:?}",
-        abort_reason
+        "session should be completed, abort_reason: {abort_reason:?}"
     );
 
     // 5. Retrieve output with read token
@@ -3081,7 +3080,7 @@ async fn start_mock_anthropic_error() -> String {
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let base_url = format!("http://127.0.0.1:{}", addr.port());
+    let base_url = format!("http://127.0.0.1:{port}", port = addr.port());
 
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();

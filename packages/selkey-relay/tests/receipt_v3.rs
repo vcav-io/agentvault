@@ -119,7 +119,7 @@ async fn serve(app: axum::Router) -> String {
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    format!("http://127.0.0.1:{}", addr.port())
+    format!("http://127.0.0.1:{port}", port = addr.port())
 }
 
 async fn start_mock_provider() -> String {

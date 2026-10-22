@@ -92,7 +92,6 @@ struct FailureReceiptContext {
     contract_hash: String,
     output_schema_hash: String,
     input_commitments: Vec<receipt_core::InputCommitmentV3>,
-    assembled_prompt_hash: String,
     prompt_template_hash: String,
     model_profile_hash: Option<String>,
     runtime_hash: String,
@@ -601,12 +600,6 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
             .ok()?,
         };
         let prompt_template_hash = prompt_program.content_hash().ok()?;
-        let assembled = prompt_program
-            .assemble(&contract, &input_a, &input_b)
-            .ok()?;
-        let assembled_prompt_hash =
-            relay::compute_assembled_prompt_hash(&assembled.system, &assembled.user_message)
-                .ok()?;
 
         // Model profile resolution (shared helper)
         let resolved_profile = profile_resolution::resolve_runtime_profile(
@@ -649,7 +642,6 @@ async fn spawn_inference(state: Arc<AppState>, session_id: String) {
             contract_hash: contract_hash.clone(),
             output_schema_hash,
             input_commitments,
-            assembled_prompt_hash,
             prompt_template_hash,
             model_profile_hash,
             runtime_hash,
@@ -784,7 +776,6 @@ async fn complete_inference<F>(
                     &ctx.contract_hash,
                     &ctx.output_schema_hash,
                     ctx.input_commitments.clone(),
-                    ctx.assembled_prompt_hash.clone(),
                     &ctx.prompt_template_hash,
                     ctx.model_profile_hash.as_deref(),
                     &ctx.effective_model_id,
@@ -797,7 +788,6 @@ async fn complete_inference<F>(
                     ctx.effective_max_tokens,
                     ctx.entropy_bits,
                     ctx.entropy_budget_bits,
-                    None, // rejected output
                 ) {
                     Ok(receipt) => Some(receipt),
                     Err(re) => {

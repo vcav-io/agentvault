@@ -99,16 +99,15 @@ pub fn compute_input_commitments(
     .collect()
 }
 
-/// `assembled_prompt_hash`: `H(JCS({"system", "user_message"}))`.
-pub fn compute_assembled_prompt_hash(
-    system: &str,
-    user_message: &str,
-) -> Result<String, RelayError> {
-    hash_json_v3(&serde_json::json!({
-        "system": system,
-        "user_message": user_message,
-    }))
-    .map_err(|e| RelayError::Internal(format!("prompt canonicalization: {e}")))
+/// Value written to `commitments.assembled_prompt_hash` while the receipt
+/// type still requires the field.
+///
+/// The assembled prompt contains both parties' inputs, so no hash of it is
+/// put in the receipt: inputs appear in receipts only through their salted
+/// input commitments. This is a fixed value (SHA-256 of zero bytes) that does
+/// not depend on the session.
+pub fn assembled_prompt_hash_placeholder() -> String {
+    hex::encode(Sha256::digest(b""))
 }
 
 /// Validate JSON output against the contract's output schema.
@@ -542,11 +541,6 @@ pub async fn relay_core(
     // Compute input commitments (one per participant) — must be done before provider call.
     let input_commitments = compute_input_commitments(contract, input_a, input_b)?;
 
-    // Compute assembled_prompt_hash — hash of the assembled prompt JSON (system + user_message).
-    // Computed once before the first provider call; never recomputed on retry.
-    let assembled_prompt_hash =
-        compute_assembled_prompt_hash(&assembled.system, &assembled.user_message)?;
-
     let provider_request = ProviderRequest {
         system: assembled.system,
         user_message: assembled.user_message,
@@ -628,7 +622,6 @@ pub async fn relay_core(
         &output_schema_hash,
         &output,
         input_commitments,
-        assembled_prompt_hash,
         &prompt_template_hash,
         model_profile_hash.as_deref(),
         &effective_model_id,
@@ -699,7 +692,6 @@ fn build_receipt_v3(
     schema_hash: &str,
     output: &serde_json::Value,
     input_commitments: Vec<InputCommitmentV3>,
-    assembled_prompt_hash: String,
     prompt_template_hash: &str,
     model_profile_hash: Option<&str>,
     model_id: &str,
@@ -744,7 +736,7 @@ fn build_receipt_v3(
             schema_hash: schema_hash.to_string(),
             output_hash,
             input_commitments,
-            assembled_prompt_hash,
+            assembled_prompt_hash: assembled_prompt_hash_placeholder(),
             prompt_assembly_version: "1.0.0".to_string(),
             output: Some(output.clone()),
             prompt_template_hash: Some(prompt_template_hash.to_string()),
@@ -825,7 +817,6 @@ pub fn build_failure_receipt_v3(
     contract_hash: &str,
     schema_hash: &str,
     input_commitments: Vec<InputCommitmentV3>,
-    assembled_prompt_hash: String,
     prompt_template_hash: &str,
     model_profile_hash: Option<&str>,
     model_id: &str,
@@ -838,17 +829,11 @@ pub fn build_failure_receipt_v3(
     effective_max_tokens: u32,
     entropy_bits: u32,
     entropy_budget_bits: Option<u32>,
-    rejected_output: Option<&serde_json::Value>,
 ) -> Result<ReceiptV3, RelayError> {
     let (status, signal_class) = abort_reason_to_receipt_status(abort_reason);
 
     // output_hash: SHA-256 of zero bytes — no output was accepted
     let output_hash = hex::encode(Sha256::digest(b""));
-
-    // rejected_output_hash: H(JCS(rejected_output)), if a rejected output is known
-    let rejected_output_hash = rejected_output.map(hash_json_v3).transpose().map_err(|e| {
-        RelayError::ReceiptSigning(format!("rejected output canonicalization: {e}"))
-    })?;
 
     let (preflight_bundle, effective_config_hash) = preflight_bundle_v3(
         policy_hash,
@@ -879,7 +864,7 @@ pub fn build_failure_receipt_v3(
             schema_hash: schema_hash.to_string(),
             output_hash,
             input_commitments,
-            assembled_prompt_hash,
+            assembled_prompt_hash: assembled_prompt_hash_placeholder(),
             prompt_assembly_version: "1.0.0".to_string(),
             output: None, // no accepted output for failure receipts
             prompt_template_hash: Some(prompt_template_hash.to_string()),
@@ -888,7 +873,9 @@ pub fn build_failure_receipt_v3(
             output_retrieval_uri: None,
             output_media_type: None,
             preflight_bundle_uri: None,
-            rejected_output_hash,
+            // Never populated: a hash of a rejected model output would be an
+            // unsalted function of both inputs.
+            rejected_output_hash: None,
             initiator_submission_hash: None,
             responder_submission_hash: None,
         },
@@ -1097,11 +1084,10 @@ mod tests {
         ];
         for (reason, expected_status, expected_signal) in cases {
             let (status, signal) = abort_reason_to_receipt_status(reason);
-            assert_eq!(status, expected_status, "wrong status for {:?}", reason);
+            assert_eq!(status, expected_status, "wrong status for {reason:?}");
             assert_eq!(
                 signal, expected_signal,
-                "wrong signal_class for {:?}",
-                reason
+                "wrong signal_class for {reason:?}"
             );
         }
     }
@@ -1127,7 +1113,6 @@ mod tests {
             &"c".repeat(64),
             &"d".repeat(64),
             test_commitments(),
-            "e".repeat(64),
             &"f".repeat(64),
             None,
             "test-model",
@@ -1140,7 +1125,6 @@ mod tests {
             4096,
             6,
             Some(128),
-            None,
         )
         .expect("failure receipt should build");
 
@@ -1167,14 +1151,12 @@ mod tests {
     #[test]
     fn test_build_failure_receipt_v3_provider_error() {
         let state = make_failure_test_state(99);
-        let rejected = serde_json::json!({"decision": "UNKNOWN"});
         let receipt = build_failure_receipt_v3(
             AbortReason::ProviderError,
             &"5".repeat(64),
             &"c".repeat(64),
             &"d".repeat(64),
             test_commitments(),
-            "e".repeat(64),
             &"f".repeat(64),
             None,
             "test-model",
@@ -1187,7 +1169,6 @@ mod tests {
             4096,
             10,
             None,
-            Some(&rejected),
         )
         .expect("failure receipt should build");
 
@@ -1197,9 +1178,10 @@ mod tests {
             Some("provider_error")
         );
         assert!(receipt.claims.provider_latency_ms.is_some());
+        assert!(receipt.commitments.rejected_output_hash.is_none());
         assert_eq!(
-            receipt.commitments.rejected_output_hash,
-            Some(hash_json_v3(&rejected).unwrap())
+            receipt.commitments.assembled_prompt_hash,
+            assembled_prompt_hash_placeholder()
         );
     }
 
@@ -1961,7 +1943,6 @@ mod tests {
             &"c".repeat(64),
             &"d".repeat(64),
             test_commitments(),
-            "e".repeat(64),
             &"f".repeat(64),
             None,
             "test-model",
@@ -1973,7 +1954,6 @@ mod tests {
             None,
             4096,
             10,
-            None,
             None,
         )
         .expect("failure receipt should build");
