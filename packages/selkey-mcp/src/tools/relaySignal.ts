@@ -1040,12 +1040,11 @@ function awaitingResponse(
 }
 
 /**
- * Commitment nonce for this handle's submission to `sessionId`. A retry of the
- * same submission reuses its nonce; any other submission gets a fresh one.
+ * A fresh commitment nonce for one submission. Every submission, including a
+ * retry, gets its own nonce; the handle keeps the nonce and context of the
+ * latest submission so the receipt can be checked against them.
  */
 function submissionNonce(handle: RelayHandle, sessionId: string, context: unknown): string {
-  const prior = handle.inputCommitment;
-  if (prior && prior.sessionId === sessionId) return prior.nonce;
   const nonce = generateCommitmentNonce();
   handle.inputCommitment = { sessionId, context, nonce };
   return nonce;
@@ -1059,6 +1058,8 @@ function localSessionData(handle: RelayHandle): LocalSessionData {
       ? { participantId: handle.agentId, context: sub.context, commitmentNonce: sub.nonce }
       : undefined,
     contract: handle.contract,
+    // Completion is only reached after this agent submitted its input.
+    submittedInput: true,
   };
 }
 
@@ -2495,20 +2496,17 @@ function ownInputFromContract(
     : undefined;
 }
 
-function ownInputFromReceipt(
-  output: SessionOutputResponse,
-  index: number,
-  context: unknown,
-  commitmentNonce: string,
-): LocalSessionData['ownInput'] {
-  const receipt = output.receipt as Record<string, unknown> | null | undefined;
-  const commitments = receipt?.['commitments'] as Record<string, unknown> | undefined;
-  const entries = commitments?.['input_commitments'];
-  const entry = Array.isArray(entries) ? (entries[index] as Record<string, unknown>) : undefined;
-  const participantId = entry?.['participant_id'];
-  return typeof participantId === 'string'
-    ? { participantId, context, commitmentNonce }
-    : undefined;
+/** This agent's participant id from local configuration (never from a receipt). */
+function localParticipantId(contract: unknown, index: number): string | undefined {
+  const participants =
+    contract && typeof contract === 'object'
+      ? (contract as Record<string, unknown>)['participants']
+      : undefined;
+  if (Array.isArray(participants) && typeof participants[index] === 'string') {
+    return participants[index] as string;
+  }
+  const configured = process.env['SELKEY_AGENT_ID']?.trim();
+  return configured ? configured : undefined;
 }
 
 async function handleCreate(args: RelaySignalArgs): Promise<ToolResponse<RelaySignalCreateData>> {
@@ -2527,6 +2525,7 @@ async function handleCreate(args: RelaySignalArgs): Promise<ToolResponse<RelaySi
   const receiptCheck = checkReceiptAgainstPinnedKey(output, {
     ownInput: ownInputFromContract(args.contract, 0, myContext, nonce),
     contract: args.contract,
+    submittedInput: true,
   });
   if (receiptCheck.status === 'FAILED') {
     return buildError('VERIFICATION_FAILED', receiptCheck.detail);
@@ -2567,10 +2566,15 @@ async function handleJoin(args: RelaySignalArgs): Promise<ToolResponse<RelaySign
     nonce,
   );
 
-  // JOIN mode does not hold the contract, so the responder's participant id
-  // is read from the receipt's second commitment entry (contract order).
+  // The responder's participant id comes from the caller's contract (second
+  // participant) or SELKEY_AGENT_ID; it is never taken from the receipt.
+  const participantId = localParticipantId(args.contract, 1);
   const receiptCheck = checkReceiptAgainstPinnedKey(output, {
-    ownInput: ownInputFromReceipt(output, 1, myContext, nonce),
+    ownInput: participantId
+      ? { participantId, context: myContext, commitmentNonce: nonce }
+      : undefined,
+    contract: args.contract,
+    submittedInput: true,
   });
   if (receiptCheck.status === 'FAILED') {
     return buildError('VERIFICATION_FAILED', receiptCheck.detail);

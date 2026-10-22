@@ -807,8 +807,9 @@ export function verifyReceiptV3(
       lexemes = parsed.numberLexemes;
     }
     const typed = readReceiptV3(value, lexemes);
-    checkConsistency(typed);
+    // Section order: 6.3 (signature) before 6.4 (internal consistency).
     checkSignature(typed, pinnedKeyHex);
+    checkConsistency(typed);
     return { ok: true, receipt: typed };
   } catch (e) {
     if (e instanceof ReceiptV3Error)
