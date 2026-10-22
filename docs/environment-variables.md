@@ -107,13 +107,30 @@ These enable the AFAL direct transport for INITIATE and RESPOND session modes (a
 | `SELKEY_AFAL_SEED_HEX` | For AFAL | — | 64-char hex Ed25519 seed for signing AFAL messages |
 | `SELKEY_AFAL_HTTP_PORT` | For RESPOND | — | Port for the AFAL HTTP server (enables RESPOND mode) |
 | `SELKEY_AFAL_BIND_ADDRESS` | No | `127.0.0.1` | Bind address for the AFAL HTTP server |
-| `SELKEY_AFAL_TRUSTED_AGENTS` | No | — | JSON array of trusted agents: `[{"agentId":"...","publicKeyHex":"..."}]` |
+| `SELKEY_AFAL_TRUSTED_AGENTS` | No | — | JSON array of trusted agents: `[{"agentId":"...","publicKeyHex":"..."}]`. Seeds the agent pin store (see below) |
 | `SELKEY_AFAL_ALLOWED_PURPOSES` | No | `MEDIATION` | Comma-separated list of allowed purpose codes (e.g. `MEDIATION,COMPATIBILITY`). Also the purposes RESPOND accepts when `expected_purpose` is omitted |
 | `SELKEY_AFAL_PEER_DESCRIPTOR_URL` | For INITIATE | — | URL of the peer agent's descriptor (used in INITIATE mode) |
-| `SELKEY_AFAL_REQUIRE_SIGNED_CARDS` | No | `false` | Set to `true` to reject unsigned A2A agent cards (strict mode) |
+| `SELKEY_AFAL_REQUIRE_SIGNED_CARDS` | No | `false` | Set to `true` to reject unsigned A2A agent cards (strict mode). Peer keys from cards are checked against pins either way |
+| `SELKEY_AGENT_PIN_MODE` | No | `preshared` | `preshared`: peers must be pinned in advance. `tofu`: on first contact the peer's key is recorded as pending and the call fails with `NEEDS_CONFIRMATION` until a person runs `selkey-mcp pins confirm <agent_id>` in a terminal |
 
 ### Known Agents
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `SELKEY_KNOWN_AGENTS` | No | — | JSON array of known agents for alias resolution. Format: `[{"alias":"bob","agentId":"bob-agent","relayUrl":"http://..."}]` |
+| `SELKEY_KNOWN_AGENTS` | No | — | JSON array of known agents: `[{"agent_id":"bob-agent","aliases":["Bob"],"public_key_hex":"...","a2a_send_message_url":"..."}]`. Aliases match exactly (no case folding); an alias that names more than one agent is an error. `public_key_hex` seeds the agent pin store |
+
+### Agent identity pins
+
+The MCP server keeps one pin store at `$SELKEY_WORKDIR/.selkey/pins.json` (directory `0700`, file `0600`; the server refuses to start if the file is group- or world-writable). It is seeded from `SELKEY_AFAL_TRUSTED_AGENTS` and the `public_key_hex` entries of `SELKEY_KNOWN_AGENTS`; a configured key replaces a stored pin for the same `agent_id`. Every PROPOSE, ADMIT, DENY, COMMIT, negotiation request and IFC signature from a peer is verified against the pinned key for its `agent_id`, never against a key in the peer's card, descriptor or message. A peer that presents a different key is rejected with both fingerprints (`ed25519:` + hex SHA-256 of the raw key).
+
+Manage pins with:
+
+```bash
+selkey-mcp pins list
+selkey-mcp pins add <agent_id> <public_key_hex> [--alias <alias>]
+selkey-mcp pins remove <agent_id>
+selkey-mcp pins confirm <agent_id>      # tofu mode: interactive terminal only
+selkey-mcp pins rotate <statement.json> <new_public_key_hex>
+```
+
+A rotation statement is `{agent_id, old_fpr, new_fpr, issued_at, signature}`, signed by the currently pinned key with the AFAL signing rules and the domain prefix `VCAV-KEY-ROTATION-V1:`.
