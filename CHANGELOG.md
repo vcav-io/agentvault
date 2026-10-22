@@ -10,6 +10,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Enforcement policy files must be canonical.** A policy file (in
+  `relay_policies/` or an admission registry) must equal its re-serialised
+  form: every field written explicitly, with `null` for an absent optional
+  value (`max_output_tokens`, `entropy_constraints`, `review_trigger_pct`)
+  and `[]` for empty lists (`model_profile_allowlist`, `provider_allowlist`,
+  `skip_keys`). Other files are rejected at load. The policy hash is then
+  the same on the admission and lockfile paths. Existing canonical files
+  keep their hashes. Policy files, and registry artefact files of every kind,
+  with a repeated member name are rejected.
 - **Renamed AgentVault → Selkey.** Clean break, no compatibility aliases:
   packages moved to `packages/selkey-{relay,client,mcp,demo-ui}`; crate
   `selkey-relay`; npm packages `selkey` (bin `selkey-contract`) and `selkey-mcp`
