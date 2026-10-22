@@ -13,7 +13,11 @@ use crate::error::RelayError;
 ///
 /// Rules are read at runtime by `validate_output_enforcement_rules` in relay.rs.
 /// The policy hash is bound into every receipt via `guardian_policy_hash`.
+///
+/// This struct and its nested structs reject unknown fields, so every field
+/// in a policy file is one the relay enforces.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RelayEnforcementPolicy {
     pub policy_version: String,
     pub policy_id: String,
@@ -31,6 +35,7 @@ pub struct RelayEnforcementPolicy {
 
 /// A single enforcement rule in the policy.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EnforcementRule {
     pub rule_id: String,
     #[serde(rename = "type")]
@@ -53,6 +58,7 @@ pub enum RuleType {
 
 /// Scope descriptor for a rule.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RuleScope {
     pub kind: RuleScopeKind,
     #[serde(default)]
@@ -68,6 +74,7 @@ pub enum RuleScopeKind {
 
 /// Entropy constraints in the policy.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EntropyConstraints {
     pub budget_bits: u32,
     pub classification: EnforcementClass,
@@ -930,6 +937,94 @@ mod tests {
         let map: std::collections::HashMap<&str, &str> = entries.iter().cloned().collect();
         let path = dir.join(LOCKFILE_NAME);
         std::fs::write(path, serde_json::to_string_pretty(&map).unwrap()).unwrap();
+    }
+
+    /// The sample policy as JSON with one unknown field added at `path`
+    /// (top level, a rule, a rule scope or the entropy constraints).
+    fn sample_policy_json_with_unknown_field(path: &str) -> serde_json::Value {
+        let mut policy = sample_policy();
+        policy.entropy_constraints = Some(EntropyConstraints {
+            budget_bits: 32,
+            classification: EnforcementClass::Advisory,
+            review_trigger_pct: Some(80),
+        });
+        let mut json = serde_json::to_value(&policy).unwrap();
+        let target = match path {
+            "" => &mut json,
+            "rule" => &mut json["rules"][0],
+            "scope" => &mut json["rules"][0]["scope"],
+            "entropy" => &mut json["entropy_constraints"],
+            other => panic!("unknown path {other}"),
+        };
+        target
+            .as_object_mut()
+            .unwrap()
+            .insert("unenforced_extra".to_string(), serde_json::json!(true));
+        json
+    }
+
+    #[test]
+    fn test_policy_with_unknown_field_rejected() {
+        for path in ["", "rule", "scope", "entropy"] {
+            let json = sample_policy_json_with_unknown_field(path);
+            let err = serde_json::from_value::<RelayEnforcementPolicy>(json).unwrap_err();
+            assert!(err.to_string().contains("unknown field"), "{path}: {err}");
+        }
+    }
+
+    #[test]
+    fn test_lockfile_rejects_policy_with_unknown_field() {
+        for path in ["", "rule", "scope", "entropy"] {
+            let dir = std::env::temp_dir().join(format!(
+                "vcav-enforcement-lockfile-unknown-field-{}",
+                if path.is_empty() { "top" } else { path }
+            ));
+            std::fs::create_dir_all(&dir).unwrap();
+
+            let json = sample_policy_json_with_unknown_field(path);
+            std::fs::write(
+                dir.join("compatibility_safe_v1.json"),
+                serde_json::to_string(&json).unwrap(),
+            )
+            .unwrap();
+            // Pin the hash the policy has without the unknown field.
+            let mut known = json.clone();
+            let hash = {
+                let target = match path {
+                    "" => &mut known,
+                    "rule" => &mut known["rules"][0],
+                    "scope" => &mut known["rules"][0]["scope"],
+                    _ => &mut known["entropy_constraints"],
+                };
+                target.as_object_mut().unwrap().remove("unenforced_extra");
+                content_hash(&serde_json::from_value(known).unwrap()).unwrap()
+            };
+            write_lockfile_entries(&dir, &[("compatibility_safe_v1", &hash)]);
+
+            let dir_str = dir.to_str().unwrap();
+            let err = validate_enforcement_lockfile(dir_str).unwrap_err();
+            assert!(err.to_string().contains("unknown field"), "{path}: {err}");
+            let entries = std::collections::HashMap::from([(
+                "compatibility_safe_v1".to_string(),
+                hash.clone(),
+            )]);
+            let err = load_all_policies(dir_str, &entries).unwrap_err();
+            assert!(err.to_string().contains("unknown field"), "{path}: {err}");
+
+            std::fs::remove_dir_all(&dir).ok();
+        }
+    }
+
+    #[test]
+    fn test_committed_policies_load() {
+        let dir = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/prompt_programs/relay_policies"
+        );
+        validate_enforcement_lockfile(dir).unwrap();
+        let entries = load_lockfile_entries(dir).unwrap();
+        let policies = load_all_policies(dir, &entries).unwrap();
+        assert_eq!(policies.len(), entries.len());
     }
 
     #[test]

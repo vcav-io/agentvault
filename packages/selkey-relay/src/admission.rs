@@ -654,6 +654,43 @@ path = "{}"
     }
 
     #[test]
+    fn test_admitted_policy_with_unknown_field_rejected() {
+        let with_extra = |path: &str| {
+            let mut policy = sample_policy();
+            policy["rules"] = serde_json::json!([{
+                "rule_id": "r", "type": "unicode_category_reject", "value": "Nd",
+                "scope": { "kind": "all_string_values" }, "classification": "GATE"
+            }]);
+            policy["entropy_constraints"] =
+                serde_json::json!({ "budget_bits": 32, "classification": "ADVISORY" });
+            let target = match path {
+                "" => &mut policy,
+                "rule" => &mut policy["rules"][0],
+                "scope" => &mut policy["rules"][0]["scope"],
+                _ => &mut policy["entropy_constraints"],
+            };
+            target
+                .as_object_mut()
+                .unwrap()
+                .insert("unenforced_extra".to_string(), serde_json::json!(true));
+            policy
+        };
+        for path in ["", "rule", "scope", "entropy"] {
+            let tmp = test_tmp("unknown-field-policy");
+            let (config_path, _, policy_digest, _, _) = setup_admission(&tmp);
+            let registry = tmp.join("registry");
+            let bad_digest = write_artefact(&registry, "policies", &with_extra(path));
+            let config = fs::read_to_string(&config_path)
+                .unwrap()
+                .replace(&policy_digest, &bad_digest);
+            fs::write(&config_path, config).unwrap();
+            let err = load_admission(&config_path, None).unwrap_err().to_string();
+            assert!(err.contains("unknown field"), "{path}: {err}");
+            fs::remove_dir_all(&tmp).ok();
+        }
+    }
+
+    #[test]
     fn test_admitted_policies_are_validated() {
         let bad_policies = [
             // Unsupported unicode category.
