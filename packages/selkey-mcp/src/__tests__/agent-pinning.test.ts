@@ -26,7 +26,7 @@ import {
   SELKEY_CONTRACT_OFFER_SELECTION_MEDIA_TYPE,
   buildA2ASendMessageRequest,
 } from '../a2a-messages.js';
-import { PinError, PinStore, keyFingerprint, resolveAgentHint } from '../pin-store.js';
+import { MAX_PENDING_PINS, PinError, PinStore, keyFingerprint, resolveAgentHint } from '../pin-store.js';
 import { runPinsCli, type PinsCliIo } from '../pin-cli.js';
 import { signNegotiationRequest } from '../negotiation-auth.js';
 import { IfcService } from '../ifc.js';
@@ -245,6 +245,78 @@ describe('pin store', () => {
     expect(store.applyRotation(byOldKey, OTHER_PUB).public_key_hex).toBe(OTHER_PUB);
     // The statement cannot be replayed once the pin has moved on.
     expect(() => store.applyRotation(byOldKey, OTHER_PUB)).toThrow(/old_fpr/);
+  });
+});
+
+describe('pin store shared with the CLI', () => {
+  const file = () => path.join(tmp, '.selkey', 'pins.json');
+
+  it('sees a CLI remove without a restart', async () => {
+    const server = PinStore.open({ filePath: file(), seeds: [{ agentId: 'bob-test', publicKeyHex: BOB_PUB }] });
+    expect(server.pinnedKeyFor('bob-test')).toBe(BOB_PUB);
+    const cli = PinStore.open({ filePath: file() });
+    expect(await runPinsCli(['remove', 'bob-test'], cli, cliIo(''))).toBe(0);
+    expect(server.pinnedKeyFor('bob-test')).toBeUndefined();
+  });
+
+  it('does not overwrite a CLI confirmation with a later server write', async () => {
+    const server = PinStore.open({ filePath: file(), mode: 'tofu' });
+    expect(() => server.checkPresentedKey('bob-test', BOB_PUB)).toThrow(PinError);
+    const cli = PinStore.open({ filePath: file(), mode: 'tofu' });
+    expect(await runPinsCli(['confirm', 'bob-test'], cli, cliIo(keyFingerprint(BOB_PUB)))).toBe(0);
+    // The server records another first contact afterwards.
+    expect(() => server.checkPresentedKey('carol-test', OTHER_PUB)).toThrow(PinError);
+    const reread = PinStore.open({ filePath: file(), mode: 'tofu' });
+    expect(reread.pinnedKeyFor('bob-test')).toBe(BOB_PUB);
+    expect(reread.listPending().map((p) => p.agent_id)).toEqual(['carol-test']);
+    expect(server.pinnedKeyFor('bob-test')).toBe(BOB_PUB);
+  });
+
+  it('refuses a configured key that differs from a stored re-pin unless reseeding', () => {
+    PinStore.open({ filePath: file(), seeds: [{ agentId: 'bob-test', publicKeyHex: BOB_PUB }] }).setPin(
+      'bob-test',
+      OTHER_PUB,
+    );
+    expect(() =>
+      PinStore.open({ filePath: file(), seeds: [{ agentId: 'bob-test', publicKeyHex: BOB_PUB }] }),
+    ).toThrow(/differs from the stored pin/);
+    expect(PinStore.open({ filePath: file() }).pinnedKeyFor('bob-test')).toBe(OTHER_PUB);
+    const reseeded = PinStore.open({
+      filePath: file(),
+      seeds: [{ agentId: 'bob-test', publicKeyHex: BOB_PUB }],
+      reseed: true,
+    });
+    expect(reseeded.pinnedKeyFor('bob-test')).toBe(BOB_PUB);
+  });
+
+  it('rejects a replayed or older rotation statement, across restarts', () => {
+    const store = PinStore.open({ filePath: file(), seeds: [{ agentId: 'bob-test', publicKeyHex: BOB_PUB }] });
+    const t1 = new Date(Date.now() - 60_000).toISOString();
+    const t2 = new Date().toISOString();
+    const forward = signMessage(
+      DOMAIN_PREFIXES.KEY_ROTATION,
+      { agent_id: 'bob-test', old_fpr: keyFingerprint(BOB_PUB), new_fpr: keyFingerprint(OTHER_PUB), issued_at: t1 },
+      BOB_SEED,
+    );
+    const back = signMessage(
+      DOMAIN_PREFIXES.KEY_ROTATION,
+      { agent_id: 'bob-test', old_fpr: keyFingerprint(OTHER_PUB), new_fpr: keyFingerprint(BOB_PUB), issued_at: t2 },
+      OTHER_SEED,
+    );
+    store.applyRotation(forward, OTHER_PUB);
+    store.applyRotation(back, BOB_PUB);
+    const restarted = PinStore.open({ filePath: file() });
+    expect(restarted.pinnedKeyFor('bob-test')).toBe(BOB_PUB);
+    expect(() => restarted.applyRotation(forward, OTHER_PUB)).toThrow(/already applied or is not newer/);
+    expect(restarted.pinnedKeyFor('bob-test')).toBe(BOB_PUB);
+  });
+
+  it('keeps at most a bounded number of pending first-contact keys', () => {
+    const store = PinStore.inMemory([], 'tofu');
+    for (let i = 0; i < MAX_PENDING_PINS + 10; i++) {
+      expect(() => store.checkPresentedKey(`agent-${i}`, BOB_PUB)).toThrow(PinError);
+    }
+    expect(store.listPending()).toHaveLength(MAX_PENDING_PINS);
   });
 });
 

@@ -121,7 +121,7 @@ These enable the AFAL direct transport for INITIATE and RESPOND session modes (a
 
 ### Agent identity pins
 
-The MCP server keeps one pin store at `$SELKEY_WORKDIR/.selkey/pins.json` (directory `0700`, file `0600`; the server refuses to start if the file is group- or world-writable). It is seeded from `SELKEY_AFAL_TRUSTED_AGENTS` and the `public_key_hex` entries of `SELKEY_KNOWN_AGENTS`; a configured key replaces a stored pin for the same `agent_id`. Every PROPOSE, ADMIT, DENY, COMMIT, negotiation request and IFC signature from a peer is verified against the pinned key for its `agent_id`, never against a key in the peer's card, descriptor or message. A peer that presents a different key is rejected with both fingerprints (`ed25519:` + hex SHA-256 of the raw key).
+The MCP server keeps one pin store at `$SELKEY_WORKDIR/.selkey/pins.json` (directory `0700`, file `0600`; the server refuses to start if the file is group- or world-writable). It is seeded from `SELKEY_AFAL_TRUSTED_AGENTS` and the `public_key_hex` entries of `SELKEY_KNOWN_AGENTS`. Stored pins take precedence: if a configured key differs from a stored pin (for example after a CLI re-pin or a rotation), the server refuses to start and shows both fingerprints; set `SELKEY_AGENT_PIN_RESEED=true` to let the configured keys replace the stored pins. The running server re-reads `pins.json` when it changes, so `selkey-mcp pins` commands take effect without a restart. Every PROPOSE, ADMIT, DENY, COMMIT, negotiation request and IFC signature from a peer is verified against the pinned key for its `agent_id`, never against a key in the peer's card, descriptor or message. A peer that presents a different key is rejected with both fingerprints (`ed25519:` + hex SHA-256 of the raw key).
 
 Manage pins with:
 
@@ -133,4 +133,6 @@ selkey-mcp pins confirm <agent_id>      # tofu mode: interactive terminal only
 selkey-mcp pins rotate <statement.json> <new_public_key_hex>
 ```
 
-A rotation statement is `{agent_id, old_fpr, new_fpr, issued_at, signature}`, signed by the currently pinned key with the AFAL signing rules and the domain prefix `VCAV-KEY-ROTATION-V1:`.
+A rotation statement is `{agent_id, old_fpr, new_fpr, issued_at, signature}`, signed by the currently pinned key with the AFAL signing rules and the domain prefix `VCAV-KEY-ROTATION-V1:`. A statement is refused if it was applied before or its `issued_at` is not newer than the last rotation applied for that agent.
+
+`pins confirm` requires an interactive terminal and is not available as an MCP tool, so a model using the MCP tools cannot confirm a pin. It does not stop a model that has its own shell or terminal access; do not give such a model access to the terminal where pins are confirmed.

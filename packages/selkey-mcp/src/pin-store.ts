@@ -25,13 +25,14 @@
  * the pinned key (VCAV-KEY-ROTATION-V1).
  */
 
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ed25519 } from '@noble/curves/ed25519';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
 
 import { DOMAIN_PREFIXES, verifyMessage } from './afal-signing.js';
-import { readPrivateJson, selkeyStateDir, writePrivateJson } from './secure-fs.js';
+import { ensurePrivateDir, readPrivateJson, selkeyStateDir, writePrivateJson } from './secure-fs.js';
 
 export type PinMode = 'preshared' | 'tofu';
 export type PinSource = 'config' | 'cli' | 'tofu-confirmed' | 'rotation';
@@ -86,10 +87,18 @@ export interface PinSeed {
   aliases?: string[];
 }
 
+interface RotationRecord {
+  /** issued_at of the newest rotation statement applied for this agent. */
+  last_issued_at: string;
+  /** "old_fpr>new_fpr" pairs already applied. */
+  applied: string[];
+}
+
 interface PinFileV1 {
   version: 1;
   pins: AgentPin[];
   pending: PendingPin[];
+  rotations?: Record<string, RotationRecord>;
 }
 
 /** Minimal lookup interface used by verifiers. */
@@ -107,6 +116,10 @@ export interface KeyRotationStatement {
 }
 
 const KEY_HEX_RE = /^[0-9a-f]{64}$/;
+/** At most this many first-contact keys wait for confirmation; the oldest are dropped. */
+export const MAX_PENDING_PINS = 32;
+const LOCK_STALE_MS = 10_000;
+const LOCK_TIMEOUT_MS = 5_000;
 const ROTATION_MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
 export function normalizeAgentId(agentId: string): string {
@@ -174,8 +187,11 @@ export function parsePinMode(value: string | undefined): PinMode {
 export class PinStore implements PinResolver {
   readonly mode: PinMode;
   private readonly filePath: string | undefined;
-  private readonly pins = new Map<string, AgentPin>();
-  private readonly pending = new Map<string, PendingPin>();
+  private pins = new Map<string, AgentPin>();
+  private pending = new Map<string, PendingPin>();
+  private rotations = new Map<string, RotationRecord>();
+  /** Identity of the file contents last loaded (inode, size, mtime, ctime). */
+  private fileStamp: string | undefined;
 
   private constructor(mode: PinMode, filePath: string | undefined) {
     this.mode = mode;
@@ -185,21 +201,79 @@ export class PinStore implements PinResolver {
   /** An in-memory store (nothing is written to disk). */
   static inMemory(seeds: PinSeed[] = [], mode: PinMode = 'preshared'): PinStore {
     const store = new PinStore(mode, undefined);
-    store.applySeeds(seeds);
+    store.applySeeds(seeds, true);
     return store;
   }
 
   /**
-   * Open the persistent store at `filePath`, merge `seeds`, and persist the
-   * result if anything changed. Throws if the file is insecure or malformed.
+   * Open the persistent store at `filePath` and merge `seeds`.
+   *
+   * Stored pins take precedence: a seed whose key differs from a stored pin
+   * fails with KEY_CHANGED (both fingerprints), unless `reseed` is set, in
+   * which case the configured key replaces the stored pin. Throws if the
+   * file is insecure or malformed.
+   *
+   * The running process re-reads the file whenever it changes, so CLI edits
+   * take effect without a restart; every write re-reads, applies one change
+   * and writes under a lock file.
    */
-  static open(params: { filePath?: string; seeds?: PinSeed[]; mode?: PinMode } = {}): PinStore {
+  static open(
+    params: { filePath?: string; seeds?: PinSeed[]; mode?: PinMode; reseed?: boolean } = {},
+  ): PinStore {
     const filePath = params.filePath ?? defaultPinFilePath();
     const store = new PinStore(params.mode ?? 'preshared', filePath);
-    const raw = readPrivateJson(filePath);
-    if (raw !== undefined) store.loadFile(raw, filePath);
-    if (store.applySeeds(params.seeds ?? [])) store.persist();
+    store.refresh();
+    const seeds = params.seeds ?? [];
+    if (seeds.length > 0) {
+      store.mutate(() => store.applySeeds(seeds, params.reseed === true));
+    }
     return store;
+  }
+
+  // ── File synchronisation ──────────────────────────────────────────────
+
+  private currentStamp(): string {
+    if (!this.filePath) return 'memory';
+    try {
+      const st = fs.statSync(this.filePath, { bigint: true });
+      return `${st.ino}:${st.size}:${st.mtimeNs}:${st.ctimeNs}`;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return 'missing';
+      throw err;
+    }
+  }
+
+  /** Reload from disk if the file changed since it was last read. */
+  private refresh(): void {
+    if (!this.filePath) return;
+    const stamp = this.currentStamp();
+    if (stamp === this.fileStamp) return;
+    this.reload();
+  }
+
+  private reload(): void {
+    if (!this.filePath) return;
+    const stamp = this.currentStamp();
+    this.pins = new Map();
+    this.pending = new Map();
+    this.rotations = new Map();
+    const raw = readPrivateJson(this.filePath);
+    if (raw !== undefined) this.loadFile(raw, this.filePath);
+    this.fileStamp = stamp;
+  }
+
+  /** Apply one change: lock, re-read, change, write, unlock. */
+  private mutate<T>(change: () => T): T {
+    if (!this.filePath) return change();
+    const release = acquireLock(`${this.filePath}.lock`);
+    try {
+      this.reload();
+      const result = change();
+      this.persist();
+      return result;
+    } finally {
+      release();
+    }
   }
 
   private loadFile(raw: unknown, filePath: string): void {
@@ -235,43 +309,49 @@ export class PinStore implements PinResolver {
         first_seen_at: typeof p.first_seen_at === 'string' ? p.first_seen_at : new Date(0).toISOString(),
       });
     }
+    if (file.rotations && typeof file.rotations === 'object') {
+      for (const [agentId, record] of Object.entries(file.rotations)) {
+        if (
+          record &&
+          typeof record.last_issued_at === 'string' &&
+          Array.isArray(record.applied)
+        ) {
+          this.rotations.set(normalizeAgentId(agentId), {
+            last_issued_at: record.last_issued_at,
+            applied: record.applied.filter((x): x is string => typeof x === 'string'),
+          });
+        }
+      }
+    }
   }
 
   /**
-   * Apply configuration seeds. A seed is explicit operator configuration, so
-   * it sets (or replaces) the pin for its agent_id. Returns true if anything
-   * changed.
+   * Apply configuration seeds. A seed adds a missing pin and aliases. A seed
+   * whose key differs from a stored pin is refused (KEY_CHANGED) unless
+   * `replace` is set.
    */
-  private applySeeds(seeds: PinSeed[]): boolean {
-    let changed = false;
+  private applySeeds(seeds: PinSeed[], replace: boolean): void {
     for (const seed of seeds) {
       const agentId = normalizeAgentId(seed.agentId);
       const aliases = (seed.aliases ?? []).map(normalizeAgentId);
       const existing = this.pins.get(agentId);
       if (!seed.publicKeyHex) {
         // Alias-only seed: attach aliases to an existing pin.
-        if (existing) {
-          const merged = [...new Set([...existing.aliases, ...aliases])];
-          if (merged.length !== existing.aliases.length) {
-            existing.aliases = merged;
-            changed = true;
-          }
-        }
+        if (existing) existing.aliases = [...new Set([...existing.aliases, ...aliases])];
         continue;
       }
       const key = normalizePublicKeyHex(seed.publicKeyHex);
       if (existing && existing.public_key_hex === key) {
-        const merged = [...new Set([...existing.aliases, ...aliases])];
-        if (merged.length !== existing.aliases.length) {
-          existing.aliases = merged;
-          changed = true;
-        }
+        existing.aliases = [...new Set([...existing.aliases, ...aliases])];
         continue;
       }
-      if (existing) {
-        console.warn(
-          `[selkey pins] configured key for ${agentId} replaces the stored pin ` +
-            `(${existing.fingerprint} -> ${keyFingerprint(key)})`,
+      if (existing && !replace) {
+        throw new PinError(
+          'KEY_CHANGED',
+          `Configured key for "${agentId}" (${keyFingerprint(key)}) differs from the stored pin ` +
+            `(${existing.fingerprint}, source ${existing.source}). Fix the configuration, re-pin with ` +
+            '`selkey-mcp pins add`, or set SELKEY_AGENT_PIN_RESEED=true to replace stored pins with configured keys.',
+          { agentId, pinnedFingerprint: existing.fingerprint, presentedFingerprint: keyFingerprint(key) },
         );
       }
       this.pins.set(agentId, {
@@ -283,9 +363,7 @@ export class PinStore implements PinResolver {
         pinned_at: new Date().toISOString(),
       });
       this.pending.delete(agentId);
-      changed = true;
     }
-    return changed;
   }
 
   private persist(): void {
@@ -294,39 +372,48 @@ export class PinStore implements PinResolver {
       version: 1,
       pins: [...this.pins.values()].sort((a, b) => a.agent_id.localeCompare(b.agent_id)),
       pending: [...this.pending.values()].sort((a, b) => a.agent_id.localeCompare(b.agent_id)),
+      rotations: Object.fromEntries([...this.rotations.entries()].sort(([a], [b]) => a.localeCompare(b))),
     };
     writePrivateJson(this.filePath, file);
+    this.fileStamp = this.currentStamp();
   }
+
+  // ── Lookup ────────────────────────────────────────────────────────────
 
   get path(): string | undefined {
     return this.filePath;
   }
 
   listPins(): AgentPin[] {
+    this.refresh();
     return [...this.pins.values()].map((p) => ({ ...p, aliases: [...p.aliases] }));
   }
 
   listPending(): PendingPin[] {
+    this.refresh();
     return [...this.pending.values()].map((p) => ({ ...p }));
   }
 
   getPin(agentId: string): AgentPin | undefined {
+    this.refresh();
     const pin = this.pins.get(normalizeAgentId(agentId));
     return pin ? { ...pin, aliases: [...pin.aliases] } : undefined;
   }
 
   private snapshot(id: string): AgentPin {
-    const pin = this.getPin(id);
+    const pin = this.pins.get(id);
     if (!pin) throw new Error(`pin for ${id} disappeared`);
-    return pin;
+    return { ...pin, aliases: [...pin.aliases] };
   }
 
   pinnedKeyFor(agentId: string): string | undefined {
+    this.refresh();
     return this.pins.get(normalizeAgentId(agentId))?.public_key_hex;
   }
 
   /** Resolve an agent_id or alias to a pinned agent_id (exact match). */
   resolveAgentId(hint: string): string | undefined {
+    this.refresh();
     return resolveAgentHint(hint, [...this.pins.values()]);
   }
 
@@ -362,6 +449,7 @@ export class PinStore implements PinResolver {
     } catch {
       throw new PinError('INVALID_KEY', `Agent "${id}" presented a malformed public key`, { agentId: id });
     }
+    this.refresh();
     const pinned = this.pins.get(id);
     if (pinned) {
       if (pinned.public_key_hex === presented) return pinned.public_key_hex;
@@ -380,13 +468,21 @@ export class PinStore implements PinResolver {
     const fingerprint = keyFingerprint(presented);
     const existingPending = this.pending.get(id);
     if (!existingPending || existingPending.public_key_hex !== presented) {
-      this.pending.set(id, {
-        agent_id: id,
-        public_key_hex: presented,
-        fingerprint,
-        first_seen_at: new Date().toISOString(),
+      this.mutate(() => {
+        this.pending.delete(id);
+        this.pending.set(id, {
+          agent_id: id,
+          public_key_hex: presented,
+          fingerprint,
+          first_seen_at: new Date().toISOString(),
+        });
+        // Bound the pending list: drop the oldest entries.
+        const ordered = [...this.pending.values()].sort((a, b) => a.first_seen_at.localeCompare(b.first_seen_at));
+        while (ordered.length > MAX_PENDING_PINS) {
+          const oldest = ordered.shift();
+          if (oldest && oldest.agent_id !== id) this.pending.delete(oldest.agent_id);
+        }
       });
-      this.persist();
     }
     throw new PinError(
       'NEEDS_CONFIRMATION',
@@ -397,28 +493,31 @@ export class PinStore implements PinResolver {
     );
   }
 
+  // ── Changes (CLI and configuration) ───────────────────────────────────
+
   /** Confirm a pending first-contact key. Only the CLI calls this. */
   confirmPending(agentId: string, fingerprint: string): AgentPin {
     const id = normalizeAgentId(agentId);
-    const pending = this.pending.get(id);
-    if (!pending) throw new PinError('UNPINNED', `No pending key for agent "${id}"`, { agentId: id });
-    if (pending.fingerprint !== fingerprint.trim().toLowerCase()) {
-      throw new PinError('KEY_CHANGED', `Fingerprint does not match the pending key for "${id}"`, {
-        agentId: id,
-        presentedFingerprint: pending.fingerprint,
+    return this.mutate(() => {
+      const pending = this.pending.get(id);
+      if (!pending) throw new PinError('UNPINNED', `No pending key for agent "${id}"`, { agentId: id });
+      if (pending.fingerprint !== fingerprint.trim().toLowerCase()) {
+        throw new PinError('KEY_CHANGED', `Fingerprint does not match the pending key for "${id}"`, {
+          agentId: id,
+          presentedFingerprint: pending.fingerprint,
+        });
+      }
+      this.pins.set(id, {
+        agent_id: id,
+        public_key_hex: pending.public_key_hex,
+        fingerprint: pending.fingerprint,
+        aliases: this.pins.get(id)?.aliases ?? [],
+        source: 'tofu-confirmed',
+        pinned_at: new Date().toISOString(),
       });
-    }
-    this.pins.set(id, {
-      agent_id: id,
-      public_key_hex: pending.public_key_hex,
-      fingerprint: pending.fingerprint,
-      aliases: this.pins.get(id)?.aliases ?? [],
-      source: 'tofu-confirmed',
-      pinned_at: new Date().toISOString(),
+      this.pending.delete(id);
+      return this.snapshot(id);
     });
-    this.pending.delete(id);
-    this.persist();
-    return this.snapshot(id);
   }
 
   /** Explicitly pin (or re-pin) a key. Only configuration and the CLI call this. */
@@ -426,67 +525,125 @@ export class PinStore implements PinResolver {
     const id = normalizeAgentId(agentId);
     if (!id) throw new Error('agent_id must not be empty');
     const key = normalizePublicKeyHex(publicKeyHex);
-    const existing = this.pins.get(id);
-    this.pins.set(id, {
-      agent_id: id,
-      public_key_hex: key,
-      fingerprint: keyFingerprint(key),
-      aliases: [...new Set([...(existing?.aliases ?? []), ...(opts.aliases ?? []).map(normalizeAgentId)])],
-      source: opts.source ?? 'cli',
-      pinned_at: new Date().toISOString(),
+    return this.mutate(() => {
+      const existing = this.pins.get(id);
+      this.pins.set(id, {
+        agent_id: id,
+        public_key_hex: key,
+        fingerprint: keyFingerprint(key),
+        aliases: [...new Set([...(existing?.aliases ?? []), ...(opts.aliases ?? []).map(normalizeAgentId)])],
+        source: opts.source ?? 'cli',
+        pinned_at: new Date().toISOString(),
+      });
+      this.pending.delete(id);
+      return this.snapshot(id);
     });
-    this.pending.delete(id);
-    this.persist();
-    return this.snapshot(id);
   }
 
   removePin(agentId: string): boolean {
     const id = normalizeAgentId(agentId);
-    const removed = this.pins.delete(id) || this.pending.delete(id);
-    if (removed) this.persist();
-    return removed;
+    return this.mutate(() => {
+      const removedPin = this.pins.delete(id);
+      const removedPending = this.pending.delete(id);
+      return removedPin || removedPending;
+    });
   }
 
   /**
    * Apply a key rotation statement: signed under the CURRENT pinned key with
    * domain prefix VCAV-KEY-ROTATION-V1:, naming the pinned key's fingerprint
-   * as old_fpr and the fingerprint of `newPublicKeyHex` as new_fpr.
+   * as old_fpr and the fingerprint of `newPublicKeyHex` as new_fpr. A
+   * statement is refused if it was applied before or is not newer than the
+   * last rotation applied for the agent.
    */
   applyRotation(statement: KeyRotationStatement, newPublicKeyHex: string, nowMs = Date.now()): AgentPin {
     verifyRotationShape(statement);
     const id = normalizeAgentId(statement.agent_id);
-    const pinned = this.pins.get(id);
-    if (!pinned) throw new PinError('UNPINNED', `No pinned key for agent "${id}"`, { agentId: id });
     const newKey = normalizePublicKeyHex(newPublicKeyHex);
-    if (statement.old_fpr !== pinned.fingerprint) {
-      throw new PinError('INVALID_ROTATION', 'rotation old_fpr does not match the pinned key', { agentId: id });
-    }
-    if (statement.new_fpr !== keyFingerprint(newKey)) {
-      throw new PinError('INVALID_ROTATION', 'rotation new_fpr does not match the new key', { agentId: id });
-    }
-    const issuedMs = Date.parse(statement.issued_at);
-    if (Number.isNaN(issuedMs) || issuedMs > nowMs + ROTATION_MAX_FUTURE_SKEW_MS) {
-      throw new PinError('INVALID_ROTATION', 'rotation issued_at is invalid or in the future', { agentId: id });
-    }
-    if (
-      !verifyMessage(
-        DOMAIN_PREFIXES.KEY_ROTATION,
-        statement as unknown as Record<string, unknown>,
-        pinned.public_key_hex,
-      )
-    ) {
-      throw new PinError('INVALID_ROTATION', 'rotation statement is not signed by the pinned key', { agentId: id });
-    }
-    this.pins.set(id, {
-      ...pinned,
-      public_key_hex: newKey,
-      fingerprint: keyFingerprint(newKey),
-      source: 'rotation',
-      pinned_at: new Date(nowMs).toISOString(),
+    return this.mutate(() => {
+      const pinned = this.pins.get(id);
+      if (!pinned) throw new PinError('UNPINNED', `No pinned key for agent "${id}"`, { agentId: id });
+      if (statement.old_fpr !== pinned.fingerprint) {
+        throw new PinError('INVALID_ROTATION', 'rotation old_fpr does not match the pinned key', { agentId: id });
+      }
+      if (statement.new_fpr !== keyFingerprint(newKey)) {
+        throw new PinError('INVALID_ROTATION', 'rotation new_fpr does not match the new key', { agentId: id });
+      }
+      const issuedMs = Date.parse(statement.issued_at);
+      if (Number.isNaN(issuedMs) || issuedMs > nowMs + ROTATION_MAX_FUTURE_SKEW_MS) {
+        throw new PinError('INVALID_ROTATION', 'rotation issued_at is invalid or in the future', { agentId: id });
+      }
+      const history = this.rotations.get(id);
+      const pair = `${statement.old_fpr}>${statement.new_fpr}`;
+      if (history && (history.applied.includes(pair) || issuedMs <= Date.parse(history.last_issued_at))) {
+        throw new PinError(
+          'INVALID_ROTATION',
+          'rotation statement was already applied or is not newer than the last applied rotation',
+          { agentId: id },
+        );
+      }
+      if (
+        !verifyMessage(
+          DOMAIN_PREFIXES.KEY_ROTATION,
+          statement as unknown as Record<string, unknown>,
+          pinned.public_key_hex,
+        )
+      ) {
+        throw new PinError('INVALID_ROTATION', 'rotation statement is not signed by the pinned key', { agentId: id });
+      }
+      this.pins.set(id, {
+        ...pinned,
+        public_key_hex: newKey,
+        fingerprint: keyFingerprint(newKey),
+        source: 'rotation',
+        pinned_at: new Date(nowMs).toISOString(),
+      });
+      this.rotations.set(id, {
+        last_issued_at: new Date(issuedMs).toISOString(),
+        applied: [...(history?.applied ?? []), pair],
+      });
+      this.pending.delete(id);
+      return this.snapshot(id);
     });
-    this.pending.delete(id);
-    this.persist();
-    return this.snapshot(id);
+  }
+}
+
+/**
+ * Take an exclusive lock file (O_EXCL). A lock older than 10 s is treated as
+ * stale and removed. Returns the release function.
+ */
+function acquireLock(lockPath: string): () => void {
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  ensurePrivateDir(path.dirname(lockPath));
+  for (;;) {
+    try {
+      const fd = fs.openSync(
+        lockPath,
+        fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL,
+        0o600,
+      );
+      fs.writeSync(fd, String(process.pid));
+      fs.closeSync(fd);
+      return () => {
+        try {
+          fs.unlinkSync(lockPath);
+        } catch {
+          // already gone
+        }
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      try {
+        if (Date.now() - fs.statSync(lockPath).mtimeMs > LOCK_STALE_MS) {
+          fs.unlinkSync(lockPath);
+          continue;
+        }
+      } catch {
+        continue;
+      }
+      if (Date.now() > deadline) throw new Error(`timed out waiting for ${lockPath}`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    }
   }
 }
 

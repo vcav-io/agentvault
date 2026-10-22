@@ -14,6 +14,7 @@
  *   SELKEY_AFAL_HTTP_PORT          — port for AFAL HTTP server (enables RESPOND mode)
  *   SELKEY_AFAL_BIND_ADDRESS       — bind address (default: 127.0.0.1)
  *   SELKEY_AFAL_TRUSTED_AGENTS     — JSON: [{"agentId":"...","publicKeyHex":"..."}] (pin seeds)
+ *   SELKEY_AGENT_PIN_RESEED        — "true" lets configured keys replace differing stored pins
  *   SELKEY_AGENT_PIN_MODE          — "preshared" (default) or "tofu" (first contact needs
  *                                    human confirmation via `selkey-mcp pins confirm`)
  *
@@ -298,6 +299,7 @@ function openPinStoreFromEnv(knownAgents: NormalizedKnownAgent[]): PinStore {
   return PinStore.open({
     seeds: pinSeedsFromEnv(knownAgents),
     mode: parsePinMode(process.env['SELKEY_AGENT_PIN_MODE']),
+    reseed: process.env['SELKEY_AGENT_PIN_RESEED'] === 'true',
   });
 }
 
@@ -424,7 +426,9 @@ if (isDirectExecution) {
   if (process.argv[2] === 'pins') {
     let exitCode = 1;
     try {
-      const store = openPinStoreFromEnv(parseKnownAgentsFromEnv());
+      // The CLI works on the stored pins only; configuration seeds are
+      // applied when the server starts.
+      const store = PinStore.open({ mode: parsePinMode(process.env['SELKEY_AGENT_PIN_MODE']) });
       exitCode = await runPinsCli(process.argv.slice(3), store, processPinsCliIo());
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
