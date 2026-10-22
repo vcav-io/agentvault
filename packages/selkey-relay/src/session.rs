@@ -73,6 +73,8 @@ pub struct Session {
     pub initiator_submitted: bool,
     pub responder_submitted: bool,
     pub created_at: DateTime<Utc>,
+    /// When inference started (set as the session enters `Processing`).
+    pub processing_started_at: Option<DateTime<Utc>>,
     pub metadata: Option<SessionMetadata>,
 }
 
@@ -152,6 +154,7 @@ impl SessionStore {
             initiator_submitted: false,
             responder_submitted: false,
             created_at: Utc::now(),
+            processing_started_at: None,
             metadata: None,
         };
 
@@ -184,16 +187,38 @@ impl SessionStore {
     }
 
     /// Reap expired sessions. Returns number of sessions removed.
+    ///
+    /// Sessions with inference in flight are kept so the background task can
+    /// write its result back. A session that stays in `Processing` for longer
+    /// than one TTL after inference started is treated as stuck: it moves to
+    /// `Aborted` with `Timeout`, its raw inputs are cleared, and it is removed
+    /// by a later pass once past its TTL.
     pub async fn reap_expired(&self) -> usize {
         let now = Utc::now();
         let ttl_chrono =
             chrono::Duration::from_std(self.ttl).unwrap_or(chrono::Duration::seconds(600));
         let mut store = self.inner.lock().await;
+        let mut timed_out = std::collections::HashSet::new();
+        for session in store.values_mut() {
+            if session.state != SessionState::Processing {
+                continue;
+            }
+            let started = session.processing_started_at.unwrap_or(session.created_at);
+            if now.signed_duration_since(started) >= ttl_chrono {
+                tracing::warn!(session_id = %session.id, "session processing timed out");
+                session.state = SessionState::Aborted;
+                session.abort_reason = Some(AbortReason::Timeout);
+                session.initiator_input = None;
+                session.responder_input = None;
+                timed_out.insert(session.id.clone());
+            }
+        }
         let before = store.len();
-        store.retain(|_, session| {
-            // Don't reap sessions with inference in flight — the background task
-            // needs the session to exist when it writes the result back.
-            session.state == SessionState::Processing
+        store.retain(|id, session| {
+            // Sessions timed out in this pass stay until the next pass so
+            // participants can observe the TIMEOUT status.
+            timed_out.contains(id)
+                || session.state == SessionState::Processing
                 || now.signed_duration_since(session.created_at) < ttl_chrono
         });
         before - store.len()
@@ -334,6 +359,68 @@ mod tests {
 
         let reaped = store.reap_expired().await;
         assert_eq!(reaped, 1);
+    }
+
+    #[tokio::test]
+    async fn test_reaper_times_out_stuck_processing_session() {
+        let store = SessionStore::new(Duration::from_millis(1));
+        let (session_id, _) = store
+            .create(test_contract(), "hash".to_string(), "anthropic".to_string())
+            .await;
+        store
+            .with_session(&session_id, |session| {
+                session.initiator_input = Some(RelayInput {
+                    role: "alice".to_string(),
+                    context: serde_json::json!({"text": "initiator input"}),
+                });
+                session.responder_input = Some(RelayInput {
+                    role: "bob".to_string(),
+                    context: serde_json::json!({"text": "responder input"}),
+                });
+                session.state = SessionState::Processing;
+            })
+            .await;
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        store.reap_expired().await;
+
+        // First pass: session is terminal with inputs cleared, still observable.
+        let snapshot = store
+            .with_session(&session_id, |session| {
+                (
+                    session.state,
+                    session.abort_reason,
+                    session.initiator_input.is_none() && session.responder_input.is_none(),
+                )
+            })
+            .await
+            .expect("timed-out session should remain visible for one reaper pass");
+        assert_eq!(snapshot.0, SessionState::Aborted);
+        assert_eq!(snapshot.1, Some(AbortReason::Timeout));
+        assert!(
+            snapshot.2,
+            "inputs should be cleared when processing times out"
+        );
+
+        // Second pass removes it.
+        assert_eq!(store.reap_expired().await, 1);
+        assert!(store.get_state(&session_id).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_reaper_keeps_processing_session_within_ttl() {
+        let store = SessionStore::new(Duration::from_secs(600));
+        let (session_id, _) = store
+            .create(test_contract(), "hash".to_string(), "anthropic".to_string())
+            .await;
+        store
+            .with_session(&session_id, |session| {
+                session.state = SessionState::Processing;
+            })
+            .await;
+        assert_eq!(store.reap_expired().await, 0);
+        let (state, _) = store.get_state(&session_id).await.unwrap();
+        assert_eq!(state, SessionState::Processing);
     }
 
     #[tokio::test]

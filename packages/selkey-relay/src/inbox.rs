@@ -150,6 +150,7 @@ impl InboxStore {
                 "contract participants must include to_agent_id".to_string(),
             ));
         }
+        crate::relay::validate_contract_key_fields(contract)?;
         Ok(())
     }
 
@@ -900,6 +901,24 @@ mod tests {
         assert!(response.invite_id.starts_with("inv_"));
         assert!(!response.contract_hash.is_empty());
         assert_eq!(response.status, InviteStatus::Pending);
+    }
+
+    #[tokio::test]
+    async fn test_create_invite_rejects_malformed_relay_verifying_key() {
+        let store = InboxStore::new(Duration::from_secs(604800));
+        for key in [
+            "a\u{20ac}\u{20ac}\u{20ac}\u{20ac}".to_string(),
+            "ab".repeat(16),
+            "z".repeat(64),
+        ] {
+            let mut request = test_create_request();
+            request.contract.relay_verifying_key_hex = Some(key);
+            let err = store
+                .create_invite("alice", &request, None)
+                .await
+                .unwrap_err();
+            assert!(matches!(err, RelayError::ContractValidation(_)));
+        }
     }
 
     #[tokio::test]

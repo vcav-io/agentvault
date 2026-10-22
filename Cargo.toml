@@ -42,6 +42,9 @@ uuid = { version = "1.0", features = ["v4"] }
 
 [profile.release]
 lto = "thin"
-panic = "abort"
+# Unwind (not abort) so a panic is contained to the request or session task
+# that raised it: the process keeps serving, and the inference path records a
+# terminal session state instead of the relay exiting.
+panic = "unwind"
 strip = true
 overflow-checks = true
