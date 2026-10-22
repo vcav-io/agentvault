@@ -184,7 +184,3 @@ Requires Rust 1.88.0+. See [docs/relay-dev-setup.md](docs/relay-dev-setup.md) fo
 ## License
 
 MIT OR Apache-2.0, at your option. See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).
-
----
-
-*Not affiliated with any other projects named "Selkey."*
