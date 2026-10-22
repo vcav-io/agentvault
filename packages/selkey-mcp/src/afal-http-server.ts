@@ -42,6 +42,9 @@ import {
   parseSupportedContractOffers,
   selectNegotiatedContractOffer,
 } from './contract-negotiation.js';
+import type { ContractOfferSelection } from './contract-negotiation.js';
+import { recordLocallySelectedAgreement } from './responder-contracts.js';
+import { resolvedAgreementFromBespoke, resolvedAgreementFromOffer } from './resolved-agreement.js';
 import {
   supportsBespokePrecontractNegotiation,
   validateBespokeContractSelection,
@@ -275,6 +278,7 @@ export class AfalHttpServer {
                     validateBespokeContract: validateBespokeContractSelection,
                   },
                 );
+                recordSelection(selection);
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify(selection));
               }
@@ -368,6 +372,7 @@ export class AfalHttpServer {
                     validateBespokeContract: validateBespokeContractSelection,
                   },
                 );
+                recordSelection(selection);
                 // Contract negotiation is single-round → always completed
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(
@@ -547,5 +552,31 @@ export class AfalHttpServer {
     req.on('error', () => {
       finish('Request error', null);
     });
+  }
+}
+
+/** Remember a contract this agent agreed to so RESPOND accepts its compiled form. */
+function recordSelection(selection: ContractOfferSelection): void {
+  if (selection.state !== 'AGREED' || !selection.selected_model_profile) return;
+  try {
+    if (selection.selected_contract_offer_id) {
+      recordLocallySelectedAgreement(
+        resolvedAgreementFromOffer({
+          contractOfferId: selection.selected_contract_offer_id,
+          selectedModelProfile: selection.selected_model_profile,
+        }),
+      );
+    } else if (selection.selected_bespoke_contract) {
+      recordLocallySelectedAgreement(
+        resolvedAgreementFromBespoke({
+          contract: selection.selected_bespoke_contract,
+          selectedModelProfile: selection.selected_model_profile,
+        }),
+      );
+    }
+  } catch (err) {
+    console.error(
+      `AfalHttpServer: could not record negotiated agreement: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }

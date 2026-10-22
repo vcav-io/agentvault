@@ -46,21 +46,17 @@ export async function handleGetIdentity(
         : await inboxService.checkInbox();
       result.pending_invites = inbox.invites.length;
       if (inbox.invites.length > 0) {
+        // Do not pre-fill from/expected_purpose from the invite: the responder
+        // decides who it expects and which contracts it accepts.
         const respondArgs: Record<string, unknown> = { mode: 'RESPOND' };
-        // When exactly one invite, pre-fill from and purpose so the LLM
-        // doesn't waste round-trips discovering required parameters.
-        if (inbox.invites.length === 1) {
-          const invite = inbox.invites[0];
-          if (invite.from_agent_id) respondArgs['from'] = invite.from_agent_id;
-          if (invite.afalPropose?.purpose_code) respondArgs['expected_purpose'] = invite.afalPropose.purpose_code;
-        }
         result.next_action = {
           tool: 'selkey.relay_signal',
           args: respondArgs,
           reason: 'pending_invite',
         };
         result.inbox_hint =
-          `You have ${inbox.invites.length} pending invite(s).`;
+          `You have ${inbox.invites.length} pending invite(s). ` +
+          'Call relay_signal RESPOND with from set to the agent you expect to hear from.';
       } else {
         result.inbox_hint = 'No pending invites.';
       }

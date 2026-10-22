@@ -308,6 +308,18 @@ export class AfalResponder {
       return { ok: false, error: 'COMMIT missing relay_session binding' };
     }
 
+    // The session binding must point at the relay the COMMIT names.
+    if (
+      typeof chosenRelayUrl === 'string' &&
+      chosenRelayUrl &&
+      relaySession.relay_url !== chosenRelayUrl
+    ) {
+      return {
+        ok: false,
+        error: `COMMIT relay_session.relay_url "${relaySession.relay_url}" does not match chosen_relay_url "${chosenRelayUrl}"`,
+      };
+    }
+
     const finalizedPropose = admitted.selectedModelProfile
       ? {
           ...admitted.propose,

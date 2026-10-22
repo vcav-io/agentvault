@@ -209,7 +209,7 @@ describe('INITIATE with AFAL', () => {
     expect(recomputed).toBe(propose.proposal_id);
   });
 
-  it('uses peer Agent Card relay_url for direct AFAL when no relay_url was provided', async () => {
+  it('does not use the peer Agent Card relay_url when no local relay is configured', async () => {
     delete process.env['SELKEY_RELAY_URL'];
     const mockFetch = vi.fn();
     vi.stubGlobal('fetch', mockFetch);
@@ -250,18 +250,73 @@ describe('INITIATE with AFAL', () => {
       text: () => Promise.resolve('ok'),
     });
 
+    const result = await handleRelaySignal(
+      { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'hello' },
+      transport,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.error?.detail).toContain('SELKEY_RELAY_URL');
+    expect(vi.mocked(createAndSubmit)).not.toHaveBeenCalled();
+  });
+
+  it('uses the locally configured relay, not the peer Agent Card relay_url', async () => {
+    const mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+
+    const transport = new DirectAfalTransport({
+      agentId: 'alice-demo',
+      seedHex: TEST_SEED,
+      localDescriptor: makeLocalDescriptor(),
+      relayUrl: 'http://relay.test',
+      peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
+    });
+
+    const card = {
+      name: 'bob-demo',
+      capabilities: {
+        extensions: [
+          {
+            uri: SELKEY_A2A_EXTENSION_URI,
+            params: {
+              public_key_hex: PEER_PUBKEY,
+              relay_url: 'http://relay.from.card',
+              supported_purposes: ['MEDIATION'],
+              afal_endpoint: 'http://peer.example.com/afal',
+            },
+          },
+        ],
+      },
+    };
+    mockFetch.mockImplementation((url: string) => {
+      if (url.endsWith('/propose')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(makeSignedAdmit('d'.repeat(64))) });
+      }
+      if (url.endsWith('/commit')) {
+        return Promise.resolve({ ok: true, text: () => Promise.resolve('ok') });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(card) });
+    });
+
     await handleRelaySignal(
       { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'hello' },
       transport,
     );
 
     expect(vi.mocked(createAndSubmit)).toHaveBeenCalledWith(
-      { relay_url: 'http://relay.from.card' },
+      { relay_url: 'http://relay.test' },
       expect.any(Object),
       'hello',
       'initiator',
     );
+    expect(vi.mocked(createAndSubmit)).not.toHaveBeenCalledWith(
+      { relay_url: 'http://relay.from.card' },
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
   });
+
 
   it('does not reject collision redirect against a stale pre-negotiation contract hash', async () => {
     const transport = createMockAfalTransport([
@@ -269,7 +324,8 @@ describe('INITIATE with AFAL', () => {
         invite_id: 'inv-1',
         from_agent_id: 'bob-demo',
         template_id: 'compatibility-demo.v1.standard',
-        contract_hash: 'negotiated-hash-from-peer',
+        // A contract the responder can rebuild locally (hash mocked above).
+        contract_hash: 'relay-hash-mock',
         payload_type: 'VCAV_E_INVITE_V1',
         payload: {
           session_id: 'sess-123',
@@ -292,7 +348,7 @@ describe('INITIATE with AFAL', () => {
     expect(result.status).toBe('PENDING');
     expect(data['phase']).toBe('JOIN');
     expect(data['from']).toBe('bob-demo');
-    expect(data['contract_hash']).toBe('negotiated-hash-from-peer');
+    expect(data['contract_hash']).toBe('relay-hash-mock');
   });
 
   it('adopts the counterparty purpose on collision redirect when the local purpose differs', async () => {
@@ -301,7 +357,7 @@ describe('INITIATE with AFAL', () => {
         invite_id: 'inv-2',
         from_agent_id: 'bob-demo',
         template_id: 'mediation-demo.v1.standard',
-        contract_hash: 'peer-mediation-hash',
+        contract_hash: 'relay-hash-mock',
         payload_type: 'VCAV_E_INVITE_V1',
         payload: {
           session_id: 'sess-456',
@@ -324,7 +380,7 @@ describe('INITIATE with AFAL', () => {
     expect(result.status).toBe('PENDING');
     expect(data['phase']).toBe('JOIN');
     expect(data['from']).toBe('bob-demo');
-    expect(data['contract_hash']).toBe('peer-mediation-hash');
+    expect(data['contract_hash']).toBe('relay-hash-mock');
     expect(data['purpose_override']).toEqual({
       requested_purpose: 'COMPATIBILITY',
       adopted_purpose: 'MEDIATION',
@@ -1202,6 +1258,7 @@ describe('RESPOND with AFAL', () => {
     const invite: AfalInviteMessage = {
       invite_id: 'inv-1',
       from_agent_id: 'bob-demo',
+      contract_hash: 'relay-hash-mock',
       payload_type: 'VCAV_E_INVITE_V1',
       template_id: 'mediation-demo.v1.standard',
       payload: {
@@ -1231,6 +1288,7 @@ describe('RESPOND with AFAL', () => {
     const invite: AfalInviteMessage = {
       invite_id: 'inv-2',
       from_agent_id: 'bob-demo',
+      contract_hash: 'relay-hash-mock',
       payload_type: 'VCAV_E_INVITE_V1',
       template_id: 'mediation-demo.v1.standard',
       payload: {
