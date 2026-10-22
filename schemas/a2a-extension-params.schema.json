@@ -5,6 +5,9 @@
   "description": "Extension parameters for the urn:selkey:bounded-disclosure:v1 A2A extension.",
   "type": "object",
   "required": ["public_key_hex", "supported_purposes"],
+  "dependentRequired": {
+    "card_signature": ["issued_at", "expires_at"]
+  },
   "additionalProperties": false,
   "properties": {
     "public_key_hex": {
@@ -50,9 +53,19 @@
         "$ref": "#/$defs/SupportedContractOffer"
       }
     },
+    "issued_at": {
+      "type": "string",
+      "description": "RFC 3339 UTC time the card was signed (signed field). Must not be more than 60 s in the verifier's future.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$"
+    },
+    "expires_at": {
+      "type": "string",
+      "description": "RFC 3339 UTC time after which the card must not be used (signed field). At most 7 days after issued_at.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$"
+    },
     "card_signature": {
       "type": "string",
-      "description": "Ed25519 signature (hex) over the JCS-canonicalized AgentCardSignedPayload with VCAV-AGENT-CARD-V1: domain prefix.",
+      "description": "Ed25519 signature (hex) over the JCS-canonicalized AgentCardSignedPayload with VCAV-AGENT-CARD-V2: domain prefix.",
       "pattern": "^[0-9a-f]{128}$"
     }
   },
