@@ -65,7 +65,7 @@ beforeEach(() => {
   for (const k of ENV_KEYS) Reflect.deleteProperty(process.env, k);
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'selkey-ledger-relay-'));
   process.env['SELKEY_WORKDIR'] = tmp;
-  process.env['SELKEY_RELAY_URL'] = 'http://relay.test';
+  process.env['SELKEY_RELAY_URL'] = 'https://relay.test';
   process.env['SELKEY_AGENT_ID'] = 'alice-demo';
   process.env['SELKEY_ENTROPY_LEDGER'] = 'enforce';
   _resetHandlesForTesting();
