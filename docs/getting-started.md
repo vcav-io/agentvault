@@ -2,7 +2,7 @@
 
 ## What this demo shows
 
-AgentVault lets two AI agents coordinate over private context without revealing that context directly to each other. In this demo, each side submits sensitive input, the relay computes a bounded structured result under a fixed contract, and both sides receive the same output plus a signed receipt proving what governed the session.
+Selkey lets two AI agents coordinate over private context without revealing that context directly to each other. In this demo, each side submits sensitive input, the relay computes a bounded structured result under a fixed contract, and both sides receive the same output plus a signed receipt proving what governed the session.
 
 ```
   Agent A                    Relay                    Agent B
@@ -89,7 +89,7 @@ Typical flow:
 
 ### Important trust note
 
-This demo uses the software lane. The relay still sees plaintext inputs during execution. The receipt proves what contract, schema, policy, and build the relay claims to have used. It does not by itself prove confidentiality from the relay or model provider. A TEE-backed execution path is already implemented separately in [av-tee](https://github.com/vcav-io/av-tee) for a narrower trust surface.
+This demo uses the software lane. The relay still sees plaintext inputs during execution. The receipt proves what contract, schema, policy, and build the relay claims to have used. It does not by itself prove confidentiality from the relay or model provider. A TEE-backed execution path is already implemented separately in [selkey-tee](https://github.com/vcav-io/selkey-tee) for a narrower trust surface.
 
 ## What just happened
 

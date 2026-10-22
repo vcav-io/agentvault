@@ -5,7 +5,7 @@ target/
 
 # Logs and run recordings
 *.log
-packages/agentvault-demo-ui/runs/
+packages/selkey-demo-ui/runs/
 
 # Git and docs (not needed in images)
 .git/

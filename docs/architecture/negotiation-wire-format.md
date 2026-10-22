@@ -1,11 +1,11 @@
 # Negotiation Wire Format
 
 > Status: Draft wire-format sketch
-> Related: [agentvault-negotiation-protocol.md](agentvault-negotiation-protocol.md), [negotiation-registry-artefacts.md](negotiation-registry-artefacts.md)
+> Related: [selkey-negotiation-protocol.md](selkey-negotiation-protocol.md), [negotiation-registry-artefacts.md](negotiation-registry-artefacts.md)
 
 ## 1. Purpose
 
-This note sketches an initial JSON wire format for structured bounded-computation negotiation in AgentVault.
+This note sketches an initial JSON wire format for structured bounded-computation negotiation in Selkey.
 
 It is intentionally draft and should not yet be treated as normative.
 

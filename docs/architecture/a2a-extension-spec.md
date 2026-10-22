@@ -1,11 +1,11 @@
-# A2A Extension Spec: `urn:agentvault:bounded-disclosure:v1`
+# A2A Extension Spec: `urn:selkey:bounded-disclosure:v1`
 
-> Status: Canonical reference for the AgentVault A2A extension
+> Status: Canonical reference for the Selkey A2A extension
 > Companion: [a2a-integration-spec.md](./a2a-integration-spec.md) (transport integration overview)
 
 ## 1. Extension URI and Versioning
 
-**URI:** `urn:agentvault:bounded-disclosure:v1`
+**URI:** `urn:selkey:bounded-disclosure:v1`
 
 The URI is declared in `capabilities.extensions` of an A2A Agent Card. The
 trailing `:v1` is the extension version. Future breaking changes will increment
@@ -16,7 +16,7 @@ The `extension_version` field in the signed card payload is `"1"` (string).
 
 ## 2. Extension Parameters
 
-The `params` object of the extension carries the `AgentVaultA2AExtensionParams`
+The `params` object of the extension carries the `SelkeyA2AExtensionParams`
 interface:
 
 | Field | Type | Required | Description |
@@ -49,7 +49,7 @@ deterministic canonicalization):
 | Field | Type | Source |
 |-------|------|--------|
 | `agent_id` | `string` | `card.name` |
-| `extension_uri` | `string` | Always `"urn:agentvault:bounded-disclosure:v1"` |
+| `extension_uri` | `string` | Always `"urn:selkey:bounded-disclosure:v1"` |
 | `extension_version` | `string` | Always `"1"` |
 | `public_key_hex` | `string` | From extension params |
 | `supported_purposes` | `string[]` | From extension params |
@@ -107,14 +107,14 @@ Eight media types are defined for A2A message parts:
 
 | Media Type | Direction | Content | Task State |
 |------------|-----------|---------|------------|
-| `application/vnd.agentvault.propose+json` | Initiator -> Responder | Signed AFAL propose envelope | n/a (request) |
-| `application/vnd.agentvault.admit+json` | Responder -> Initiator | Signed AFAL admit envelope | `working` (with task_id) or `completed` (without) |
-| `application/vnd.agentvault.deny+json` | Responder -> Initiator | Signed AFAL deny envelope | `failed` |
-| `application/vnd.agentvault.session-tokens+json` | Initiator -> Responder (commit) / Responder -> Initiator (ack) | Signed COMMIT with relay session binding / acknowledgment | `completed` |
-| `application/vnd.agentvault.topic-alignment-proposal+json` | Initiator -> Responder | Bounded topic-alignment proposal | n/a (request) |
-| `application/vnd.agentvault.topic-alignment-selection+json` | Responder -> Initiator | Topic-alignment selection response | `completed` |
-| `application/vnd.agentvault.contract-offer-proposal+json` | Initiator -> Responder | Pre-contract negotiation proposal | n/a (request) |
-| `application/vnd.agentvault.contract-offer-selection+json` | Responder -> Initiator | Contract offer selection response | `completed` |
+| `application/vnd.selkey.propose+json` | Initiator -> Responder | Signed AFAL propose envelope | n/a (request) |
+| `application/vnd.selkey.admit+json` | Responder -> Initiator | Signed AFAL admit envelope | `working` (with task_id) or `completed` (without) |
+| `application/vnd.selkey.deny+json` | Responder -> Initiator | Signed AFAL deny envelope | `failed` |
+| `application/vnd.selkey.session-tokens+json` | Initiator -> Responder (commit) / Responder -> Initiator (ack) | Signed COMMIT with relay session binding / acknowledgment | `completed` |
+| `application/vnd.selkey.topic-alignment-proposal+json` | Initiator -> Responder | Bounded topic-alignment proposal | n/a (request) |
+| `application/vnd.selkey.topic-alignment-selection+json` | Responder -> Initiator | Topic-alignment selection response | `completed` |
+| `application/vnd.selkey.contract-offer-proposal+json` | Initiator -> Responder | Pre-contract negotiation proposal | n/a (request) |
+| `application/vnd.selkey.contract-offer-selection+json` | Responder -> Initiator | Contract offer selection response | `completed` |
 
 ## 5. Task Lifecycle States and Transitions
 
@@ -126,7 +126,7 @@ response objects.
 
 | State | Type | Meaning |
 |-------|------|---------|
-| `submitted` | `A2ATaskState` | Task received but not yet processed (standard A2A; not emitted by AgentVault) |
+| `submitted` | `A2ATaskState` | Task received but not yet processed (standard A2A; not emitted by Selkey) |
 | `working` | `A2ATaskState` | Proposal admitted; awaiting session token delivery (COMMIT) |
 | `completed` | `A2ATaskState` | Handshake finished successfully |
 | `failed` | `A2ATaskState` | Proposal denied or handshake failed |

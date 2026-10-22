@@ -1,6 +1,6 @@
 # Receipt Verification Guide
 
-AgentVault relay receipts are signed JSON documents that bind a session's inputs,
+Selkey relay receipts are signed JSON documents that bind a session's inputs,
 outputs, and governance artefacts to a specific relay execution. This guide explains
 what receipts prove, how to verify them, and how to interpret the fields they contain.
 
@@ -25,7 +25,7 @@ For full protocol context see [docs/protocol-spec.md](protocol-spec.md).
 
 ### What is a receipt?
 
-Every AgentVault session produces a signed receipt. The receipt is a JSON document
+Every Selkey session produces a signed receipt. The receipt is a JSON document
 issued by the relay after execution completes. It records what contract governed
 the session, what inputs were committed, what output was produced, and which relay
 signed it.
@@ -96,7 +96,7 @@ verifiable) and `claims` (relay-asserted). The `receipt_schema_version` field is
 Key signing properties:
 - Domain separator: `VCAV-RECEIPT-V2:`
 - Signature encoding: base64url string in `signature.value`
-- Algorithm: specified in `signature.alg` (Ed25519 is the default for AgentVault)
+- Algorithm: specified in `signature.alg` (Ed25519 is the default for Selkey)
 - Signed over: SHA-256 of `"VCAV-RECEIPT-V2:" + JCS(receipt_without_signature_object)`
 
 ```json
@@ -497,9 +497,9 @@ of external evidence backing the receipt.
 | `SELF_ASSERTED` | The relay signs its own receipt. No external attestation. Claims are relay assertions only. |
 | `OPERATOR_AUDITED` | The operator publishes a verifiable audit trail. Claims can be cross-checked against the audit log. |
 | `PROVIDER_ATTESTED` | The model provider supplied signed inference metadata. `claims.model_identity_attested` can be trusted. |
-| `TEE_ATTESTED` | Hardware TEE attestation (AMD SEV-SNP) binds the receipt to the CVM measurement. The relay binary, signing key, and session transcript are hardware-verified. Operational via `av-tee` relay. |
+| `TEE_ATTESTED` | Hardware TEE attestation (AMD SEV-SNP) binds the receipt to the CVM measurement. The relay binary, signing key, and session transcript are hardware-verified. Operational via `selkey-tee` relay. |
 
-The software relay operates at `SELF_ASSERTED`. The TEE relay (`av-tee`) operates
+The software relay operates at `SELF_ASSERTED`. The TEE relay (`selkey-tee`) operates
 at `TEE_ATTESTED` on AMD SEV-SNP hardware (validated on GCP N2D instances).
 Never display "receipt verified" without also showing the assurance level — a
 `SELF_ASSERTED` receipt is much weaker than a `TEE_ATTESTED` one.
@@ -508,9 +508,9 @@ Never display "receipt verified" without also showing the assurance level — a
 
 ```json
 {
-  "operator_id": "relay.agentvault.dev",
+  "operator_id": "relay.selkey.dev",
   "operator_key_fingerprint": "abcd1234...",
-  "operator_key_discovery": "https://relay.agentvault.dev/.well-known/av-keys.json"
+  "operator_key_discovery": "https://relay.selkey.dev/.well-known/selkey-keys.json"
 }
 ```
 
@@ -590,14 +590,14 @@ function checkKeyFingerprint(
 
 ## 7. Using the MCP Tool
 
-The `agentvault-mcp-server` package exposes an `agentvault.verify_receipt` tool
+The `selkey-mcp` package exposes an `selkey.verify_receipt` tool
 that wraps the verification logic described above.
 
 ### Tool signature
 
 ```typescript
 {
-  "name": "agentvault.verify_receipt",
+  "name": "selkey.verify_receipt",
   "arguments": {
     "receipt": { /* receipt JSON object */ },
     "public_key_hex": "a3f2...optional...",  // omit to fetch from relay
@@ -617,7 +617,7 @@ the key.
   "valid": true,
   "schema_version": "2.1.0",
   "assurance_level": "SELF_ASSERTED",    // v2 only
-  "operator_id": "relay.agentvault.dev", // v2 only
+  "operator_id": "relay.selkey.dev", // v2 only
   "errors": [],
   "warnings": []
 }
@@ -630,7 +630,7 @@ were verified — that requires the caller to hold the original artefacts.
 
 ```json
 {
-  "tool": "agentvault.verify_receipt",
+  "tool": "selkey.verify_receipt",
   "arguments": {
     "receipt": {
       "receipt_schema_version": "2.1.0",
@@ -640,7 +640,7 @@ were verified — that requires the caller to hold the original artefacts.
       "issued_at": "2026-03-04T12:00:00Z",
       "assurance_level": "SELF_ASSERTED",
       "operator": {
-        "operator_id": "relay.agentvault.dev",
+        "operator_id": "relay.selkey.dev",
         "operator_key_fingerprint": "abcd1234..."
       },
       "commitments": {

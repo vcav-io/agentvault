@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'packages/agentvault-relay/**'
+      - 'packages/selkey-relay/**'
       - 'docker/Dockerfile.relay'
       - 'Cargo.lock'
       - 'prompt_programs/**'
@@ -12,7 +12,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: vcav-io/agentvault-relay
+  IMAGE_NAME: vcav-io/selkey-relay
 
 jobs:
   build-and-push:

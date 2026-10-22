@@ -1,6 +1,6 @@
 # Provider Notes
 
-Model sweep results and provider-specific observations for AgentVault relay mediation.
+Model sweep results and provider-specific observations for Selkey relay mediation.
 
 ## Key Finding: Agent-Relay Pairing Matters More Than Relay Model Tier
 

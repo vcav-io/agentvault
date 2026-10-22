@@ -5,7 +5,7 @@
 We use GitHub Security Advisories for coordinated disclosure. To report a vulnerability:
 
 1. **Email:** Send a report to [security@vcav.io](mailto:security@vcav.io)
-2. **GitHub:** Go to the [Security Advisories page](https://github.com/vcav-io/agentvault/security/advisories), click "Report a vulnerability", and provide a description of the issue, steps to reproduce, and any relevant context
+2. **GitHub:** Go to the [Security Advisories page](https://github.com/vcav-io/selkey/security/advisories), click "Report a vulnerability", and provide a description of the issue, steps to reproduce, and any relevant context
 
 Please do **not** open a public issue for security vulnerabilities.
 
@@ -13,9 +13,9 @@ Please do **not** open a public issue for security vulnerabilities.
 
 The following components are in scope for security reports:
 
-- **agentvault-relay** — session lifecycle, token authentication, schema validation, guardian policy enforcement, receipt signing, prompt assembly
-- **agentvault-client** — HTTP client, contract hashing, session state handling
-- **agentvault-mcp-server** — MCP tool dispatch, AFAL transport, session file persistence
+- **selkey-relay** — session lifecycle, token authentication, schema validation, guardian policy enforcement, receipt signing, prompt assembly
+- **selkey** (client library, `packages/selkey-client`) — HTTP client, contract hashing, session state handling
+- **selkey-mcp** — MCP tool dispatch, AFAL transport, session file persistence
 - **schemas/** — input payload schemas used for output validation
 
 ## Out of Scope

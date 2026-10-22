@@ -1,8 +1,8 @@
-# AgentVault Protocol Specification
+# Selkey Protocol Specification
 
 > **Protocol version: 0.1.0**
 >
-> This document is the normative specification for the AgentVault bounded-disclosure
+> This document is the normative specification for the Selkey bounded-disclosure
 > coordination protocol. A conforming implementation can be built from this document
 > and the JSON schemas in the `schemas/` directory.
 
@@ -10,7 +10,7 @@
 
 ## 1. Overview
 
-AgentVault is a protocol for producing bounded, verifiable signals from a shared LLM
+Selkey is a protocol for producing bounded, verifiable signals from a shared LLM
 call between two agents without revealing their raw inputs to each other.
 
 Three roles participate in every session:
@@ -260,7 +260,7 @@ A multi-step protocol where each participant submits independently:
 
 Submit tokens are consumed on use. Resubmission returns 401 (constant-shape). All
 tokens for a session share the same session TTL. Sessions expire after
-`AV_SESSION_TTL_SECS` (default: 600 seconds); expired sessions return 401 for all
+`SELKEY_SESSION_TTL_SECS` (default: 600 seconds); expired sessions return 401 for all
 subsequent requests. Read tokens remain valid until the session TTL elapses or the
 session store reaper removes a terminal session, whichever comes first.
 
@@ -553,7 +553,7 @@ receipt alone.
 
 **Assurance levels** extend what receipts prove beyond `SELF_ASSERTED`. See
 [Section 2.6](#26-receipt) for the level definitions. The `TEE_ATTESTED` level is
-operational via the `av-tee` relay running on AMD SEV-SNP hardware (validated on
+operational via the `selkey-tee` relay running on AMD SEV-SNP hardware (validated on
 GCP N2D instances). `OPERATOR_AUDITED` and `PROVIDER_ATTESTED` are defined in the
 schema but are not yet active in production.
 
@@ -799,11 +799,11 @@ the same value on load (integrity check).
 
 ### 12.4 Contract Composition
 
-The `av-contract` CLI composes contracts from registry artefacts:
+The `selkey-contract` CLI composes contracts from registry artefacts:
 
-- `av-contract list` — enumerate registered artefacts by kind.
-- `av-contract build` — assemble a contract from artefact references.
-- `av-contract validate` — verify that a contract's artefact references resolve
+- `selkey-contract list` — enumerate registered artefacts by kind.
+- `selkey-contract build` — assemble a contract from artefact references.
+- `selkey-contract validate` — verify that a contract's artefact references resolve
   and that schema/policy compatibility holds (SAFE/RICH validation).
 
 ### 12.5 SAFE/RICH Compatibility

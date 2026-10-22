@@ -10,13 +10,13 @@ dist/
 
 .claude/*
 
-.agentvault/
+.selkey/
 
 .playwright-mcp/
 .playwright-cli/
 
 # Demo run recordings (contain session data)
-packages/agentvault-demo-ui/runs/
+packages/selkey-demo-ui/runs/
 
 # Live test results (contain API responses, session IDs, contract content)
 tests/live/results/

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# drive-inbox.sh — Async invite flow test for AgentVault relay
+# drive-inbox.sh — Async invite flow test for Selkey relay
 #
 # Exercises the full invite → accept → session → output flow via curl,
 # proving that the inbox allows asynchronous coordination (no synchrony
@@ -126,9 +126,9 @@ start_relay() {
 
   detect_provider
 
-  local relay_bin="${REPO_ROOT}/target/release/agentvault-relay"
+  local relay_bin="${REPO_ROOT}/target/release/selkey-relay"
   log_info "Building relay (release)..."
-  cargo build --release -p agentvault-relay --manifest-path "${REPO_ROOT}/Cargo.toml" 2>&1 | \
+  cargo build --release -p selkey-relay --manifest-path "${REPO_ROOT}/Cargo.toml" 2>&1 | \
     while IFS= read -r line; do log_info "  cargo: ${line}"; done
   log_success "Relay binary ready: ${relay_bin}"
 
@@ -136,9 +136,9 @@ start_relay() {
   relay_port="$(echo "${RELAY_URL}" | grep -oE '[0-9]+$')"
 
   local relay_log="${RESULTS_BASE}/_drive_inbox_relay.log"
-  AV_PORT="${relay_port}" \
-  AV_PROMPT_PROGRAM_DIR="${REPO_ROOT}/packages/agentvault-relay/prompt_programs" \
-  AV_AGENT_REGISTRY_PATH="${AGENTS_FILE}" \
+  SELKEY_PORT="${relay_port}" \
+  SELKEY_PROMPT_PROGRAM_DIR="${REPO_ROOT}/packages/selkey-relay/prompt_programs" \
+  SELKEY_AGENT_REGISTRY_PATH="${AGENTS_FILE}" \
   ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
   OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
     "${relay_bin}" > "${relay_log}" 2>&1 &
@@ -159,7 +159,7 @@ CONTRACT_HASH=""
 build_contract() {
   local result
   result="$(node --input-type=module -e "
-import { buildRelayContract, computeRelayContractHash } from '${REPO_ROOT}/packages/agentvault-client/dist/relay-contracts.js';
+import { buildRelayContract, computeRelayContractHash } from '${REPO_ROOT}/packages/selkey-client/dist/relay-contracts.js';
 const c = buildRelayContract('${PURPOSE}', ['alice', 'bob']);
 if (!c) { console.error('Unknown purpose: ${PURPOSE}'); process.exit(1); }
 const h = computeRelayContractHash(c);
@@ -247,7 +247,7 @@ echo "${CONTRACT_JSON}" | jq . > "${run_dir}/contract.json"
 
 echo ""
 echo "==========================================================="
-echo "  AgentVault Async Invite Flow Test"
+echo "  Selkey Async Invite Flow Test"
 echo "  Scenario:  ${SCENARIO}"
 echo "  Purpose:   ${PURPOSE}"
 echo "  Provider:  ${PROVIDER}"

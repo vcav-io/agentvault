@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# demo/setup.sh — One-command demo setup for AgentVault
+# demo/setup.sh — One-command demo setup for Selkey
 #
 # Starts the relay, creates isolated agent workspaces in /tmp, generates
 # Ed25519 identities, and prints copy-paste instructions.
@@ -14,7 +14,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-MCP_SERVER_DIR="${REPO_ROOT}/packages/agentvault-mcp-server"
+MCP_SERVER_DIR="${REPO_ROOT}/packages/selkey-mcp"
 MCP_DIST="${MCP_SERVER_DIR}/dist/index.js"
 
 RED='\033[0;31m'
@@ -84,7 +84,7 @@ fi
 
 # Ensure MCP server is built
 if [[ ! -f "${MCP_DIST}" ]]; then
-  log_info "Building agentvault-mcp-server..."
+  log_info "Building selkey-mcp..."
   (cd "${MCP_SERVER_DIR}" && npm install --silent && npm run build --silent)
   log_success "MCP server built"
 fi
@@ -124,15 +124,15 @@ if [[ "${NO_RELAY}" == "false" ]]; then
     fi
     # Build from source
     log_info "Building relay (release)..."
-    cargo build --release -p agentvault-relay --manifest-path "${REPO_ROOT}/Cargo.toml" 2>&1 | \
+    cargo build --release -p selkey-relay --manifest-path "${REPO_ROOT}/Cargo.toml" 2>&1 | \
       while IFS= read -r line; do log_info "  cargo: ${line}"; done
     log_success "Relay binary ready"
 
-    RELAY_BIN="${REPO_ROOT}/target/release/agentvault-relay"
-    AV_PORT=3100 \
-    AV_PROMPT_PROGRAM_DIR="${REPO_ROOT}/packages/agentvault-relay/prompt_programs" \
-    AV_ENV=dev \
-    AV_INBOX_AUTH=off \
+    RELAY_BIN="${REPO_ROOT}/target/release/selkey-relay"
+    SELKEY_PORT=3100 \
+    SELKEY_PROMPT_PROGRAM_DIR="${REPO_ROOT}/packages/selkey-relay/prompt_programs" \
+    SELKEY_ENV=dev \
+    SELKEY_INBOX_AUTH=off \
     ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" \
       "${RELAY_BIN}" &>/tmp/vcav-demo-relay.log &
     RELAY_PID=$!
@@ -204,23 +204,23 @@ log_success "Identities generated"
 # ---------------------------------------------------------------------------
 
 DEMO_DIR="$(mktemp -d /tmp/vcav-demo-XXXX)"
-mkdir -p "${DEMO_DIR}/alice/.agentvault" "${DEMO_DIR}/bob/.agentvault"
+mkdir -p "${DEMO_DIR}/alice/.selkey" "${DEMO_DIR}/bob/.selkey"
 chmod 0700 "${DEMO_DIR}" "${DEMO_DIR}/alice" "${DEMO_DIR}/bob"
 
 cat >"${DEMO_DIR}/alice/.mcp.json" <<JSON
 {
   "mcpServers": {
-    "agentvault": {
+    "selkey": {
       "command": "node",
       "args": ["${MCP_DIST}"],
       "env": {
-        "AV_RELAY_URL": "${RELAY_URL}",
-        "AV_AGENT_ID": "alice",
-        "AV_AFAL_SEED_HEX": "${ALICE_SEED}",
-        "AV_AFAL_PEER_DESCRIPTOR_URL": "http://localhost:3201/afal/descriptor",
-        "AV_KNOWN_AGENTS": "[{\"agent_id\":\"bob\",\"aliases\":[\"Bob\"]}]",
-        "AV_RESUME_TOKEN_SECRET": "${ALICE_RESUME}",
-        "AV_WORKDIR": "${DEMO_DIR}/alice"
+        "SELKEY_RELAY_URL": "${RELAY_URL}",
+        "SELKEY_AGENT_ID": "alice",
+        "SELKEY_AFAL_SEED_HEX": "${ALICE_SEED}",
+        "SELKEY_AFAL_PEER_DESCRIPTOR_URL": "http://localhost:3201/afal/descriptor",
+        "SELKEY_KNOWN_AGENTS": "[{\"agent_id\":\"bob\",\"aliases\":[\"Bob\"]}]",
+        "SELKEY_RESUME_TOKEN_SECRET": "${ALICE_RESUME}",
+        "SELKEY_WORKDIR": "${DEMO_DIR}/alice"
       }
     }
   }
@@ -230,19 +230,19 @@ JSON
 cat >"${DEMO_DIR}/bob/.mcp.json" <<JSON
 {
   "mcpServers": {
-    "agentvault": {
+    "selkey": {
       "command": "node",
       "args": ["${MCP_DIST}"],
       "env": {
-        "AV_RELAY_URL": "${RELAY_URL}",
-        "AV_AGENT_ID": "bob",
-        "AV_AFAL_SEED_HEX": "${BOB_SEED}",
-        "AV_AFAL_HTTP_PORT": "3201",
-        "AV_AFAL_TRUSTED_AGENTS": "[{\"agentId\":\"alice\",\"publicKeyHex\":\"${ALICE_PUB}\"}]",
-        "AV_AFAL_ALLOWED_PURPOSES": "MEDIATION,COMPATIBILITY",
-        "AV_KNOWN_AGENTS": "[{\"agent_id\":\"alice\",\"aliases\":[\"Alice\"]}]",
-        "AV_RESUME_TOKEN_SECRET": "${BOB_RESUME}",
-        "AV_WORKDIR": "${DEMO_DIR}/bob"
+        "SELKEY_RELAY_URL": "${RELAY_URL}",
+        "SELKEY_AGENT_ID": "bob",
+        "SELKEY_AFAL_SEED_HEX": "${BOB_SEED}",
+        "SELKEY_AFAL_HTTP_PORT": "3201",
+        "SELKEY_AFAL_TRUSTED_AGENTS": "[{\"agentId\":\"alice\",\"publicKeyHex\":\"${ALICE_PUB}\"}]",
+        "SELKEY_AFAL_ALLOWED_PURPOSES": "MEDIATION,COMPATIBILITY",
+        "SELKEY_KNOWN_AGENTS": "[{\"agent_id\":\"alice\",\"aliases\":[\"Alice\"]}]",
+        "SELKEY_RESUME_TOKEN_SECRET": "${BOB_RESUME}",
+        "SELKEY_WORKDIR": "${DEMO_DIR}/bob"
       }
     }
   }
@@ -267,7 +267,7 @@ BOB_PROMPT="$(cat "${SCRIPT_DIR}/bob-prompt.md")"
 cat <<INSTRUCTIONS
 
 ${BOLD}═══════════════════════════════════════════════════════════════${NC}
-${BOLD}  AgentVault Demo — Co-founder Mediation${NC}
+${BOLD}  Selkey Demo — Co-founder Mediation${NC}
 ${BOLD}═══════════════════════════════════════════════════════════════${NC}
 
   Open two terminals and start Claude Code in each.

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# prep.sh — Main preparation script for AgentVault live test suite
+# prep.sh — Main preparation script for Selkey live test suite
 #
 # Usage:
 #   ./tests/live/prep.sh <scenario>           # run a named scenario
@@ -16,7 +16,7 @@ set -euo pipefail
 #   --all        run all scenarios in tests/live/scenarios/
 #
 # Environment:
-#   ANTHROPIC_API_KEY, OPENAI_API_KEY, AV_MOCK, AV_TEST_DIR
+#   ANTHROPIC_API_KEY, OPENAI_API_KEY, SELKEY_MOCK, SELKEY_TEST_DIR
 # ---------------------------------------------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,7 +24,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 HARNESS_DIR="${SCRIPT_DIR}/harness"
 SCENARIOS_DIR="${SCRIPT_DIR}/scenarios"
 RESULTS_BASE="${SCRIPT_DIR}/results"
-MCP_SERVER_DIR="${REPO_ROOT}/packages/agentvault-mcp-server"
+MCP_SERVER_DIR="${REPO_ROOT}/packages/selkey-mcp"
 
 # shellcheck source=harness/lib.sh
 source "${HARNESS_DIR}/lib.sh"
@@ -47,15 +47,15 @@ FLAG_SMOKE=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --mock)
-      export AV_MOCK=1
+      export SELKEY_MOCK=1
       FLAG_MOCK=1
       shift
       ;;
     --provider)
       case "${2:-}" in
-        anthropic) unset AV_MOCK 2>/dev/null || true; export AV_PROVIDER=anthropic ;;
-        openai)    unset AV_MOCK 2>/dev/null || true; export AV_PROVIDER=openai ;;
-        mock)      export AV_MOCK=1; FLAG_MOCK=1 ;;
+        anthropic) unset SELKEY_MOCK 2>/dev/null || true; export SELKEY_PROVIDER=anthropic ;;
+        openai)    unset SELKEY_MOCK 2>/dev/null || true; export SELKEY_PROVIDER=openai ;;
+        mock)      export SELKEY_MOCK=1; FLAG_MOCK=1 ;;
         *)
           log_error "Unknown provider: ${2:-}. Use: anthropic, openai, mock"
           exit 1
@@ -112,9 +112,9 @@ cargo metadata --no-deps --manifest-path "${REPO_ROOT}/Cargo.toml" --format-vers
   >/dev/null 2>&1 || { log_error "cargo metadata failed"; exit 1; }
 
 # Build MCP server TypeScript
-log_info "Building agentvault-mcp-server..."
+log_info "Building selkey-mcp..."
 (cd "${MCP_SERVER_DIR}" && npm install --silent && npm run build --silent)
-log_success "agentvault-mcp-server built"
+log_success "selkey-mcp built"
 
 # ---------------------------------------------------------------------------
 # Resolve scenarios to run
@@ -151,9 +151,9 @@ setup_cleanup_trap
 # ---------------------------------------------------------------------------
 
 # Generate relay signing key if not already set
-if [[ -z "${AV_SIGNING_KEY_HEX:-}" ]]; then
-  export AV_SIGNING_KEY_HEX
-  AV_SIGNING_KEY_HEX="$(openssl rand -hex 32)"
+if [[ -z "${SELKEY_SIGNING_KEY_HEX:-}" ]]; then
+  export SELKEY_SIGNING_KEY_HEX
+  SELKEY_SIGNING_KEY_HEX="$(openssl rand -hex 32)"
   log_info "Generated relay signing key"
 fi
 
@@ -229,7 +229,7 @@ done
 # ---------------------------------------------------------------------------
 
 _provider_display() {
-  if [[ "${AV_MOCK:-}" == "1" ]]; then echo "mock"
+  if [[ "${SELKEY_MOCK:-}" == "1" ]]; then echo "mock"
   elif [[ -n "${OPENAI_API_KEY:-}" ]]; then echo "openai (via proxy)"
   elif [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then echo "anthropic (direct)"
   else echo "unknown"; fi
@@ -241,7 +241,7 @@ for sc in "${SCENARIOS[@]}"; do
   cat <<INSTRUCTIONS
 
 ═══════════════════════════════════════════════════════
-  AgentVault Live Test — Scenario: ${sc}
+  Selkey Live Test — Scenario: ${sc}
   Run ID: ${RUN_TIMESTAMP}
   Provider: $(_provider_display)
 ═══════════════════════════════════════════════════════

@@ -30,7 +30,7 @@ Copy `tests/live/HEARTBEAT.md` to each OpenClaw agent's workspace:
 ```markdown
 # Heartbeat checklist
 
-- Check for pending AgentVault invites: call `agentvault.get_identity`. If `pending_invites > 0`, follow `next_action` (call `agentvault.relay_signal` in RESPOND mode).
+- Check for pending Selkey invites: call `selkey.get_identity`. If `pending_invites > 0`, follow `next_action` (call `selkey.relay_signal` in RESPOND mode).
 ```
 
 ### Flow

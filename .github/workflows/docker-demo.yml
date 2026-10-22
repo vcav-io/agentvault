@@ -4,9 +4,9 @@ on:
   push:
     branches: [main]
     paths:
-      - 'packages/agentvault-client/**'
-      - 'packages/agentvault-mcp-server/**'
-      - 'packages/agentvault-demo-ui/**'
+      - 'packages/selkey-client/**'
+      - 'packages/selkey-mcp/**'
+      - 'packages/selkey-demo-ui/**'
       - 'docker/Dockerfile.demo'
       - 'demo/alice-prompt.md'
       - 'demo/bob-prompt.md'
@@ -14,7 +14,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: vcav-io/agentvault-demo
+  IMAGE_NAME: vcav-io/selkey-demo
 
 jobs:
   build-and-push:

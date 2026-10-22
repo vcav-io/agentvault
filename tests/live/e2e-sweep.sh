@@ -86,14 +86,14 @@ fi
 # Build relay binary and demo server
 # ---------------------------------------------------------------------------
 
-RELAY_BIN="${REPO_ROOT}/target/release/agentvault-relay"
+RELAY_BIN="${REPO_ROOT}/target/release/selkey-relay"
 log_info "Building relay (release)..."
-cargo build --release -p agentvault-relay --manifest-path "${REPO_ROOT}/Cargo.toml" 2>&1 | \
+cargo build --release -p selkey-relay --manifest-path "${REPO_ROOT}/Cargo.toml" 2>&1 | \
   while IFS= read -r line; do log_info "  cargo: ${line}"; done
 log_success "Relay binary ready: ${RELAY_BIN}"
 
 log_info "Building demo server..."
-(cd "${REPO_ROOT}/packages/agentvault-demo-ui" && npm run build 2>&1) | \
+(cd "${REPO_ROOT}/packages/selkey-demo-ui" && npm run build 2>&1) | \
   while IFS= read -r line; do log_info "  npm: ${line}"; done
 log_success "Demo server built"
 
@@ -122,9 +122,9 @@ api_key_for_provider() {
 # Relay model env var per provider
 model_env_var_for_provider() {
   case "$1" in
-    anthropic) echo "AV_MODEL_ID" ;;
-    openai)    echo "AV_OPENAI_MODEL_ID" ;;
-    gemini)    echo "AV_GEMINI_MODEL_ID" ;;
+    anthropic) echo "SELKEY_MODEL_ID" ;;
+    openai)    echo "SELKEY_OPENAI_MODEL_ID" ;;
+    gemini)    echo "SELKEY_GEMINI_MODEL_ID" ;;
     *)         echo "" ;;
   esac
 }
@@ -253,7 +253,7 @@ run_e2e_scenario() {
   log_info "  Agents settled: alice=${alice_turns} turns, bob=${bob_turns} turns (~${elapsed}s)"
 
   # Extract relay output and agent inputs from JSONL run file
-  local runs_dir="${REPO_ROOT}/packages/agentvault-demo-ui/runs"
+  local runs_dir="${REPO_ROOT}/packages/selkey-demo-ui/runs"
   local jsonl_path="${runs_dir}/${run_file}"
 
   if [[ ! -f "${jsonl_path}" ]]; then
@@ -395,10 +395,10 @@ for current_provider in ${PROVIDERS}; do
     # not Anthropic by default when all keys are present.
     relay_log="${SWEEP_DIR}/${current_provider}_${relay_model}_relay.log"
     relay_env_args=(
-      "AV_PORT=${RELAY_PORT}"
-      "AV_PROMPT_PROGRAM_DIR=${REPO_ROOT}/packages/agentvault-relay/prompt_programs"
-      "AV_ENV=dev"
-      "AV_INBOX_AUTH=off"
+      "SELKEY_PORT=${RELAY_PORT}"
+      "SELKEY_PROMPT_PROGRAM_DIR=${REPO_ROOT}/packages/selkey-relay/prompt_programs"
+      "SELKEY_ENV=dev"
+      "SELKEY_INBOX_AUTH=off"
       "${model_env}=${relay_model}"
     )
     # Set ONLY the current provider's key.
@@ -435,12 +435,12 @@ for current_provider in ${PROVIDERS}; do
     demo_log="${SWEEP_DIR}/${current_provider}_${relay_model}_demo.log"
     env \
       DEMO_PORT="${DEMO_PORT}" \
-      AV_RELAY_URL="${RELAY_URL}" \
+      SELKEY_RELAY_URL="${RELAY_URL}" \
       ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
       OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
       GEMINI_API_KEY="${GEMINI_API_KEY:-}" \
       PROVIDER="${current_provider}" \
-      node "${REPO_ROOT}/packages/agentvault-demo-ui/dist/server.js" > "${demo_log}" 2>&1 &
+      node "${REPO_ROOT}/packages/selkey-demo-ui/dist/server.js" > "${demo_log}" 2>&1 &
     DEMO_PID=$!
 
     if ! health_check "${DEMO_URL}/api/status" 30; then

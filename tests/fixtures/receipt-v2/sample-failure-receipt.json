@@ -6,7 +6,7 @@
   "issued_at": "2026-03-05T00:00:00Z",
   "assurance_level": "SELF_ASSERTED",
   "operator": {
-    "operator_id": "agentvault-relay-dev",
+    "operator_id": "selkey-relay-dev",
     "operator_key_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
   "commitments": {

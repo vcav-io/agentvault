@@ -1,0 +1,42 @@
+[package]
+name = "selkey-relay"
+description = "Selkey Relay: Stateless API-mediated inference relay with receipt signing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# TODO: replace git rev pins with tagged releases once vault-family-core stabilises
+afal-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "3061b55", package = "afal-core" }
+entropy-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "3061b55", package = "entropy-core" }
+receipt-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "3061b55", package = "receipt-core" }
+vault-family-types = { git = "https://github.com/vcav-io/vault-family-core", rev = "3061b55", package = "vault-family-types" }
+
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+axum.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+reqwest = { version = "0.12", features = ["json"] }
+ed25519-dalek.workspace = true
+sha2.workspace = true
+rand.workspace = true
+hex.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+jsonschema.workspace = true
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures-util = "0.3"
+rusqlite = { version = "0.32", features = ["bundled"], optional = true }
+
+[features]
+persistence = ["rusqlite"]
+
+[dev-dependencies]
+verifier-core = { git = "https://github.com/vcav-io/vault-family-core", rev = "3061b55", package = "verifier-core" }
+tokio = { version = "1.0", features = ["full", "test-util"] }
+tower.workspace = true

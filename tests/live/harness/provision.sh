@@ -6,14 +6,14 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 #
 # Generates two Ed25519 key pairs using node + @noble/curves (same dep as
-# agentvault-mcp-server), creates resume token secrets, and writes .mcp.json
+# selkey-mcp), creates resume token secrets, and writes .mcp.json
 # into each agent's working directory.
 #
 # Usage: source this file or call provision_agents <alice_dir> <bob_dir> <relay_url>
 
 HARNESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${HARNESS_DIR}/../../.." && pwd)"
-MCP_SERVER_DIST="${REPO_ROOT}/packages/agentvault-mcp-server/dist/index.js"
+MCP_SERVER_DIST="${REPO_ROOT}/packages/selkey-mcp/dist/index.js"
 
 # shellcheck source=lib.sh
 source "${HARNESS_DIR}/lib.sh"
@@ -24,7 +24,7 @@ source "${HARNESS_DIR}/lib.sh"
 
 _generate_keypair() {
   # Run from MCP server dir so @noble/curves resolves from its node_modules
-  (cd "${REPO_ROOT}/packages/agentvault-mcp-server" && node --input-type=module <<'EOF'
+  (cd "${REPO_ROOT}/packages/selkey-mcp" && node --input-type=module <<'EOF'
 import { ed25519 } from '@noble/curves/ed25519';
 import { bytesToHex } from '@noble/hashes/utils';
 import crypto from 'node:crypto';
@@ -94,7 +94,7 @@ JSON
     log_info "Identity keys written to ${run_dir}/identities.json"
   fi
 
-  # AV_KNOWN_AGENTS: aliases for get_identity tool (not crypto keys)
+  # SELKEY_KNOWN_AGENTS: aliases for get_identity tool (not crypto keys)
   # Inner quotes escaped for embedding in heredoc JSON string values
   local alice_known_agents='[{\"agent_id\":\"bob\",\"aliases\":[\"Bob\"]}]'
   local bob_known_agents='[{\"agent_id\":\"alice\",\"aliases\":[\"Alice\"]}]'
@@ -109,17 +109,17 @@ JSON
   cat >"${alice_dir}/.mcp.json" <<JSON
 {
   "mcpServers": {
-    "agentvault": {
+    "selkey": {
       "command": "node",
       "args": ["${MCP_SERVER_DIST}"],
       "env": {
-        "AV_RELAY_URL": "${relay_url}",
-        "AV_AGENT_ID": "alice",
-        "AV_AFAL_SEED_HEX": "${alice_seed}",
-        "AV_AFAL_PEER_DESCRIPTOR_URL": "http://localhost:3201/afal/descriptor",
-        "AV_KNOWN_AGENTS": "${alice_known_agents}",
-        "AV_RESUME_TOKEN_SECRET": "${alice_resume_secret}",
-        "AV_WORKDIR": "${alice_dir}"
+        "SELKEY_RELAY_URL": "${relay_url}",
+        "SELKEY_AGENT_ID": "alice",
+        "SELKEY_AFAL_SEED_HEX": "${alice_seed}",
+        "SELKEY_AFAL_PEER_DESCRIPTOR_URL": "http://localhost:3201/afal/descriptor",
+        "SELKEY_KNOWN_AGENTS": "${alice_known_agents}",
+        "SELKEY_RESUME_TOKEN_SECRET": "${alice_resume_secret}",
+        "SELKEY_WORKDIR": "${alice_dir}"
       }
     }
   }
@@ -129,26 +129,26 @@ JSON
 
   # -------------------------------------------------------------------------
   # Bob's .mcp.json (RESPONDER role)
-  # AV_AFAL_HTTP_PORT=3201 starts bob's AFAL HTTP server for descriptor
+  # SELKEY_AFAL_HTTP_PORT=3201 starts bob's AFAL HTTP server for descriptor
   # serving and incoming PROPOSE messages.
   # -------------------------------------------------------------------------
   mkdir -p "${bob_dir}"
   cat >"${bob_dir}/.mcp.json" <<JSON
 {
   "mcpServers": {
-    "agentvault": {
+    "selkey": {
       "command": "node",
       "args": ["${MCP_SERVER_DIST}"],
       "env": {
-        "AV_RELAY_URL": "${relay_url}",
-        "AV_AGENT_ID": "bob",
-        "AV_AFAL_SEED_HEX": "${bob_seed}",
-        "AV_AFAL_HTTP_PORT": "3201",
-        "AV_AFAL_TRUSTED_AGENTS": "[{\"agentId\":\"alice\",\"publicKeyHex\":\"${alice_pubkey}\"}]",
-        "AV_AFAL_ALLOWED_PURPOSES": "MEDIATION,COMPATIBILITY",
-        "AV_KNOWN_AGENTS": "${bob_known_agents}",
-        "AV_RESUME_TOKEN_SECRET": "${bob_resume_secret}",
-        "AV_WORKDIR": "${bob_dir}"
+        "SELKEY_RELAY_URL": "${relay_url}",
+        "SELKEY_AGENT_ID": "bob",
+        "SELKEY_AFAL_SEED_HEX": "${bob_seed}",
+        "SELKEY_AFAL_HTTP_PORT": "3201",
+        "SELKEY_AFAL_TRUSTED_AGENTS": "[{\"agentId\":\"alice\",\"publicKeyHex\":\"${alice_pubkey}\"}]",
+        "SELKEY_AFAL_ALLOWED_PURPOSES": "MEDIATION,COMPATIBILITY",
+        "SELKEY_KNOWN_AGENTS": "${bob_known_agents}",
+        "SELKEY_RESUME_TOKEN_SECRET": "${bob_resume_secret}",
+        "SELKEY_WORKDIR": "${bob_dir}"
       }
     }
   }

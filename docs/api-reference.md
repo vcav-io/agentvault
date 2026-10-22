@@ -1,6 +1,6 @@
 # API Reference
 
-The AgentVault relay exposes a REST API over HTTP. All request and response bodies are JSON.
+The Selkey relay exposes a REST API over HTTP. All request and response bodies are JSON.
 
 ## Authentication
 
@@ -43,7 +43,7 @@ Health check. No authentication required.
 }
 ```
 
-`provider` and `model_id` are `"redacted"` unless `AV_HEALTH_EXPOSE_MODEL=true`. `verifying_key_hex` is the relay's Ed25519 public key for receipt signature verification.
+`provider` and `model_id` are `"redacted"` unless `SELKEY_HEALTH_EXPOSE_MODEL=true`. `verifying_key_hex` is the relay's Ed25519 public key for receipt signature verification.
 
 ---
 
@@ -418,4 +418,4 @@ All errors return a JSON body with an `error` field:
 
 ## Session lifecycle
 
-Sessions expire after `AV_SESSION_TTL_SECS` (default: 600 seconds). A background reaper cleans up expired sessions. Tokens for expired sessions return `401 Unauthorized`.
+Sessions expire after `SELKEY_SESSION_TTL_SECS` (default: 600 seconds). A background reaper cleans up expired sessions. Tokens for expired sessions return `401 Unauthorized`.

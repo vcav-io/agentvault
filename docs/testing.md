@@ -13,8 +13,8 @@ This runs all unit tests in the relay crate including session lifecycle, contrac
 ### TypeScript (client + MCP server)
 
 ```bash
-cd packages/agentvault-client && npm install && npm test
-cd packages/agentvault-mcp-server && npm install && npm test
+cd packages/selkey-client && npm install && npm test
+cd packages/selkey-mcp && npm install && npm test
 ```
 
 The MCP server tests use Vitest with mocked HTTP calls. No running relay is required.
@@ -27,8 +27,8 @@ Before submitting a PR, ensure all CI checks pass locally:
 cargo fmt --all -- --check
 cargo clippy --workspace -- -D warnings
 cargo test --workspace
-cd packages/agentvault-client && npm test
-cd packages/agentvault-mcp-server && npm run build
+cd packages/selkey-client && npm test
+cd packages/selkey-mcp && npm run build
 ```
 
 ## Live test suite

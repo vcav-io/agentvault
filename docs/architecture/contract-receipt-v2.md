@@ -1,7 +1,7 @@
 # Contract & Receipt v2 — Unified Architecture Spec
 
 > **Status:** Implemented (PRs #173, #174)
-> **Canonical schema:** `agentvault-receipt-schema-v2.1.0.revised.json`
+> **Canonical schema:** `selkey-receipt-schema-v2.1.0.revised.json`
 > **Issues:** #155 (receipt hardening), #151 (contract completeness), #147 (enforcement policy)
 
 ## Design Principles
@@ -107,7 +107,7 @@ pub enum EntropyEnforcementMode {
 
 ## 2. Receipt v2 Struct
 
-Maps directly from `agentvault-receipt-schema-v2.1.0.revised.json`.
+Maps directly from `selkey-receipt-schema-v2.1.0.revised.json`.
 
 ### Top-Level Structure
 
@@ -398,7 +398,7 @@ This ensures a valid v1 signature cannot be misinterpreted as a valid v2 signatu
 
 ### Signature Algorithm Flexibility
 
-v2 supports Ed25519, ES256 (P-256), and ES384 (P-384). The relay's `signature.alg` field determines which algorithm the verifier uses. Ed25519 remains the default for AgentVault deployments.
+v2 supports Ed25519, ES256 (P-256), and ES384 (P-384). The relay's `signature.alg` field determines which algorithm the verifier uses. Ed25519 remains the default for Selkey deployments.
 
 ---
 
@@ -491,7 +491,7 @@ The relay MUST NOT call `assemble()` again on retry. The cached bytes are the ca
   "issued_at": "2026-03-04T12:00:00Z",
   "assurance_level": "SELF_ASSERTED",
   "operator": {
-    "operator_id": "relay.agentvault.dev",
+    "operator_id": "relay.selkey.dev",
     "operator_key_fingerprint": "abcd1234..."
   },
   "commitments": {
