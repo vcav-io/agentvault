@@ -53,6 +53,11 @@ vi.mock('selkey/contracts', () => ({
   }),
   listRelayPurposes: vi.fn().mockReturnValue(['MEDIATION', 'COMPATIBILITY']),
   computeRelayContractHash: vi.fn().mockReturnValue('relay-hash-mock'),
+  withRelayContractModelProfile: vi.fn().mockImplementation((contract, profile) => ({
+    ...contract,
+    model_profile_id: profile.id,
+    model_profile_hash: profile.hash,
+  })),
 }));
 
 function createMockAfalTransport(invites: AfalInviteMessage[] = []): AfalTransport {
@@ -436,7 +441,7 @@ describe('stale resume-token fallback', () => {
         invite_id: 'inv-fallback',
         from_agent_id: 'bob-demo',
         template_id: 'dating.v1.d2',
-        contract_hash: 'compat-hash',
+        contract_hash: 'relay-hash-mock',
         payload_type: 'VCAV_E_INVITE_V1',
         payload: {
           session_id: 'sess-fallback',
@@ -462,7 +467,7 @@ describe('stale resume-token fallback', () => {
     expect(result.status).toBe('PENDING');
     expect(data.phase).toBe('JOIN');
     expect(data.from).toBe('bob-demo');
-    expect(data.contract_hash).toBe('compat-hash');
+    expect(data.contract_hash).toBe('relay-hash-mock');
   });
 
   it('falls back to fresh INITIATE args when resume_token is invalid but enough context is present', async () => {

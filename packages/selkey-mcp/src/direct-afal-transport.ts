@@ -202,6 +202,18 @@ export class DirectAfalTransport implements AfalTransport {
     return this.config.agentId;
   }
 
+  /** Relay URL from this agent's own configuration (never peer-supplied). */
+  get localRelayUrl(): string | undefined {
+    return this.config.relayUrl;
+  }
+
+  /** Purpose codes this agent admits as a responder, if RESPOND mode is configured. */
+  get respondPurposeCodes(): string[] | undefined {
+    return this.config.respondMode
+      ? [...this.config.respondMode.policy.allowedPurposeCodes]
+      : undefined;
+  }
+
   get ifcSeedHex(): string {
     return this.config.seedHex;
   }

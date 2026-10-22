@@ -104,6 +104,10 @@ function makeSignedCommit(
     admit_token_id: admitTokenId,
     relay_session: {
       ...makeRelay(),
+      // A well-formed COMMIT binds the session to the relay it names.
+      ...(typeof overrides['chosen_relay_url'] === 'string'
+        ? { relay_url: overrides['chosen_relay_url'] }
+        : {}),
       contract_hash: 'c'.repeat(64),
     } satisfies RelaySessionBinding,
     ...overrides,
@@ -301,6 +305,28 @@ describe('Relay Preference Arbitration', () => {
       const commit = makeSignedCommit(tokenId, proposalId);
       const result = responder.handleCommit(commit);
       expect(result.ok).toBe(true);
+    });
+
+    it('rejects COMMIT whose relay_session.relay_url differs from chosen_relay_url', () => {
+      const responder = new AfalResponder({
+        agentId: 'bob-test',
+        seedHex: RESPONDER_SEED,
+        policy: makePolicy(),
+      });
+
+      const { tokenId, proposalId } = admitAndGetIds(responder);
+      const commit = makeSignedCommit(tokenId, proposalId, {
+        chosen_relay_url: RESPONDER_RELAY,
+        relay_session: {
+          ...makeRelay(),
+          relay_url: 'http://other-relay.example',
+          contract_hash: 'c'.repeat(64),
+        },
+      });
+      const result = responder.handleCommit(commit);
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('does not match chosen_relay_url');
+      expect(responder.drainQueue()).toHaveLength(0);
     });
 
     it('same relay on both sides proceeds normally (REQUIRED)', () => {

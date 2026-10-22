@@ -53,7 +53,8 @@ cargo build --features persistence
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `SELKEY_RELAY_URL` | For CREATE/JOIN | — | Relay base URL (e.g. `http://localhost:3100`) |
+| `SELKEY_RELAY_URL` | For all relay sessions | — | Relay base URL (e.g. `http://localhost:3100`). INITIATE and RESPOND only use locally configured relays: this URL plus `SELKEY_RELAY_ALLOWLIST`. Relay URLs from a peer's Agent Card or invite are never used unless they match. If `SELKEY_RELAY_VERIFYING_KEY_HEX` (64 hex chars) is set, the relay's `/health` `verifying_key_hex` must match it before any input is submitted |
+| `SELKEY_RELAY_ALLOWLIST` | No | — | Comma-separated additional relay URLs this agent will use (e.g. when a counterparty's session lives on a different relay you trust) |
 | `SELKEY_AGENT_ID` | No | — | This agent's ID, used for contract building |
 | `SELKEY_RESUME_TOKEN_SECRET` | No | — | Secret for HMAC-signing resume tokens. Recommended for production |
 | `SELKEY_RELAY_VERIFYING_KEY_HEX` | No | — | Pinned relay Ed25519 verifying key (64 hex chars). `selkey.verify_receipt` uses it when no `public_key_hex` argument is given, and rejects an argument that differs from it. Without this or an argument, the tool returns an error |
@@ -68,7 +69,7 @@ These enable the AFAL direct transport for INITIATE and RESPOND session modes (a
 | `SELKEY_AFAL_HTTP_PORT` | For RESPOND | — | Port for the AFAL HTTP server (enables RESPOND mode) |
 | `SELKEY_AFAL_BIND_ADDRESS` | No | `127.0.0.1` | Bind address for the AFAL HTTP server |
 | `SELKEY_AFAL_TRUSTED_AGENTS` | No | — | JSON array of trusted agents: `[{"agentId":"...","publicKeyHex":"..."}]` |
-| `SELKEY_AFAL_ALLOWED_PURPOSES` | No | — | Comma-separated list of allowed purpose codes (e.g. `MEDIATION,COMPATIBILITY`) |
+| `SELKEY_AFAL_ALLOWED_PURPOSES` | No | `MEDIATION` | Comma-separated list of allowed purpose codes (e.g. `MEDIATION,COMPATIBILITY`). Also the purposes RESPOND accepts when `expected_purpose` is omitted |
 | `SELKEY_AFAL_PEER_DESCRIPTOR_URL` | For INITIATE | — | URL of the peer agent's descriptor (used in INITIATE mode) |
 | `SELKEY_AFAL_REQUIRE_SIGNED_CARDS` | No | `false` | Set to `true` to reject unsigned A2A agent cards (strict mode) |
 

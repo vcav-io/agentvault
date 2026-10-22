@@ -69,10 +69,10 @@ describe('handleGetIdentity', () => {
         args: { mode: 'RESPOND' },
         reason: 'pending_invite',
       });
-      expect(result.data?.inbox_hint).toBe('You have 1 pending invite(s).');
+      expect(result.data?.inbox_hint).toContain('You have 1 pending invite(s).');
     });
 
-    it('pre-fills from and expected_purpose in next_action when single invite has metadata', async () => {
+    it('does not pre-fill from or expected_purpose from a single invite', async () => {
       const inboxService: InboxService = {
         checkInbox: async () => ({
           invites: [{
@@ -85,7 +85,7 @@ describe('handleGetIdentity', () => {
       const result = await handleGetIdentity(undefined, [], inboxService);
       expect(result.data?.next_action).toEqual({
         tool: 'selkey.relay_signal',
-        args: { mode: 'RESPOND', from: 'alice', expected_purpose: 'MEDIATION' },
+        args: { mode: 'RESPOND' },
         reason: 'pending_invite',
       });
     });

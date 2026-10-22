@@ -51,6 +51,16 @@ import {
   type ResolvedAgreement,
 } from '../resolved-agreement.js';
 import {
+  assertRelayTrusted,
+  checkReceiptAgainstPinnedKey,
+  isRelayKeyPinned,
+  isRelayUrlAllowed,
+  normalizeRelayUrl,
+  resolveLocalRelayUrl,
+  RelayTrustError,
+} from '../relay-trust.js';
+import { buildExpectedContractHashes, localAllowedPurposes } from '../responder-contracts.js';
+import {
   encodeRelayToken,
   decodeRelayToken,
   createRelayHandle,
@@ -350,7 +360,7 @@ function mediationContext(handle: RelayHandle): InterpretationContext {
       valid_claims: [
         'The protocol does not expose raw inputs to counterparties.',
         'Only a bounded signal is produced — not a summary of either input.',
-        `This session is cryptographically receipted (session_id=${sessionId ?? 'n/a'}).`,
+        receiptClaim(sessionId),
       ],
       invalid_claims: [
         '"Bob never saw your input" — the relay enforces privacy at its boundary, but cannot control what the counterparty\'s agent does with the relay output.',
@@ -463,7 +473,7 @@ function compatibilityContext(handle: RelayHandle): InterpretationContext {
       valid_claims: [
         'The protocol does not expose raw inputs to counterparties.',
         'Only a bounded signal is produced — not a summary of either input.',
-        `This session is cryptographically receipted (session_id=${sessionId ?? 'n/a'}).`,
+        receiptClaim(sessionId),
         'derived_fields.value is a deterministic function of other signal fields — it is not an opinion or recommendation.',
       ],
       invalid_claims: [
@@ -491,6 +501,7 @@ function customContext(handle: RelayHandle): InterpretationContext {
       valid_claims: [
         'The protocol does not expose raw inputs to counterparties.',
         'Only a bounded signal is produced — not a summary of either input.',
+        receiptClaim(sessionId),
       ],
       invalid_claims: [
         '"Bob never saw your input" — the relay enforces privacy at its boundary, but cannot control what the counterparty\'s agent does with the relay output.',
@@ -503,6 +514,12 @@ function customContext(handle: RelayHandle): InterpretationContext {
       receipt_available: true,
     },
   };
+}
+
+function receiptClaim(sessionId: string | null): string {
+  return isRelayKeyPinned()
+    ? `This session's receipt verified against the pinned relay key (session_id=${sessionId ?? 'n/a'}).`
+    : `This session has a relay-signed receipt, not verified: no relay key pinned (session_id=${sessionId ?? 'n/a'}).`;
 }
 
 function getReceiptSessionId(receipt: unknown): string | undefined {
@@ -626,17 +643,37 @@ function buildInterpretationContext(
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-function resolveRelayUrl(argsUrl?: string, discoveredUrl?: string): string {
-  const url = argsUrl ?? process.env['SELKEY_RELAY_URL'] ?? discoveredUrl;
-  if (!url) {
-    throw new Error(
-      'relay_url is required (or set SELKEY_RELAY_URL environment variable, or discover a peer Agent Card relay_url in direct AFAL mode)',
-    );
-  }
-  return url;
+function resolveRelayUrl(argsUrl?: string): string {
+  // Only locally configured relays: never fall back to a peer-advertised relay.
+  return resolveLocalRelayUrl(argsUrl);
+}
+
+/** Relay URL from this agent's own transport configuration. */
+function transportLocalRelayUrl(transport: AfalTransport | undefined): string | undefined {
+  if (transport instanceof RelayInboxTransport) return transport.relayUrl;
+  if (transport instanceof DirectAfalTransport) return transport.localRelayUrl;
+  return undefined;
+}
+
+/** Purposes this responder accepts, from the caller's expected_purpose or local config. */
+function responderAcceptablePurposes(handle: RelayHandle, transport: AfalTransport): string[] {
+  if (handle.expectedPurpose) return [handle.expectedPurpose];
+  const purposes = new Set<string>(
+    transport instanceof DirectAfalTransport && transport.respondPurposeCodes
+      ? transport.respondPurposeCodes
+      : localAllowedPurposes(),
+  );
+  if (handle.preferredPurpose) purposes.add(handle.preferredPurpose);
+  return [...purposes];
 }
 
 function mapRelayError(error: unknown): { code: ErrorCode; detail: string } {
+  if (error instanceof RelayTrustError) {
+    return {
+      code: error.message.startsWith('relay_url') ? 'INVALID_INPUT' : 'PRECONDITION_FAILED',
+      detail: error.message,
+    };
+  }
   if (error instanceof Error) {
     const msg = error.message;
     if (msg.includes('Relay HTTP 4')) {
@@ -1004,6 +1041,11 @@ function completedResponse(
   handle: RelayHandle,
   output: SessionOutputResponse,
 ): ToolResponse<RelaySignalOutput> {
+  const receiptCheck = checkReceiptAgainstPinnedKey(output);
+  if (receiptCheck.status === 'FAILED') {
+    // Do not present output whose receipt fails the pinned-key check.
+    return failedResponse(handle, 'RECEIPT_VERIFICATION_FAILED', receiptCheck.detail);
+  }
   handle.phase = 'COMPLETED';
   const effectiveSessionId = getEffectiveCompletedSessionId(handle, output);
   if (effectiveSessionId) {
@@ -1137,6 +1179,7 @@ async function createCommittedDirectSession(params: {
   proposalId: string;
   purposeHint?: string | null;
 }): Promise<void> {
+  await assertRelayTrusted(params.relayUrl, [transportLocalRelayUrl(params.transport)]);
   const config = { relay_url: params.relayUrl };
   const created = await createAndSubmit(config, params.contract, params.myInput, 'initiator');
   const relaySession: RelaySessionBinding = {
@@ -1484,7 +1527,7 @@ async function phaseInvite(
     );
   }
 
-  const relayUrl = resolveRelayUrl(args.relay_url, peerDiscovery?.relayUrl);
+  const relayUrl = resolveRelayUrl(args.relay_url);
   // 1. Build AfalPropose from purpose and contract template.
   const templateId = purposeHint
     ? (PURPOSE_TO_TEMPLATE[purposeHint] ?? 'mediation-demo.v1.standard')
@@ -1522,6 +1565,7 @@ async function phaseInvite(
   handle.proposalId = proposalId;
 
   if (!(transport instanceof DirectAfalTransport)) {
+    await assertRelayTrusted(relayUrl, [transportLocalRelayUrl(transport)]);
     const config = { relay_url: relayUrl };
     const created = await createAndSubmit(config, contract, args.my_input ?? '', 'initiator');
     const relay: RelayInvitePayload = {
@@ -1668,7 +1712,16 @@ async function phasePollInvite(
     // Commit phase before submit so retries route to POLL_RELAY (not back here)
     handle.phase = 'POLL_RELAY';
 
-    // Submit initiator input
+    // Submit initiator input (only to a locally configured relay)
+    try {
+      await assertRelayTrusted(handle.relayUrl, [transport.relayUrl]);
+    } catch (err) {
+      return failedResponse(
+        handle,
+        'RELAY_NOT_TRUSTED',
+        err instanceof Error ? err.message : String(err),
+      );
+    }
     const config = { relay_url: handle.relayUrl };
     try {
       await rawSubmitInput(
@@ -1930,6 +1983,8 @@ async function phaseDiscover(
   );
   let isFirstCheck = true;
 
+  const localRelayUrl = transportLocalRelayUrl(transport);
+
   while (true) {
     // Check overall timeout
     if (Date.now() > handle.timeoutDeadline) {
@@ -1939,6 +1994,16 @@ async function phaseDiscover(
         'Timed out waiting for relay invite. Ask the initiator to retry.',
       );
     }
+
+    // The responder only accepts a contract that hashes to one it would build
+    // itself from local configuration (or to an explicitly supplied hash).
+    // Rebuilt each poll so configuration changes take effect.
+    const expectedContractHashes = handle.expectedContractHash
+      ? new Set([handle.expectedContractHash])
+      : await buildExpectedContractHashes({
+          purposes: responderAcceptablePurposes(handle, transport),
+          participants: [handle.counterparty, handle.agentId],
+        });
 
     // Sleep between polls (not before the first check)
     if (!isFirstCheck) {
@@ -1955,6 +2020,7 @@ async function phaseDiscover(
     let senderInviteFailure:
       | { kind: 'contract' }
       | { kind: 'purpose'; expected: string; actual: string }
+      | { kind: 'relay'; relayUrl: string }
       | null = null;
 
     // Scan newest-first to prefer the most recent matching invite
@@ -2112,6 +2178,15 @@ async function phaseDiscover(
           }
         }
 
+        // Validate: the full contract must be one this responder would build
+        if (!expectedContractHashes.has(computedHash)) {
+          console.error(
+            `phaseDiscover: invite ${invite.invite_id} contract ${computedHash} is not a locally expected contract`,
+          );
+          senderInviteFailure = { kind: 'contract' };
+          continue;
+        }
+
         // Bind confirmed contract to handle
         handle.inviteId = invite.invite_id;
         handle.contractHash = detail.contract_hash;
@@ -2121,14 +2196,32 @@ async function phaseDiscover(
       } else {
         // Legacy path: extract session tokens from invite payload.
         // (payload was validated by the filter above — this guard is defensive)
+        const payload = invite.payload;
+        if (!payload || typeof payload !== 'object' || !isRelayInvitePayload(payload)) continue;
+
+        // The contract hash bound to the session must be one this responder
+        // would build itself.
+        if (!invite.contract_hash || !expectedContractHashes.has(invite.contract_hash)) {
+          senderInviteFailure = { kind: 'contract' };
+          continue;
+        }
+
+        // The session relay must be locally configured, and must match an
+        // explicitly requested relay_url.
+        if (
+          !isRelayUrlAllowed(payload.relay_url, [localRelayUrl]) ||
+          (handle.relayUrl &&
+            normalizeRelayUrl(handle.relayUrl) !== normalizeRelayUrl(payload.relay_url))
+        ) {
+          senderInviteFailure = { kind: 'relay', relayUrl: payload.relay_url };
+          continue;
+        }
+
         handle.inviteId = invite.invite_id;
         handle.contractHash = invite.contract_hash;
         handle.proposalId = invite.afalPropose?.proposal_id;
-
-        const payload = invite.payload;
-        if (!payload || typeof payload !== 'object' || !isRelayInvitePayload(payload)) continue;
         handle.sessionId = payload.session_id;
-        handle.relayUrl = handle.relayUrl ?? payload.relay_url;
+        handle.relayUrl = payload.relay_url;
         handle.tokens = {
           submit: payload.responder_submit_token,
           read: payload.responder_read_token,
@@ -2156,6 +2249,14 @@ async function phaseDiscover(
         handle,
         'CONTRACT_MISMATCH',
         'Invite contract does not match expected contract.',
+      );
+    }
+    if (senderInviteFailure?.kind === 'relay') {
+      return failedResponse(
+        handle,
+        'RELAY_NOT_TRUSTED',
+        `Invite names relay "${senderInviteFailure.relayUrl}", which is not a locally configured relay. ` +
+          'Set SELKEY_RELAY_URL or add it to SELKEY_RELAY_ALLOWLIST.',
       );
     }
 
@@ -2196,6 +2297,17 @@ async function phaseJoin(
 
   // Submit input if not yet done (uses stored myInput from handle, not args)
   if (!handle.submitted) {
+    // Only submit to a locally configured relay (and, if pinned, the expected key).
+    try {
+      await assertRelayTrusted(handle.relayUrl, [transportLocalRelayUrl(transport)]);
+    } catch (err) {
+      return failedResponse(
+        handle,
+        'RELAY_NOT_TRUSTED',
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+
     // For relay inbox: accept invite FIRST to get session tokens.
     // For legacy transports: tokens are already in handle from phaseDiscover.
     if (!handle.sessionId || !handle.tokens) {
@@ -2334,6 +2446,7 @@ async function handleCreate(args: RelaySignalArgs): Promise<ToolResponse<RelaySi
     return buildError('INVALID_INPUT', 'contract is required for CREATE mode');
   }
   const relayUrl = resolveRelayUrl(args.relay_url);
+  await assertRelayTrusted(relayUrl);
   const config = { relay_url: relayUrl };
 
   const created = await createAndSubmit(config, args.contract, args.my_input ?? '', 'initiator');
@@ -2358,6 +2471,7 @@ async function handleJoin(args: RelaySignalArgs): Promise<ToolResponse<RelaySign
     return buildError('INVALID_INPUT', 'contract_hash is required for JOIN mode');
 
   const relayUrl = resolveRelayUrl(args.relay_url);
+  await assertRelayTrusted(relayUrl);
   const config = { relay_url: relayUrl };
 
   const output = await joinAndWait(
@@ -2369,6 +2483,11 @@ async function handleJoin(args: RelaySignalArgs): Promise<ToolResponse<RelaySign
     args.my_input ?? '',
     'responder',
   );
+
+  const receiptCheck = checkReceiptAgainstPinnedKey(output);
+  if (receiptCheck.status === 'FAILED') {
+    return buildError('VERIFICATION_FAILED', receiptCheck.detail);
+  }
 
   return buildSuccess('COMPLETE', {
     mode: 'JOIN' as const,
@@ -2589,26 +2708,6 @@ export async function handleRelaySignal(
           );
         }
 
-        // Auto-infer missing params from inbox when there's exactly one
-        // pending invite. Saves 1-2 LLM round-trips discovering required
-        // parameters (from, expected_purpose).
-        if (!args.from || (!args.expected_purpose && !args.expected_contract_hash)) {
-          try {
-            const inbox = await transport.peekInbox();
-            if (inbox.invites.length === 1) {
-              const invite = inbox.invites[0];
-              if (!args.from && invite.from_agent_id) {
-                args.from = invite.from_agent_id;
-              }
-              if (!args.expected_purpose && !args.expected_contract_hash && invite.afalPropose?.purpose_code) {
-                args.expected_purpose = invite.afalPropose.purpose_code;
-              }
-            }
-          } catch {
-            // Non-fatal — fall through to manual validation below
-          }
-        }
-
         if (!args.from) {
           const knownNames = knownAgents.map(a => a.agent_id).join(', ');
           return buildError(
@@ -2638,11 +2737,15 @@ export async function handleRelaySignal(
           return awaitingResponse(existing, 'Reattached to existing relay session.');
         }
 
-        // Validate that we have expected_purpose or expected_contract_hash
-        if (!args.expected_purpose && !args.expected_contract_hash) {
+        // Without expected_purpose or expected_contract_hash, the responder
+        // accepts only contracts built from its locally configured purposes.
+
+        // An explicit relay_url must be a locally configured relay.
+        if (args.relay_url && !isRelayUrlAllowed(args.relay_url, [transportLocalRelayUrl(transport)])) {
           return buildError(
             'INVALID_INPUT',
-            'RESPOND requires expected_purpose or expected_contract_hash.',
+            `relay_url "${args.relay_url}" is not a locally configured relay. ` +
+              'Set SELKEY_RELAY_URL or add it to SELKEY_RELAY_ALLOWLIST.',
           );
         }
 

@@ -189,12 +189,13 @@ export const RELAY_TOOLS = [
           type: 'string',
           enum: RELAY_PURPOSES,
           description:
-            "What kind of session you expect to join (RESPOND mode, required unless expected_contract_hash provided). Verified cryptographically against the invite's contract hash before submitting data.",
+            'What kind of session you expect to join (RESPOND mode). Optional: if omitted, the purposes allowed by local configuration (SELKEY_AFAL_ALLOWED_PURPOSES) are used. ' +
+            'The invite is accepted only if its full contract hash matches a contract built locally for an accepted purpose.',
         },
         expected_contract_hash: {
           type: 'string',
           description:
-            'Explicit contract hash for custom contracts (RESPOND mode). Overrides expected_purpose.',
+            'Explicit contract hash for custom contracts (RESPOND mode). Overrides expected_purpose. Obtain it from your own records, not from the invite.',
         },
         counterparty: {
           type: 'string',
@@ -243,7 +244,8 @@ export const RELAY_TOOLS = [
         },
         relay_url: {
           type: 'string',
-          description: 'Relay base URL. Defaults to SELKEY_RELAY_URL environment variable.',
+          description:
+            'Relay base URL. Defaults to SELKEY_RELAY_URL. Must be SELKEY_RELAY_URL or listed in SELKEY_RELAY_ALLOWLIST.',
         },
         session_id: {
           type: 'string',
