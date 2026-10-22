@@ -11,7 +11,7 @@
  * verifying_key_hex must match it before any input is submitted.
  */
 
-import { fetchRelayPublicKey } from 'selkey/verify';
+import { fetchRelayPublicKey, verifyReceipt } from 'selkey/verify';
 
 export const RELAY_URL_ENV = 'SELKEY_RELAY_URL';
 export const RELAY_ALLOWLIST_ENV = 'SELKEY_RELAY_ALLOWLIST';
@@ -120,4 +120,68 @@ export async function assertRelayTrusted(
       `Relay verifying key at ${relayUrl} does not match ${RELAY_VERIFYING_KEY_ENV}`,
     );
   }
+}
+
+export type ReceiptCheck =
+  | { status: 'NOT_PINNED' }
+  | { status: 'VERIFIED' }
+  | { status: 'FAILED'; detail: string };
+
+export function isRelayKeyPinned(): boolean {
+  return Boolean(process.env[RELAY_VERIFYING_KEY_ENV]?.trim());
+}
+
+/**
+ * Verify a session output's receipt against SELKEY_RELAY_VERIFYING_KEY_HEX.
+ * Returns NOT_PINNED when no key is configured.
+ */
+export function checkReceiptAgainstPinnedKey(output: {
+  receipt?: unknown;
+  receipt_signature?: string;
+  receipt_v2?: Record<string, unknown>;
+}): ReceiptCheck {
+  const pinned = process.env[RELAY_VERIFYING_KEY_ENV]?.trim();
+  if (!pinned) return { status: 'NOT_PINNED' };
+  if (!KEY_HEX_RE.test(pinned)) {
+    return {
+      status: 'FAILED',
+      detail: `${RELAY_VERIFYING_KEY_ENV} must be a 64-character hex Ed25519 public key`,
+    };
+  }
+  const key = pinned.toLowerCase();
+
+  let receipt: Record<string, unknown> | undefined;
+  if (output.receipt_v2 && typeof output.receipt_v2 === 'object') {
+    receipt = output.receipt_v2;
+  } else if (output.receipt && typeof output.receipt === 'object') {
+    const v1 = output.receipt as Record<string, unknown>;
+    receipt =
+      v1['signature'] === undefined && typeof output.receipt_signature === 'string'
+        ? { ...v1, signature: output.receipt_signature }
+        : v1;
+  }
+  if (!receipt) {
+    return { status: 'FAILED', detail: 'Session output has no receipt to verify' };
+  }
+
+  // A key embedded in the receipt is never trusted in place of the pinned key.
+  const att = receipt['tee_attestation'];
+  if (att && typeof att === 'object') {
+    const embedded = (att as Record<string, unknown>)['receipt_signing_pubkey_hex'];
+    if (embedded !== undefined && String(embedded).toLowerCase() !== key) {
+      return {
+        status: 'FAILED',
+        detail: 'Receipt tee_attestation signing key does not match the pinned relay key',
+      };
+    }
+  }
+
+  const result = verifyReceipt(receipt, key);
+  if (!result.valid) {
+    return {
+      status: 'FAILED',
+      detail: `Receipt did not verify against the pinned relay key: ${result.errors.join('; ') || 'invalid'}`,
+    };
+  }
+  return { status: 'VERIFIED' };
 }

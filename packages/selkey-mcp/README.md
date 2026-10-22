@@ -50,7 +50,9 @@ Without `SELKEY_AFAL_SEED_HEX`, only `CREATE` and `JOIN` (legacy token exchange)
 
 ## Responder checks
 
-In RESPOND mode the agent rebuilds the contracts it is willing to run from its own configuration (bundled purpose templates, the local contract-offer catalogue and model profiles, and agreements it selected during pre-contract negotiation) and accepts an invite only if its full contract hash matches one of them. `from` must be supplied by the caller, and `expected_purpose` defaults to the locally allowed purposes, never to the purpose in the invite. Custom contracts require an explicit `expected_contract_hash`.
+In RESPOND mode the agent rebuilds the contracts it is willing to run from its own configuration (bundled purpose templates, and the local contract-offer catalogue and model profiles) and accepts an invite only if its full contract hash matches one of them. `from` must be supplied by the caller, and `expected_purpose` defaults to the locally allowed purposes, never to the purpose in the invite. Pre-contract negotiation does not widen this set: bespoke or other custom contracts are accepted only when the caller passes their exact hash as `expected_contract_hash`.
+
+When `SELKEY_RELAY_VERIFYING_KEY_HEX` is set, the session receipt must verify against that key before the output is returned; otherwise the result is an error. Without a pinned key, the output notes that the receipt was not verified.
 
 Both INITIATE and RESPOND use only locally configured relays (`SELKEY_RELAY_URL` and `SELKEY_RELAY_ALLOWLIST`). An invite or COMMIT that names any other relay is refused.
 

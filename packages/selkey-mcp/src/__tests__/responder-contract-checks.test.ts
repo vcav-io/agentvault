@@ -14,7 +14,10 @@ import {
   computeRelayContractHash,
   type RelayContract,
 } from 'selkey/contracts';
-import { submitInput } from 'selkey/http';
+import { submitInput, getStatus, getOutput } from 'selkey/http';
+import { sha256 } from '@noble/hashes/sha256';
+import { utf8ToBytes } from '@noble/hashes/utils';
+import { canonicalize } from 'json-canonicalize';
 import { createAndSubmit } from 'selkey';
 import { ed25519 } from '@noble/curves/ed25519';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
@@ -195,6 +198,29 @@ describe('responder rebuilds and compares the full contract', () => {
     const data = await respond(mockTransport([legacyInvite(hash)]));
     expect(data.phase).toBe('JOIN');
     expect(data.contract_hash).toBe(hash);
+  });
+});
+
+describe('contracts outside the local set', () => {
+  const customHash = computeRelayContractHash({
+    ...localContract(),
+    output_schema_id: 'custom_schema',
+    output_schema: { type: 'object' },
+  });
+
+  it('rejects a custom contract without an explicit expected_contract_hash', async () => {
+    const data = await respond(mockTransport([legacyInvite(customHash)]));
+    expect(data.phase).toBe('FAILED');
+    expect(data.error_code).toBe('CONTRACT_MISMATCH');
+  });
+
+  it('accepts a custom contract only when its exact hash is expected', async () => {
+    const data = await respond(mockTransport([legacyInvite(customHash)]), {
+      expected_purpose: undefined,
+      expected_contract_hash: customHash,
+    });
+    expect(data.phase).toBe('JOIN');
+    expect(data.contract_hash).toBe(customHash);
   });
 });
 
@@ -411,5 +437,75 @@ describe('direct AFAL round trip with locally configured relays', () => {
     );
     const data = responded.data as RelaySignalOutput;
     expect(data.phase).toBe('JOIN');
+  });
+});
+
+describe('receipt verification against the pinned relay key', () => {
+  const RELAY_SEED = '03'.repeat(32);
+  const OTHER_SEED = '04'.repeat(32);
+  const keyOf = (seed: string) => bytesToHex(ed25519.getPublicKey(hexToBytes(seed)));
+
+  function signedReceiptV2(seed: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
+    const unsigned = {
+      receipt_schema_version: '2.1.0',
+      session_id: 'sess-1',
+      assurance_level: 'SELF_ASSERTED',
+      ...extra,
+    };
+    const digest = sha256(utf8ToBytes('VCAV-RECEIPT-V2:' + canonicalize(unsigned)));
+    const sig = Buffer.from(ed25519.sign(digest, hexToBytes(seed))).toString('base64url');
+    return { ...unsigned, signature: { alg: 'Ed25519', value: sig } };
+  }
+
+  async function runToCompletion(receiptV2: Record<string, unknown>): Promise<RelaySignalOutput> {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ verifying_key_hex: keyOf(RELAY_SEED) }),
+      }),
+    );
+    vi.mocked(getStatus).mockResolvedValueOnce({ state: 'COMPLETED' } as never);
+    vi.mocked(getOutput).mockResolvedValueOnce({
+      state: 'COMPLETED',
+      output: { mediation_signal: 'ALIGNED' },
+      receipt_v2: receiptV2,
+    } as never);
+    const transport = mockTransport([legacyInvite(computeRelayContractHash(localContract()))]);
+    const first = await respond(transport);
+    const second = await handleRelaySignal({ resume_token: first.resume_token ?? '' }, transport);
+    return second.data as RelaySignalOutput;
+  }
+
+  it('returns an error instead of output when the receipt is not signed by the pinned key', async () => {
+    process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'] = keyOf(RELAY_SEED);
+    const data = await runToCompletion(signedReceiptV2(OTHER_SEED));
+    expect(data.phase).toBe('FAILED');
+    expect(data.error_code).toBe('RECEIPT_VERIFICATION_FAILED');
+    expect(data.output).toBeUndefined();
+  });
+
+  it('returns an error when the receipt declares a different embedded signing key', async () => {
+    process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'] = keyOf(RELAY_SEED);
+    const data = await runToCompletion(
+      signedReceiptV2(OTHER_SEED, { tee_attestation: { receipt_signing_pubkey_hex: keyOf(OTHER_SEED) } }),
+    );
+    expect(data.phase).toBe('FAILED');
+    expect(data.error_code).toBe('RECEIPT_VERIFICATION_FAILED');
+  });
+
+  it('completes when the receipt verifies against the pinned key', async () => {
+    process.env['SELKEY_RELAY_VERIFYING_KEY_HEX'] = keyOf(RELAY_SEED);
+    const data = await runToCompletion(signedReceiptV2(RELAY_SEED));
+    expect(data.phase).toBe('COMPLETED');
+    expect(JSON.stringify(data.interpretation_context)).toContain('verified against the pinned relay key');
+  });
+
+  it('says the receipt is not verified when no relay key is pinned', async () => {
+    const data = await runToCompletion(signedReceiptV2(OTHER_SEED));
+    expect(data.phase).toBe('COMPLETED');
+    const text = JSON.stringify(data.interpretation_context);
+    expect(text).toContain('not verified: no relay key pinned');
+    expect(text).not.toContain('cryptographically receipted');
   });
 });

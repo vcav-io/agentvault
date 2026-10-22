@@ -3,10 +3,11 @@
  *
  * A responder only accepts a relay contract whose hash equals the hash of a
  * contract it would build itself from local configuration: the bundled
- * purpose templates, the local contract-offer catalogue and model profiles,
- * and any agreements this agent selected during pre-contract negotiation
- * (compiled from its own admitted registry). The counterparty's invite never
- * decides which contracts are acceptable.
+ * purpose templates and the local contract-offer catalogue and model
+ * profiles. The counterparty's invite never decides which contracts are
+ * acceptable. Pre-contract negotiation does not add to this set: a bespoke
+ * contract is accepted only when the caller passes its exact hash as
+ * expected_contract_hash.
  */
 
 import {
@@ -17,7 +18,6 @@ import {
 } from 'selkey/contracts';
 import { listContractOffers } from './contract-offers.js';
 import { listKnownModelProfiles } from './model-profiles.js';
-import { compileResolvedAgreement, type ResolvedAgreement } from './resolved-agreement.js';
 
 export const ALLOWED_PURPOSES_ENV = 'SELKEY_AFAL_ALLOWED_PURPOSES';
 const DEFAULT_ALLOWED_PURPOSES = ['MEDIATION'];
@@ -31,60 +31,6 @@ export function localAllowedPurposes(): string[] {
     .map((s) => s.trim())
     .filter(Boolean);
   return parsed.length ? parsed : [...DEFAULT_ALLOWED_PURPOSES];
-}
-
-// ── Locally selected negotiation agreements ─────────────────────────────
-
-const AGREEMENT_TTL_MS = 30 * 60 * 1000;
-const MAX_AGREEMENTS = 256;
-
-interface RecordedAgreement {
-  agreement: ResolvedAgreement;
-  expiresAt: number;
-}
-
-const recordedAgreements: RecordedAgreement[] = [];
-
-function agreementKey(agreement: ResolvedAgreement): string {
-  return JSON.stringify([
-    agreement.source.kind,
-    agreement.source.kind === 'offer' ? agreement.source.contract_offer_id : null,
-    agreement.purpose_code,
-    agreement.schema_ref,
-    agreement.policy_ref,
-    agreement.program_ref,
-    agreement.selected_model_profile.id,
-    agreement.selected_model_profile.version,
-    agreement.selected_model_profile.hash,
-  ]);
-}
-
-function gcAgreements(now: number): void {
-  for (let i = recordedAgreements.length - 1; i >= 0; i--) {
-    if (recordedAgreements[i].expiresAt <= now) recordedAgreements.splice(i, 1);
-  }
-}
-
-/**
- * Record an agreement that this agent selected while answering a
- * pre-contract negotiation, so the responder will accept the compiled
- * contract later.
- */
-export function recordLocallySelectedAgreement(agreement: ResolvedAgreement): void {
-  const now = Date.now();
-  gcAgreements(now);
-  const key = agreementKey(agreement);
-  const existing = recordedAgreements.find((entry) => agreementKey(entry.agreement) === key);
-  if (existing) {
-    existing.expiresAt = now + AGREEMENT_TTL_MS;
-    return;
-  }
-  recordedAgreements.push({ agreement, expiresAt: now + AGREEMENT_TTL_MS });
-  while (recordedAgreements.length > MAX_AGREEMENTS) recordedAgreements.shift();
-}
-
-export function _resetRecordedAgreementsForTesting(): void {
-  recordedAgreements.length = 0;
 }
 
 // ── Expected contracts ──────────────────────────────────────────────────
@@ -148,18 +94,6 @@ export async function buildExpectedContractHashes(params: {
           }),
         );
       }
-    }
-  }
-
-  // Agreements this agent selected during pre-contract negotiation.
-  const now = Date.now();
-  gcAgreements(now);
-  for (const { agreement } of recordedAgreements) {
-    if (!purposes.has(agreement.purpose_code)) continue;
-    try {
-      add(await compileResolvedAgreement({ agreement, participants }));
-    } catch {
-      // Registry unavailable or agreement no longer resolvable: not acceptable.
     }
   }
 

@@ -52,6 +52,8 @@ import {
 } from '../resolved-agreement.js';
 import {
   assertRelayTrusted,
+  checkReceiptAgainstPinnedKey,
+  isRelayKeyPinned,
   isRelayUrlAllowed,
   normalizeRelayUrl,
   resolveLocalRelayUrl,
@@ -358,7 +360,7 @@ function mediationContext(handle: RelayHandle): InterpretationContext {
       valid_claims: [
         'The protocol does not expose raw inputs to counterparties.',
         'Only a bounded signal is produced — not a summary of either input.',
-        `This session is cryptographically receipted (session_id=${sessionId ?? 'n/a'}).`,
+        receiptClaim(sessionId),
       ],
       invalid_claims: [
         '"Bob never saw your input" — the relay enforces privacy at its boundary, but cannot control what the counterparty\'s agent does with the relay output.',
@@ -471,7 +473,7 @@ function compatibilityContext(handle: RelayHandle): InterpretationContext {
       valid_claims: [
         'The protocol does not expose raw inputs to counterparties.',
         'Only a bounded signal is produced — not a summary of either input.',
-        `This session is cryptographically receipted (session_id=${sessionId ?? 'n/a'}).`,
+        receiptClaim(sessionId),
         'derived_fields.value is a deterministic function of other signal fields — it is not an opinion or recommendation.',
       ],
       invalid_claims: [
@@ -499,6 +501,7 @@ function customContext(handle: RelayHandle): InterpretationContext {
       valid_claims: [
         'The protocol does not expose raw inputs to counterparties.',
         'Only a bounded signal is produced — not a summary of either input.',
+        receiptClaim(sessionId),
       ],
       invalid_claims: [
         '"Bob never saw your input" — the relay enforces privacy at its boundary, but cannot control what the counterparty\'s agent does with the relay output.',
@@ -511,6 +514,12 @@ function customContext(handle: RelayHandle): InterpretationContext {
       receipt_available: true,
     },
   };
+}
+
+function receiptClaim(sessionId: string | null): string {
+  return isRelayKeyPinned()
+    ? `This session's receipt verified against the pinned relay key (session_id=${sessionId ?? 'n/a'}).`
+    : `This session has a relay-signed receipt, not verified: no relay key pinned (session_id=${sessionId ?? 'n/a'}).`;
 }
 
 function getReceiptSessionId(receipt: unknown): string | undefined {
@@ -1032,6 +1041,11 @@ function completedResponse(
   handle: RelayHandle,
   output: SessionOutputResponse,
 ): ToolResponse<RelaySignalOutput> {
+  const receiptCheck = checkReceiptAgainstPinnedKey(output);
+  if (receiptCheck.status === 'FAILED') {
+    // Do not present output whose receipt fails the pinned-key check.
+    return failedResponse(handle, 'RECEIPT_VERIFICATION_FAILED', receiptCheck.detail);
+  }
   handle.phase = 'COMPLETED';
   const effectiveSessionId = getEffectiveCompletedSessionId(handle, output);
   if (effectiveSessionId) {
@@ -1969,14 +1983,6 @@ async function phaseDiscover(
   );
   let isFirstCheck = true;
 
-  // The responder only accepts a contract that hashes to one it would build
-  // itself from local configuration (or to an explicitly supplied hash).
-  const expectedContractHashes = handle.expectedContractHash
-    ? new Set([handle.expectedContractHash])
-    : await buildExpectedContractHashes({
-        purposes: responderAcceptablePurposes(handle, transport),
-        participants: [handle.counterparty, handle.agentId],
-      });
   const localRelayUrl = transportLocalRelayUrl(transport);
 
   while (true) {
@@ -1988,6 +1994,16 @@ async function phaseDiscover(
         'Timed out waiting for relay invite. Ask the initiator to retry.',
       );
     }
+
+    // The responder only accepts a contract that hashes to one it would build
+    // itself from local configuration (or to an explicitly supplied hash).
+    // Rebuilt each poll so configuration changes take effect.
+    const expectedContractHashes = handle.expectedContractHash
+      ? new Set([handle.expectedContractHash])
+      : await buildExpectedContractHashes({
+          purposes: responderAcceptablePurposes(handle, transport),
+          participants: [handle.counterparty, handle.agentId],
+        });
 
     // Sleep between polls (not before the first check)
     if (!isFirstCheck) {
@@ -2467,6 +2483,11 @@ async function handleJoin(args: RelaySignalArgs): Promise<ToolResponse<RelaySign
     args.my_input ?? '',
     'responder',
   );
+
+  const receiptCheck = checkReceiptAgainstPinnedKey(output);
+  if (receiptCheck.status === 'FAILED') {
+    return buildError('VERIFICATION_FAILED', receiptCheck.detail);
+  }
 
   return buildSuccess('COMPLETE', {
     mode: 'JOIN' as const,
