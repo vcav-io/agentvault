@@ -136,8 +136,8 @@ The same protocol runs in two lanes: a software lane (this repo) where the relay
 ## Related work
 
 - [NDAI Agreements](https://arxiv.org/abs/2502.07924) (Stephenson, Miller et al., Feb 2025): TEE-resident agents, with disclosure conditional on a deal.
-- [The NDAI zone](https://arxiv.org/abs/2603.19011) (Bottazzi & Park): a follow-up to NDAI Agreements.
-- [AgentCrypt](https://arxiv.org/abs/2512.08104) (Karthikeyan, Guo, Veloso et al., NeurIPS 2025): tiered privacy and homomorphic encryption for agent collaboration.
+- [Security awareness in LLM agents: the NDAI zone case](https://arxiv.org/abs/2603.19011) (Bottazzi & Park, Mar 2026): a follow-up to NDAI Agreements.
+- [AgentCrypt](https://arxiv.org/abs/2512.08104) (Karthikeyan, Guo, Veloso et al., Dec 2025): tiered privacy and homomorphic encryption for agent collaboration.
 
 Selkey's contribution is a working protocol: contracts that bind the prompt and output schema, the schema as the security boundary, signed receipts that commit to inputs and output, MCP and A2A integration, and both software and TEE lanes.
 
