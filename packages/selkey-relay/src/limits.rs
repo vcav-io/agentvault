@@ -33,6 +33,181 @@ pub const DEFAULT_SESSION_CREATE_RATE_PER_MIN: u32 = 60;
 pub const DEFAULT_INVITE_CREATE_RATE_PER_MIN: u32 = 30;
 /// Maximum number of distinct keys a rate limiter tracks at once.
 pub const MAX_RATE_LIMIT_KEYS: usize = 10_000;
+/// Maximum size of a contract, as compact JSON. Checked before a contract is
+/// normalised, hashed or stored.
+pub const MAX_CONTRACT_BYTES: usize = 16 * 1024;
+/// Maximum size of a contract's `metadata`, as compact JSON.
+pub const MAX_CONTRACT_METADATA_BYTES: usize = 2 * 1024;
+/// Maximum length, in bytes, of each string in a contract outside
+/// `output_schema` and `metadata` (participant ids, hashes, profile ids).
+pub const MAX_CONTRACT_STRING_BYTES: usize = 256;
+/// Maximum estimated heap of one accepted contract ([`contract_heap_bytes`]).
+/// A contract within [`MAX_CONTRACT_BYTES`] made of many tiny JSON values
+/// can take over 1.5 MB once parsed; this keeps any one contract (held once
+/// per session and twice per invite) to a small share of a store budget.
+pub const MAX_CONTRACT_HEAP_BYTES: usize = 256 * 1024;
+/// Default memory budget of each in-memory store (`SELKEY_MAX_STORE_BYTES`):
+/// the session store's contracts and inputs, and separately the invite
+/// store's contracts, measured with [`approx_heap_bytes`].
+pub const DEFAULT_MAX_STORE_BYTES: usize = 256 * 1024 * 1024;
+
+/// Approximate heap footprint of a parsed JSON value, in bytes: the root
+/// `serde_json::Value` plus everything it allocates. A compact JSON text can
+/// take many times its own length in memory, so store budgets count this
+/// rather than text length.
+///
+/// The estimate is meant to be at least the real allocation under glibc
+/// malloc (the relay image is Debian bookworm): each heap allocation is
+/// charged as a glibc chunk ([`alloc_chunk_bytes`]). Other allocators round
+/// differently: macOS malloc can be about 18% higher for mid-size strings,
+/// jemalloc and musl about 5%. Allocator fragmentation and transient parsing
+/// buffers are not counted (see the provisioning note for
+/// `SELKEY_MAX_STORE_BYTES` in `docs/environment-variables.md`):
+/// - strings and object keys: their capacity;
+/// - arrays: their capacity in `Value`s;
+/// - objects: serde_json stores members in a `BTreeMap` (no
+///   `preserve_order`), so each non-empty object costs whole B-tree nodes.
+///   See [`BTREE_LEAF_BYTES`] for the node model.
+///
+/// `tests/heap_estimate.rs` checks this against a counting allocator for
+/// the worst shapes (many small objects, arrays and strings).
+pub fn approx_heap_bytes(value: &serde_json::Value) -> usize {
+    std::mem::size_of::<serde_json::Value>().saturating_add(owned_heap_bytes(value))
+}
+
+/// Approximate heap footprint of a typed contract, as [`approx_heap_bytes`]
+/// counts it: the struct itself plus what each field owns. Fields are
+/// measured in place (nothing is cloned or re-serialised), so a `Value`
+/// built by deserialisation is charged its real spare capacity.
+pub fn contract_heap_bytes(contract: &crate::types::Contract) -> usize {
+    // Capacity needs the owned types, hence &String and &Vec.
+    #[allow(clippy::ptr_arg)]
+    fn string(s: &String) -> usize {
+        alloc_chunk_bytes(s.capacity())
+    }
+    fn opt_string(s: &Option<String>) -> usize {
+        s.as_ref().map_or(0, string)
+    }
+    #[allow(clippy::ptr_arg)]
+    fn strings(v: &Vec<String>) -> usize {
+        v.iter().fold(
+            alloc_chunk_bytes(v.capacity().saturating_mul(std::mem::size_of::<String>())),
+            |sum, s| sum.saturating_add(string(s)),
+        )
+    }
+    // Exhaustive, so a new contract field must be accounted for here.
+    let crate::types::Contract {
+        purpose_code: _,
+        output_schema_id,
+        output_schema,
+        participants,
+        prompt_template_hash,
+        entropy_budget_bits: _,
+        timing_class,
+        metadata,
+        model_profile_id,
+        model_profile_hash,
+        enforcement_policy_hash,
+        output_schema_hash,
+        model_constraints,
+        max_completion_tokens: _,
+        session_ttl_secs: _,
+        invite_ttl_secs: _,
+        entropy_enforcement: _,
+        relay_verifying_key_hex,
+    } = contract;
+    let constraints = model_constraints.as_ref().map_or(0, |c| {
+        strings(&c.allowed_providers)
+            .saturating_add(strings(&c.allowed_models))
+            .saturating_add(opt_string(&c.min_tier))
+    });
+    [
+        std::mem::size_of::<crate::types::Contract>(),
+        string(output_schema_id),
+        owned_heap_bytes(output_schema),
+        strings(participants),
+        string(prompt_template_hash),
+        opt_string(timing_class),
+        owned_heap_bytes(metadata),
+        opt_string(model_profile_id),
+        opt_string(model_profile_hash),
+        opt_string(enforcement_policy_hash),
+        opt_string(output_schema_hash),
+        constraints,
+        opt_string(relay_verifying_key_hex),
+    ]
+    .into_iter()
+    .fold(0usize, usize::saturating_add)
+}
+
+/// Size of a std `BTreeMap<String, Value>` leaf node: parent pointer,
+/// parent index and length (`u16` each), then 11 keys and 11 values (std's
+/// node capacity, `2 * B - 1` with `B = 6`), rounded to pointer alignment.
+/// This mirrors std's private node layout; `tests/heap_estimate.rs` pins it
+/// against real allocations.
+pub const BTREE_LEAF_BYTES: usize = {
+    let raw = std::mem::size_of::<usize>()
+        + 2 * std::mem::size_of::<u16>()
+        + BTREE_NODE_CAPACITY
+            * (std::mem::size_of::<String>() + std::mem::size_of::<serde_json::Value>());
+    let align = std::mem::align_of::<usize>();
+    raw.div_ceil(align) * align
+};
+/// Size of an internal node: a leaf plus 12 child pointers.
+pub const BTREE_INTERNAL_BYTES: usize =
+    BTREE_LEAF_BYTES + (BTREE_NODE_CAPACITY + 1) * std::mem::size_of::<usize>();
+const BTREE_NODE_CAPACITY: usize = 11;
+/// Every non-root node holds at least this many members.
+const BTREE_NODE_MIN_LEN: usize = 5;
+
+/// Memory a heap allocation of `size` bytes takes, modelled on glibc
+/// malloc: an 8-byte header, rounded up to 16 bytes, at least 32 bytes.
+/// Zero-size requests do not allocate.
+pub const fn alloc_chunk_bytes(size: usize) -> usize {
+    if size == 0 {
+        return 0;
+    }
+    let chunk = size.saturating_add(8 + 15) & !15;
+    if chunk < 32 {
+        32
+    } else {
+        chunk
+    }
+}
+
+/// Upper bound on the node memory of a `BTreeMap` with `len` members.
+fn btree_bytes(len: usize) -> usize {
+    let leaf = alloc_chunk_bytes(BTREE_LEAF_BYTES);
+    let internal = alloc_chunk_bytes(BTREE_INTERNAL_BYTES);
+    match len {
+        0 => 0,
+        1..=BTREE_NODE_CAPACITY => leaf,
+        _ => {
+            let leaves = len.div_ceil(BTREE_NODE_MIN_LEN);
+            let internals = leaves.div_ceil(BTREE_NODE_MIN_LEN) + 1;
+            leaves
+                .saturating_mul(leaf)
+                .saturating_add(internals.saturating_mul(internal))
+        }
+    }
+}
+
+/// Heap bytes `value` owns, not counting the `Value` itself.
+fn owned_heap_bytes(value: &serde_json::Value) -> usize {
+    const NODE: usize = std::mem::size_of::<serde_json::Value>();
+    match value {
+        serde_json::Value::String(s) => alloc_chunk_bytes(s.capacity()),
+        serde_json::Value::Array(items) => items.iter().fold(
+            alloc_chunk_bytes(items.capacity().saturating_mul(NODE)),
+            |sum, v| sum.saturating_add(owned_heap_bytes(v)),
+        ),
+        serde_json::Value::Object(map) => map.iter().fold(btree_bytes(map.len()), |sum, (k, v)| {
+            sum.saturating_add(alloc_chunk_bytes(k.capacity()))
+                .saturating_add(owned_heap_bytes(v))
+        }),
+        _ => 0,
+    }
+}
 
 /// Operator-configured limits.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,6 +220,7 @@ pub struct LimitConfig {
     pub max_invites_per_agent: usize,
     pub session_create_rate_per_min: u32,
     pub invite_create_rate_per_min: u32,
+    pub max_store_bytes: usize,
 }
 
 impl Default for LimitConfig {
@@ -58,6 +234,7 @@ impl Default for LimitConfig {
             max_invites_per_agent: DEFAULT_MAX_INVITES_PER_AGENT,
             session_create_rate_per_min: DEFAULT_SESSION_CREATE_RATE_PER_MIN,
             invite_create_rate_per_min: DEFAULT_INVITE_CREATE_RATE_PER_MIN,
+            max_store_bytes: DEFAULT_MAX_STORE_BYTES,
         }
     }
 }
@@ -115,6 +292,7 @@ impl LimitConfig {
                 "SELKEY_INVITE_CREATE_RATE_PER_MIN",
                 d.invite_create_rate_per_min,
             )?,
+            max_store_bytes: read(&lookup, "SELKEY_MAX_STORE_BYTES", d.max_store_bytes)?,
         })
     }
 }
@@ -281,6 +459,19 @@ mod tests {
             .unwrap_err();
             assert!(err.contains("SELKEY_MAX_INVITES"), "{err}");
         }
+    }
+
+    #[test]
+    fn test_approx_heap_bytes_counts_nodes_not_text() {
+        let node = std::mem::size_of::<serde_json::Value>();
+        let zeros: serde_json::Value =
+            serde_json::from_str(&format!("[{}]", vec!["0"; 1000].join(","))).unwrap();
+        // About 2 bytes of text per element, a whole Value in memory.
+        assert!(approx_heap_bytes(&zeros) >= node * 1001);
+        // Each non-empty object costs at least one B-tree leaf.
+        let small: serde_json::Value = serde_json::from_str(r#"{"a":0}"#).unwrap();
+        assert!(approx_heap_bytes(&small) >= node + BTREE_LEAF_BYTES);
+        assert_eq!(BTREE_LEAF_BYTES, 632);
     }
 
     #[test]

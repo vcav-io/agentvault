@@ -261,7 +261,8 @@ async fn main() {
     };
     tracing::info!(limits = ?limit_config, "relay limits");
     let session_store = SessionStore::new(Duration::from_secs(session_ttl_secs))
-        .with_max_sessions(limit_config.max_sessions);
+        .with_max_sessions(limit_config.max_sessions)
+        .with_max_held_bytes(limit_config.max_store_bytes);
 
     // Start background session reaper
     session_store.clone().start_reaper();
@@ -338,7 +339,8 @@ async fn main() {
         limit_config.max_invites,
         limit_config.max_pending_invites_per_agent,
     )
-    .with_max_held_per_agent(limit_config.max_invites_per_agent);
+    .with_max_held_per_agent(limit_config.max_invites_per_agent)
+    .with_max_held_bytes(limit_config.max_store_bytes);
 
     #[cfg(not(feature = "persistence"))]
     let inbox_store = InboxStore::new(Duration::from_secs(invite_ttl_secs))
@@ -346,7 +348,8 @@ async fn main() {
             limit_config.max_invites,
             limit_config.max_pending_invites_per_agent,
         )
-        .with_max_held_per_agent(limit_config.max_invites_per_agent);
+        .with_max_held_per_agent(limit_config.max_invites_per_agent)
+        .with_max_held_bytes(limit_config.max_store_bytes);
 
     // Start background inbox reaper
     inbox_store.clone().start_reaper();

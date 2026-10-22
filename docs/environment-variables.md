@@ -126,11 +126,16 @@ cargo build --features persistence
 
 Unset variables use the default. A set value must be a positive integer, or the relay refuses to start.
 
+Provisioning: the two store budgets together allow `2 × SELKEY_MAX_STORE_BYTES` of estimated heap. Real resident memory can reach about 2–3 times that (allocator overhead and fragmentation, other allocators than glibc), plus transient memory for requests being parsed (up to `SELKEY_MAX_BODY_BYTES` per request, many times that once parsed). Size the container accordingly, or lower `SELKEY_MAX_STORE_BYTES`.
+
+Contracts have fixed size limits, checked before a session or invite is created (`400` above them): 16 KiB for the whole contract as compact JSON, 256 KiB of estimated heap once parsed, 2 KiB for `metadata`, and 256 bytes for each string outside `output_schema` and `metadata` (participant ids, hashes, profile ids).
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SELKEY_MAX_ENTROPY_BITS_PER_SESSION` | `64` | Per-session cap on the output schema's entropy upper bound. Applies to every contract, whatever its `entropy_budget_bits` or `entropy_enforcement`; a contract above it is rejected at session or invite creation |
 | `SELKEY_MAX_BODY_BYTES` | `262144` | Maximum request body size (`413` above it) |
 | `SELKEY_MAX_SESSIONS` | `10000` | Sessions held in memory at once (`503` when full) |
+| `SELKEY_MAX_STORE_BYTES` | `268435456` | Memory budget, in bytes, for each in-memory store: the contracts and not-yet-finished inputs of held sessions, and separately the contracts of held invites (each invite holds two copies of its contract). Sizes are the estimated heap of the parsed JSON (approximate; modelled on glibc malloc, and up to about 100 times the request size for JSON made of many tiny values). A new session or input over the budget gets `503`; for invites, finished invites are removed to make room first. With the shipped contracts, the invite budget binds at about 9,000 invites. See the provisioning note below |
 | `SELKEY_MAX_INVITES` | `10000` | Invites held in memory at once. Accepted, declined, canceled and expired invites are removed 1 hour after they reach that state; when the store is full, the oldest finished invite (declined, canceled or expired before accepted) is removed to make room. `503` only when every held invite is pending |
 | `SELKEY_MAX_INVITES_PER_AGENT` | `1000` | Invites in any state held per sending agent. At the limit the sender's oldest finished invite is removed; `429` if all of them are pending |
 | `SELKEY_MAX_PENDING_INVITES_PER_AGENT` | `100` | Pending invites per sending agent (`429` above it) |

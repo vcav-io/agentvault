@@ -53,12 +53,19 @@ pub struct AcceptedContract {
 /// v2), never from a re-serialised typed contract. Unknown members, including
 /// a `contract_hash` member, are rejected.
 pub fn accept_contract(contract_json: &serde_json::Value) -> Result<AcceptedContract, RelayError> {
+    check_contract_size(contract_json)?;
     let normalized = receipt_core::normalize_contract_v2(contract_json)
         .map_err(|e| RelayError::ContractValidation(format!("contract: {e}")))?;
     let contract_hash = hash_json_v3(&normalized)
         .map_err(|e| RelayError::ContractValidation(format!("contract: {e}")))?;
     let contract: Contract = serde_json::from_value(normalized.clone())
         .map_err(|e| RelayError::ContractValidation(format!("contract: {e}")))?;
+    if crate::limits::contract_heap_bytes(&contract) > crate::limits::MAX_CONTRACT_HEAP_BYTES {
+        return Err(RelayError::ContractValidation(format!(
+            "contract exceeds {} bytes once parsed",
+            crate::limits::MAX_CONTRACT_HEAP_BYTES
+        )));
+    }
     // Receipts need one input commitment per participant, keyed by a unique,
     // non-empty participant id; reject anything else before inputs are taken.
     let mut seen = std::collections::BTreeSet::new();
@@ -74,6 +81,73 @@ pub fn accept_contract(contract_json: &serde_json::Value) -> Result<AcceptedCont
         contract_json: normalized,
         contract_hash,
     })
+}
+
+/// Length of a JSON value as compact JSON text.
+fn compact_json_len(value: &serde_json::Value) -> usize {
+    struct Counter(usize);
+    impl std::io::Write for Counter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0 += buf.len();
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut counter = Counter(0);
+    match serde_json::to_writer(&mut counter, value) {
+        Ok(()) => counter.0,
+        // Serialising a Value into a counter cannot fail; treat it as too big.
+        Err(_) => usize::MAX,
+    }
+}
+
+/// Bound a contract's size before it is normalised, hashed or stored: the
+/// whole contract, its `metadata`, and each string outside `output_schema`
+/// and `metadata`.
+fn check_contract_size(contract_json: &serde_json::Value) -> Result<(), RelayError> {
+    use crate::limits::{
+        MAX_CONTRACT_BYTES, MAX_CONTRACT_METADATA_BYTES, MAX_CONTRACT_STRING_BYTES,
+    };
+    fn strings_within(value: &serde_json::Value, max: usize) -> bool {
+        match value {
+            serde_json::Value::String(s) => s.len() <= max,
+            serde_json::Value::Array(items) => items.iter().all(|v| strings_within(v, max)),
+            serde_json::Value::Object(map) => map
+                .iter()
+                .all(|(k, v)| k.len() <= max && strings_within(v, max)),
+            _ => true,
+        }
+    }
+    if compact_json_len(contract_json) > MAX_CONTRACT_BYTES {
+        return Err(RelayError::ContractValidation(format!(
+            "contract exceeds {MAX_CONTRACT_BYTES} bytes"
+        )));
+    }
+    if let Some(fields) = contract_json.as_object() {
+        for (key, value) in fields {
+            match key.as_str() {
+                "output_schema" => {}
+                "metadata" => {
+                    if compact_json_len(value) > MAX_CONTRACT_METADATA_BYTES {
+                        return Err(RelayError::ContractValidation(format!(
+                            "contract metadata exceeds {MAX_CONTRACT_METADATA_BYTES} bytes"
+                        )));
+                    }
+                }
+                _ => {
+                    if !strings_within(value, MAX_CONTRACT_STRING_BYTES) {
+                        return Err(RelayError::ContractValidation(format!(
+                            "contract field {key} has a string longer than \
+                             {MAX_CONTRACT_STRING_BYTES} bytes"
+                        )));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Check that an input context can be committed to (receipt v3 profile).
@@ -1210,6 +1284,76 @@ pub async fn relay(request: RelayRequest, state: &AppState) -> Result<RelayRespo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn contract_with(key: &str, value: serde_json::Value) -> serde_json::Value {
+        let mut contract = serde_json::json!({
+            "purpose_code": "MEDIATION",
+            "output_schema_id": "vault_result_mediation",
+            "output_schema": {"type": "object"},
+            "participants": ["alice", "bob"],
+            "prompt_template_hash": "a".repeat(64)
+        });
+        contract[key] = value;
+        contract
+    }
+
+    fn rejection(contract: &serde_json::Value) -> String {
+        match accept_contract(contract) {
+            Err(RelayError::ContractValidation(msg)) => msg,
+            other => panic!("expected a contract validation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_contract_size_limits() {
+        use crate::limits::{MAX_CONTRACT_BYTES, MAX_CONTRACT_STRING_BYTES};
+        // Whole contract: a schema description fills it past the cap.
+        let at = |len: usize| {
+            contract_with(
+                "output_schema",
+                serde_json::json!({"type": "object", "description": "x".repeat(len)}),
+            )
+        };
+        let base = serde_json::to_string(&at(0)).unwrap().len();
+        let fits = at(MAX_CONTRACT_BYTES - base);
+        assert_eq!(
+            serde_json::to_string(&fits).unwrap().len(),
+            MAX_CONTRACT_BYTES
+        );
+        assert!(accept_contract(&fits).is_ok());
+        let over = at(MAX_CONTRACT_BYTES - base + 1);
+        assert!(rejection(&over).contains(&format!("exceeds {MAX_CONTRACT_BYTES} bytes")));
+        // Metadata.
+        let msg = rejection(&contract_with(
+            "metadata",
+            serde_json::json!({"n": "x".repeat(2048)}),
+        ));
+        assert!(msg.contains("metadata exceeds"), "{msg}");
+        assert!(accept_contract(&contract_with(
+            "metadata",
+            serde_json::json!({"n": "x".repeat(2000)})
+        ))
+        .is_ok());
+        // Estimated heap: within the text cap, but made of tiny values.
+        let tiny = vec![serde_json::json!({"": 0}); 2_000];
+        let packed = contract_with("output_schema", serde_json::json!({"enum": tiny}));
+        assert!(serde_json::to_string(&packed).unwrap().len() < MAX_CONTRACT_BYTES);
+        let msg = rejection(&packed);
+        assert!(msg.contains("once parsed"), "{msg}");
+        // Strings outside output_schema and metadata.
+        let long = "a".repeat(MAX_CONTRACT_STRING_BYTES + 1);
+        let msg = rejection(&contract_with(
+            "participants",
+            serde_json::json!([long, "bob"]),
+        ));
+        assert!(msg.contains("participants"), "{msg}");
+        let ok = "a".repeat(MAX_CONTRACT_STRING_BYTES);
+        assert!(accept_contract(&contract_with(
+            "participants",
+            serde_json::json!([ok, "bob"])
+        ))
+        .is_ok());
+    }
 
     #[test]
     fn test_accepted_contract_hash_is_contract_hash_v2() {

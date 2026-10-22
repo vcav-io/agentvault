@@ -256,7 +256,20 @@ impl SqliteDb {
                     from_agent_pubkey: None, // not persisted (registry-owned)
                 })
             })?
-            .filter_map(|r| r.ok())
+            .filter_map(|r| match r {
+                Ok(invite) => Some(invite),
+                Err(e) => {
+                    // A row that no longer loads (for example a contract over
+                    // a size limit added since it was stored) is skipped, not
+                    // fatal. Only the failing column is logged, no values.
+                    let column = match &e {
+                        rusqlite::Error::FromSqlConversionFailure(i, _, _) => Some(*i),
+                        _ => None,
+                    };
+                    tracing::warn!(?column, "skipping persisted invite that fails to load");
+                    None
+                }
+            })
             .collect();
 
         let mut invites: HashMap<String, Invite> = HashMap::new();
@@ -456,6 +469,21 @@ mod tests {
         // inbox_index populated
         let bob_index = &inbox_index["bob"];
         assert!(bob_index.contains(&"inv_test123".to_string()));
+    }
+
+    #[test]
+    fn test_load_skips_invite_whose_contract_no_longer_loads() {
+        let db = open_temp_db();
+        db.insert_invite(&test_invite()).unwrap();
+        let mut oversized = test_invite();
+        oversized.invite_id = "inv_oversized".to_string();
+        oversized.contract_json["metadata"] = serde_json::json!({ "note": "x".repeat(4096) });
+        db.insert_invite(&oversized).unwrap();
+
+        let (invites, inbox_index, _) = db.load_all().unwrap();
+        assert_eq!(invites.len(), 1);
+        assert!(invites.contains_key("inv_test123"));
+        assert_eq!(inbox_index["bob"], vec!["inv_test123".to_string()]);
     }
 
     #[test]

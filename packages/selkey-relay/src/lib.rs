@@ -452,11 +452,14 @@ async fn submit_input_handler(
         None
     };
 
+    // Memory the stored input counts against the session store budget.
+    let input_held_bytes = limits::approx_heap_bytes(&request.context);
+
     // Submit input and check if both inputs are now present
     let is_dev = state.is_dev;
     let both_ready = state
         .session_store
-        .with_session(&session_id, |session| {
+        .with_session_within_budget(&session_id, input_held_bytes, |session| {
             // Check one-time submit: reject if already submitted
             if is_initiator && session.initiator_submitted {
                 return Err(RelayError::Unauthorized);
@@ -490,6 +493,7 @@ async fn submit_input_handler(
                 session.responder_input = Some(input);
                 session.responder_submitted = true;
             }
+            session.input_bytes = session.input_bytes.saturating_add(input_held_bytes);
 
             // Capture input timing and sizes in metadata
             if is_dev {
@@ -516,7 +520,7 @@ async fn submit_input_handler(
             }
         })
         .await
-        .ok_or(RelayError::Unauthorized)??;
+        .ok_or(RelayError::Unauthorized)???;
 
     // If both inputs received, start inference in its own task. Nothing
     // after this point depends on the request staying connected.
