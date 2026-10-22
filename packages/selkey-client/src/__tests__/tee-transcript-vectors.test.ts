@@ -10,7 +10,8 @@
 import { describe, it, expect } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { bytesToHex } from '@noble/hashes/utils';
+import { sha512 } from '@noble/hashes/sha512';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 
 import {
   assertRelayConfig,
@@ -43,6 +44,15 @@ describe('transcript v1 golden vector', () => {
   it('matches the selkey-tee fixture', () => {
     expect(v1Golden.version).toBe('av-tee-transcript-v1');
     expect(computeTranscriptHashHex(v1Golden.inputs)).toBe(v1Golden.expected_hash_hex);
+  });
+
+  it('inserts values into the template without escaping', () => {
+    const inputs = { ...v1Golden.inputs, contract_hash: 'a"b\\c' };
+    const template =
+      '{"contract_hash":"a"b\\c","initiator_submission_hash":"cccc","output_hash":"eeee",' +
+      '"prompt_template_hash":"bbbb","receipt_signing_pubkey_hex":"ffff",' +
+      '"responder_submission_hash":"dddd","version":"av-tee-transcript-v1"}';
+    expect(computeTranscriptHashHex(inputs)).toBe(bytesToHex(sha512(utf8ToBytes(template))));
   });
 });
 
@@ -96,6 +106,14 @@ describe('relay config golden vectors', () => {
     const { env: _env, ...missingEnv } = base;
     expect(() => assertRelayConfig(missingEnv)).toThrow(TypeError);
   });
+
+  it('rejects strings that are not well-formed UTF-16', () => {
+    const base = v3Golden.relay_config_vectors[0].relay_config;
+    // A lone surrogate would otherwise encode as U+FFFD, the same bytes as '\uFFFD'.
+    expect(() => assertRelayConfig({ ...base, env: 'a\uD800' })).toThrow(TypeError);
+    expect(() => assertRelayConfig({ ...base, env: '\uDC00b' })).toThrow(TypeError);
+    expect(() => assertRelayConfig({ ...base, env: 'ok \u{1F600}' })).not.toThrow();
+  });
 });
 
 describe('transcript v3 golden vectors', () => {
@@ -108,6 +126,13 @@ describe('transcript v3 golden vectors', () => {
       expect(bytesToHex(hash)).toBe(v.expected_hash_hex);
     });
   }
+
+  it('rejects inputs that are not well-formed UTF-16', () => {
+    const inputs: TranscriptInputsV3 = v3Golden.transcript_vectors[0].inputs;
+    expect(() =>
+      computeTranscriptHashV3({ ...inputs, model_identity_asserted: 'anthropic/m\uD800' }),
+    ).toThrow(TypeError);
+  });
 
   it('differs from v2 for the same inputs', () => {
     const inputs: TranscriptInputsV3 = v3Golden.transcript_vectors[0].inputs;

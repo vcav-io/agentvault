@@ -49,6 +49,11 @@ export interface TranscriptInputsV3 extends TranscriptInputsV2 {
  * Compute the v1 transcript hash (SHA-512, 64 bytes). Matches Rust
  * `tee_transcript::compute_transcript_hash`: values are interpolated into a
  * fixed sorted-key JSON template without escaping.
+ *
+ * Legacy: because values are not escaped, inputs that contain `"` or `,` can
+ * produce the same encoding as different inputs. Current receipts use v3
+ * (`computeTranscriptHashV3`); this function is kept to check receipts issued
+ * before it.
  */
 export function computeTranscriptHash(inputs: TranscriptInputs): Uint8Array {
   const canonical =
@@ -75,6 +80,10 @@ export function computeTranscriptHashHex(inputs: TranscriptInputs): string {
  * Compute the v2 transcript hash (SHA-512, 64 bytes). Matches Rust
  * `tee_transcript::compute_transcript_hash_v2`: the v1 template plus
  * `model_identity_asserted`, with `av-tee-transcript-v2`.
+ *
+ * Legacy: like v1, values are interpolated without escaping, so inputs that
+ * contain `"` or `,` can produce the same encoding as different inputs. Kept
+ * to check receipts issued before v3.
  */
 export function computeTranscriptHashV2(inputs: TranscriptInputsV2): Uint8Array {
   const canonical =
@@ -96,6 +105,26 @@ export function computeTranscriptHashV2Hex(inputs: TranscriptInputsV2): string {
 }
 
 /**
+ * Whether `value` is well-formed UTF-16 (no lone surrogates), so it has an
+ * exact UTF-8 encoding. A lone surrogate would otherwise be replaced by
+ * U+FFFD, and two different strings could encode to the same bytes.
+ * (`String.prototype.isWellFormed` is ES2024; this targets ES2022.)
+ */
+function isWellFormedUtf16(value: string): boolean {
+  for (let i = 0; i < value.length; i++) {
+    const c = value.charCodeAt(i);
+    if (c >= 0xd800 && c <= 0xdbff) {
+      const next = i + 1 < value.length ? value.charCodeAt(i + 1) : 0;
+      if (next < 0xdc00 || next > 0xdfff) return false;
+      i++;
+    } else if (c >= 0xdc00 && c <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * Length-prefixed encoding shared by transcript v3 and the relay config hash:
  * `LP(version) || LP(name_1) || LP(value_1) || ...`, where `LP(x)` is the
  * UTF-8 byte length of `x` as a big-endian u64 followed by those bytes.
@@ -106,6 +135,9 @@ function encodeFields(
 ): Uint8Array {
   const parts: Uint8Array[] = [utf8ToBytes(version)];
   for (const [name, value] of fields) {
+    if (typeof value !== 'string' || !isWellFormedUtf16(value)) {
+      throw new TypeError(`${name} must be a well-formed string`);
+    }
     parts.push(utf8ToBytes(name), utf8ToBytes(value));
   }
   const total = parts.reduce((n, p) => n + 8 + p.length, 0);
@@ -156,8 +188,10 @@ const RELAY_CONFIG_KEYS: ReadonlySet<string> = new Set([
 
 /**
  * Check that a value has exactly the `RelayConfig` members with the right
- * types, as the Rust `RelayConfig` deserialiser requires. Throws `TypeError`
- * otherwise. Use it on a configuration parsed from JSON (e.g. `/tee/info`).
+ * types: rejects unknown members, wrongly typed values and strings that are
+ * not well-formed UTF-16. Throws `TypeError` otherwise. Use it on a
+ * configuration parsed from JSON (e.g. `/tee/info`). Duplicate keys cannot
+ * be detected once the JSON has been parsed.
  */
 export function assertRelayConfig(value: unknown): asserts value is RelayConfig {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -170,8 +204,12 @@ export function assertRelayConfig(value: unknown): asserts value is RelayConfig 
     }
   }
   for (const key of RELAY_CONFIG_STRING_FIELDS) {
-    if (typeof obj[key] !== 'string') {
+    const v = obj[key];
+    if (typeof v !== 'string') {
       throw new TypeError(`relay_config.${key} must be a string`);
+    }
+    if (!isWellFormedUtf16(v)) {
+      throw new TypeError(`relay_config.${key} must be well-formed UTF-16`);
     }
   }
   for (const key of RELAY_CONFIG_BOOL_FIELDS) {
@@ -207,7 +245,10 @@ export function computeRelayConfigHashHex(config: RelayConfig): string {
   return bytesToHex(computeRelayConfigHash(config));
 }
 
-/** The length-prefixed v3 transcript encoding (Rust `TranscriptInputsV3::encode`). */
+/**
+ * The length-prefixed v3 transcript encoding (Rust `TranscriptInputsV3::encode`).
+ * Throws `TypeError` if an input is not a well-formed UTF-16 string.
+ */
 export function encodeTranscriptV3(inputs: TranscriptInputsV3): Uint8Array {
   return encodeFields(TRANSCRIPT_VERSION_V3, [
     ['contract_hash', inputs.contract_hash],
@@ -326,6 +367,10 @@ export interface TeeVerificationResult {
   // The relay configuration the v3 transcript matched (set only when
   // transcript_schema is 'V3'). Callers apply their own policy to it.
   relay_config: RelayConfig | undefined;
+  // The model identity the v2/v3 transcripts were computed with (from
+  // options.model_identity_asserted, "" if not supplied). Compare it with the
+  // receipt's claims.model_identity_asserted.
+  model_identity_asserted_used: string;
   // False until the verifier can parse the quote and cross-check transcript-
   // binding fields against the quote contents.
   quote_field_cross_checked: boolean;
@@ -361,7 +406,13 @@ export interface TeeVerifyOptions {
    * is then reported as invalid.
    */
   relay_config?: RelayConfig;
-  /** Require a v3 transcript even without a relay config. Implied by `relay_config`. */
+  /**
+   * Require a v3 transcript even without a relay config (in which case no
+   * transcript can match). Implied by `relay_config`. Recommended for
+   * current receipts: set this or supply `relay_config`, since the v1 and v2
+   * encodings are legacy and can be ambiguous for inputs containing `"` or
+   * `,`.
+   */
   require_transcript_v3?: boolean;
 }
 
@@ -407,13 +458,18 @@ export function verifyTeeReceipt(
     model_identity_asserted: options.model_identity_asserted ?? '',
   };
   const relayConfig = options.relay_config;
-  const v3Hex =
-    relayConfig !== undefined
-      ? computeTranscriptHashV3Hex({
-          ...v2Inputs,
-          relay_config_hash: computeRelayConfigHashHex(relayConfig),
-        })
-      : undefined;
+  let v3Hex: string | undefined;
+  if (relayConfig !== undefined) {
+    // A malformed caller-supplied relay config throws here.
+    const relay_config_hash = computeRelayConfigHashHex(relayConfig);
+    try {
+      v3Hex = computeTranscriptHashV3Hex({ ...v2Inputs, relay_config_hash });
+    } catch (e) {
+      // Receipt values that are not well-formed strings cannot match v3.
+      if (!(e instanceof TypeError)) throw e;
+      v3Hex = undefined;
+    }
+  }
   const v2Hex = computeTranscriptHashV2Hex(v2Inputs);
   const v1Hex = computeTranscriptHashHex(v2Inputs);
 
@@ -457,6 +513,7 @@ export function verifyTeeReceipt(
     transcript_binding,
     transcript_schema,
     relay_config: transcript_schema === 'V3' ? relayConfig : undefined,
+    model_identity_asserted_used: v2Inputs.model_identity_asserted,
     quote_field_cross_checked: false,
     submission_hashes_present,
   };

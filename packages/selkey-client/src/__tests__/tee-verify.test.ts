@@ -324,6 +324,21 @@ describe('verifyTeeReceipt transcript versions', () => {
     expect(result.transcript_binding).toBe('ReceiptClaimedUserData');
     expect(result.quote_field_cross_checked).toBe(false);
     expect(result.measurement_match).toBeUndefined();
+    expect(result.model_identity_asserted_used).toBe(MODEL_ID);
+  });
+
+  it('reports an empty model identity when none is supplied', () => {
+    const result = verifyTeeReceipt(commitments, att(V1_HASH), []);
+    expect(result.model_identity_asserted_used).toBe('');
+  });
+
+  it('does not match v3 when a receipt value is not well-formed UTF-16', () => {
+    const result = verifyTeeReceipt(commitments, att(V3_HASH), [], {
+      model_identity_asserted: 'anthropic/test-model\uD800',
+      relay_config: RELAY_CONFIG,
+    });
+    expect(result.transcript_hash_valid).toBe(false);
+    expect(result.transcript_schema).toBeUndefined();
   });
 
   it('accepts a v3 transcript in transcript_hash_hex', () => {
