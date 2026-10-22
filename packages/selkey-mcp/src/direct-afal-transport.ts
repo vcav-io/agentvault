@@ -9,8 +9,15 @@
  * evaluates admission policy, and enqueues admitted proposals for checkInbox().
  */
 
+import { clipUntrustedText } from './untrusted-content.js';
 import type { AfalTransport, AfalInviteMessage, AcceptResult } from './afal-transport.js';
-import type { AfalAdmit, AfalPropose, RelayInvitePayload, RelaySessionBinding } from './afal-types.js';
+import type {
+  AfalAdmit,
+  AfalPropose,
+  RelayInvitePayload,
+  RelayPreference,
+  RelaySessionBinding,
+} from './afal-types.js';
 import { signMessage, verifyMessage, DOMAIN_PREFIXES, contentHash } from './afal-signing.js';
 import { AfalResponder } from './afal-responder.js';
 import type { AdmissionPolicy, AdmittedProposal } from './afal-responder.js';
@@ -37,6 +44,7 @@ import type { ContractOfferProposal, ContractOfferSelection, SupportedContractOf
 import { parseContractOfferSelection, parseSupportedContractOffers } from './contract-negotiation.js';
 import type { TopicAlignmentProposal, TopicAlignmentSelection } from './topic-alignment.js';
 import { parseTopicAlignmentSelection } from './topic-alignment.js';
+import { normalizeRelayUrl } from './relay-trust.js';
 import { PinError, PinStore } from './pin-store.js';
 import { signNegotiationRequest } from './negotiation-auth.js';
 import { assertSelectionWithinProposal } from './contract-negotiation.js';
@@ -387,7 +395,7 @@ export class DirectAfalTransport implements AfalTransport {
 
     if (!response.ok) {
       const body = await response.text();
-      throw new Error(`PROPOSE rejected: ${response.status} ${body}`);
+      throw new Error(`PROPOSE rejected: ${response.status} ${clipUntrustedText(body)}`);
     }
 
     let admitOrDeny: Record<string, unknown>;
@@ -528,38 +536,41 @@ export class DirectAfalTransport implements AfalTransport {
     );
   }
 
+  /**
+   * Relay preference from the verified ADMIT for `proposalId`, if any. The
+   * initiator consults this before creating the relay session so the session
+   * is created on the arbitrated relay (subject to local relay trust checks).
+   */
+  admittedRelayPreference(proposalId: string): RelayPreference | undefined {
+    return this.storedAdmits.get(proposalId)?.relay_preference;
+  }
+
   async commitAdmit(inviteId: string, relaySession: RelaySessionBinding): Promise<void> {
     const admit = this.storedAdmits.get(inviteId);
     if (!admit) {
       throw new Error(`No stored ADMIT for proposal_id: ${inviteId}`);
     }
 
-    // Apply relay preference arbitration:
-    // - REQUIRED: use responder's relay or abort
-    // - PREFERRED: use responder's relay unless initiator has explicit override
-    // - Absent: initiator-chooses (backward compat)
-    let chosenRelayUrl = relaySession.relay_url;
+    // Relay preference arbitration happens before the relay session is
+    // created (see admittedRelayPreference()). The session binding is never
+    // rewritten here: a session lives on the relay it was created on, so the
+    // COMMIT must name that relay. If the responder REQUIRED a different
+    // relay, refuse rather than point the responder at a relay the session
+    // does not exist on.
     const relayPref = admit.relay_preference;
-    if (relayPref) {
-      if (relayPref.policy === 'REQUIRED') {
-        chosenRelayUrl = relayPref.relay_url;
-      } else if (relayPref.policy === 'PREFERRED') {
-        // Use responder's relay unless the initiator has an explicit override
-        if (!this.config.relayUrl || this.config.relayUrl === relayPref.relay_url) {
-          chosenRelayUrl = relayPref.relay_url;
-        }
-        // else: initiator's explicit relayUrl overrides PREFERRED
-      }
+    if (
+      relayPref?.policy === 'REQUIRED' &&
+      !sameRelayUrl(relaySession.relay_url, relayPref.relay_url)
+    ) {
+      throw new Error(
+        `Relay session was created on "${relaySession.relay_url}" but the responder requires relay ` +
+          `"${relayPref.relay_url}"; refusing to COMMIT a session to a different relay`,
+      );
     }
+    const chosenRelayUrl = relaySession.relay_url;
+    const committedRelaySession = relaySession;
 
     const peer = await this.resolvePeerDescriptor(this.storedAdmitPeers.get(inviteId));
-
-    // Ensure the relay_session uses the arbitrated relay URL so the
-    // committed session actually routes through the selected relay.
-    const committedRelaySession =
-      relaySession.relay_url === chosenRelayUrl
-        ? relaySession
-        : { ...relaySession, relay_url: chosenRelayUrl };
 
     const commitMessage: Record<string, unknown> = {
       commit_version: '1',
@@ -600,7 +611,7 @@ export class DirectAfalTransport implements AfalTransport {
 
     if (!response.ok) {
       const body = await response.text();
-      throw new Error(`COMMIT rejected: ${response.status} ${body}`);
+      throw new Error(`COMMIT rejected: ${response.status} ${clipUntrustedText(body)}`);
     }
 
     if (transportTarget.useA2ANative) {
@@ -1208,6 +1219,12 @@ export class DirectAfalTransport implements AfalTransport {
   _setStoredAdmitForTesting(proposalId: string, admit: AfalAdmit): void {
     this.storedAdmits.set(proposalId, admit);
   }
+}
+
+function sameRelayUrl(a: string, b: string): boolean {
+  const na = normalizeRelayUrl(a);
+  const nb = normalizeRelayUrl(b);
+  return na !== null && na === nb;
 }
 
 function deriveAgentCardUrl(peerUrl: string): string | null {

@@ -16,6 +16,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { buildSuccess, buildError, type ToolResponse, type ErrorCode } from '../envelope.js';
+import { labelUntrustedContent, relaySignalUntrustedPaths } from '../untrusted-content.js';
 import { createAndSubmit, pollUntilDone, joinAndWait } from 'selkey';
 import { generateCommitmentNonce } from 'selkey/commitment';
 import {
@@ -1282,6 +1283,30 @@ function tryAdoptPreferredPurpose(
 }
 
 /**
+ * Pick the relay for a direct-AFAL session from the responder's ADMIT
+ * relay_preference:
+ * - REQUIRED: the responder's relay (it must still be locally trusted; the
+ *   caller's assertRelayTrusted fails closed otherwise).
+ * - PREFERRED: the responder's relay only when this agent has no relay of its
+ *   own configured and the preferred relay is locally allowlisted; otherwise
+ *   keep the locally resolved relay.
+ * - Absent: the locally resolved relay.
+ */
+function arbitrateDirectSessionRelay(
+  transport: AfalTransport,
+  proposalId: string,
+  localRelayUrl: string,
+): string {
+  const pref = transport.admittedRelayPreference?.(proposalId);
+  if (!pref) return localRelayUrl;
+  if (normalizeRelayUrl(pref.relay_url) === normalizeRelayUrl(localRelayUrl)) return localRelayUrl;
+  if (pref.policy === 'REQUIRED') return pref.relay_url;
+  const ownConfigured = transportLocalRelayUrl(transport);
+  if (!ownConfigured && isRelayUrlAllowed(pref.relay_url)) return pref.relay_url;
+  return localRelayUrl;
+}
+
+/**
  * Create the relay session and submit this agent's input (charged once per
  * session). Returns the binding to COMMIT; does not contact the peer.
  */
@@ -1294,6 +1319,10 @@ async function createDirectSession(params: {
   proposalId: string;
   purposeHint?: string | null;
 }): Promise<RelaySessionBinding> {
+  // Arbitrate the relay BEFORE creating the session, so the session (and the
+  // initiator's input) lives on the relay named in the COMMIT. The arbitrated
+  // relay must still pass the local trust check below.
+  params.relayUrl = arbitrateDirectSessionRelay(params.transport, params.proposalId, params.relayUrl);
   await assertRelayTrusted(params.relayUrl, [transportLocalRelayUrl(params.transport)]);
   chargeSessionDisclosure({
     key: newSessionChargeKey(params.handle),
@@ -2848,6 +2877,16 @@ function hasExtraArgs(args: RelaySignalArgs): boolean {
 }
 
 export async function handleRelaySignal(
+  args: RelaySignalArgs,
+  transport?: AfalTransport,
+  knownAgents: NormalizedKnownAgent[] = [],
+  relayProfileId?: string,
+): Promise<ToolResponse<RelaySignalData>> {
+  const response = await handleRelaySignalUnlabelled(args, transport, knownAgents, relayProfileId);
+  return labelUntrustedContent(response, relaySignalUntrustedPaths(response));
+}
+
+async function handleRelaySignalUnlabelled(
   args: RelaySignalArgs,
   transport?: AfalTransport,
   knownAgents: NormalizedKnownAgent[] = [],

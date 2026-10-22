@@ -1174,6 +1174,124 @@ describe('INITIATE with AFAL', () => {
   });
 });
 
+describe('INITIATE relay preference ordering', () => {
+  const RESPONDER_RELAY = 'https://relay.responder.test';
+
+  function stubPeer(relayPreference: { relay_url: string; policy: 'REQUIRED' | 'PREFERRED' }) {
+    const commits: Array<Record<string, unknown>> = [];
+    const card = signCard({
+      name: 'bob-demo',
+      capabilities: {
+        extensions: [
+          {
+            uri: SELKEY_A2A_EXTENSION_URI,
+            params: {
+              public_key_hex: PEER_PUBKEY,
+              supported_purposes: ['MEDIATION'],
+              afal_endpoint: 'http://peer.example.com/afal',
+            },
+          },
+        ],
+      },
+    }, PEER_SEED);
+    const mockFetch = vi.fn().mockImplementation((url: string, init?: { body?: string }) => {
+      if (url.endsWith('/propose')) {
+        const body = JSON.parse(init?.body ?? '{}') as { propose: { proposal_id: string } };
+        const admit = signMessage(
+          DOMAIN_PREFIXES.ADMIT,
+          {
+            admission_version: '1',
+            outcome: 'ADMIT',
+            proposal_id: body.propose.proposal_id,
+            admit_token_id: 'a'.repeat(64),
+            admission_tier: 'DEFAULT',
+            expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+            relay_preference: relayPreference,
+          },
+          PEER_SEED,
+        );
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(admit) });
+      }
+      if (url.endsWith('/commit')) {
+        commits.push(JSON.parse(init?.body ?? '{}') as Record<string, unknown>);
+        return Promise.resolve({ ok: true, text: () => Promise.resolve('ok') });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(card) });
+    });
+    vi.stubGlobal('fetch', mockFetch);
+    return { commits };
+  }
+
+  function makeInitiator(relayUrl?: string): DirectAfalTransport {
+    return new DirectAfalTransport({
+      agentId: 'alice-demo',
+      seedHex: TEST_SEED,
+      localDescriptor: makeLocalDescriptor(),
+      ...(relayUrl ? { relayUrl } : {}),
+      peerDescriptorUrl: 'http://peer.example.com/afal/descriptor',
+      pinStore: PinStore.inMemory([{ agentId: 'bob-demo', publicKeyHex: PEER_PUBKEY }]),
+    });
+  }
+
+  // Use https relays here so the tests do not depend on whether plain http
+  // relay URLs are accepted for non-loopback hosts.
+  beforeEach(() => {
+    process.env['SELKEY_RELAY_URL'] = 'https://relay.test';
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env['SELKEY_RELAY_ALLOWLIST'];
+    process.env['SELKEY_RELAY_URL'] = 'http://relay.test';
+  });
+
+  it('creates the session on a REQUIRED, locally allowlisted responder relay and commits that same relay', async () => {
+    process.env['SELKEY_RELAY_ALLOWLIST'] = RESPONDER_RELAY;
+    const { commits } = stubPeer({ relay_url: RESPONDER_RELAY, policy: 'REQUIRED' });
+
+    await handleRelaySignal(
+      { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'hello' },
+      makeInitiator('https://relay.test'),
+    );
+
+    expect(vi.mocked(createAndSubmit)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(createAndSubmit).mock.calls[0]![0]).toEqual({ relay_url: RESPONDER_RELAY });
+    expect(commits).toHaveLength(1);
+    const relaySession = commits[0]!['relay_session'] as Record<string, unknown>;
+    expect(relaySession['relay_url']).toBe(RESPONDER_RELAY);
+    expect(commits[0]!['chosen_relay_url']).toBe(RESPONDER_RELAY);
+  });
+
+  it('does not create a session when the REQUIRED responder relay is not locally trusted', async () => {
+    const { commits } = stubPeer({ relay_url: RESPONDER_RELAY, policy: 'REQUIRED' });
+
+    const result = await handleRelaySignal(
+      { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'hello' },
+      makeInitiator('https://relay.test'),
+    );
+
+    expect(result.status).toBe('ERROR');
+    expect(vi.mocked(createAndSubmit)).not.toHaveBeenCalled();
+    expect(commits).toHaveLength(0);
+  });
+
+  it('keeps its own relay for a PREFERRED responder relay and commits the relay the session is on', async () => {
+    process.env['SELKEY_RELAY_ALLOWLIST'] = RESPONDER_RELAY;
+    const { commits } = stubPeer({ relay_url: RESPONDER_RELAY, policy: 'PREFERRED' });
+
+    await handleRelaySignal(
+      { mode: 'INITIATE', counterparty: 'bob-demo', purpose: 'MEDIATION', my_input: 'hello' },
+      makeInitiator('https://relay.test'),
+    );
+
+    expect(vi.mocked(createAndSubmit).mock.calls[0]![0]).toEqual({ relay_url: 'https://relay.test' });
+    expect(commits).toHaveLength(1);
+    const relaySession = commits[0]!['relay_session'] as Record<string, unknown>;
+    expect(relaySession['relay_url']).toBe('https://relay.test');
+    expect(commits[0]!['chosen_relay_url']).toBe('https://relay.test');
+  });
+});
+
 describe('legacy payload type guard (isRelayInvitePayload)', () => {
   it('skips legacy invite when payload fields are truthy non-strings', async () => {
     // session_id: true passes the pre-filter's truthiness check but fails
