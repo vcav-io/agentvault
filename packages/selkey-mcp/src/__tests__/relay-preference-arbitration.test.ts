@@ -553,27 +553,47 @@ describe('Relay Preference Arbitration — Initiator E2E', () => {
     return { proposalId: propose.proposal_id };
   }
 
-  it('REQUIRED: initiator uses responder relay even when session has different relay_url', async () => {
+  it('REQUIRED: commitAdmit refuses a session created on a different relay instead of rewriting it', async () => {
     const peerUrl = await startResponder({
       relay_url: RESPONDER_RELAY,
       policy: 'REQUIRED',
     });
 
-    // Initiator sends PROPOSE with a relay session pointing to a different URL.
-    // commitAdmit() should override chosen_relay_url to the responder's relay,
-    // so the responder accepts the COMMIT.
-    await proposeAndCommit(peerUrl, undefined, INITIATOR_RELAY);
+    // The session lives on INITIATOR_RELAY; the COMMIT must not claim it is on
+    // the responder's relay.
+    await expect(proposeAndCommit(peerUrl, undefined, INITIATOR_RELAY)).rejects.toThrow(
+      /responder requires relay/,
+    );
 
-    // If we got here without throwing, the COMMIT was accepted.
-    // Verify the responder queued the proposal.
+    const inbox = await transportB.checkInbox();
+    expect(inbox.invites).toHaveLength(0);
+  });
+
+  it('REQUIRED: commitAdmit commits a session created on the required relay', async () => {
+    const peerUrl = await startResponder({
+      relay_url: RESPONDER_RELAY,
+      policy: 'REQUIRED',
+    });
+
+    await proposeAndCommit(peerUrl, undefined, RESPONDER_RELAY);
+
     const inbox = await transportB.checkInbox();
     expect(inbox.invites).toHaveLength(1);
-    const invite = inbox.invites[0];
-    expect(invite).toBeDefined();
-    expect(invite!.from_agent_id).toBe('alice-test');
-    expect(invite!.payload).toBeDefined();
-    // The committed relay_session.relay_url must be rewritten to the responder's relay
-    expect(invite!.payload!['relay_url']).toBe(RESPONDER_RELAY);
+    expect(inbox.invites[0]!.payload!['relay_url']).toBe(RESPONDER_RELAY);
+  });
+
+  it('PREFERRED: commitAdmit keeps the session relay_url (no rewrite)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const peerUrl = await startResponder({
+      relay_url: RESPONDER_RELAY,
+      policy: 'PREFERRED',
+    });
+
+    await proposeAndCommit(peerUrl, undefined, INITIATOR_RELAY);
+
+    const inbox = await transportB.checkInbox();
+    expect(inbox.invites).toHaveLength(1);
+    expect(inbox.invites[0]!.payload!['relay_url']).toBe(INITIATOR_RELAY);
   });
 
   it('PREFERRED: initiator overrides with explicit relayUrl config', async () => {

@@ -11,7 +11,7 @@
  */
 
 import type { InviteTransport, InviteMessage } from './invite-transport.js';
-import type { AfalPropose, RelayInvitePayload, RelaySessionBinding } from './afal-types.js';
+import type { AfalPropose, RelayInvitePayload, RelayPreference, RelaySessionBinding } from './afal-types.js';
 import { hasAfalDraft, computeProposalId } from './afal-types.js';
 import { contentHash } from './afal-signing.js';
 import type { ModelProfileRef } from './model-profiles.js';
@@ -59,6 +59,9 @@ export interface AfalTransport {
   ): Promise<AcceptResult | undefined>;
 
   commitAdmit?(inviteId: string, relaySession: RelaySessionBinding): Promise<void>;
+
+  /** Relay preference carried by the verified ADMIT for `proposalId` (direct transports). */
+  admittedRelayPreference?(proposalId: string): RelayPreference | undefined;
 
   readonly agentId: string;
 }

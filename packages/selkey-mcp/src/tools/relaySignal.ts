@@ -1208,6 +1208,30 @@ function tryAdoptPreferredPurpose(
   return null;
 }
 
+/**
+ * Pick the relay for a direct-AFAL session from the responder's ADMIT
+ * relay_preference:
+ * - REQUIRED: the responder's relay (it must still be locally trusted; the
+ *   caller's assertRelayTrusted fails closed otherwise).
+ * - PREFERRED: the responder's relay only when this agent has no relay of its
+ *   own configured and the preferred relay is locally allowlisted; otherwise
+ *   keep the locally resolved relay.
+ * - Absent: the locally resolved relay.
+ */
+function arbitrateDirectSessionRelay(
+  transport: AfalTransport,
+  proposalId: string,
+  localRelayUrl: string,
+): string {
+  const pref = transport.admittedRelayPreference?.(proposalId);
+  if (!pref) return localRelayUrl;
+  if (normalizeRelayUrl(pref.relay_url) === normalizeRelayUrl(localRelayUrl)) return localRelayUrl;
+  if (pref.policy === 'REQUIRED') return pref.relay_url;
+  const ownConfigured = transportLocalRelayUrl(transport);
+  if (!ownConfigured && isRelayUrlAllowed(pref.relay_url)) return pref.relay_url;
+  return localRelayUrl;
+}
+
 async function createCommittedDirectSession(params: {
   handle: RelayHandle;
   transport: AfalTransport;
@@ -1217,6 +1241,10 @@ async function createCommittedDirectSession(params: {
   proposalId: string;
   purposeHint?: string | null;
 }): Promise<void> {
+  // Arbitrate the relay BEFORE creating the session, so the session (and the
+  // initiator's input) lives on the relay named in the COMMIT. The arbitrated
+  // relay must still pass the local trust check below.
+  params.relayUrl = arbitrateDirectSessionRelay(params.transport, params.proposalId, params.relayUrl);
   await assertRelayTrusted(params.relayUrl, [transportLocalRelayUrl(params.transport)]);
   const config = { relay_url: params.relayUrl };
   const nonce = generateCommitmentNonce();
