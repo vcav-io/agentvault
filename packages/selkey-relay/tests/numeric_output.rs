@@ -387,7 +387,8 @@ async fn assert_spellings_release_as(
             released.output_hash, expected.output_hash,
             "{spelling} must hash as {canonical}"
         );
-        let embedded = serde_json::to_string(released.receipt_output.as_ref().unwrap()).unwrap();
+        let embedded =
+            receipt_core::canonicalize_v3(released.receipt_output.as_ref().unwrap()).unwrap();
         assert_eq!(
             embedded, canonical,
             "{spelling} must be committed as {canonical}"
@@ -488,4 +489,34 @@ async fn test_relay_releases_large_integer_spellings_identically_or_aborts() {
             assert_eq!(released.output_hash, receipt_core::jcs::sha256_hex(b""));
         }
     }
+}
+
+/// Object keys whose UTF-8 byte order differs from their UTF-16 code-unit
+/// order (RFC 8785 sorts by UTF-16 code units).
+fn mixed_plane_keys_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "\u{FB33}": {"type": "string", "enum": ["A", "B"]},
+            "\u{1F600}": {"type": "string", "enum": ["A", "B"]}
+        },
+        "required": ["\u{FB33}", "\u{1F600}"],
+        "additionalProperties": false
+    })
+}
+
+#[tokio::test]
+async fn test_relay_delivers_output_keys_in_canonical_order() {
+    let canonical = "{\"\u{1F600}\":\"A\",\"\u{FB33}\":\"B\"}";
+    assert_spellings_release_as(
+        "mixed-plane-keys",
+        &mixed_plane_keys_schema(),
+        false,
+        canonical,
+        &[
+            "{\"\u{FB33}\":\"B\",\"\u{1F600}\":\"A\"}",
+            r#"{"דּ":"B","😀":"A"}"#,
+        ],
+    )
+    .await;
 }
