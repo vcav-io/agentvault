@@ -39,7 +39,6 @@ const SMOKE_RECEIPT = {
       { participant_id: 'alice', input_commitment: '77'.repeat(32), scheme: 'SHA256_N32_JCS_V3' },
       { participant_id: 'bob', input_commitment: '88'.repeat(32), scheme: 'SHA256_N32_JCS_V3' },
     ],
-    assembled_prompt_hash: '99'.repeat(32),
     prompt_assembly_version: '1.0.0',
     prompt_template_hash: '66'.repeat(32),
   },

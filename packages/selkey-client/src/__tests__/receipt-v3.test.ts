@@ -84,7 +84,6 @@ function buildReceipt(
           scheme: 'SHA256_N32_JCS_V3',
         },
       ],
-      assembled_prompt_hash: '7'.repeat(64),
       prompt_assembly_version: '1.0.0',
       output,
       prompt_template_hash: contract.prompt_template_hash,
@@ -366,5 +365,26 @@ describe('verifyReceipt — v3 artefact handling', () => {
       ok: false,
       errorClass: 'SIGNATURE_INVALID',
     });
+  });
+});
+
+describe('receipt v3 field privacy', () => {
+  it('rejects receipts that carry assembled_prompt_hash or rejected_output_hash', () => {
+    const { seed, publicKeyHex, aliceNonce, bobNonce } = setup();
+    const base = buildReceipt(seed, publicKeyHex, { aliceNonce, bobNonce });
+    for (const field of ['assembled_prompt_hash', 'rejected_output_hash']) {
+      const { signature: _s, ...unsigned } = base;
+      const withField = {
+        ...unsigned,
+        commitments: { ...unsigned.commitments, [field]: '7'.repeat(64) },
+      } as unknown as ReceiptV3;
+      // Correctly signed, so only the field rules can reject it.
+      const sig = ed25519.sign(signingDigestV3(withField), seed);
+      const signed = {
+        ...withField,
+        signature: { alg: 'Ed25519', value: b64url(sig), signed_fields: 'ALL_EXCEPT_SIGNATURE' },
+      } as unknown as Record<string, unknown>;
+      expect(verifyReceiptV3(signed, publicKeyHex)).toMatchObject({ ok: false });
+    }
   });
 });

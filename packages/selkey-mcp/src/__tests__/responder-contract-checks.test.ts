@@ -516,7 +516,6 @@ describe('receipt verification against the pinned relay key', () => {
             scheme: 'SHA256_N32_JCS_V3',
           },
         ],
-        assembled_prompt_hash: '7'.repeat(64),
         prompt_assembly_version: '1.0.0',
       },
       claims: { status: 'success' },
